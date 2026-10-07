@@ -1,0 +1,246 @@
+"""Train a classifier inside an sklearn ClassifierChain on an exported, model-ready dataset.
+
+    python -m app.modeling.train --export-id 3                       # LightGBM (default)
+    python -m app.modeling.train --export-id 3 --model xgboost --order column_b,column_a
+    python -m app.modeling.train --list-models
+
+Chain mechanics
+---------------
+ClassifierChain fits one classifier per target, in `order`. Each later model sees the
+original features plus the earlier models' outputs. With `cv=5` those outputs are
+out-of-fold during training, so the downstream model learns from realistic (noisy)
+upstream predictions instead of the ground truth it will never see at inference time.
+
+* both targets binary   -> chain_method="predict_proba" (the P(class=1) is passed down)
+* any target multiclass -> chain_method="predict"       (the predicted class code is passed
+  down; sklearn's chain stores one column per target, so a k-class probability vector
+  can't be chained)
+
+Models come from `registry.MODELS`; which ones may train on an export depends on the
+model family the export was prepared for (see `registry.compatibility`).
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import time
+import warnings
+from pathlib import Path
+from typing import Any, Callable
+
+import joblib
+import numpy as np
+import polars as pl
+from sklearn import config_context
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score, log_loss, roc_auc_score
+from sklearn.multioutput import ClassifierChain
+
+from .registry import DEFAULT_MODEL, MODELS, ModelSpec, catalog, compatibility, get_model, importances
+
+log = logging.getLogger("train")
+
+# LightGBM >= 4.6 records generated feature names even for ndarray input; sklearn then warns
+# on every chained predict. The arrays are always in manifest order, so the warning is noise.
+warnings.filterwarnings("ignore", message="X does not have valid feature names", category=UserWarning)
+
+
+class NaNTolerantClassifierChain(ClassifierChain):
+    """ClassifierChain that lets NaN through to models that route missing values natively.
+
+    sklearn's chain validates X as finite even when the wrapped model (LightGBM, XGBoost,
+    HistGradientBoosting, random forest) handles NaN itself — the tree family's "leave
+    missing" default depends on this. `assume_finite` (thread-local) skips only that check.
+    """
+
+    def fit(self, X, Y, **fit_params):
+        with config_context(assume_finite=True):
+            return super().fit(X, Y, **fit_params)
+
+    def predict(self, X):
+        with config_context(assume_finite=True):
+            return super().predict(X)
+
+    def predict_proba(self, X):
+        with config_context(assume_finite=True):
+            return super().predict_proba(X)
+
+
+def load_export(export_dir: Path) -> tuple[dict, pl.DataFrame]:
+    manifest = json.loads((export_dir / "manifest.json").read_text())
+    df = pl.read_parquet(export_dir / manifest["files"]["data"])
+    return manifest, df
+
+
+def build_chain(spec: ModelSpec, target_kinds: list[str], order: list[int], seed: int,
+                params: dict | None = None, cv: int | None = 5) -> ClassifierChain:
+    all_binary = all(k == "binary" for k in target_kinds)
+    estimator = spec.build({**spec.default_params, **(params or {})}, seed)
+    chain_cls = NaNTolerantClassifierChain if spec.handles_nan else ClassifierChain
+    # First positional arg is `base_estimator` in sklearn 1.6 and `estimator` from 1.7.
+    return chain_cls(
+        estimator,
+        order=order,
+        cv=cv,
+        chain_method="predict_proba" if all_binary else "predict",
+        random_state=seed,
+    )
+
+
+def chain_predict_proba(chain: ClassifierChain, X: np.ndarray) -> list[np.ndarray]:
+    """Full class-probability matrix for every target (in original target order).
+
+    `ClassifierChain.predict_proba` only returns P(class=1) per target, which is not
+    enough for multiclass targets, so walk the fitted chain exactly as sklearn does.
+    """
+    n_targets = len(chain.estimators_)
+    feature_chain = np.zeros((X.shape[0], n_targets))
+    probas: list[np.ndarray | None] = [None] * n_targets
+    method = chain.chain_method_
+    for pos, est in enumerate(chain.estimators_):
+        X_aug = np.hstack((X, feature_chain[:, :pos]))
+        p = est.predict_proba(X_aug)
+        probas[chain.order_[pos]] = p
+        feature_chain[:, pos] = p[:, 1] if method == "predict_proba" else est.predict(X_aug)
+    return probas  # type: ignore[return-value]
+
+
+def evaluate(y_true: np.ndarray, proba: np.ndarray) -> dict[str, float]:
+    pred = proba.argmax(axis=1)
+    out = {
+        "accuracy": float(accuracy_score(y_true, pred)),
+        "balanced_accuracy": float(balanced_accuracy_score(y_true, pred)),
+        "f1_macro": float(f1_score(y_true, pred, average="macro")),
+        "log_loss": float(log_loss(y_true, proba, labels=list(range(proba.shape[1])))),
+    }
+    try:
+        if proba.shape[1] == 2:
+            out["roc_auc"] = float(roc_auc_score(y_true, proba[:, 1]))
+        else:
+            out["roc_auc_ovr_macro"] = float(roc_auc_score(y_true, proba, multi_class="ovr", average="macro"))
+    except ValueError:  # a class absent from this split
+        pass
+    return out
+
+
+def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] | None = None, seed: int = 42,
+          params: dict | None = None, cv: int | None = 5, out_dir: Path | None = None,
+          progress: Callable[[str], None] | None = None) -> dict[str, Any]:
+    spec = get_model(model)
+    manifest, df = load_export(export_dir)
+    export_family = manifest.get("model_family", "tree")
+    problem = compatibility(spec, export_family, bool(manifest.get("contains_nan", False)))
+    if problem:
+        raise ValueError(problem)
+    targets: list[str] = manifest["targets"]
+    feats: list[str] = manifest["feature_names"]
+    split_col = manifest["split_column"]
+    order_names = order_names or targets
+    if sorted(order_names) != sorted(targets):
+        raise ValueError(f"order must be a permutation of {targets}")
+    order = [targets.index(t) for t in order_names]
+    kinds = [manifest["target_kinds"][t] for t in targets]
+    say = progress or (lambda msg: log.info(msg))
+
+    def xy(split: str) -> tuple[np.ndarray, np.ndarray]:
+        part = df.filter(pl.col(split_col) == split)
+        return part.select(feats).to_numpy().astype(np.float32), part.select(targets).to_numpy().astype(np.int64)
+
+    X_tr, Y_tr = xy("train")
+    say(f"Fitting {spec.label} chain {' → '.join(order_names)} on {X_tr.shape[0]:,} rows × {X_tr.shape[1]:,} features")
+    chain = build_chain(spec, kinds, order, seed, params, cv)
+    t0 = time.time()
+    chain.fit(X_tr, Y_tr)
+    fit_seconds = time.time() - t0
+
+    say("Evaluating on validation and test splits")
+    metrics: dict[str, Any] = {}
+    for split in ("valid", "test"):
+        X, Y = xy(split)
+        if len(X) == 0:
+            continue
+        with config_context(assume_finite=spec.handles_nan):
+            probas = chain_predict_proba(chain, X)
+            predicted = chain.predict(X).astype(int)
+        metrics[split] = {t: evaluate(Y[:, i], probas[i]) for i, t in enumerate(targets)}
+        # Sanity check: the manual walk must agree with sklearn's own chain prediction
+        if not np.array_equal(np.column_stack([p.argmax(1) for p in probas]), predicted):
+            raise RuntimeError("chain_predict_proba diverged from ClassifierChain.predict")
+
+    top_features = {}
+    for pos, est in enumerate(chain.estimators_):
+        names = feats + [f"chain::{order_names[k]}" for k in range(pos)]
+        imp = importances(spec, est, names)
+        if imp is None or len(imp) != len(names):
+            continue
+        top = np.argsort(imp)[::-1][:25]
+        top_features[order_names[pos]] = [
+            {"feature": names[k], "source": manifest["feature_source_field"].get(names[k], names[k]),
+             "importance": float(imp[k])} for k in top
+        ]
+
+    out_dir = out_dir or export_dir.parent.parent / "models" / f"export{export_dir.name}_{spec.key}_{int(time.time())}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    joblib.dump(chain, out_dir / "classifier_chain.joblib", compress=3)
+    report = {
+        "export_dir": str(export_dir),
+        "model": spec.key,
+        "model_label": spec.label,
+        "family": spec.family,
+        "export_family": export_family,
+        "order": order_names,
+        "chain_method": chain.chain_method_,
+        "cv": cv,
+        "target_classes": manifest["target_classes"],
+        "n_train": int(len(X_tr)),
+        "n_features": len(feats),
+        "fit_seconds": round(fit_seconds, 1),
+        "params": {k: (list(v) if isinstance(v, tuple) else v) for k, v in {**spec.default_params, **(params or {})}.items()},
+        "metrics": metrics,
+        "top_features": top_features,
+    }
+    (out_dir / "report.json").write_text(json.dumps(report, indent=2))
+    report["model_dir"] = str(out_dir)
+    return report
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    g = ap.add_mutually_exclusive_group(required=True)
+    g.add_argument("--export-id", type=int, help="export id (looked up under $DATA_DIR/exports/<id>)")
+    g.add_argument("--export-dir", type=Path)
+    g.add_argument("--list-models", action="store_true")
+    ap.add_argument("--model", default=DEFAULT_MODEL, choices=list(MODELS))
+    ap.add_argument("--order", help="comma-separated target order, e.g. column_a,column_b")
+    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--cv", type=int, default=5, help="folds for out-of-fold chain features (0 = use truth)")
+    ap.add_argument("--param", action="append", default=[], metavar="KEY=VALUE",
+                    help="override a model parameter, e.g. --param n_estimators=1000 (repeatable)")
+    args = ap.parse_args()
+
+    if args.list_models:
+        for m in catalog():
+            print(f"{m['key']:24s} {m['family']:7s} {'nan-ok' if m['handles_nan'] else 'no-nan':7s} "
+                  f"{'available' if m['available'] else 'not installed'}  {m['description']}")
+        return
+    if args.export_dir is None:
+        from ..config import get_settings
+        export_dir = get_settings().exports_dir / str(args.export_id)
+    else:
+        export_dir = args.export_dir
+    overrides = {}
+    for kv in args.param:
+        k, _, v = kv.partition("=")
+        try:
+            overrides[k] = json.loads(v)
+        except json.JSONDecodeError:
+            overrides[k] = v
+    report = train(export_dir, args.model, args.order.split(",") if args.order else None, args.seed, overrides,
+                   args.cv or None)
+    print(json.dumps({k: report[k] for k in ("model_dir", "model", "order", "chain_method", "n_train", "metrics")},
+                     indent=2))
+
+
+if __name__ == "__main__":
+    main()

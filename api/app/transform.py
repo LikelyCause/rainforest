@@ -1,0 +1,556 @@
+"""Turn reviewed field decisions into a fitted sklearn preprocessing pipeline + model-ready Parquet.
+
+Pipeline per field (only `action == keep`):
+    numeric      : [clip | signed-log1p] -> [SimpleImputer] -> [scaler]   (+ optional missing indicator)
+    categorical  : SimpleImputer -> OneHot | Ordinal | Frequency
+    binary       : SimpleImputer -> Ordinal (0/1)
+    text         : TF-IDF -> TruncatedSVD   |   length / word-count stats
+    datetime     : date parts + epoch days -> [SimpleImputer]
+
+Leakage hygiene: the split is assigned first and every statistic (medians, vocabularies,
+category levels, scaler params) is fitted on training rows only. Fitting uses a sample of
+the training split; transformation streams through the full file in chunks.
+"""
+from __future__ import annotations
+
+import json
+import math
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable
+
+import numpy as np
+import pandas as pd
+import polars as pl
+import pyarrow as pa
+import pyarrow.parquet as pq
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.compose import ColumnTransformer
+from sklearn.decomposition import TruncatedSVD
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.impute import MissingIndicator, SimpleImputer
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import (
+    MinMaxScaler,
+    OneHotEncoder,
+    OrdinalEncoder,
+    QuantileTransformer,
+    RobustScaler,
+    StandardScaler,
+)
+
+from .profiling import coerce_numeric, parse_datetime
+from .semantics import DEFAULT_FAMILY, DEFAULT_PARAMS, FAMILIES, NON_FEATURE_TYPES, NUMERIC
+
+SPLIT_COL = "__split"
+ROW_ID = "__row_id"
+SPLIT_CODES = {"train": 0, "valid": 1, "test": 2}
+
+
+# =========================================================================== transformers
+class _NamesOneToOne:
+    def get_feature_names_out(self, input_features=None):
+        if input_features is None:
+            input_features = getattr(self, "feature_names_in_", None)
+        if input_features is None:
+            input_features = [f"x{i}" for i in range(self.n_features_in_)]
+        return np.asarray(input_features, dtype=object)
+
+
+class SignedLog1p(_NamesOneToOne, TransformerMixin, BaseEstimator):
+    """sign(x) * log1p(|x|): compresses heavy tails on both sides, NaN-safe."""
+
+    def fit(self, X, y=None):
+        self.n_features_in_ = np.asarray(X).shape[1]
+        return self
+
+    def transform(self, X):
+        X = np.asarray(X, dtype=np.float64)
+        return np.sign(X) * np.log1p(np.abs(X))
+
+
+class Winsorizer(_NamesOneToOne, TransformerMixin, BaseEstimator):
+    """Clip each column to its [lower, upper] training quantiles."""
+
+    def __init__(self, lower: float = 0.01, upper: float = 0.99):
+        self.lower = lower
+        self.upper = upper
+
+    def fit(self, X, y=None):
+        X = np.asarray(X, dtype=np.float64)
+        self.n_features_in_ = X.shape[1]
+        self.low_ = np.nanquantile(X, self.lower, axis=0)
+        self.high_ = np.nanquantile(X, self.upper, axis=0)
+        return self
+
+    def transform(self, X):
+        return np.clip(np.asarray(X, dtype=np.float64), self.low_, self.high_)
+
+
+class FrequencyEncoder(TransformerMixin, BaseEstimator):
+    """Replace each level by its training frequency; unseen levels -> 0."""
+
+    def fit(self, X, y=None):
+        df = pd.DataFrame(X)
+        self.n_features_in_ = df.shape[1]
+        self.feature_names_in_ = np.asarray([str(c) for c in df.columns], dtype=object)
+        self.maps_ = [df[c].astype(str).value_counts(normalize=True).to_dict() for c in df.columns]
+        return self
+
+    def transform(self, X):
+        df = pd.DataFrame(X)
+        out = np.zeros(df.shape, dtype=np.float64)
+        for k, c in enumerate(df.columns):
+            out[:, k] = df[c].astype(str).map(self.maps_[k]).fillna(0.0).to_numpy()
+        return out
+
+    def get_feature_names_out(self, input_features=None):
+        names = input_features if input_features is not None else self.feature_names_in_
+        return np.asarray([f"{n}_freq" for n in names], dtype=object)
+
+
+class TextFeatures(TransformerMixin, BaseEstimator):
+    """Single text column -> TF-IDF -> SVD components (and/or simple length statistics)."""
+
+    def __init__(self, mode: str = "tfidf_svd", fill_value: str = "", svd_components: int = 32,
+                 max_features: int = 20000, min_df: int = 3, random_state: int = 0):
+        self.mode = mode
+        self.fill_value = fill_value
+        self.svd_components = svd_components
+        self.max_features = max_features
+        self.min_df = min_df
+        self.random_state = random_state
+
+    def _docs(self, X) -> list[str]:
+        s = pd.Series(np.asarray(X, dtype=object).ravel())
+        return s.where(s.notna(), self.fill_value).astype(str).tolist()
+
+    def fit(self, X, y=None):
+        self.n_features_in_ = 1
+        docs = self._docs(X)
+        if self.mode == "tfidf_svd":
+            self.vectorizer_ = TfidfVectorizer(
+                max_features=self.max_features, min_df=min(self.min_df, max(1, len(docs) // 100)),
+                ngram_range=(1, 2), sublinear_tf=True, dtype=np.float32, stop_words="english",
+            )
+            try:
+                tf = self.vectorizer_.fit_transform(docs)
+            except ValueError:  # empty vocabulary (e.g. all-empty column)
+                self.vectorizer_, self.svd_ = None, None
+                self.n_out_ = 0
+                return self
+            k = max(1, min(self.svd_components, tf.shape[1] - 1))
+            self.svd_ = TruncatedSVD(n_components=k, random_state=self.random_state).fit(tf)
+            self.n_out_ = k
+        else:
+            self.n_out_ = 2
+        return self
+
+    def transform(self, X):
+        docs = self._docs(X)
+        if self.mode == "tfidf_svd":
+            if self.vectorizer_ is None:
+                return np.zeros((len(docs), 0), dtype=np.float32)
+            return self.svd_.transform(self.vectorizer_.transform(docs)).astype(np.float32)
+        s = pd.Series(docs)
+        return np.column_stack([s.str.len().to_numpy(float), s.str.split().str.len().fillna(0).to_numpy(float)])
+
+    def get_feature_names_out(self, input_features=None):
+        if self.mode == "tfidf_svd":
+            return np.asarray([f"svd{i:02d}" for i in range(self.n_out_)], dtype=object)
+        return np.asarray(["n_chars", "n_words"], dtype=object)
+
+
+class DatetimeParts(TransformerMixin, BaseEstimator):
+    """datetime64 column(s) -> year, month, day, weekday, hour, day-of-year, epoch days (NaN for NaT)."""
+
+    PARTS = ("year", "month", "day", "weekday", "hour", "dayofyear", "epoch_days")
+
+    def fit(self, X, y=None):
+        df = pd.DataFrame(X)
+        self.n_features_in_ = df.shape[1]
+        self.feature_names_in_ = np.asarray([str(c) for c in df.columns], dtype=object)
+        return self
+
+    def transform(self, X):
+        df = pd.DataFrame(X)
+        blocks = []
+        for c in df.columns:
+            d = pd.to_datetime(df[c], errors="coerce")
+            epoch = (d - pd.Timestamp("1970-01-01")) / pd.Timedelta(days=1)
+            blocks.append(np.column_stack([
+                d.dt.year, d.dt.month, d.dt.day, d.dt.weekday, d.dt.hour, d.dt.dayofyear, epoch,
+            ]).astype(np.float64))
+        return np.hstack(blocks)
+
+    def get_feature_names_out(self, input_features=None):
+        names = input_features if input_features is not None else self.feature_names_in_
+        return np.asarray([f"{n}_{p}" for n in names for p in self.PARTS], dtype=object)
+
+
+# =========================================================================== building
+@dataclass
+class FieldSpec:
+    name: str
+    semantic_type: str
+    imputation: str
+    impute_value: str | None
+    add_missing_indicator: bool
+    transform: str
+    scaling: str
+    encoding: str
+    params: dict[str, Any]
+    datetime_format: str | None = None
+
+
+SCALERS = {
+    "standard": lambda: StandardScaler(),
+    "robust": lambda: RobustScaler(),
+    "minmax": lambda: MinMaxScaler(),
+    "quantile_normal": lambda: QuantileTransformer(output_distribution="normal", n_quantiles=1000,
+                                                   subsample=200_000, random_state=0),
+}
+
+
+def _numeric_pipeline(f: FieldSpec) -> Pipeline | str:
+    steps: list[tuple[str, Any]] = []
+    if f.transform == "clip":
+        steps.append(("clip", Winsorizer()))
+    elif f.transform == "log1p":
+        steps.append(("log1p", SignedLog1p()))
+    if f.imputation != "none":
+        kw: dict[str, Any] = {"strategy": f.imputation, "keep_empty_features": True}
+        if f.imputation == "constant":
+            kw["fill_value"] = float(f.impute_value or 0)
+        steps.append(("impute", SimpleImputer(**kw)))
+    if f.scaling in SCALERS:
+        steps.append(("scale", SCALERS[f.scaling]()))
+    return Pipeline(steps) if steps else "passthrough"
+
+
+def _categorical_pipeline(f: FieldSpec) -> Pipeline:
+    if f.imputation == "most_frequent":
+        imputer = SimpleImputer(strategy="most_frequent", keep_empty_features=True)
+    else:
+        imputer = SimpleImputer(strategy="constant", fill_value=f.impute_value or "__missing__",
+                                keep_empty_features=True)
+    p = {**DEFAULT_PARAMS.get(f.encoding, {}), **(f.params or {})}
+    if f.semantic_type == "binary" or f.encoding == "binary":
+        enc: Any = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1, dtype=np.float32)
+    elif f.encoding == "onehot":
+        enc = OneHotEncoder(handle_unknown="infrequent_if_exist", sparse_output=False, dtype=np.float32,
+                            max_categories=int(p.get("max_categories", 30)),
+                            min_frequency=float(p.get("min_frequency", 0.01)))
+    elif f.encoding == "ordinal":
+        enc = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1, dtype=np.float32,
+                             min_frequency=float(p.get("min_frequency", 0.001)))
+    else:
+        enc = FrequencyEncoder()
+    return Pipeline([("impute", imputer), ("encode", enc)])
+
+
+def build_preprocessor(specs: list[FieldSpec], seed: int = 0) -> ColumnTransformer:
+    transformers: list[tuple[str, Any, Any]] = []
+    sources: dict[str, str] = {}  # transformer name -> source field
+    used: set[str] = set()
+
+    def tname(field: str, suffix: str = "") -> str:
+        # sklearn forbids "__" in step names; it is also the output-name separator.
+        base = re.sub(r"_{2,}", "_", field + suffix).strip("_") or "field"
+        cand, k = base, 2
+        while cand in used:
+            cand = f"{base}_{k}"
+            k += 1
+        used.add(cand)
+        sources[cand] = field
+        return cand
+
+    for f in specs:
+        t = f.semantic_type
+        if t in NUMERIC:
+            transformers.append((tname(f.name), _numeric_pipeline(f), [f.name]))
+            if f.add_missing_indicator:
+                transformers.append(
+                    (tname(f.name, "_isna"), MissingIndicator(features="all", error_on_new=False), [f.name])
+                )
+        elif t in ("categorical", "binary"):
+            transformers.append((tname(f.name), _categorical_pipeline(f), [f.name]))
+        elif t == "text":
+            p = {**DEFAULT_PARAMS["tfidf_svd"], **(f.params or {})}
+            transformers.append((tname(f.name), TextFeatures(
+                mode=f.encoding, fill_value=f.impute_value or "", svd_components=int(p["svd_components"]),
+                max_features=int(p["max_features"]), min_df=int(p["min_df"]), random_state=seed,
+            ), f.name))  # scalar column -> 1-D input
+        elif t == "datetime":
+            steps: list[tuple[str, Any]] = [("parts", DatetimeParts())]
+            if f.imputation == "median":
+                steps.append(("impute", SimpleImputer(strategy="median", keep_empty_features=True)))
+            if f.scaling in SCALERS:
+                steps.append(("scale", SCALERS[f.scaling]()))
+            transformers.append((tname(f.name), Pipeline(steps), [f.name]))
+    ct = ColumnTransformer(transformers, remainder="drop", verbose_feature_names_out=True,
+                           sparse_threshold=0.0, n_jobs=None)
+    ct.rainforest_sources_ = sources
+    return ct
+
+
+def coercion_exprs(specs: list[FieldSpec], schema: pl.Schema) -> dict[str, Callable[[pl.Series], pl.Series]]:
+    """Deterministic, fit-free casting of raw columns into what the preprocessor expects."""
+    out: dict[str, Callable[[pl.Series], pl.Series]] = {}
+    for f in specs:
+        if f.semantic_type in NUMERIC:
+            out[f.name] = coerce_numeric
+        elif f.semantic_type == "datetime":
+            fmt = f.datetime_format
+            out[f.name] = lambda s, fmt=fmt: parse_datetime(s, fmt)
+        else:
+            out[f.name] = lambda s: s.cast(pl.String)
+    return out
+
+
+def to_pandas_frame(df: pl.DataFrame, specs: list[FieldSpec], coercers) -> pd.DataFrame:
+    data: dict[str, Any] = {}
+    for f in specs:
+        s = coercers[f.name](df[f.name])
+        if f.semantic_type in NUMERIC:
+            data[f.name] = s.to_numpy().astype(np.float64)
+        elif f.semantic_type == "datetime":
+            data[f.name] = s.to_pandas()
+        else:
+            arr = s.to_numpy().astype(object)
+            arr[pd.isna(arr)] = np.nan  # SimpleImputer's default missing marker for object arrays
+            data[f.name] = arr
+    return pd.DataFrame(data)
+
+
+def readable_feature_names(pre: ColumnTransformer) -> list[str]:
+    """Drop sklearn's redundant '<transformer>__' prefix when the inner name already starts with the field."""
+    out: list[str] = []
+    for name in pre.get_feature_names_out():
+        tname, _, rest = str(name).partition("__")
+        field = pre.rainforest_sources_.get(tname, tname)
+        if rest.startswith("missingindicator_"):
+            out.append(f"{field}__isna")
+        elif rest.startswith(field):
+            out.append(rest)
+        else:
+            out.append(f"{field}__{rest}")
+    return out
+
+
+def safe_feature_names(names: list[str]) -> list[str]:
+    """LightGBM rejects JSON special chars in feature names; also guarantee uniqueness."""
+    out, seen = [], set()
+    for n in names:
+        base = re.sub(r"[^0-9A-Za-z_]+", "_", n).strip("_") or "f"
+        cand, k = base, 2
+        while cand in seen:
+            cand = f"{base}_{k}"
+            k += 1
+        seen.add(cand)
+        out.append(cand)
+    return out
+
+
+# =========================================================================== export
+def assign_splits(
+    y: pd.DataFrame, valid_size: float, test_size: float, seed: int
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Return split codes per row (255 = dropped because a target is missing)."""
+    n = len(y)
+    codes = np.full(n, 255, dtype=np.uint8)
+    labeled = y.notna().all(axis=1).to_numpy()
+    idx = np.flatnonzero(labeled)
+    strat_key = y.loc[labeled].astype(str).agg("|".join, axis=1).to_numpy()
+    info: dict[str, Any] = {"dropped_unlabeled": int((~labeled).sum())}
+
+    def stratify_or_none(keys: np.ndarray) -> np.ndarray | None:
+        _, counts = np.unique(keys, return_counts=True)
+        return keys if counts.min() >= 2 else None
+
+    holdout = valid_size + test_size
+    if holdout <= 0:
+        codes[idx] = 0
+        info["stratified"] = False
+        return codes, info
+    strat = stratify_or_none(strat_key)
+    train_idx, rest_idx, _, rest_keys = train_test_split(
+        idx, strat_key, test_size=holdout, random_state=seed, stratify=strat
+    )
+    codes[train_idx] = 0
+    if test_size <= 0:
+        codes[rest_idx] = 1
+    elif valid_size <= 0:
+        codes[rest_idx] = 2
+    else:
+        strat2 = stratify_or_none(rest_keys)
+        v_idx, t_idx = train_test_split(
+            rest_idx, test_size=test_size / holdout, random_state=seed, stratify=strat2
+        )
+        codes[v_idx], codes[t_idx] = 1, 2
+    info["stratified"] = strat is not None
+    return codes, info
+
+
+def encode_targets(y: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, list[str]]]:
+    """Map each target's labels to 0..k-1 (sorted for determinism); NaN stays NaN."""
+    encoded, classes = {}, {}
+    for c in y.columns:
+        s = y[c]
+        labels = sorted(s.dropna().astype(str).unique().tolist(), key=_natural_key)
+        mapping = {v: i for i, v in enumerate(labels)}
+        encoded[c] = s.map(lambda v: mapping.get(str(v), np.nan) if pd.notna(v) else np.nan)
+        classes[c] = labels
+    return pd.DataFrame(encoded), classes
+
+
+def _natural_key(v: str):
+    try:
+        return (0, float(v), v)
+    except ValueError:
+        return (1, 0.0, v)
+
+
+def run_export(
+    parquet_path: Path,
+    specs: list[FieldSpec],
+    targets: list[str],
+    out_dir: Path,
+    config: dict[str, Any],
+    progress: Callable[[float, str], None],
+    family: str = DEFAULT_FAMILY,
+) -> dict[str, Any]:
+    import joblib
+    import sklearn
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    seed = int(config.get("seed", 42))
+    chunk_rows = int(config.get("chunk_rows", 200_000))
+    fit_rows = int(config.get("fit_sample_rows", 500_000))
+    specs = [f for f in specs if f.semantic_type not in NON_FEATURE_TYPES]
+    if not specs:
+        raise ValueError("No fields are marked 'keep' — nothing to export.")
+    if not targets:
+        raise ValueError("No target fields — mark at least one field as a target.")
+
+    schema = pl.read_parquet_schema(parquet_path)
+    n_rows = pl.scan_parquet(parquet_path).select(pl.len()).collect().item()
+
+    # 1. targets + split ------------------------------------------------------------
+    progress(0.02, "Assigning train / valid / test split")
+    y_raw = pl.read_parquet(parquet_path, columns=targets).to_pandas()
+    y_enc, classes = encode_targets(y_raw)
+    split, split_info = assign_splits(
+        y_raw, float(config.get("valid_size", 0.15)), float(config.get("test_size", 0.15)), seed
+    )
+
+    # 2. fit preprocessor on a training sample ---------------------------------------
+    progress(0.08, "Fitting preprocessing pipeline on training rows")
+    train_idx = np.flatnonzero(split == 0)
+    rng = np.random.default_rng(seed)
+    fit_idx = np.sort(rng.choice(train_idx, size=min(fit_rows, train_idx.size), replace=False))
+    feature_cols = [f.name for f in specs]
+    fit_df = (
+        pl.scan_parquet(parquet_path)
+        .select(feature_cols)
+        .with_row_index("__i")
+        .filter(pl.col("__i").is_in(pl.Series(fit_idx, dtype=pl.UInt32)))
+        .drop("__i")
+        .collect()
+    )
+    coercers = coercion_exprs(specs, schema)
+    pre = build_preprocessor(specs, seed)
+    pre.fit(to_pandas_frame(fit_df, specs, coercers))
+    del fit_df
+    raw_names = readable_feature_names(pre)
+    feat_names = safe_feature_names(raw_names)
+    feature_source = _feature_sources(pre, feat_names)
+
+    # 3. stream transform -> Parquet ---------------------------------------------------
+    data_path = out_dir / "model_ready.parquet"
+    arrow_fields = (
+        [pa.field(ROW_ID, pa.int64()), pa.field(SPLIT_COL, pa.string())]
+        + [pa.field(n, pa.float32()) for n in feat_names]
+        + [pa.field(t, pa.int32()) for t in targets]
+    )
+    arrow_schema = pa.schema(arrow_fields)
+    split_names = np.array(["train", "valid", "test"], dtype=object)
+    written = 0
+    nan_counts = np.zeros(len(feat_names), dtype=np.int64)
+    pf = pq.ParquetFile(parquet_path)
+    offset = 0
+    with pq.ParquetWriter(data_path, arrow_schema, compression="zstd") as writer:
+        for batch in pf.iter_batches(batch_size=chunk_rows, columns=feature_cols):
+            df = pl.from_arrow(batch)
+            assert isinstance(df, pl.DataFrame)
+            rows = np.arange(offset, offset + df.height)
+            offset += df.height
+            keep = split[rows] != 255
+            if not keep.any():
+                continue
+            df = df.filter(pl.Series(keep))
+            rows = rows[keep]
+            X = pre.transform(to_pandas_frame(df, specs, coercers)).astype(np.float32)
+            nan_counts += np.isnan(X).sum(axis=0)
+            if not FAMILIES[family]["handles_nan"] and nan_counts.any():
+                bad = [feat_names[k] for k in np.flatnonzero(nan_counts)][:10]
+                raise ValueError(
+                    f"{family} models need complete data but these features still contain NaN: {', '.join(bad)}. "
+                    "Set an imputation for the source fields."
+                )
+            cols: list[Any] = [pa.array(rows, pa.int64()), pa.array(split_names[split[rows]], pa.string())]
+            cols += [pa.array(X[:, k]) for k in range(X.shape[1])]
+            cols += [pa.array(y_enc[t].to_numpy()[rows].astype(np.int32)) for t in targets]
+            writer.write_table(pa.Table.from_arrays(cols, schema=arrow_schema))
+            written += int(keep.sum())
+            progress(0.15 + 0.8 * offset / max(n_rows, 1), f"Transformed {offset:,} / {n_rows:,} rows")
+
+    # 4. artefacts ----------------------------------------------------------------------
+    joblib.dump(pre, out_dir / "preprocessor.joblib", compress=3)
+    split_counts = {k: int((split == v).sum()) for k, v in SPLIT_CODES.items()}
+    manifest = {
+        "model_family": family,
+        "contains_nan": bool(nan_counts.any()),
+        "nan_features": {feat_names[k]: int(nan_counts[k]) for k in np.flatnonzero(nan_counts)},
+        "rows_written": written,
+        "n_features": len(feat_names),
+        "feature_names": feat_names,
+        "feature_source_field": feature_source,
+        "targets": targets,
+        "target_classes": classes,
+        "target_kinds": {t: ("binary" if len(c) == 2 else "multiclass") for t, c in classes.items()},
+        "split_column": SPLIT_COL,
+        "split_counts": split_counts,
+        "split_info": split_info,
+        "fit_sample_rows": int(fit_idx.size),
+        "config": config,
+        "fields": [f.__dict__ for f in specs],
+        "versions": {"sklearn": sklearn.__version__, "polars": pl.__version__, "numpy": np.__version__},
+        "files": {"data": "model_ready.parquet", "preprocessor": "preprocessor.joblib"},
+    }
+    (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, default=_json_default))
+    progress(1.0, "Done")
+    return manifest
+
+
+def _feature_sources(pre: ColumnTransformer, feat_names: list[str]) -> dict[str, str]:
+    """Map each output feature to the source field it came from."""
+    out: dict[str, str] = {}
+    for name, sl in pre.output_indices_.items():
+        if name == "remainder":
+            continue
+        for k in range(sl.start, sl.stop):
+            out[feat_names[k]] = pre.rainforest_sources_.get(name, name)
+    return out
+
+
+def _json_default(o: Any):
+    if isinstance(o, (np.integer,)):
+        return int(o)
+    if isinstance(o, (np.floating,)):
+        return None if math.isnan(o) else float(o)
+    if isinstance(o, Path):
+        return str(o)
+    raise TypeError(type(o))
