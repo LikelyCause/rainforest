@@ -239,6 +239,13 @@ export interface ModelOption {
 
 export type Metrics = Record<string, Record<string, Record<string, number>>>; // split -> target -> metric
 
+export interface TargetEvaluation {
+  labels: string[];
+  positive_label: string | null;
+  confusion_matrix: number[][]; // rows = actual, columns = predicted
+  per_class: { label: string; precision: number; recall: number; f1: number; support: number }[];
+}
+
 export interface ModelRun {
   id: number;
   export_id: number;
@@ -250,7 +257,14 @@ export interface ModelRun {
   error: string | null;
   config: { order?: string[] | null; cv?: number; params?: Record<string, unknown> };
   metrics: Metrics;
-  report: { order?: string[]; chain_method?: string; fit_seconds?: number; model_label?: string; n_features?: number };
+  report: {
+    order?: string[];
+    chain_method?: string;
+    fit_seconds?: number;
+    model_label?: string;
+    n_features?: number;
+    evaluation?: Record<string, Record<string, TargetEvaluation>>; // split -> target
+  };
   created_at: string;
   finished_at: string | null;
 }

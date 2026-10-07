@@ -5,6 +5,7 @@ import { api } from "../api";
 import { useDataset, useOptions } from "../hooks";
 import { fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
 import type { ExportJob, ModelRun } from "../types";
+import { RunDetail } from "../components/RunDetail";
 
 const FAMILY_EXPLAINER: Record<string, string> = {
   tree: "Missing values stay as NaN for the trees to route; no scaling or log transforms; mid/high-cardinality categoricals become compact ordinal codes.",
@@ -120,40 +121,43 @@ function ExportRow({ e, familyLabel }: { e: ExportJob; familyLabel: string }) {
 }
 
 function RunsTable({ runs, targets }: { runs: ModelRun[]; targets: string[] }) {
-  const metricFor = (r: ModelRun, t: string, m: "auc" | "accuracy") => {
+  const [open, setOpen] = useState<number | null>(null);
+  const metricFor = (r: ModelRun, t: string, m: "auc" | "f1") => {
     const x = r.metrics?.test?.[t];
     if (!x) return undefined;
-    return m === "auc" ? x.roc_auc ?? x.roc_auc_ovr_macro : x.accuracy;
+    return m === "auc" ? x.roc_auc ?? x.roc_auc_ovr_macro : x.f1_macro;
   };
   const best = useMemo(() => {
     const out: Record<string, number> = {};
-    for (const t of targets) for (const m of ["auc", "accuracy"] as const) {
+    for (const t of targets) for (const m of ["auc", "f1"] as const) {
       const vals = runs.map((r) => metricFor(r, t, m)).filter((v): v is number => v !== undefined);
       if (vals.length) out[`${t}:${m}`] = Math.max(...vals);
     }
     return out;
   }, [runs, targets]);
-  const cell = (r: ModelRun, t: string, m: "auc" | "accuracy") => {
+  const cell = (r: ModelRun, t: string, m: "auc" | "f1") => {
     const v = metricFor(r, t, m);
     if (v === undefined) return <td className="num muted">—</td>;
     const isBest = runs.length > 1 && v === best[`${t}:${m}`];
     return <td className="num" style={isBest ? { fontWeight: 700 } : undefined}>{fmtNum(v, 3)}{isBest ? " ★" : ""}</td>;
   };
   return (
-    <div className="table-wrap">
+    <div className="table-wrap" style={{ maxHeight: "none" }}>
       <table className="data">
         <thead>
           <tr>
             <th>Run</th><th>Model</th><th>Export</th><th>Chain order</th><th>Status</th>
             {targets.map((t) => <th key={t + "a"} className="num">{t} AUC</th>)}
-            {targets.map((t) => <th key={t + "c"} className="num">{t} acc.</th>)}
+            {targets.map((t) => <th key={t + "c"} className="num">{t} F1 (macro)</th>)}
             <th className="num">Fit</th><th />
           </tr>
         </thead>
         <tbody>
           {runs.map((r) => (
-            <tr key={r.id}>
-              <td>#{r.id}</td>
+            <Fragment key={r.id}>
+            <tr className={`run-row${open === r.id ? " open" : ""}`} onClick={() => setOpen(open === r.id ? null : r.id)}
+              aria-expanded={open === r.id} title="Click for precision / recall / F1 and confusion matrices">
+              <td>{open === r.id ? "▾" : "▸"} #{r.id}</td>
               <td>{r.report?.model_label ?? r.model}{r.family !== "tree" && <span className="type-tag"> {r.family}</span>}</td>
               <td>#{r.export_id}</td>
               <td className="secondary">{(r.report?.order ?? r.config?.order ?? targets).join(" → ")}</td>
@@ -163,10 +167,16 @@ function RunsTable({ runs, targets }: { runs: ModelRun[]; targets: string[] }) {
                   : <span className="badge accent">… {r.status_message ?? r.status}</span>}
               </td>
               {targets.map((t) => <Fragment key={t + "a"}>{cell(r, t, "auc")}</Fragment>)}
-              {targets.map((t) => <Fragment key={t + "c"}>{cell(r, t, "accuracy")}</Fragment>)}
+              {targets.map((t) => <Fragment key={t + "c"}>{cell(r, t, "f1")}</Fragment>)}
               <td className="num">{r.report?.fit_seconds !== undefined ? `${fmtNum(r.report.fit_seconds, 2)}s` : "—"}</td>
-              <td>{r.status === "done" && <a href={`/api/runs/${r.id}/files/model`}>model</a>}</td>
+              <td>{r.status === "done" && <a href={`/api/runs/${r.id}/files/model`} onClick={(e) => e.stopPropagation()}>model</a>}</td>
             </tr>
+            {open === r.id && (
+              <tr className="run-detail">
+                <td colSpan={7 + targets.length * 2}><RunDetail run={r} targets={targets} /></td>
+              </tr>
+            )}
+            </Fragment>
           ))}
         </tbody>
       </table>
@@ -270,7 +280,7 @@ export function ExportPage() {
       <section className="card stack">
         <div className="card-head">
           <h2>Model runs</h2>
-          <span className="muted">test split · ★ best per column · also in <code>meta.v_model_metrics</code></span>
+          <span className="muted">test split · ★ best per column · click a run for precision, recall, F1 &amp; confusion matrices · also in <code>meta.v_model_metrics</code></span>
         </div>
         {runs.data?.length ? (
           <RunsTable runs={runs.data} targets={ds.data?.target_columns ?? []} />

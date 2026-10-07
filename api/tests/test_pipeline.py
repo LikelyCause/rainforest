@@ -96,3 +96,24 @@ def test_manual_chain_walk_matches_sklearn(tree_export, tmp_path):
     with config_context(assume_finite=True):
         probas = chain_predict_proba(chain, X)
     assert np.array_equal(np.column_stack([p.argmax(1) for p in probas]), chain.predict(X).astype(int))
+
+
+def test_evaluate_reports_precision_recall_f1_and_confusion():
+    from app.modeling.train import evaluate
+
+    y = np.array([0, 0, 0, 1, 1, 1, 1, 0])
+    proba = np.array([[.9, .1], [.8, .2], [.4, .6], [.3, .7], [.2, .8], [.6, .4], [.1, .9], [.7, .3]])
+    m, d = evaluate(y, proba, ["no", "yes"])
+    # predictions: 0 0 1 1 1 0 1 0 -> TP=3 FP=1 FN=1 TN=3
+    assert d["confusion_matrix"] == [[3, 1], [1, 3]]
+    assert m["precision"] == 0.75 and m["recall"] == 0.75 and m["specificity"] == 0.75
+    assert abs(m["f1"] - 0.75) < 1e-12 and abs(m["f1_macro"] - 0.75) < 1e-12
+    assert [c["label"] for c in d["per_class"]] == ["no", "yes"] and d["positive_label"] == "yes"
+    assert sum(c["support"] for c in d["per_class"]) == 8
+
+    y3 = np.array([0, 1, 2, 2])
+    p3 = np.array([[.8, .1, .1], [.2, .7, .1], [.1, .2, .7], [.5, .3, .2]])
+    m3, d3 = evaluate(y3, p3, ["a", "b", "c"])
+    assert d3["confusion_matrix"] == [[1, 0, 0], [0, 1, 0], [1, 0, 1]]
+    assert "precision" not in m3 and {"precision_macro", "recall_weighted", "f1_macro"} <= m3.keys()
+    assert all(isinstance(v, float) for v in m3.values())  # scalars only -> safe for v_model_metrics

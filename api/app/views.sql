@@ -52,4 +52,4 @@ FROM meta.model_runs r,
      jsonb_each(r.metrics) sp,
      jsonb_each(sp.value) tg,
      jsonb_each(tg.value) mt
-WHERE r.status = 'done';
+WHERE r.status = 'done' AND jsonb_typeof(mt.value) = 'number';

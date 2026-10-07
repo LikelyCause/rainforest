@@ -33,7 +33,14 @@ import joblib
 import numpy as np
 import polars as pl
 from sklearn import config_context
-from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score, log_loss, roc_auc_score
+from sklearn.metrics import (
+    accuracy_score,
+    balanced_accuracy_score,
+    confusion_matrix,
+    log_loss,
+    precision_recall_fscore_support,
+    roc_auc_score,
+)
 from sklearn.multioutput import ClassifierChain
 
 from .registry import DEFAULT_MODEL, MODELS, ModelSpec, catalog, compatibility, get_model, importances
@@ -105,22 +112,51 @@ def chain_predict_proba(chain: ClassifierChain, X: np.ndarray) -> list[np.ndarra
     return probas  # type: ignore[return-value]
 
 
-def evaluate(y_true: np.ndarray, proba: np.ndarray) -> dict[str, float]:
+def evaluate(y_true: np.ndarray, proba: np.ndarray, labels: list[str] | None = None) -> tuple[dict[str, float], dict[str, Any]]:
+    """Score one target. Predictions are the argmax class (i.e. a 0.5 threshold for binary targets).
+
+    Returns (scalars, details): scalars are single numbers (stored in `metrics`, queryable via
+    meta.v_model_metrics); details hold the confusion matrix and per-class table.
+    """
+    k = proba.shape[1]
+    classes = list(range(k))
+    names = labels if labels and len(labels) == k else [str(c) for c in classes]
     pred = proba.argmax(axis=1)
-    out = {
+    out: dict[str, float] = {
         "accuracy": float(accuracy_score(y_true, pred)),
         "balanced_accuracy": float(balanced_accuracy_score(y_true, pred)),
-        "f1_macro": float(f1_score(y_true, pred, average="macro")),
-        "log_loss": float(log_loss(y_true, proba, labels=list(range(proba.shape[1])))),
+        "log_loss": float(log_loss(y_true, proba, labels=classes)),
     }
+    for avg in ("macro", "weighted"):
+        p, r, f, _ = precision_recall_fscore_support(y_true, pred, labels=classes, average=avg, zero_division=0)
+        out[f"precision_{avg}"], out[f"recall_{avg}"], out[f"f1_{avg}"] = float(p), float(r), float(f)
+    cm = confusion_matrix(y_true, pred, labels=classes)
+    if k == 2:
+        # Positive class = encoded label 1 (see manifest target_classes).
+        tn, fp, fn, tp = (int(v) for v in cm.ravel())
+        out["precision"] = tp / (tp + fp) if tp + fp else 0.0
+        out["recall"] = tp / (tp + fn) if tp + fn else 0.0
+        out["f1"] = 2 * out["precision"] * out["recall"] / (out["precision"] + out["recall"]) if tp else 0.0
+        out["specificity"] = tn / (tn + fp) if tn + fp else 0.0
     try:
-        if proba.shape[1] == 2:
+        if k == 2:
             out["roc_auc"] = float(roc_auc_score(y_true, proba[:, 1]))
         else:
             out["roc_auc_ovr_macro"] = float(roc_auc_score(y_true, proba, multi_class="ovr", average="macro"))
     except ValueError:  # a class absent from this split
         pass
-    return out
+    p, r, f, support = precision_recall_fscore_support(y_true, pred, labels=classes, zero_division=0)
+    details = {
+        "labels": names,
+        "positive_label": names[1] if k == 2 else None,
+        "confusion_matrix": cm.astype(int).tolist(),  # rows = actual, columns = predicted
+        "per_class": [
+            {"label": names[c], "precision": float(p[c]), "recall": float(r[c]), "f1": float(f[c]),
+             "support": int(support[c])}
+            for c in classes
+        ],
+    }
+    return out, details
 
 
 def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] | None = None, seed: int = 42,
@@ -155,6 +191,7 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
 
     say("Evaluating on validation and test splits")
     metrics: dict[str, Any] = {}
+    details: dict[str, Any] = {}
     for split in ("valid", "test"):
         X, Y = xy(split)
         if len(X) == 0:
@@ -162,7 +199,9 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
         with config_context(assume_finite=spec.handles_nan):
             probas = chain_predict_proba(chain, X)
             predicted = chain.predict(X).astype(int)
-        metrics[split] = {t: evaluate(Y[:, i], probas[i]) for i, t in enumerate(targets)}
+        metrics[split], details[split] = {}, {}
+        for i, t in enumerate(targets):
+            metrics[split][t], details[split][t] = evaluate(Y[:, i], probas[i], manifest["target_classes"].get(t))
         # Sanity check: the manual walk must agree with sklearn's own chain prediction
         if not np.array_equal(np.column_stack([p.argmax(1) for p in probas]), predicted):
             raise RuntimeError("chain_predict_proba diverged from ClassifierChain.predict")
@@ -197,6 +236,7 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
         "fit_seconds": round(fit_seconds, 1),
         "params": {k: (list(v) if isinstance(v, tuple) else v) for k, v in {**spec.default_params, **(params or {})}.items()},
         "metrics": metrics,
+        "evaluation": details,
         "top_features": top_features,
     }
     (out_dir / "report.json").write_text(json.dumps(report, indent=2))
@@ -240,6 +280,17 @@ def main() -> None:
                    args.cv or None)
     print(json.dumps({k: report[k] for k in ("model_dir", "model", "order", "chain_method", "n_train", "metrics")},
                      indent=2))
+    for split, by_target in report["evaluation"].items():
+        for target, d in by_target.items():
+            print(f"\n{split} · {target} — confusion matrix (rows = actual, columns = predicted)")
+            print(format_confusion(d["labels"], d["confusion_matrix"]))
+
+
+def format_confusion(labels: list[str], cm: list[list[int]]) -> str:
+    w = max(8, *(len(x) + 2 for x in labels), *(len(f"{v:,}") + 2 for row in cm for v in row))
+    lines = [" " * w + "".join(f"{x:>{w}}" for x in labels)]
+    lines += [f"{a:>{w}}" + "".join(f"{v:>{w},}" for v in row) for a, row in zip(labels, cm)]
+    return "\n".join(lines)
 
 
 if __name__ == "__main__":
