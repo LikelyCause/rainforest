@@ -1,20 +1,33 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { api, ApiError } from "../api";
-import type { Decision, DecisionInput, Dim, FieldListItem, FieldResponse, OptionCatalog, Suggestion } from "../types";
+import { forwardRef, useImperativeHandle, useRef, useState, type ChangeEvent } from "react";
+import { pendingDraft, queueSave } from "../saveQueue";
+import type { Decision, DecisionInput, Dim, FieldResponse, OptionCatalog, Suggestion } from "../types";
+
 const NUMERIC = new Set(["numeric_continuous", "numeric_discrete"]);
+const DIMS: Dim[] = ["imputation", "transform", "scaling", "encoding"];
+const DIM_LABEL: Record<Dim, string> = { imputation: "Missing values", transform: "Transform", scaling: "Scaling", encoding: "Encoding" };
 const SAVE_DEBOUNCE_MS = 400;
 
 export interface DecisionPanelHandle {
-  markReviewed: () => void;
-  acceptSuggestion: () => void;
+  confirm: () => void;
+  revertAndConfirm: () => void;
   toggleKeep: () => void;
+  focusNote: () => void;
+}
+
+export interface Confirmed {
+  fieldId: number;
+  name: string;
+  before: DecisionInput;
+  after: DecisionInput;
 }
 
 interface Props {
   data: FieldResponse;
   catalog: OptionCatalog;
-  onAdvance: () => void;
+  familyLabel: string;
+  typing: boolean;
+  onConfirmed: (c: Confirmed) => void;
+  onShowShortcuts: () => void;
 }
 
 function toInput(d: Decision | Suggestion, family: string): DecisionInput {
@@ -45,232 +58,258 @@ function retype(d: DecisionInput, type: string, catalog: OptionCatalog, sugg: Su
     return allowed[dim][0];
   };
   const encoding = pick("encoding");
+  const imputation = pick("imputation");
   const nonFeature = catalog.non_feature_types.includes(type);
+  const fill = type === "categorical" || type === "binary" ? "__missing__" : type === "text" ? "" : imputation === "constant" ? "0" : null;
   return {
     ...d,
     semantic_type: type,
     action: d.action === "target" ? "target" : nonFeature ? "drop" : d.action,
-    imputation: pick("imputation"),
+    imputation,
     transform: pick("transform"),
     scaling: pick("scaling"),
     encoding,
-    impute_value: type === "categorical" || type === "binary" ? "__missing__" : type === "text" ? "" : null,
+    impute_value: fill,
     params: sugg.semantic_type === type ? sugg.params : { ...(catalog.default_params[encoding] ?? {}) },
     add_missing_indicator: NUMERIC.has(type) ? d.add_missing_indicator : false,
   };
 }
 
-function suggestionParts(s: Suggestion): string[] {
-  return [
-    s.imputation !== "none" && `impute ${s.imputation}`,
-    s.transform !== "none" && s.transform,
-    s.scaling !== "none" && `${s.scaling} scale`,
-    s.encoding !== "none" && s.encoding,
-    s.add_missing_indicator && "+ missing flag",
-  ].filter((x): x is string => Boolean(x));
+function retypeWarning(type: string, data: FieldResponse): string | null {
+  const f = data.field;
+  if (type === f.inferred_type) return null;
+  if (type === "binary" && f.n_unique > 2) return `${f.n_unique.toLocaleString()} distinct values — Binary expects 2.`;
+  if (type === "constant" && f.n_unique > 1) return `${f.n_unique.toLocaleString()} distinct values — not constant.`;
+  if (NUMERIC.has(type) && !NUMERIC.has(f.inferred_type) && !f.stats?.numeric_like && !f.stats?.stored_as_text)
+    return "Values weren't recognised as numbers; non-numeric ones become missing.";
+  if (type === "categorical" && f.n_unique > 1000) return `${f.n_unique.toLocaleString()} levels — most will be grouped as rare.`;
+  return null;
 }
 
-export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function DecisionPanel({ data, catalog, onAdvance }, ref) {
-  const qc = useQueryClient();
-  const fieldId = data.field.id;
-  const datasetId = data.field.dataset_id;
-  const sugg = data.field.suggestion;
+const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function DecisionPanel(
+  { data, catalog, familyLabel, typing, onConfirmed, onShowShortcuts }, ref,
+) {
+  const f = data.field;
+  const sugg = f.suggestion;
   const family = data.family;
-  const familyInfo = catalog.families.find((f) => f.value === family);
-  const notes = catalog.family_notes[family] ?? {};
-  const [draft, setDraft] = useState<DecisionInput>(() => toInput(data.decision, family));
+  const server = toInput(data.decision, family);
+  const [draft, setDraft] = useState<DecisionInput>(() => pendingDraft(f.id) ?? server);
   const draftRef = useRef(draft);
-  const [state, setState] = useState<{ kind: "idle" | "saving" | "saved" | "error"; msg?: string }>({ kind: "idle" });
-  const pending = useRef<DecisionInput | null>(null);
-  const timer = useRef<number | undefined>(undefined);
+  const before = useRef(server);
+  const noteRef = useRef<HTMLTextAreaElement>(null);
+  const [noteOpen, setNoteOpen] = useState(Boolean(draft.notes));
 
-  const applyToCache = useCallback((saved: Decision) => {
-    qc.setQueryData<FieldResponse>(["field", fieldId, family], (old) => (old ? { ...old, decision: saved } : old));
-    // Shared parts (keep/drop, type, notes) changed for every family; refetch the others when shown.
-    qc.invalidateQueries({ queryKey: ["field", fieldId], predicate: (q) => q.queryKey[2] !== family });
-    qc.setQueryData<FieldListItem[]>(["fields", datasetId], (list) =>
-      list?.map((f) => (f.id === fieldId ? { ...f, action: saved.action, semantic_type: saved.semantic_type, reviewed: saved.reviewed, source: saved.source } : f)),
-    );
-    qc.invalidateQueries({ queryKey: ["summary", datasetId] });
-    qc.invalidateQueries({ queryKey: ["exportPreview", datasetId] });
-  }, [qc, fieldId, datasetId, family]);
-
-  const send = useCallback(async (d: DecisionInput) => {
-    setState({ kind: "saving" });
-    try {
-      const saved = await api.saveDecision(fieldId, d);
-      applyToCache(saved);
-      setState({ kind: "saved" });
-    } catch (e) {
-      const err = e as ApiError;
-      setState({ kind: "error", msg: [err.message, ...(err.details ?? [])].join(" — ") });
-    }
-  }, [fieldId, applyToCache]);
-
-  const flush = useCallback(() => {
-    window.clearTimeout(timer.current);
-    if (pending.current) {
-      const d = pending.current;
-      pending.current = null;
-      return send(d);
-    }
-    return Promise.resolve();
-  }, [send]);
-
-  // Persist any unsaved edit when leaving this field (the panel is keyed by field id).
-  useEffect(() => () => { void flush(); }, [flush]);
-
-  const commit = (next: DecisionInput, immediate: boolean) => {
+  const commit = (next: DecisionInput, delay = SAVE_DEBOUNCE_MS) => {
     draftRef.current = next;
     setDraft(next);
-    pending.current = next;
-    window.clearTimeout(timer.current);
-    if (immediate) void flush();
-    else timer.current = window.setTimeout(() => void flush(), SAVE_DEBOUNCE_MS);
-    setState({ kind: "idle" });
+    void queueSave(f.id, f.dataset_id, f.name, next, delay);
   };
-  const update = (patch: Partial<DecisionInput>, opts: { immediate?: boolean } = {}) =>
-    commit({ ...draftRef.current, ...patch }, opts.immediate ?? false);
+  const update = (patch: Partial<DecisionInput>, delay?: number) => commit({ ...draftRef.current, ...patch }, delay);
 
-  const markReviewed = () => {
-    update({ reviewed: true }, { immediate: true });
-    onAdvance();
-  };
-  const acceptSuggestion = () => {
-    commit({ ...toInput(sugg, family), notes: draftRef.current.notes, reviewed: true }, true);
-    onAdvance();
-  };
+  const suggested = toInput(sugg, family);
+  const differs = (dim: Dim | "semantic_type" | "action" | "add_missing_indicator") => !same(draft[dim], suggested[dim]);
+  const isTarget = draft.action === "target";
   const nonFeature = catalog.non_feature_types.includes(draft.semantic_type);
-  const toggleKeep = () => {
-    if (draft.action === "target") return;
-    if (draft.action === "drop" && nonFeature) return;
-    update({ action: draft.action === "keep" ? "drop" : "keep" });
-  };
-  useImperativeHandle(ref, () => ({ markReviewed, acceptSuggestion, toggleKeep }));
-
   const allowed = catalog.allowed[family][draft.semantic_type];
+  const notes = catalog.family_notes[family] ?? {};
   const labels = catalog.labels;
-  const typeAllowsAny = (dim: Dim) =>
-    catalog.families.some((f) => catalog.allowed[f.value][draft.semantic_type][dim].length > 1);
-  const select = (dim: Dim, title: string) => {
-    if (allowed[dim].length === 1 && draft[dim] === allowed[dim][0]) {
-      // Locked by the model family (e.g. scaling for trees): say why instead of hiding it silently.
-      return notes[dim] && typeAllowsAny(dim) ? (
-        <div className="locked"><b>{title}</b>{notes[dim]}</div>
-      ) : null;
-    }
+
+  const editableDims = draft.action === "keep" ? DIMS.filter((d) => allowed[d].length > 1 || draft[d] !== allowed[d][0]) : [];
+  const lockedDims = draft.action === "keep" ? DIMS.filter((d) => !editableDims.includes(d) && notes[d]) : [];
+  const edited = (["action", "semantic_type", ...editableDims, ...(NUMERIC.has(draft.semantic_type) && draft.action === "keep" ? ["add_missing_indicator" as const] : [])] as const)
+    .filter((k) => differs(k));
+
+  const confirmLabel = (() => {
+    const unchanged = same({ ...draft, notes: null }, { ...server, notes: null }) && draft.reviewed;
+    if (unchanged) return "Next";
+    const verb = { keep: "keep", drop: "drop", target: "target" }[draft.action];
+    const parts = edited.filter((k) => k !== "action").map((k) =>
+      k === "semantic_type" ? catalog.types.find((t) => t.value === draft.semantic_type)?.label.toLowerCase() ?? draft.semantic_type
+        : k === "add_missing_indicator" ? "missing flag"
+        : `${(labels[k as Dim][draft[k as Dim]] ?? draft[k as Dim]).split(" (")[0].toLowerCase()}${k === "imputation" ? " fill" : ""}`);
+    const shown = parts.slice(0, 2).join(", ");
+    return `Confirm · ${verb}${shown ? `, ${shown}` : ""}${parts.length > 2 ? ` +${parts.length - 2}` : ""}`;
+  })();
+
+  const confirm = () => {
+    const after = { ...draftRef.current, reviewed: true };
+    commit(after, 0);
+    onConfirmed({ fieldId: f.id, name: f.name, before: before.current, after });
+  };
+  const revertAndConfirm = () => {
+    const after = { ...suggested, notes: draftRef.current.notes, reviewed: true };
+    commit(after, 0);
+    onConfirmed({ fieldId: f.id, name: f.name, before: before.current, after });
+  };
+  const toggleKeep = () => {
+    const d = draftRef.current;
+    if (d.action === "target" || (d.action === "drop" && catalog.non_feature_types.includes(d.semantic_type))) return;
+    update({ action: d.action === "keep" ? "drop" : "keep" }, 0);
+  };
+  const focusNote = () => {
+    setNoteOpen(true);
+    window.setTimeout(() => noteRef.current?.focus(), 0);
+  };
+  useImperativeHandle(ref, () => ({ confirm, revertAndConfirm, toggleKeep, focusNote }));
+
+  // A select keeps keyboard focus after a mouse change, which used to swallow J/K (P2).
+  const blurAfter = (fn: (e: ChangeEvent<HTMLSelectElement>) => void) => (e: ChangeEvent<HTMLSelectElement>) => {
+    fn(e);
+    e.currentTarget.blur();
+  };
+  const revert = (patch: Partial<DecisionInput>) => (
+    <button type="button" className="ghost" onClick={() => update(patch, 0)} title="Revert this setting to the suggestion">↺</button>
+  );
+  const suggestedLine = (k: Dim | "semantic_type" | "action", text: string) =>
+    differs(k) ? <div className="suggested">suggested: {text} {revert({ [k]: suggested[k] } as Partial<DecisionInput>)}</div> : null;
+
+  const param = (key: string, title: string, step = 1) => {
+    const value = draft.params?.[key] ?? catalog.default_params[draft.encoding]?.[key] ?? "";
     return (
-      <label className="field">{title}
-        <select value={draft[dim]} onChange={(e) => update({ [dim]: e.target.value } as Partial<DecisionInput>)}>
-          {allowed[dim].map((o) => <option key={o} value={o}>{labels[dim][o] ?? o}</option>)}
-        </select>
-        {notes[dim] && allowed[dim].length > 1 && <span className="muted" style={{ fontWeight: 400 }}>{notes[dim]}</span>}
-      </label>
+      <div className="setting-row" key={key}>
+        <label htmlFor={`p-${key}`}>{title}</label>
+        <input id={`p-${key}`} type="number" step={step} value={value}
+          onChange={(e) => {
+            const n = e.target.value === "" ? undefined : Number(e.target.value);
+            update({ params: { ...draft.params, [key]: n !== undefined && Number.isFinite(n) ? n : undefined } });
+          }} />
+      </div>
     );
   };
-  const param = (key: string, title: string, step = 1) => (
-    <label className="field" key={key}>{title}
-      <input type="number" step={step} value={draft.params?.[key] ?? catalog.default_params[draft.encoding]?.[key] ?? ""}
-        onChange={(e) => update({ params: { ...draft.params, [key]: e.target.value === "" ? undefined : Number(e.target.value) } })} />
-    </label>
-  );
 
-  const isTarget = draft.action === "target";
-  const differsFromSuggestion =
-    (["action", "semantic_type", "imputation", "transform", "scaling", "encoding"] as const).some((k) => draft[k] !== sugg[k]) ||
-    draft.add_missing_indicator !== (sugg.add_missing_indicator ?? false);
+  const warning = retypeWarning(draft.semantic_type, data);
+  const typeLabel = (v: string) => catalog.types.find((t) => t.value === v)?.label ?? v;
 
   return (
     <aside className="decision" aria-label="Decision">
-      <div className="section">
+      <div className="decision-body">
         <div className="row" style={{ justifyContent: "space-between" }}>
           <h3>Decision</h3>
-          <span className="family-tag" title="Keep / drop, type and notes are shared; the preprocessing below is per model family">
-            for {familyInfo?.label.toLowerCase() ?? family}
+          <span className="badge" title="Keep / drop, type and notes are shared; the settings below are for this model">{familyLabel}</span>
+        </div>
+
+        <div className={`setting${differs("action") ? " edited" : ""}`}>
+          <div className="segmented" role="radiogroup" aria-label="Keep, drop or target">
+            {(["keep", "drop", "target"] as const).map((a) => (
+              <button key={a} type="button" role="radio" aria-checked={draft.action === a}
+                className={draft.action === a ? `on ${a}` : ""}
+                disabled={a === "keep" && nonFeature && !isTarget}
+                title={a === "keep" && nonFeature ? `${draft.semantic_type} fields can't be model features` : a === "target" ? "Use as a target column" : "X toggles keep / drop"}
+                onClick={() => update({ action: a }, 0)}>
+                {a[0].toUpperCase() + a.slice(1)}
+              </button>
+            ))}
+          </div>
+          {suggestedLine("action", sugg.action)}
+        </div>
+
+        <div className={`setting${differs("semantic_type") ? " edited" : ""}`}>
+          <div className="setting-row">
+            <label htmlFor="d-type">Type</label>
+            <select id="d-type" value={draft.semantic_type}
+              onChange={blurAfter((e) => commit(retype(draftRef.current, e.target.value, catalog, sugg), 0))}>
+              {catalog.types.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+          </div>
+          {warning && (
+            <div className="inline-warn">
+              {warning}{" "}
+              <button type="button" className="link small-text" onClick={() => commit(retype(draftRef.current, f.inferred_type, catalog, sugg), 0)}>
+                Undo retype
+              </button>
+            </div>
+          )}
+          {!warning && suggestedLine("semantic_type", typeLabel(sugg.semantic_type))}
+        </div>
+
+        {editableDims.map((dim) => (
+          <div key={dim} className={`setting${differs(dim) ? " edited" : ""}`}>
+            {allowed[dim].length > 1 ? (
+              <div className="setting-row">
+                <label htmlFor={`d-${dim}`}>{DIM_LABEL[dim]}</label>
+                <select id={`d-${dim}`} value={draft[dim]}
+                  onChange={blurAfter((e) => update({ [dim]: e.target.value } as Partial<DecisionInput>, 0))}>
+                  {allowed[dim].map((o) => <option key={o} value={o}>{labels[dim][o] ?? o}</option>)}
+                </select>
+              </div>
+            ) : (
+              <div className="setting-row">
+                <span>{DIM_LABEL[dim]}</span>
+                <span className="secondary" title={notes[dim]}>{labels[dim][draft[dim]] ?? draft[dim]} (fixed for {familyLabel.toLowerCase()}) {notes[dim] && "ⓘ"}</span>
+              </div>
+            )}
+            {suggestedLine(dim, (labels[dim][sugg[dim]] ?? sugg[dim]).split(" (")[0])}
+            {dim === "imputation" && draft.imputation === "constant" && (
+              <div className="setting-row">
+                <label htmlFor="d-fill">{["categorical", "binary"].includes(draft.semantic_type) ? "Missing label" : "Fill value"}</label>
+                <input id="d-fill" value={draft.impute_value ?? ""} inputMode={NUMERIC.has(draft.semantic_type) ? "decimal" : undefined}
+                  onChange={(e) => update({ impute_value: e.target.value })} />
+              </div>
+            )}
+            {dim === "encoding" && draft.encoding === "onehot" && <>{param("max_categories", "Max categories")}{param("min_frequency", "Min frequency", 0.005)}</>}
+            {dim === "encoding" && draft.encoding === "ordinal" && param("min_frequency", "Min frequency", 0.001)}
+            {dim === "encoding" && draft.encoding === "tfidf_svd" && <>{param("svd_components", "SVD components")}{param("max_features", "Max vocabulary", 1000)}</>}
+          </div>
+        ))}
+
+        {draft.action === "keep" && NUMERIC.has(draft.semantic_type) && (
+          <div className={`setting${differs("add_missing_indicator") ? " edited" : ""}`}>
+            <div className="setting-row">
+              <span>Missing flag</span>
+              <label className="check">
+                <input type="checkbox" checked={draft.add_missing_indicator}
+                  onChange={(e) => update({ add_missing_indicator: e.target.checked }, 0)} />
+                add indicator column
+              </label>
+            </div>
+          </div>
+        )}
+
+        {lockedDims.length > 0 && (
+          <div className="locked-line" title={lockedDims.map((d) => notes[d]).join("\n")}>
+            {lockedDims.map((d) => DIM_LABEL[d]).join(", ")}: not used for {familyLabel.toLowerCase()} ⓘ
+          </div>
+        )}
+
+        {sugg.reasons.length > 0 && (
+          <div className="why">
+            <h3>Why</h3>
+            <ul>{sugg.reasons.slice(0, 3).map((r) => <li key={r}>{r}</li>)}</ul>
+          </div>
+        )}
+
+        {noteOpen ? (
+          <label className="field">Note
+            <textarea ref={noteRef} value={draft.notes ?? ""} placeholder="Why this choice?"
+              onChange={(e) => update({ notes: e.target.value || null })} />
+          </label>
+        ) : (
+          <button type="button" className="link" style={{ justifyContent: "space-between", width: "100%" }} onClick={focusNote}>
+            + add a note <kbd>N</kbd>
+          </button>
+        )}
+      </div>
+
+      <div className="decision-foot">
+        <div className="foot-line">
+          <span>
+            {typing ? "Esc to return to review"
+              : draft.reviewed && server.reviewed ? "Reviewed ✓"
+              : edited.length ? `${edited.length} setting${edited.length === 1 ? "" : "s"} differ${edited.length === 1 ? "s" : ""} from the suggestion`
+              : "Matches the suggestion"}
           </span>
+          <button type="button" className="link small-text" onClick={onShowShortcuts}>? shortcuts</button>
         </div>
-        <div className="segmented" role="group" aria-label="Keep, drop or target">
-          <button className={draft.action === "keep" ? "on" : ""} disabled={nonFeature && !isTarget} onClick={() => update({ action: "keep" })}
-            title={nonFeature ? `${draft.semantic_type} fields can't be model features` : "Keep (X toggles)"}>Keep</button>
-          <button className={draft.action === "drop" ? "on drop" : ""} onClick={() => update({ action: "drop" })}>Drop</button>
-          <button className={isTarget ? "on" : ""} onClick={() => update({ action: "target" })} title="Use as a target column">Target</button>
-        </div>
-        <label className="field">Semantic type
-          <select value={draft.semantic_type} onChange={(e) => {
-            const next = retype(draft, e.target.value, catalog, sugg);
-            update(next);
-          }}>
-            {catalog.types.map((t) => <option key={t.value} value={t.value}>{t.label}{t.value === data.field.inferred_type ? " (inferred)" : ""}</option>)}
-          </select>
-        </label>
-      </div>
-
-      {draft.action === "keep" && (
-        <div className="section">
-          {select("imputation", "Missing values")}
-          {draft.imputation === "constant" && !["categorical", "binary", "text"].includes(draft.semantic_type) && (
-            <label className="field">Fill value
-              <input value={draft.impute_value ?? ""} inputMode="decimal" onChange={(e) => update({ impute_value: e.target.value })} />
-            </label>
-          )}
-          {draft.imputation === "constant" && ["categorical", "binary"].includes(draft.semantic_type) && (
-            <label className="field">Missing-level label
-              <input value={draft.impute_value ?? ""} onChange={(e) => update({ impute_value: e.target.value })} />
-            </label>
-          )}
-          {NUMERIC.has(draft.semantic_type) && (
-            <label className="check">
-              <input type="checkbox" checked={draft.add_missing_indicator} onChange={(e) => update({ add_missing_indicator: e.target.checked })} />
-              Add “was missing” indicator column
-            </label>
-          )}
-          {select("transform", "Transform")}
-          {select("scaling", "Scaling")}
-          {select("encoding", "Encoding")}
-          {draft.encoding === "onehot" && <>{param("max_categories", "Max categories")}{param("min_frequency", "Min level frequency", 0.005)}</>}
-          {draft.encoding === "ordinal" && param("min_frequency", "Min level frequency", 0.001)}
-          {draft.encoding === "tfidf_svd" && <>{param("svd_components", "SVD components")}{param("max_features", "Max vocabulary", 1000)}</>}
-        </div>
-      )}
-
-      <label className="field">Notes
-        <textarea value={draft.notes ?? ""} placeholder="Why this choice?" onChange={(e) => update({ notes: e.target.value || null })} />
-      </label>
-
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <label className="check">
-          <input type="checkbox" checked={draft.reviewed} onChange={(e) => update({ reviewed: e.target.checked }, { immediate: true })} /> Reviewed
-        </label>
-        <span className={`save-state${state.kind === "error" ? " error" : ""}`} aria-live="polite">
-          {state.kind === "saving" ? "Saving…" : state.kind === "saved" ? "✓ Saved" : state.kind === "error" ? "" : ""}
-        </span>
-      </div>
-      {state.kind === "error" && <div className="alert bad">✕ {state.msg}</div>}
-      <div className="row">
-        <button className="primary" onClick={markReviewed} style={{ flex: 1 }}>Mark reviewed &amp; next <kbd>↵</kbd></button>
-      </div>
-
-      <div className="section card" style={{ padding: 12, boxShadow: "none" }}>
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <h3>Suggestion</h3>
-          {differsFromSuggestion ? <span className="badge warn">differs</span> : <span className="badge good">✓ matches</span>}
-        </div>
-        <div className="secondary" style={{ fontSize: 13 }}>
-          <b>{sugg.action}</b> · {sugg.semantic_type.replace("_", " ")}
-          {sugg.action === "keep" && suggestionParts(sugg).map((p) => <span key={p}> · {p}</span>)}
-        </div>
-        {sugg.reasons.length > 0 && <ul className="reasons">{sugg.reasons.map((r) => <li key={r}>{r}</li>)}</ul>}
-        <button onClick={acceptSuggestion}>Accept suggestion &amp; next <kbd>A</kbd></button>
-      </div>
-
-      <div className="shortcuts" aria-label="Keyboard shortcuts">
-        <kbd>J</kbd><span>next field (or <kbd>→</kbd>)</span>
-        <kbd>K</kbd><span>previous field (or <kbd>←</kbd>)</span>
-        <kbd>U</kbd><span>next unreviewed</span>
-        <kbd>X</kbd><span>toggle keep / drop</span>
-        <kbd>A</kbd><span>accept suggestion &amp; next</span>
-        <kbd>↵</kbd><span>mark reviewed &amp; next</span>
-        <kbd>/</kbd><span>search fields</span>
+        <button type="button" className="primary confirm" onClick={confirm}>
+          <span>{confirmLabel}</span><kbd>↵</kbd>
+        </button>
+        {edited.length > 0 && (
+          <button type="button" onClick={() => commit({ ...suggested, notes: draftRef.current.notes, reviewed: draftRef.current.reviewed }, 0)}>
+            Revert all to suggestion ↺
+          </button>
+        )}
       </div>
     </aside>
   );

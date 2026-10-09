@@ -34,3 +34,7 @@ export const METHOD_LABEL: Record<string, string> = {
   cramers_v: "Cramér's V",
   correlation_ratio: "Correlation ratio η",
 };
+
+const FAMILY_SHORT: Record<string, string> = { tree: "Trees", linear: "Linear", neural: "Neural" };
+/** The one vocabulary for model families in labels, badges and the top-bar switch. */
+export const familyShort = (f: string) => FAMILY_SHORT[f] ?? f;

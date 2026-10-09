@@ -1,8 +1,10 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { useDataset, useOptions } from "../hooks";
+import { useOptions } from "../hooks";
+import { useDatasetContext } from "../components/DatasetLayout";
+import { ErrorAlert } from "../components/ui";
 import { fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
 import type { ExportJob, ModelRun } from "../types";
 import { RunDetail } from "../components/RunDetail";
@@ -51,7 +53,7 @@ function TrainForm({ e, targets }: { e: ExportJob; targets: string[] }) {
         </button>
       </div>
       {selected && <span className="muted" style={{ fontSize: 12 }}>{selected.description}</span>}
-      {start.error && <div className="alert bad">✕ {(start.error as Error).message}</div>}
+      <ErrorAlert error={start.error} />
     </div>
   );
 }
@@ -185,12 +187,12 @@ function RunsTable({ runs, targets }: { runs: ModelRun[]; targets: string[] }) {
 }
 
 export function ExportPage() {
-  const datasetId = Number(useParams().datasetId);
+  const ds = useDatasetContext();
+  const datasetId = ds.id;
   const qc = useQueryClient();
-  const ds = useDataset(datasetId);
   const options = useOptions();
-  const [family, setFamily] = useState<string | null>(null);
-  const fam = family ?? ds.data?.model_family ?? "tree";
+  // One model control for the whole app lives in the top bar (P8); Export follows it.
+  const fam = ds.model_family;
   const familyLabel = (f: string) => options.data?.families.find((x) => x.value === f)?.label ?? f;
 
   const preview = useQuery({ queryKey: ["exportPreview", datasetId, fam], queryFn: () => api.exportPreview(datasetId, fam) });
@@ -230,15 +232,10 @@ export function ExportPage() {
       <section className="card stack">
         <div className="card-head">
           <h2>What will be exported</h2>
-          <label className="row" style={{ gap: 6 }}>
-            <span className="muted">Prepare features for</span>
-            <select value={fam} onChange={(e) => setFamily(e.target.value)} aria-label="Model family">
-              {options.data?.families.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
-            </select>
-          </label>
+          <span className="muted small-text">for {familyLabel(fam).toLowerCase()} · change Model in the top bar</span>
         </div>
         <p className="secondary" style={{ margin: 0, fontSize: 13 }}>{FAMILY_EXPLAINER[fam]}</p>
-        {preview.error && <div className="alert bad">{(preview.error as Error).message}</div>}
+        <ErrorAlert error={preview.error} />
         {p && (
           <>
             <div className="stats">
@@ -270,7 +267,7 @@ export function ExportPage() {
         <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
           Train share: {fmtPct(1 - cfg.valid_size - cfg.test_size, 0)}. Splits are stratified on the combination of both targets when every combination has at least 2 rows.
         </p>
-        {start.error && <div className="alert bad">✕ {(start.error as Error).message}</div>}
+        <ErrorAlert error={start.error} />
       </section>
       <section className="card">
         <div className="card-head"><h2>Exports</h2></div>
@@ -283,7 +280,7 @@ export function ExportPage() {
           <span className="muted">test split · ★ best per column · click a run for precision, recall, F1 &amp; confusion matrices · also in <code>meta.v_model_metrics</code></span>
         </div>
         {runs.data?.length ? (
-          <RunsTable runs={runs.data} targets={ds.data?.target_columns ?? []} />
+          <RunsTable runs={runs.data} targets={ds.target_columns} />
         ) : (
           <div className="empty">Train a chain on a finished export to compare models here.</div>
         )}

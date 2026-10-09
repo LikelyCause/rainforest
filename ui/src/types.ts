@@ -268,3 +268,24 @@ export interface ModelRun {
   created_at: string;
   finished_at: string | null;
 }
+
+export interface BulkRequest {
+  field_ids?: number[];
+  filters?: FieldFilter[];
+  excluded_ids?: number[];
+  accept_suggestion?: boolean;
+  action?: "keep" | "drop";
+  reviewed?: boolean;
+  dry_run?: boolean;
+}
+
+export interface BulkResult {
+  batch_id: string | null;
+  dry_run: boolean;
+  matched: number;
+  changed: number;
+  unchanged: number;
+  reviewed_changed: number;
+  transitions: Record<string, number>;
+  changes: { field_id: number; name: string; before: { action: Action; semantic_type: string; reviewed: boolean }; after: { action: Action; semantic_type: string; reviewed: boolean } }[];
+}

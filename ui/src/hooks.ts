@@ -6,10 +6,11 @@ export const PROCESSING = new Set(["pending", "ingesting", "profiling", "correla
 
 export const useOptions = () => useQuery({ queryKey: ["options"], queryFn: api.options, staleTime: Infinity });
 
-export const useDataset = (id: number) =>
+export const useDataset = (id: number, enabled = true) =>
   useQuery({
     queryKey: ["dataset", id],
     queryFn: () => api.dataset(id),
+    enabled,
     refetchInterval: (q) => (q.state.data && PROCESSING.has((q.state.data as Dataset).status) ? 1000 : false),
   });
 

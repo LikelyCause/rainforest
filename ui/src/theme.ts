@@ -10,24 +10,34 @@ export interface ChartTheme {
   negative: string;
   muted: string;
   accentWeak: string;
+  target: string;
   font: string;
 }
 
+// Tokens are light-dark() expressions, which getPropertyValue returns unresolved; a probe's computed colour resolves them.
 function read(): ChartTheme {
-  const cs = getComputedStyle(document.documentElement);
-  const v = (name: string) => cs.getPropertyValue(name).trim();
-  return {
-    surface: v("--surface-1"),
-    text: v("--text-primary"),
-    textSecondary: v("--text-secondary"),
-    textMuted: v("--text-muted"),
-    grid: v("--grid"),
-    series: v("--series-1"),
-    negative: v("--series-neg"),
-    muted: v("--series-muted"),
-    accentWeak: v("--accent-weak"),
-    font: v("--font"),
+  const probe = document.createElement("span");
+  probe.style.display = "none";
+  document.body.appendChild(probe);
+  const color = (name: string) => {
+    probe.style.color = `var(${name})`;
+    return getComputedStyle(probe).color;
   };
+  const theme = {
+    surface: color("--surface-1"),
+    text: color("--text-primary"),
+    textSecondary: color("--text-secondary"),
+    textMuted: color("--text-muted"),
+    grid: color("--grid"),
+    series: color("--series-1"),
+    negative: color("--series-neg"),
+    muted: color("--series-muted"),
+    accentWeak: color("--accent-weak"),
+    target: color("--target"),
+    font: getComputedStyle(document.documentElement).getPropertyValue("--font").trim(),
+  };
+  probe.remove();
+  return theme;
 }
 
 /** Chart colours resolved from CSS tokens; re-resolves when the OS colour scheme flips. */
