@@ -3,6 +3,12 @@
 Every endpoint the FastAPI app serves (`api/app/main.py` and `api/app/routers/*.py`). Through the UI's nginx the API
 is at `http://localhost:8080/api/…`; directly it is on `http://localhost:8000` (interactive docs at `/docs`).
 
+Every path except `/health`, `POST /api/auth/login` and `POST /api/auth/logout` needs the `rf_session` cookie that
+sign-in sets; without it the answer is `401`. While `RAINFOREST_ADMIN_PASSWORD` is unset, those paths answer `503`
+with a message saying to set it. `POST`, `PUT`, `PATCH` and `DELETE` from a browser must be same-origin (`403`
+otherwise), and a request body must be `application/json` (`multipart/form-data` for the upload) or it gets `415`.
+A `Host` outside `RAINFOREST_ALLOWED_HOSTS` gets `400`.
+
 Errors are JSON `{"detail": …}`. Validation failures are `422`, sometimes with `{"message", "errors"}` in `detail`.
 Long-running work returns `202` with a row to poll; its `status` is `pending`, `running`, `done` or `failed`
 (datasets use `pending`, `ingesting`, `profiling`, `correlating`, `ready`, `failed`), with `progress` (0–1),
@@ -14,6 +20,14 @@ Long-running work returns `202` with a row to poll; its `status` is `pending`, `
 |---|---|---|
 | GET | `/health` | Liveness; runs `SELECT 1`. |
 | GET | `/api/options` | Option catalog: semantic types, model families, setting labels, allowed settings per family × type, family notes, default encoder params, non-feature types. |
+
+## Sign-in (`auth.py`)
+
+| Method | Path | Purpose | Key params |
+|---|---|---|---|
+| POST | `/api/auth/login` | Check the admin credentials and set the session cookie (`HttpOnly`, `SameSite=Strict`, 7 days, `Secure` over HTTPS). Returns `{user}`. `401` for wrong credentials; `429` with `Retry-After` after 10 failures from one address in 15 minutes. | body: `username`, `password` |
+| POST | `/api/auth/logout` | Clear the session cookie. `204`. | |
+| GET | `/api/auth/me` | The signed-in user, `{user}`. | |
 
 ## Datasets (`routers/datasets.py`)
 
@@ -45,7 +59,7 @@ Long-running work returns `202` with a row to poll; its `status` is `pending`, `
 |---|---|---|---|
 | POST | `/api/datasets/{dataset_id}/fields/query` | Structured search over `meta.v_fields`. | `filters` (≤ 20 of `{column, op, value}`; ops `=`, `!=`, `>`, `>=`, `<`, `<=`, `in`, `contains`, `is_null`, `not_null`; columns from a whitelist), `order_by`, `descending`, `limit` (≤ 5,000, default 500) |
 | GET | `/api/sql/examples` | Example queries for the SQL console (`:dataset` is a placeholder the UI fills in). | |
-| POST | `/api/sql` | Run one statement as the read-only role, in a read-only transaction with `SQL_TIMEOUT_MS`. Returns columns, rows (≤ `SQL_MAX_ROWS`), `truncated`, `elapsed_ms`. | `sql` |
+| POST | `/api/sql` | Run one query (`SELECT`, `WITH … SELECT`, `VALUES`, `TABLE`) as the read-only role through a server-side cursor, in a read-only transaction with `SQL_TIMEOUT_MS`. Returns columns, rows (≤ `SQL_MAX_ROWS`), `truncated`, `elapsed_ms`. `400` with `{message, detail}` for anything else, including a second statement; `503` when all console connections are busy. | `sql` |
 
 ## Exports (`routers/exports.py`)
 

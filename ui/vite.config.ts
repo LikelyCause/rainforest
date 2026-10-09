@@ -6,7 +6,8 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
-    proxy: { "/api": process.env.API_URL ?? "http://localhost:8000" },
+    // xfwd passes the browser's host on, which the API's same-origin check compares with Origin.
+    proxy: { "/api": { target: process.env.API_URL ?? "http://localhost:8000", changeOrigin: true, xfwd: true } },
   },
   build: { chunkSizeWarningLimit: 1500 },
 });

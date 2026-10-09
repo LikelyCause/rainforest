@@ -41,6 +41,11 @@ services:
       WEB_CONCURRENCY: ${API_WORKERS:-2}
       JOB_WORKERS: ${JOB_WORKERS:-2}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Without a password the API refuses every request but /health.
+      RAINFOREST_ADMIN_USER: ${RAINFOREST_ADMIN_USER:-admin}
+      RAINFOREST_ADMIN_PASSWORD: ${RAINFOREST_ADMIN_PASSWORD:-}
+      RAINFOREST_SESSION_SECRET: ${RAINFOREST_SESSION_SECRET:-}
+      RAINFOREST_ALLOWED_HOSTS: ${RAINFOREST_ALLOWED_HOSTS:-*}
     volumes:
       - appdata:/data
     ports:
@@ -59,6 +64,7 @@ services:
       api:
         condition: service_healthy
     ports:
+      # All interfaces, so the UI is reachable over the LAN; sign-in protects it.
       - "${UI_PORT:-8080}:80"
 
 volumes:
