@@ -18,6 +18,15 @@ export interface Dataset {
   updated_at: string;
   profiled_at: string | null;
   raw_table: string | null;
+  field_count?: number;
+  reviewed_count?: number;
+  kept_count?: number;
+  dropped_count?: number;
+  target_count?: number;
+  export_count?: number;
+  run_count?: number;
+  last_export?: { id: number; model_family: string; status: ExportJob["status"]; created_at: string; n_features: number | null } | null;
+  last_run?: { id: number; model: string; model_label: string | null; status: ModelRun["status"]; metric: string | null; value: number | null } | null;
 }
 
 export type Action = "keep" | "drop" | "target";
@@ -208,6 +217,8 @@ export interface ExportPreview {
   unreviewed: number;
   warnings: string[];
   blocking: string[];
+  last_export?: { id: number; created_at: string; status: string } | null;
+  changed_since_export?: number | null;
 }
 
 export interface ExportJob {

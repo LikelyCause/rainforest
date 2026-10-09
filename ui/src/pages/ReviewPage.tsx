@@ -86,6 +86,7 @@ export function ReviewPage() {
   const [overlay, setOverlay] = useState(false);
   const [typing, setTyping] = useState(false);
   const [panelVersion, setPanelVersion] = useState(0);
+  const [drawer, setDrawer] = useState(false);
 
   const all = fields.data ?? [];
   const scope = useMemo(() => {
@@ -116,6 +117,7 @@ export function ReviewPage() {
   const go = useCallback((id: number | undefined) => {
     if (id === undefined) return;
     setFinish(null);
+    setDrawer(false);
     nav({ pathname: `/d/${datasetId}/review/${id}`, search: query.toString() });
   }, [datasetId, nav, query]);
 
@@ -147,6 +149,12 @@ export function ReviewPage() {
     placeholderData: keepPreviousData,
     staleTime: 60_000,
   });
+
+  // Remembered so the Datasets list can continue where you left off.
+  useEffect(() => {
+    if (fieldId === null) return;
+    try { localStorage.setItem(`rf:last:${datasetId}`, String(fieldId)); } catch { /* storage unavailable */ }
+  }, [datasetId, fieldId]);
 
   // Prefetch neighbours so stepping through fields feels instant.
   useEffect(() => {
@@ -201,6 +209,7 @@ export function ReviewPage() {
       const k = e.key;
       if (k === "Escape") {
         if (overlay) return setOverlay(false);
+        if (drawer) return setDrawer(false);
         if (isControl(e.target) || e.target instanceof HTMLButtonElement) (e.target as HTMLElement).blur();
         if (finish?.kind === "end") setFinish(null);
         return;
@@ -225,7 +234,11 @@ export function ReviewPage() {
       else if (k === "a") panel.current?.revertAndConfirm();
       else if (k === "z") undo();
       else if (k === "n") { e.preventDefault(); panel.current?.focusNote(); }
-      else if (k === "/") { e.preventDefault(); searchRef.current?.focus(); }
+      else if (k === "/") {
+        e.preventDefault();
+        setDrawer(true);
+        window.setTimeout(() => searchRef.current?.focus(), 0);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -244,7 +257,7 @@ export function ReviewPage() {
   const missingField = detail.error && (detail.error as { status?: number }).status === 404;
 
   return (
-    <div className={`review${!typing && !overlay && !finish && current ? " mode" : ""}`}>
+    <div className={`review${!typing && !overlay && !finish && current ? " mode" : ""}${drawer ? " drawer-open" : ""}`}>
       <FieldList
         fields={scope} visible={visible} settled={settled} activeId={fieldId}
         search={search} onSearch={setSearch}
@@ -254,7 +267,16 @@ export function ReviewPage() {
         workingSet={workingSet} onClearSet={clearSet}
         onClearFilters={clearFilters} onSelect={go} searchRef={searchRef}
       />
+      <div className="drawer-scrim" onClick={() => setDrawer(false)} aria-hidden="true" />
       <section className="detail" aria-busy={detail.isFetching}>
+        <div className="narrow-bar">
+          <button type="button" onClick={() => setDrawer(true)} aria-expanded={drawer}>
+            ☰ Fields {position ? `${position.index + 1}/${position.total}` : scope.length}
+          </button>
+          <span className="spacer" style={{ flex: 1 }} />
+          <button type="button" className="small" onClick={prev} aria-label="Previous field">‹ <kbd>K</kbd></button>
+          <button type="button" className="small" onClick={next} aria-label="Next field"><kbd>J</kbd> ›</button>
+        </div>
         {detail.isFetching && detail.isPlaceholderData && <div className="loading-bar" aria-hidden="true" />}
         {finish ? (
           <FinishCard finish={finish} scope={scope} datasetId={datasetId} workingSet={workingSet}

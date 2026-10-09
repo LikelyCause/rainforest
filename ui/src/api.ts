@@ -32,8 +32,8 @@ export const api = {
   options: () => request<OptionCatalog>("/api/options"),
   datasets: () => request<Dataset[]>("/api/datasets"),
   dataset: (id: number) => request<Dataset>(`/api/datasets/${id}`),
-  deleteDataset: (id: number) => request<void>(`/api/datasets/${id}`, { method: "DELETE" }),
-  patchDataset: (id: number, data: { model_family?: string; name?: string }) =>
+  deleteDataset: (id: number) => request<{ fields: number; exports: number; runs: number }>(`/api/datasets/${id}`, { method: "DELETE" }),
+  patchDataset: (id: number, data: { model_family?: string; name?: string; target_columns?: string[] }) =>
     request<Dataset>(`/api/datasets/${id}`, json("PATCH", data)),
   createSample: (data: { rows: number; fields: number; seed: number; target_kind: string }) =>
     request<Dataset>("/api/datasets/sample", json("POST", data)),

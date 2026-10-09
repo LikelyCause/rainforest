@@ -1,128 +1,230 @@
-import { useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError, uploadDataset } from "../api";
+import { api, uploadDataset } from "../api";
 import { PROCESSING } from "../hooks";
-import { fmtDate, fmtInt, fmtPct } from "../format";
+import { fmtAgo, fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
+import { ErrorAlert } from "../components/ui";
+import { showError, toast } from "../toast";
 import type { Dataset } from "../types";
 
-const STATUS_LABEL: Record<string, string> = {
-  pending: "Queued",
-  ingesting: "Ingesting",
-  profiling: "Profiling",
-  correlating: "Correlations",
-  ready: "Ready",
-  failed: "Failed",
-};
+const ACCEPT = /\.(csv|parquet|pq|txt)$/i;
 
 function StatusBadge({ ds }: { ds: Dataset }) {
-  const cls = ds.status === "ready" ? "good" : ds.status === "failed" ? "bad" : "accent";
-  const icon = ds.status === "ready" ? "✓" : ds.status === "failed" ? "✕" : "…";
-  return <span className={`badge ${cls}`}>{icon} {STATUS_LABEL[ds.status]}</span>;
+  if (ds.status === "ready") return <span className="badge good">✓ ready</span>;
+  if (ds.status === "failed") return <span className="badge bad">✕ failed</span>;
+  return (
+    <span className="badge accent" title={ds.status_message ?? ""}>
+      <span className="spinner" aria-hidden="true" /> {ds.status_message ?? ds.status}
+    </span>
+  );
 }
 
-function UploadCard() {
-  const qc = useQueryClient();
-  const input = useRef<HTMLInputElement>(null);
-  const [file, setFile] = useState<File | null>(null);
-  const [name, setName] = useState("");
-  const [targets, setTargets] = useState("column_a,column_b");
-  const [over, setOver] = useState(false);
-  const [progress, setProgress] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
+function lastVisited(id: number): string | null {
+  try { return localStorage.getItem(`rf:last:${id}`); } catch { return null; }
+}
 
-  const pick = (f: File | undefined) => {
-    if (!f) return;
-    if (!/\.(csv|parquet|pq|txt)$/i.test(f.name)) {
-      setError("Choose a .csv or .parquet file");
+/** Uploads start the moment a file is picked or dropped; name and targets are set afterwards (P11). */
+function useUpload() {
+  const qc = useQueryClient();
+  const [progress, setProgress] = useState<{ name: string; frac: number } | null>(null);
+  const start = async (file: File | undefined) => {
+    if (!file) return;
+    if (!ACCEPT.test(file.name)) {
+      showError("Can't upload that file", { message: "Choose a .csv or .parquet file" });
       return;
     }
-    setError(null);
-    setFile(f);
-    if (!name) setName(f.name.replace(/\.[^.]+$/, ""));
-  };
-
-  const submit = async () => {
-    if (!file) return;
-    setError(null);
-    setProgress(0);
+    setProgress({ name: file.name, frac: 0 });
     try {
-      await uploadDataset(file, name, targets, setProgress);
-      setFile(null);
-      setName("");
+      const ds = await uploadDataset(file, "", "", (frac) => setProgress({ name: file.name, frac }));
       qc.invalidateQueries({ queryKey: ["datasets"] });
+      return ds;
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e));
+      showError(`Upload of ${file.name} failed`, e);
     } finally {
       setProgress(null);
     }
   };
+  return { progress, start };
+}
 
+function TargetPicker({ ds, onClose }: { ds: Dataset; onClose: () => void }) {
+  const qc = useQueryClient();
+  const fields = useQuery({ queryKey: ["fields", ds.id], queryFn: () => api.fields(ds.id) });
+  const [q, setQ] = useState("");
+  const [chosen, setChosen] = useState<Set<string>>(new Set(ds.target_columns));
+  const save = useMutation({
+    mutationFn: (names: string[]) => api.patchDataset(ds.id, { target_columns: names }),
+    onSuccess: () => {
+      for (const k of ["datasets", "dataset", "fields", "field", "corr"]) qc.invalidateQueries({ queryKey: [k] });
+      onClose();
+    },
+  });
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const close = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && onClose();
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [onClose]);
+  const shown = (fields.data ?? []).filter((f) => f.name.toLowerCase().includes(q.toLowerCase())).slice(0, 200);
+  const toggle = (n: string) => {
+    const next = new Set(chosen);
+    next.has(n) ? next.delete(n) : next.add(n);
+    setChosen(next);
+  };
   return (
-    <section className="card stack">
-      <div className="card-head"><h2>Upload a dataset</h2><span className="muted">CSV or Parquet</span></div>
-      <div
-        className={`dropzone${over ? " over" : ""}`}
-        role="button"
-        tabIndex={0}
-        onClick={() => input.current?.click()}
-        onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && input.current?.click()}
-        onDragOver={(e) => { e.preventDefault(); setOver(true); }}
-        onDragLeave={() => setOver(false)}
-        onDrop={(e) => { e.preventDefault(); setOver(false); pick(e.dataTransfer.files[0]); }}
-      >
-        {file ? (
-          <><b>{file.name}</b><div className="muted">{fmtInt(Math.round(file.size / 1024))} KB · click to change</div></>
-        ) : (
-          <>Drop a file here or <span style={{ color: "var(--accent)" }}>browse</span></>
-        )}
-        <input ref={input} type="file" accept=".csv,.parquet,.pq,.txt" hidden onChange={(e) => pick(e.target.files?.[0])} />
+    <div ref={ref} className="popover combobox" role="dialog" aria-label={`Targets for ${ds.name}`}
+      onKeyDown={(e) => e.key === "Escape" && onClose()}>
+      <input type="search" placeholder="Search columns" value={q} onChange={(e) => setQ(e.target.value)} autoFocus aria-label="Search columns" />
+      <label className="check"><span className="row" style={{ gap: 8 }}>
+        <input type="radio" checked={chosen.size === 0} onChange={() => setChosen(new Set())} />
+        No target (unsupervised)
+      </span></label>
+      <div className="combo-list">
+        {fields.isLoading && <span className="muted small-text" style={{ padding: 6 }}>Loading columns…</span>}
+        {shown.map((f) => (
+          <label key={f.id} className="check">
+            <span className="row" style={{ gap: 8, flexWrap: "nowrap", minWidth: 0 }}>
+              <input type="checkbox" checked={chosen.has(f.name)} onChange={() => toggle(f.name)} />
+              <span className="mono" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</span>
+            </span>
+            <span className="type-tag">{f.inferred_type.replace("_", " ")}</span>
+          </label>
+        ))}
       </div>
-      <div className="grid-2" style={{ gap: 12 }}>
-        <label className="field">Dataset name<input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-dataset" /></label>
-        <label className="field">Target columns (comma-separated)<input value={targets} onChange={(e) => setTargets(e.target.value)} /></label>
+      <ErrorAlert error={save.error} />
+      <div className="row" style={{ justifyContent: "space-between", padding: "4px 2px 0" }}>
+        <span className="muted small-text">{chosen.size} selected · associations are recomputed</span>
+        <button type="button" className="primary small" disabled={save.isPending} onClick={() => save.mutate([...chosen])}>Save</button>
       </div>
-      {progress !== null && (
-        <div className="stack" style={{ gap: 4 }}>
-          <div className="meter"><span style={{ width: `${progress * 100}%` }} /></div>
-          <span className="muted" style={{ fontSize: 12 }}>Uploading… {fmtPct(progress, 0)}</span>
-        </div>
-      )}
-      {error && <div className="alert bad">{error}</div>}
-      <div className="row"><button className="primary" disabled={!file || progress !== null} onClick={submit}>Upload &amp; profile</button></div>
-    </section>
+    </div>
   );
 }
 
-function SampleCard() {
-  const qc = useQueryClient();
-  const [rows, setRows] = useState(50_000);
-  const [fields, setFields] = useState(150);
-  const [kind, setKind] = useState("mixed");
-  const m = useMutation({
-    mutationFn: () => api.createSample({ rows, fields, seed: 42, target_kind: kind }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["datasets"] }),
-  });
+function RowMenu({ ds, onRename, onDelete }: { ds: Dataset; onRename: () => void; onDelete: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
   return (
-    <section className="card stack">
-      <div className="card-head"><h2>Generate a sample dataset</h2></div>
-      <p className="secondary" style={{ margin: 0 }}>
-        Mixed numeric / categorical / text / date fields driven by shared latent factors, with missingness, skew,
-        IDs, numbers-as-text, a constant column and one deliberately leaky feature.
-      </p>
-      <div className="row" style={{ gap: 12, alignItems: "flex-end" }}>
-        <label className="field">Rows<input type="number" min={1000} max={2000000} step={1000} value={rows} onChange={(e) => setRows(Number(e.target.value))} style={{ width: 120 }} /></label>
-        <label className="field">Fields<input type="number" min={30} max={400} value={fields} onChange={(e) => setFields(Number(e.target.value))} style={{ width: 90 }} /></label>
-        <label className="field">Targets
-          <select value={kind} onChange={(e) => setKind(e.target.value)}>
-            <option value="mixed">column_a binary, column_b 3-class</option>
-            <option value="binary">both binary</option>
-            <option value="multiclass">both multiclass</option>
-          </select>
-        </label>
-        <button className="primary" disabled={m.isPending} onClick={() => m.mutate()}>Generate</button>
+    <div ref={ref} style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
+      <button type="button" className="ghost small" aria-label={`More actions for ${ds.name}`} aria-expanded={open} onClick={() => setOpen(!open)}>⋯</button>
+      {open && (
+        <div className="popover" role="menu" onKeyDown={(e) => e.key === "Escape" && setOpen(false)}>
+          <button type="button" role="menuitem" className="ghost menu-item" onClick={() => { setOpen(false); onRename(); }}>Rename</button>
+          <button type="button" role="menuitem" className="ghost menu-item" style={{ color: "var(--bad)" }}
+            disabled={PROCESSING.has(ds.status)} onClick={() => { setOpen(false); onDelete(); }}>Delete…</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DeleteDialog({ ds, onClose }: { ds: Dataset; onClose: () => void }) {
+  const qc = useQueryClient();
+  const del = useMutation({
+    mutationFn: () => api.deleteDataset(ds.id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["datasets"] });
+      toast({ message: `Deleted ${ds.name}` });
+      onClose();
+    },
+  });
+  const parts = [
+    ds.field_count !== undefined && `${fmtInt(ds.field_count)} field decisions`,
+    ds.export_count ? `${ds.export_count} export${ds.export_count === 1 ? "" : "s"}` : null,
+    ds.run_count ? `${ds.run_count} model run${ds.run_count === 1 ? "" : "s"}` : null,
+    "the raw table",
+  ].filter(Boolean);
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="dialog" role="alertdialog" aria-modal="true" aria-label={`Delete ${ds.name}`} onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.key === "Escape" && onClose()}>
+        <h2>Delete {ds.name}?</h2>
+        <p className="secondary" style={{ margin: 0 }}>This removes {parts.join(", ")}. It can't be undone.</p>
+        <ErrorAlert error={del.error} />
+        <div className="row" style={{ justifyContent: "flex-end" }}>
+          <button type="button" onClick={onClose} autoFocus>Cancel</button>
+          <button type="button" className="danger" disabled={del.isPending} onClick={() => del.mutate()}>Delete</button>
+        </div>
       </div>
-      {m.error && <div className="alert bad">{(m.error as Error).message}</div>}
+    </div>
+  );
+}
+
+function SampleMenu({ onCreated }: { onCreated: (ds: Dataset) => void }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState("50000");
+  const [fields, setFields] = useState("150");
+  const [kind, setKind] = useState("mixed");
+  const ref = useRef<HTMLDivElement>(null);
+  const m = useMutation({
+    mutationFn: () => api.createSample({ rows: Number(rows), fields: Number(fields), seed: 42, target_kind: kind }),
+    onSuccess: (ds) => { qc.invalidateQueries({ queryKey: ["datasets"] }); setOpen(false); onCreated(ds); },
+  });
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}>Generate sample ▾</button>
+      {open && (
+        <form className="popover stack" style={{ width: 320, padding: 14, gap: 10 }}
+          onSubmit={(e) => { e.preventDefault(); m.mutate(); }} onKeyDown={(e) => e.key === "Escape" && setOpen(false)}>
+          <span className="secondary small-text">
+            Mixed numeric, categorical, text and date fields with missingness, skew, IDs, numbers-as-text, a constant column and one leaky feature.
+          </span>
+          <div className="row" style={{ gap: 10, alignItems: "flex-start" }}>
+            <label className="field" style={{ flex: 1 }}>Rows
+              <input type="number" min={1000} max={2000000} step={1000} value={rows} onChange={(e) => setRows(e.target.value)} />
+              <span className="muted" style={{ fontWeight: 400 }}>1,000 – 2,000,000</span>
+            </label>
+            <label className="field" style={{ width: 96 }}>Fields
+              <input type="number" min={30} max={400} value={fields} onChange={(e) => setFields(e.target.value)} />
+              <span className="muted" style={{ fontWeight: 400 }}>30 – 400</span>
+            </label>
+          </div>
+          <label className="field">Targets
+            <select value={kind} onChange={(e) => setKind(e.target.value)}>
+              <option value="mixed">column_a binary, column_b 3-class</option>
+              <option value="binary">both binary</option>
+              <option value="multiclass">both multiclass</option>
+            </select>
+          </label>
+          <ErrorAlert error={m.error} />
+          <button type="submit" className="primary" disabled={m.isPending}>Generate</button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function FirstRun({ onBrowse, onDemo, busy }: { onBrowse: () => void; onDemo: () => void; busy: boolean }) {
+  return (
+    <section className="first-run card">
+      <button type="button" className="dropzone first-drop" onClick={onBrowse}>
+        <b>Drop a CSV or Parquet file</b>
+        <span>or <span style={{ color: "var(--accent)" }}>browse</span></span>
+        <span className="muted small-text">Targets are picked after upload</span>
+      </button>
+      <div className="stack" style={{ justifyContent: "center", gap: 12 }}>
+        <h2>No data handy?</h2>
+        <div><button type="button" className="primary" disabled={busy} onClick={onDemo}>Open the 50k × 150 demo</button></div>
+        <div className="chips">
+          {["leaky feature", "ID columns", "numbers-as-text", "missingness"].map((c) => <span key={c} className="badge">{c}</span>)}
+        </div>
+      </div>
+      <p className="muted" style={{ gridColumn: "1 / -1", margin: 0 }}>
+        <b className="secondary">1</b> Review each field (<kbd>J</kbd>/<kbd>K</kbd>, <kbd>X</kbd>, <kbd>↵</kbd>) → <b className="secondary">2</b> Export → <b className="secondary">3</b> Train
+      </p>
     </section>
   );
 }
@@ -130,63 +232,214 @@ function SampleCard() {
 export function DatasetsPage() {
   const qc = useQueryClient();
   const nav = useNavigate();
+  const fileInput = useRef<HTMLInputElement>(null);
+  const upload = useUpload();
+  const [dragging, setDragging] = useState(false);
+  const [targetFor, setTargetFor] = useState<number | null>(null);
+  const [renaming, setRenaming] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState<Dataset | null>(null);
+  const [fresh, setFresh] = useState<number | null>(null);
+  const [details, setDetails] = useState<number | null>(null);
   const { data, isLoading, error } = useQuery({
     queryKey: ["datasets"],
     queryFn: api.datasets,
     refetchInterval: (q) => ((q.state.data as Dataset[] | undefined)?.some((d) => PROCESSING.has(d.status)) ? 1000 : false),
   });
-  const del = useMutation({
-    mutationFn: (id: number) => api.deleteDataset(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["datasets"] }),
+  const demo = useMutation({
+    mutationFn: () => api.createSample({ rows: 50_000, fields: 150, seed: 42, target_kind: "mixed" }),
+    onSuccess: (ds) => { qc.invalidateQueries({ queryKey: ["datasets"] }); highlight(ds.id); },
   });
+  const rename = useMutation({
+    mutationFn: ({ id, name }: { id: number; name: string }) => api.patchDataset(id, { name }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["datasets"] }); qc.invalidateQueries({ queryKey: ["dataset"] }); setRenaming(null); },
+    onError: (e) => showError("Couldn't rename", e),
+  });
+
+  const highlight = (id: number) => {
+    setFresh(id);
+    window.setTimeout(() => setFresh((f) => (f === id ? null : f)), 1500);
+  };
+  const open = (ds: Dataset) => {
+    const last = lastVisited(ds.id);
+    nav(`/d/${ds.id}/review${last ? `/${last}` : ""}`);
+  };
+
+  // Tell the user when a dataset they're waiting on becomes ready.
+  const wasProcessing = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    for (const ds of data ?? []) {
+      if (PROCESSING.has(ds.status)) wasProcessing.current.add(ds.id);
+      else if (wasProcessing.current.delete(ds.id) && ds.status === "ready") {
+        highlight(ds.id);
+        toast({
+          message: `✓ ${ds.name} is ready`, detail: `${fmtInt(ds.column_count)} fields`, tone: "good", duration: 8000,
+          action: { label: "Start review", run: () => nav(`/d/${ds.id}/review`) },
+        });
+      }
+    }
+  }, [data, nav]);
+
+  // A file dropped anywhere on the page uploads; without this the browser would navigate to it.
+  useEffect(() => {
+    let depth = 0;
+    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+    const enter = (e: DragEvent) => { if (hasFiles(e)) { depth++; setDragging(true); } };
+    const leave = (e: DragEvent) => { if (hasFiles(e) && --depth <= 0) { depth = 0; setDragging(false); } };
+    const over = (e: DragEvent) => hasFiles(e) && e.preventDefault();
+    const drop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth = 0;
+      setDragging(false);
+      void upload.start(e.dataTransfer?.files[0]).then((ds) => ds && highlight(ds.id));
+    };
+    window.addEventListener("dragenter", enter);
+    window.addEventListener("dragleave", leave);
+    window.addEventListener("dragover", over);
+    window.addEventListener("drop", drop);
+    return () => {
+      window.removeEventListener("dragenter", enter);
+      window.removeEventListener("dragleave", leave);
+      window.removeEventListener("dragover", over);
+      window.removeEventListener("drop", drop);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const browse = () => fileInput.current?.click();
+  const rows = useMemo(() => data ?? [], [data]);
 
   return (
     <div className="page">
-      <div><h1>Datasets</h1><p className="secondary" style={{ margin: "4px 0 0" }}>Ingest a file, walk through every field, and export a model-ready dataset.</p></div>
-      <div className="grid-2">
-        <UploadCard />
-        <SampleCard />
-      </div>
-      <section className="card">
-        <div className="card-head"><h2>Your datasets</h2></div>
-        {isLoading && <div className="empty">Loading…</div>}
-        {error && <div className="alert bad">{(error as Error).message}</div>}
-        {data && data.length === 0 && <div className="empty">No datasets yet. Upload a file or generate a sample above.</div>}
-        {data?.map((ds) => (
-          <div key={ds.id} className="dataset-row">
-            <div className="stack" style={{ gap: 4, minWidth: 0 }}>
-              <div className="row">
-                {ds.status === "ready" ? <Link to={`/d/${ds.id}/review`} style={{ fontWeight: 600 }}>{ds.name}</Link> : <b>{ds.name}</b>}
-                <StatusBadge ds={ds} />
-                <span className="muted" style={{ fontSize: 12.5 }}>
-                  {ds.row_count !== null && `${fmtInt(ds.row_count)} rows · `}
-                  {ds.column_count !== null && `${ds.column_count} fields · `}
-                  targets: {ds.target_columns.join(", ") || "none"} · {fmtDate(ds.created_at)}
-                </span>
-              </div>
-              {PROCESSING.has(ds.status) && (
-                <div className="stack" style={{ gap: 4, maxWidth: 520 }}>
-                  <div className="meter"><span style={{ width: `${Math.max(ds.progress, 0.02) * 100}%` }} /></div>
-                  <span className="muted" style={{ fontSize: 12 }}>{ds.status_message}</span>
-                </div>
-              )}
-              {ds.warnings.map((w) => <div key={w} className="alert warn">⚠ {w}</div>)}
-              {ds.status === "failed" && ds.error && (
-                <details className="alert bad"><summary>✕ {ds.error.split("\n")[0]}</summary><pre>{ds.error}</pre></details>
-              )}
-            </div>
-            <div className="row">
-              {ds.status === "ready" && <button className="primary" onClick={() => nav(`/d/${ds.id}/review`)}>Review fields</button>}
-              {!PROCESSING.has(ds.status) && (
-                <button
-                  className="ghost danger"
-                  onClick={() => window.confirm(`Delete "${ds.name}", its raw table, decisions and exports?`) && del.mutate(ds.id)}
-                >Delete</button>
-              )}
-            </div>
+      <input ref={fileInput} type="file" accept=".csv,.parquet,.pq,.txt" hidden
+        onChange={(e) => { void upload.start(e.target.files?.[0]).then((ds) => ds && highlight(ds.id)); e.target.value = ""; }} />
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <h1>Datasets</h1>
+        {rows.length > 0 && (
+          <div className="row">
+            <SampleMenu onCreated={(ds) => highlight(ds.id)} />
+            <button type="button" className="primary" onClick={browse} disabled={upload.progress !== null}>↑ Upload CSV / Parquet</button>
           </div>
-        ))}
-      </section>
+        )}
+      </div>
+      <ErrorAlert error={error} />
+      {isLoading && <div className="stack"><span className="skeleton" /><span className="skeleton" /></div>}
+      {data && rows.length === 0 && !upload.progress && <FirstRun onBrowse={browse} onDemo={() => demo.mutate()} busy={demo.isPending} />}
+      <ErrorAlert error={demo.error} />
+
+      {(rows.length > 0 || upload.progress) && (
+        <div className="table-wrap" style={{ maxHeight: "none", overflow: "visible" }}>
+          <table className="data datasets">
+            <thead>
+              <tr>
+                <th>Name</th><th>Status</th><th className="num">Rows</th><th className="num">Fields</th><th>Targets</th>
+                <th>Review</th><th>Last export</th><th>Updated</th><th aria-label="Actions" />
+              </tr>
+            </thead>
+            <tbody>
+              {upload.progress && (
+                <tr className="fresh">
+                  <td><b>{upload.progress.name}</b></td>
+                  <td colSpan={8}>
+                    <div className="row" style={{ flexWrap: "nowrap" }}>
+                      <span className="badge accent"><span className="spinner" aria-hidden="true" /> uploading {fmtPct(upload.progress.frac, 0)}</span>
+                      <div className="meter" style={{ width: 200 }}><span style={{ width: `${upload.progress.frac * 100}%` }} /></div>
+                    </div>
+                  </td>
+                </tr>
+              )}
+              {rows.map((ds) => {
+                const ready = ds.status === "ready";
+                const total = ds.field_count ?? ds.column_count ?? 0;
+                const reviewed = ds.reviewed_count ?? 0;
+                return (
+                  <Fragment key={ds.id}>
+                    <tr className={`${ready ? "clickable" : ""}${fresh === ds.id ? " fresh" : ""}`}
+                      onClick={() => ready && renaming !== ds.id && open(ds)}
+                      onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && ready && open(ds)}
+                      tabIndex={ready ? 0 : -1} aria-label={ready ? `Open ${ds.name}` : undefined}>
+                      <td className="name-cell">
+                        {renaming === ds.id ? (
+                          <input defaultValue={ds.name} autoFocus aria-label="Dataset name" onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => {
+                              e.stopPropagation();
+                              if (e.key === "Enter") rename.mutate({ id: ds.id, name: e.currentTarget.value.trim() || ds.name });
+                              if (e.key === "Escape") setRenaming(null);
+                            }}
+                            onBlur={(e) => e.currentTarget.value.trim() !== ds.name ? rename.mutate({ id: ds.id, name: e.currentTarget.value.trim() || ds.name }) : setRenaming(null)} />
+                        ) : (
+                          <b title={ds.name}>{ds.name}</b>
+                        )}
+                      </td>
+                      <td>
+                        <div className="row" style={{ flexWrap: "nowrap" }}>
+                          <StatusBadge ds={ds} />
+                          {ds.warnings.length > 0 && (
+                            <span className="badge warn" title={ds.warnings.join("\n")}>⚠ {ds.warnings.length}</span>
+                          )}
+                        </div>
+                        {ds.status === "failed" && ds.error && (
+                          <div className="small-text" style={{ color: "var(--bad)", marginTop: 4, maxWidth: 360 }}>
+                            {ds.error.split("\n")[0]}{" "}
+                            <button type="button" className="link small-text" onClick={(e) => { e.stopPropagation(); setDetails(details === ds.id ? null : ds.id); }}>
+                              {details === ds.id ? "Hide details" : "Details"}
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                      <td className="num">{fmtInt(ds.row_count)}</td>
+                      <td className="num">{fmtInt(ds.column_count)}</td>
+                      <td style={{ position: "relative" }}>
+                        {ready && (ds.target_columns.length ? (
+                          <button type="button" className="ghost target-chips" title="Change targets"
+                            onClick={(e) => { e.stopPropagation(); setTargetFor(ds.id); }}>
+                            {ds.target_columns.map((t) => <code key={t}>{t}</code>)}
+                          </button>
+                        ) : (
+                          <button type="button" className="chip attention on" onClick={(e) => { e.stopPropagation(); setTargetFor(ds.id); }}>Choose target ▾</button>
+                        ))}
+                        {targetFor === ds.id && (
+                          <div onClick={(e) => e.stopPropagation()}><TargetPicker ds={ds} onClose={() => setTargetFor(null)} /></div>
+                        )}
+                      </td>
+                      <td>
+                        {ready && total > 0 && (
+                          <div className="stack" style={{ gap: 3 }} title={`${ds.kept_count ?? 0} kept · ${ds.dropped_count ?? 0} dropped · ${ds.target_count ?? 0} targets`}>
+                            <span className="num small-text">{reviewed === total ? "✓ " : ""}{fmtInt(reviewed)} / {fmtInt(total)}</span>
+                            <span className="meter" style={{ width: 80, height: 4 }}><span style={{ width: `${(100 * reviewed) / total}%`, background: "var(--good)" }} /></span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="small-text">
+                        {ds.last_export ? (
+                          <span title={`Export #${ds.last_export.id} · ${ds.last_export.status}`}>
+                            v{ds.last_export.id}
+                            {ds.last_run?.status === "done" && ds.last_run.value !== null && ` · ${ds.last_run.model_label ?? ds.last_run.model} ${fmtNum(ds.last_run.value, 2)} ${ds.last_run.metric?.startsWith("roc_auc") ? "AUC" : ds.last_run.metric}`}
+                          </span>
+                        ) : <span className="muted">—</span>}
+                      </td>
+                      <td className="small-text muted" title={fmtDate(ds.updated_at)}>{fmtAgo(ds.updated_at)}</td>
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <div className="row" style={{ flexWrap: "nowrap", gap: 2 }}>
+                          <RowMenu ds={ds} onRename={() => setRenaming(ds.id)} onDelete={() => setDeleting(ds)} />
+                          {ready && <span className="chevron" aria-hidden="true">→</span>}
+                        </div>
+                      </td>
+                    </tr>
+                    {details === ds.id && ds.error && (
+                      <tr><td colSpan={9}><pre className="alert bad" style={{ margin: 0, whiteSpace: "pre-wrap" }}>{ds.error}</pre></td></tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {dragging && (
+        <div className="drop-overlay" aria-hidden="true"><span>Drop to upload: CSV or Parquet</span></div>
+      )}
+      {deleting && <DeleteDialog ds={deleting} onClose={() => setDeleting(null)} />}
     </div>
   );
 }
