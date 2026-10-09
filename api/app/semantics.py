@@ -138,6 +138,20 @@ _BASE_ALLOWED: dict[str, dict[str, list[str]]] = {
 
 NON_FEATURE_TYPES = {"identifier", "constant"}
 
+# Targets are class labels for a ClassifierChain; a continuous or free-form field would become thousands of classes.
+TARGET_TYPES = ("binary", "categorical", "numeric_discrete")
+MAX_TARGET_LEVELS = 100
+
+
+def target_problem(t: str, n_unique: int | None) -> str | None:
+    """Why a field typed `t` with `n_unique` distinct values can't be a target, or None if it can."""
+    if t not in TARGET_TYPES:
+        return (f"a {TYPE_LABELS.get(t, t).lower()} field can't be a target; targets must be binary, categorical "
+                f"or discrete numeric (change the field's type first if its values are class labels)")
+    if n_unique is not None and n_unique > MAX_TARGET_LEVELS:
+        return f"{n_unique:,} distinct values; a target can have at most {MAX_TARGET_LEVELS} classes"
+    return None
+
 DEFAULT_PARAMS: dict[str, dict[str, Any]] = {
     "onehot": {"max_categories": 30, "min_frequency": 0.01},
     "ordinal": {"min_frequency": 0.001},
@@ -176,11 +190,15 @@ def option_catalog() -> dict[str, Any]:
         "allowed": {f: {t: allowed(t, f) for t in SEMANTIC_TYPES} for f in FAMILIES},
         "default_params": DEFAULT_PARAMS,
         "non_feature_types": sorted(NON_FEATURE_TYPES),
+        "target_rule": {"types": list(TARGET_TYPES), "max_levels": MAX_TARGET_LEVELS},
     }
 
 
-def validate_decision(d: dict[str, Any], family: str = DEFAULT_FAMILY) -> list[str]:
-    """Return a list of problems; empty means the decision is coherent for this family."""
+def validate_decision(d: dict[str, Any], family: str = DEFAULT_FAMILY, n_unique: int | None = None) -> list[str]:
+    """Return a list of problems; empty means the decision is coherent for this family.
+
+    `n_unique` (the field's distinct values) is needed to check the level limit on targets.
+    """
     errors: list[str] = []
     t = d.get("semantic_type")
     if t not in _BASE_ALLOWED:
@@ -189,6 +207,8 @@ def validate_decision(d: dict[str, Any], family: str = DEFAULT_FAMILY) -> list[s
         return [f"unknown model family {family!r}"]
     if d.get("action") == "keep" and t in NON_FEATURE_TYPES:
         errors.append(f"a field typed '{t}' cannot be kept as a feature; drop it or change its type")
+    if d.get("action") == "target" and (problem := target_problem(t, n_unique)):
+        errors.append(problem)
     if d.get("action") in ("drop", "target"):
         return errors
     a = allowed(t, family)

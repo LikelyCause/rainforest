@@ -61,8 +61,9 @@ def process_dataset(dataset_id: int, upload_path: str | None, fmt: str) -> None:
         warnings: list[str] = []
         if upload_path is not None:
             warnings = ingest.to_parquet(Path(upload_path), fmt, parquet_path)
-            Path(upload_path).unlink(missing_ok=True)
         schema = pl.read_parquet_schema(parquet_path)
+        if upload_path is not None:
+            Path(upload_path).unlink(missing_ok=True)
         names = list(schema.keys())
         db_cols = ingest.sanitize_identifiers(names)
         missing_targets = [t for t in targets if t not in schema]
@@ -98,6 +99,11 @@ def process_dataset(dataset_id: int, upload_path: str | None, fmt: str) -> None:
         )
         field_ids = _persist_profiles(dataset_id, profiles, db_cols)
         execute("UPDATE meta.datasets SET row_count = %s WHERE id = %s", (n_rows, dataset_id))
+        rejected = [p.name for p in profiles if p.name in targets and not p.is_target]
+        if rejected:
+            warnings.append(f"Not used as target(s), too many distinct values: {', '.join(rejected)}")
+            execute("UPDATE meta.datasets SET target_columns = %s, warnings = %s WHERE id = %s",
+                    ([t for t in targets if t not in rejected], warnings, dataset_id))
 
         # ---- 3. correlations ------------------------------------------------------
         st.set("correlating", 0.75, "Computing pairwise associations", force=True)

@@ -37,9 +37,10 @@ open http://localhost:8080
    `column_a` / `column_b` targets that are binary + 3-class, both binary or both multiclass). On an empty install,
    *Open the 50k × 150 demo* does the same in one click. The upload is converted to Parquet, loaded into
    `raw.ds_<id>`, profiled and correlated, with live progress.
-   Then **Choose target ▾** on the dataset's row: pick one or more columns, or *No target (unsupervised)*. Saving
-   refreshes the target associations and leakage flags. Generated samples already have their two targets set. The row menu also
-   renames or deletes a dataset (deleting removes its fields, exports, model runs and their files).
+   Then **Choose target ▾** on the dataset's row: pick one or more columns, or *No target (unsupervised)*. A target
+   must be binary, categorical or discrete numeric with at most 100 distinct values; other fields are disabled in the
+   picker with the reason, and the API refuses them. Saving refreshes the target associations and leakage flags.
+   Generated samples already have their two targets set. The row menu also renames or deletes a dataset (deleting removes its fields, exports, model runs and their files).
 2. **Review** → walk the fields. Each field shows its signals (missing, skew, outliers, levels, target association
    with a leakage flag), its distribution and quantile strip, top tokens or weekdays, and its strongest
    **associations** (click a bar to jump to that field). Decisions autosave. The sidebar filters by status
@@ -101,9 +102,22 @@ models — they split on value order, so rescaling changes nothing."* The API re
 
 **Type inference** (`api/app/profiling.py`) proposes `numeric_continuous`, `numeric_discrete`, `categorical`,
 `binary`, `text`, `datetime`, `identifier` or `constant`, with a confidence score and reasons. It detects numbers stored
-as text (`"1,234.50"`), dates stored as text (13 formats), integer and UUID keys, and free text compared with short
-categorical strings. Fields with a ≥ 0.95 association to a target are flagged as **possible leakage** and suggested
-for dropping.
+as text, dates stored as text (15 formats, including `YYYYMMDD` as text or integers), integer and UUID keys, and free
+text compared with short categorical strings.
+* Parse rates are measured over the whole column, and formats are chosen from values spread across the file, so a
+  clean head can't hide junk further down.
+* Commas are thousands separators only in valid groups (`"1,234.50"`). A column that writes decimals with a comma
+  (`"1,5"`, and no dot decimals) is read as decimals. Any other value with a comma doesn't parse.
+* `dd/mm` vs `mm/dd` is decided by values with a part above 12. When nothing decides it, month-first is assumed and
+  the reasons say so.
+* Values that don't parse as the inferred type, and ±inf, are counted in **Missing** because the export reads them as
+  missing. They're also reported as `stats.unparseable_count` (with examples) and `stats.inf_count`, shown as a *Read
+  as missing* signal. Unparseable values cap the type confidence at 0.65.
+* Integer columns retyped to datetime are read as `YYYYMMDD` when they are valid dates, otherwise as epoch
+  timestamps whose unit (s, ms, µs, ns) follows from their magnitude.
+* An upload target with more than 100 distinct values isn't made a target; the dataset gets a warning.
+
+Fields with a ≥ 0.95 association to a target are flagged as **possible leakage** and suggested for dropping.
 
 **Associations** use a seeded 100k-row sample:
 - Spearman ρ for numeric pairs (pairwise-complete, vectorised).
@@ -140,11 +154,15 @@ of failing.
 
 ## Export → ClassifierChain
 
-* **Leakage-safe split:** the train / valid / test split is assigned first, stratified on the target combination.
+* **Leakage-safe split:** the train / valid / test split is assigned first, stratified on the target combination
+  (single-row combinations are pooled; if the combinations still can't be stratified, on one target, else not at
+  all). An export fails, naming the class, when a target has a class with a single row.
   Every statistic is then fitted on training rows only (up to 500k of them by default), and the full file is
   transformed in 200k-row chunks.
 * **Output:** float32 features, `__split`, `__row_id` (joins back to `raw.ds_<id>`), label-encoded targets, the fitted
-  `preprocessor.joblib`, and `manifest.json` (feature → source field, class mappings, model family, NaN report).
+  `preprocessor.joblib`, and `manifest.json` (feature → source field, class mappings, model family, NaN report, and
+  `inf_values`: ±inf per field, written as missing). Feature names never take a target's name or `__row_id` /
+  `__split`; a clashing feature gets a numbered suffix.
 * **Before you export**, the page summarises what will go in (kept / dropped / targets / customised fields, kept
   fields by type) and warns about unreviewed fields, kept leakage flags and a target count other than two. No target
   or no kept features blocks the export. Once an export exists, it shows how many decisions changed since, with
@@ -157,6 +175,9 @@ of failing.
     predictions of the earlier ones rather than the ground truth.
   * All targets binary → P(class 1) is passed down the chain; any multiclass target → the predicted class code.
   * NaN-capable models are wrapped so sklearn's finiteness check doesn't reject the NaN they handle natively.
+* **Classes missing from training** (a rare class that only landed in valid or test) keep their own probability
+  column (zero), so metrics stay aligned with the class names; the report lists them under `missing_from_train`. A
+  target with a single class in the training split stops the run before fitting.
 * **Metrics** per target on the valid and test splits: accuracy, balanced accuracy, log-loss, ROC-AUC (one-vs-rest
   macro for multiclass), precision / recall / F1 (macro and weighted, plus positive-class and specificity for binary
   targets), confusion matrices and a per-class table, plus the top importances per chain link.
@@ -254,8 +275,8 @@ npm run typecheck
 make sample-csv
 ```
 
-**Tests** live in `api/tests` (86 tests). Most need no database; the 7 API tests in `test_explore.py` run against an
-empty Postgres and skip unless `RAINFOREST_TEST_DATABASE_URL` is set.
+**Tests** live in `api/tests`. Most need no database; the API tests in `test_explore.py` and
+`test_data_correctness.py` run against an empty Postgres and skip unless `RAINFOREST_TEST_DATABASE_URL` is set.
 
 ```bash
 make test                         # API suite locally; DB-backed tests skip

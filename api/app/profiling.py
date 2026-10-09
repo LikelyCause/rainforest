@@ -17,7 +17,7 @@ import numpy as np
 import polars as pl
 from scipy import stats as sstats
 
-from .semantics import NUMERIC
+from .semantics import NUMERIC, target_problem
 
 ID_NAME_RE = re.compile(r"(^|[_\s.-])(id|uuid|guid|key|pk|identifier|code)$", re.IGNORECASE)
 TOKEN_RE = r"[a-z][a-z']{2,}"
@@ -31,11 +31,18 @@ DATETIME_FORMATS = [
     "%m/%d/%Y",
     "%d/%m/%Y",
     "%m/%d/%Y %H:%M",
+    "%d/%m/%Y %H:%M",
     "%m/%d/%Y %H:%M:%S",
+    "%d/%m/%Y %H:%M:%S",
     "%Y/%m/%d",
     "%d-%b-%Y",
     "%Y%m%d",
 ]
+DAY_FIRST = {"%m/%d/%Y": "%d/%m/%Y", "%m/%d/%Y %H:%M": "%d/%m/%Y %H:%M", "%m/%d/%Y %H:%M:%S": "%d/%m/%Y %H:%M:%S"}
+MONTH_FIRST = {v: k for k, v in DAY_FIRST.items()}
+YYYYMMDD = "%Y%m%d"
+THOUSANDS_RE = r"^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$"
+DECIMAL_COMMA_RE = r"^[+-]?\d+,\d+$"
 STOPWORDS = set(
     """the and for are but not you all any can had her was one our out has have this that with from
     they will would there their what about which when your into than then them these some been were
@@ -83,30 +90,91 @@ def sample_indices(n_rows: int, k: int, seed: int = 17) -> np.ndarray | None:
     return np.sort(rng.choice(n_rows, size=k, replace=False))
 
 
-def detect_datetime_format(s: pl.Series) -> tuple[str | None, float]:
-    """Best strptime format for a string series and the share of values it parses."""
-    probe = s.drop_nulls().head(5000).str.strip_chars()
+def _spread(s: pl.Series, k: int, seed: int = 11) -> pl.Series:
+    """Up to k values drawn from across the whole series, so sorted files don't fool a probe."""
+    idx = sample_indices(s.len(), k, seed)
+    return s if idx is None else s.gather(idx)
+
+
+def _datetime_format(s: pl.Series) -> tuple[str | None, float, str | None]:
+    """(format, share of a spread probe it parses, note) for a string series."""
+    probe = _spread(s.drop_nulls(), 5000).str.strip_chars()
     if probe.len() == 0:
-        return None, 0.0
-    best, best_rate = None, 0.0
+        return None, 0.0, None
+    rates: dict[str, float] = {}
     for fmt in DATETIME_FORMATS:
         try:
             parsed = probe.str.strptime(pl.Datetime("us"), fmt, strict=False)
         except Exception:  # noqa: BLE001 - polars raises for some format/type combos
             continue
-        rate = 1 - parsed.null_count() / probe.len()
-        if rate > best_rate:
-            best, best_rate = fmt, rate
-        if rate >= 0.999:
-            break
-    return best, best_rate
+        rates[fmt] = 1 - parsed.null_count() / probe.len()
+    best = max(rates, key=rates.get, default=None)  # ties go to the earlier format
+    if best is None or rates[best] == 0:
+        return None, 0.0, None
+    note = None
+    if best in DAY_FIRST or best in MONTH_FIRST:
+        best, note = _day_month_order(s, best)
+    return best, rates[best], note
+
+
+def _day_month_order(s: pl.Series, fmt: str) -> tuple[str, str | None]:
+    """Settle dd/mm vs mm/dd on the whole column: a part above 12 can only be a day."""
+    parts = s.drop_nulls().str.strip_chars().str.extract_groups(r"^(\d{1,2})/(\d{1,2})/")
+    first = parts.struct.field("1").cast(pl.Int32, strict=False)
+    second = parts.struct.field("2").cast(pl.Int32, strict=False)
+    day_first, month_first = int((first > 12).sum()), int((second > 12).sum())
+    month_fmt = MONTH_FIRST.get(fmt, fmt)
+    if day_first > month_first:
+        return DAY_FIRST[month_fmt], None
+    if month_first > day_first:
+        return month_fmt, None
+    return month_fmt, "day and month are ambiguous (no part above 12); assumed month-first"
+
+
+def detect_datetime_format(s: pl.Series) -> tuple[str | None, float]:
+    """Best strptime format for a string series and the share of a spread probe it parses."""
+    fmt, rate, _ = _datetime_format(s)
+    return fmt, rate
+
+
+def _yyyymmdd_rate(s: pl.Series) -> float:
+    """Share of non-null values that are valid YYYYMMDD dates (integers, or 8-digit strings)."""
+    nn = s.drop_nulls()
+    if nn.len() == 0:
+        return 0.0
+    if nn.dtype == pl.String:
+        txt = nn.str.strip_chars()
+        txt = txt.filter(txt.str.contains(r"^\d{8}$"))
+    elif nn.dtype.is_numeric():
+        x = nn.cast(pl.Float64)
+        txt = x.filter((x >= 19000101) & (x <= 21001231) & (x == x.round(0))).cast(pl.Int64).cast(pl.String)
+    else:
+        return 0.0
+    return txt.str.strptime(pl.Datetime("us"), YYYYMMDD, strict=False).drop_nulls().len() / nn.len()
+
+
+def _numeric_to_datetime(s: pl.Series, fmt: str | None) -> pl.Series:
+    """YYYYMMDD integers, else epoch timestamps whose unit (s, ms, us, ns) follows from their magnitude."""
+    if fmt == YYYYMMDD or (fmt is None and _yyyymmdd_rate(s) >= 0.99):
+        ints = s.cast(pl.Float64).fill_nan(None).round(0).cast(pl.Int64, strict=False)
+        return ints.cast(pl.String).str.strptime(pl.Datetime("us"), YYYYMMDD, strict=False)
+    x = null_infinite(s.cast(pl.Float64).fill_nan(None))
+    biggest = x.abs().max() or 0
+    to_us = 1e6 if biggest < 1e11 else 1e3 if biggest < 1e14 else 1.0 if biggest < 1e17 else 1e-3
+    return pl.from_epoch((x * to_us).round(0).cast(pl.Int64), time_unit="us").alias(s.name)
 
 
 def parse_datetime(s: pl.Series, fmt: str | None) -> pl.Series:
     if s.dtype == pl.String:
-        out = s.str.strip_chars().str.strptime(pl.Datetime("us"), fmt, strict=False)
+        txt = s.str.strip_chars()
+        fmt = fmt or detect_datetime_format(txt)[0]
+        if fmt is None:
+            return pl.Series(s.name, [None] * s.len(), dtype=pl.Datetime("us"))
+        out = txt.str.strptime(pl.Datetime("us"), fmt, strict=False)
     elif s.dtype == pl.Date:
         out = s.cast(pl.Datetime("us"))
+    elif s.dtype.is_numeric():
+        out = _numeric_to_datetime(s, fmt)
     else:
         out = s
     if isinstance(out.dtype, pl.Datetime) and out.dtype.time_zone is not None:
@@ -114,16 +182,47 @@ def parse_datetime(s: pl.Series, fmt: str | None) -> pl.Series:
     return out
 
 
-def coerce_numeric(s: pl.Series) -> pl.Series:
+def detect_decimal_comma(s: pl.Series) -> bool:
+    """True when a text column writes decimals with a comma ("1,5"), judged on the whole column.
+
+    "1,500" reads either way, so only values that can't be thousands groups count as evidence, and any
+    dot decimal rules the reading out.
+    """
+    txt = s.drop_nulls().str.strip_chars()
+    with_comma = int(txt.str.contains(",", literal=True).sum())
+    if not with_comma or txt.str.contains(".", literal=True).any():
+        return False
+    decimal = txt.str.contains(DECIMAL_COMMA_RE)
+    return bool((decimal & ~txt.str.contains(THOUSANDS_RE)).any()) and int(decimal.sum()) * 2 >= with_comma
+
+
+def null_infinite(s: pl.Series) -> pl.Series:
+    return pl.select(pl.when(s.is_infinite()).then(None).otherwise(s)).to_series().alias(s.name)
+
+
+def coerce_numeric(s: pl.Series, decimal_comma: bool | None = None, keep_inf: bool = False) -> pl.Series:
+    """Float64 view of a column. Text that doesn't parse, NaN and (unless keep_inf) ±inf become null.
+
+    Commas are thousands separators only in valid groups ("1,234.5"). With `decimal_comma` (detected from
+    the series when None) "1,5" is 1.5. Any other value with a comma doesn't parse.
+    """
     if s.dtype == pl.String:
-        out = s.str.strip_chars().str.replace_all(",", "").cast(pl.Float64, strict=False)
+        txt = s.str.strip_chars()
+        if decimal_comma is None:
+            decimal_comma = detect_decimal_comma(txt)
+        if decimal_comma:
+            fixed = pl.when(txt.str.contains(DECIMAL_COMMA_RE)).then(txt.str.replace(",", ".", literal=True))
+        else:
+            fixed = pl.when(txt.str.contains(THOUSANDS_RE)).then(txt.str.replace_all(",", "", literal=True))
+        out = pl.select(fixed.otherwise(txt)).to_series().cast(pl.Float64, strict=False)
     elif s.dtype == pl.Boolean:
         out = s.cast(pl.Float64)
     elif s.dtype.is_temporal():
         out = s.cast(pl.Datetime("us")).dt.epoch("s").cast(pl.Float64)
     else:
         out = s.cast(pl.Float64)
-    return out.fill_nan(None)
+    out = out.fill_nan(None).alias(s.name)
+    return out if keep_inf else null_infinite(out)
 
 
 # --------------------------------------------------------------------------- inference
@@ -143,6 +242,9 @@ def infer_type(
         return "binary", 0.95, ["exactly two distinct values"], hints
     if dt.is_temporal():
         return "datetime", 0.99, [f"{dt} dtype"], hints
+    if dt.is_numeric() and _looks_yyyymmdd(s, name):
+        hints["datetime_format"] = YYYYMMDD
+        return "datetime", 0.85, ["integers that read as YYYYMMDD dates"], hints
     if dt.is_numeric():
         t, c, r = _infer_numeric(s.drop_nulls(), name, dt, n_unique, n_nonnull)
         return t, c, r, hints
@@ -151,11 +253,14 @@ def infer_type(
     return "categorical", 0.4, [f"unrecognised dtype {dt}; treating as categorical"], hints
 
 
+def _looks_yyyymmdd(s: pl.Series, name: str) -> bool:
+    return not ID_NAME_RE.search(name) and _yyyymmdd_rate(s) >= 0.99
+
+
 def _infer_numeric(nn: pl.Series, name: str, dt: pl.DataType, n_unique: int, n_nonnull: int):
     unique_ratio = n_unique / max(n_nonnull, 1)
     if dt.is_float():
-        probe = nn.head(200_000)
-        integral = bool((probe == probe.round(0)).all())
+        integral = bool((nn == nn.round(0)).all())
     else:
         integral = True
     if integral and n_nonnull >= 500:
@@ -183,23 +288,31 @@ def _infer_numeric(nn: pl.Series, name: str, dt: pl.DataType, n_unique: int, n_n
 def _infer_string(s: pl.Series, name: str, n_unique: int, n_nonnull: int):
     hints: dict[str, Any] = {}
     nn = s.drop_nulls()
-    probe = nn.head(20_000)
+    probe = _spread(nn, 20_000)
     unique_ratio = n_unique / max(n_nonnull, 1)
 
-    as_num = probe.str.strip_chars().str.replace_all(",", "").cast(pl.Float64, strict=False)
-    num_rate = 1 - as_num.null_count() / max(probe.len(), 1)
+    if _looks_yyyymmdd(nn, name):
+        hints["datetime_format"] = YYYYMMDD
+        return "datetime", 0.85, ["8-digit values that read as YYYYMMDD dates"], hints
+
+    # Parse rates come from the whole column, so a clean head can't hide junk further down.
+    decimal_comma = detect_decimal_comma(nn)
+    as_num = coerce_numeric(nn, decimal_comma, keep_inf=True)
+    num_rate = 1 - as_num.null_count() / max(nn.len(), 1)
     if num_rate >= 0.98:
-        t, c, r = _infer_numeric(
-            coerce_numeric(nn).drop_nulls(), name, pl.Float64, n_unique, n_nonnull
-        )
+        t, c, r = _infer_numeric(null_infinite(as_num).drop_nulls(), name, pl.Float64, n_unique, n_nonnull)
         hints["stored_as_text"] = True
+        if decimal_comma:
+            hints["decimal_comma"] = True
+            r = ["comma used as the decimal separator", *r]
         return t, round(c * 0.9, 2), [f"stored as text but {num_rate:.1%} of values parse as numbers", *r], hints
 
-    fmt, dt_rate = detect_datetime_format(probe)
+    fmt, probe_rate, note = _datetime_format(nn)
+    dt_rate = 1 - parse_datetime(nn, fmt).null_count() / max(nn.len(), 1) if fmt and probe_rate >= 0.9 else 0.0
     if fmt and dt_rate >= 0.95:
         hints["datetime_format"] = fmt
         return "datetime", round(0.8 + 0.2 * dt_rate, 2), [
-            f"{dt_rate:.1%} of values parse as dates with format {fmt}"
+            f"{dt_rate:.1%} of values parse as dates with format {fmt}", *([note] if note else [])
         ], hints
 
     lengths = probe.str.len_chars()
@@ -226,6 +339,7 @@ def _infer_string(s: pl.Series, name: str, n_unique: int, n_nonnull: int):
 
 # --------------------------------------------------------------------------- statistics
 def _histogram(x: np.ndarray, bins: int = 40) -> dict[str, Any]:
+    x = x[np.isfinite(x)]
     if x.size == 0:
         return {"edges": [], "counts": []}
     lo, hi = np.percentile(x, [0.5, 99.5])
@@ -403,6 +517,11 @@ def _codes(s: pl.Series, max_levels: int) -> np.ndarray:
     return mapped.fill_null(missing).to_numpy().astype(np.int32)
 
 
+def _failed_examples(raw: pl.Series, parsed: pl.Series, k: int = 5) -> list[str]:
+    failed = raw.filter(raw.is_not_null() & parsed.is_null())
+    return [str(v)[:100] for v in failed.unique(maintain_order=True).head(k).to_list()]
+
+
 def corr_vector(s: pl.Series, t: str, datetime_format: str | None, corr_idx: np.ndarray | None,
                 corr_max_levels: int) -> tuple[np.ndarray | None, np.ndarray | None]:
     """(numeric, codes) association-sample vectors for a column already typed `t`, as profile_column builds them."""
@@ -430,14 +549,20 @@ def profile_column(
 ) -> FieldProfile:
     name = s.name
     physical = str(s.dtype)
+    inf_count = 0
     if s.dtype.is_float():
         s = s.fill_nan(None)
+        inf_count = int(s.is_infinite().sum())
+        s = null_infinite(s) if inf_count else s
     n = s.len()
     nulls = s.null_count()
     n_nonnull = n - nulls
     n_unique = int(s.drop_nulls().n_unique()) if n_nonnull else 0
 
     t, conf, reasons, hints = infer_type(s, name, n_unique, n_nonnull)
+    if is_target and target_problem("categorical", n_unique):
+        reasons = [f"named as a target but can't be a target: {target_problem('categorical', n_unique)}", *reasons]
+        is_target = False
     if is_target and t not in ("binary", "categorical"):
         reasons = [f"target column; values look {t}, treated as class labels", *reasons]
         t = "binary" if n_unique == 2 else "categorical"
@@ -456,8 +581,14 @@ def profile_column(
     def _corr_sample(series: pl.Series) -> pl.Series:
         return series if corr_idx is None else series.gather(corr_idx)
 
+    unparseable = text_inf = 0
     if t in NUMERIC:
-        num = coerce_numeric(s)
+        raw = coerce_numeric(s, hints.get("decimal_comma", False), keep_inf=True)
+        text_inf = int(raw.is_infinite().sum())
+        num = null_infinite(raw)
+        unparseable = raw.null_count() - nulls
+        if unparseable:
+            stats["unparseable_examples"] = _failed_examples(s, raw)
         su, st, ch = _numeric_stats(num, _sample_series(num, sample_idx), t == "numeric_discrete")
         corr_numeric = _corr_sample(num).to_numpy().astype(np.float64)
     elif t in ("categorical", "binary"):
@@ -469,6 +600,9 @@ def profile_column(
         su, st, ch = _text_stats(_sample_series(s, sample_idx))
     elif t == "datetime":
         parsed = parse_datetime(s, hints.get("datetime_format"))
+        unparseable = parsed.null_count() - nulls
+        if unparseable:
+            stats["unparseable_examples"] = _failed_examples(s, parsed)
         su, st, ch = _datetime_stats(parsed, _sample_series(parsed, sample_idx))
         corr_numeric = (
             _corr_sample(parsed).dt.epoch("s").cast(pl.Float64).to_numpy().astype(np.float64)
@@ -484,6 +618,20 @@ def profile_column(
 
     summary.update(su)
     stats.update(st)
+    inf_count += text_inf
+    if unparseable or text_inf:
+        # The export reads these as missing, so the profile counts them as missing too (float infs already are).
+        summary["null_count"] = nulls + unparseable + text_inf
+        summary["null_pct"] = summary["null_count"] / n
+    if unparseable:
+        stats["unparseable_count"] = unparseable
+        what = "dates" if t == "datetime" else "numbers"
+        reasons = [*reasons, f"{unparseable:,} value(s) ({unparseable / n:.2%}) don't parse as {what} and are "
+                   f"treated as missing"]
+        conf = min(conf, 0.65)
+    if inf_count:
+        stats["inf_count"] = inf_count
+        reasons = [*reasons, f"{inf_count:,} infinite value(s) are treated as missing"]
     charts.update(ch)
     stats["examples"] = [
         f"{v:.6g}" if isinstance(v, float) else str(v)[:200]
