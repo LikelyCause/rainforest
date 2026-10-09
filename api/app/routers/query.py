@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import datetime as dt
 import decimal
-import re
+import threading
 import time
 import uuid
 
 import psycopg
 from fastapi import APIRouter, HTTPException
 from psycopg import sql
+from psycopg_pool import PoolTimeout
 
 from ..config import get_settings
-from ..db import fetch_all, readonly_conninfo
+from ..db import fetch_all, get_readonly_pool
 from ..schemas import FieldFilter, FieldQuery, SqlRequest
 
 router = APIRouter(prefix="/api", tags=["query"])
@@ -125,26 +126,32 @@ def sql_examples() -> list[dict]:
 
 @router.post("/sql")
 def run_sql(req: SqlRequest) -> dict:
-    """Run one statement as the SELECT-only role, inside a READ ONLY transaction."""
+    """Run one query as the SELECT-only role, in a READ ONLY transaction, through a server-side cursor."""
     s = get_settings()
-    statement = req.sql.strip().rstrip(";").strip()
-    if ";" in _strip_literals(statement):
-        raise HTTPException(400, {"message": "Run one statement at a time (no ';' separators)."})
     started = time.perf_counter()
     try:
-        with psycopg.connect(readonly_conninfo(), connect_timeout=5, autocommit=False) as conn:
-            conn.execute("SET TRANSACTION READ ONLY")
-            conn.execute(sql.SQL("SET LOCAL statement_timeout = {}").format(sql.Literal(f"{s.sql_timeout_ms}ms")))
-            cur = conn.execute(statement, prepare=False)  # type: ignore[arg-type]
-            if cur.description is None:
-                return {"columns": [], "rows": [], "row_count": 0, "truncated": False,
-                        "elapsed_ms": _ms(started)}
-            columns = [d.name for d in cur.description]
-            rows = cur.fetchmany(s.sql_max_rows + 1)
-            conn.rollback()
+        with get_readonly_pool().connection(timeout=10) as conn:
+            # Backstop for a server that ignores statement_timeout (e.g. the client stops reading).
+            cancel = threading.Timer(s.sql_timeout_ms / 1000 + 5, conn.cancel_safe)
+            cancel.start()
+            try:
+                with conn.transaction(force_rollback=True):
+                    conn.execute("SET TRANSACTION READ ONLY")
+                    conn.execute(sql.SQL("SET LOCAL statement_timeout = {}").format(
+                        sql.Literal(f"{s.sql_timeout_ms}ms")))
+                    # DECLARE goes over the extended protocol, so the server rejects a second statement
+                    # however it is hidden, and DECLARE only takes a query (SELECT, WITH, VALUES, TABLE).
+                    # FETCH then pulls just the rows shown instead of the whole result.
+                    with conn.cursor(name="rf_console") as cur:
+                        cur.execute(req.sql)  # type: ignore[arg-type]
+                        columns = [d.name for d in cur.description or []]
+                        rows = cur.fetchmany(s.sql_max_rows + 1)
+            finally:
+                cancel.cancel()
+    except PoolTimeout:
+        raise HTTPException(503, {"message": "The SQL console is busy. Try again in a moment."}) from None
     except psycopg.Error as exc:
-        msg = exc.diag.message_primary if getattr(exc, "diag", None) and exc.diag.message_primary else str(exc)
-        raise HTTPException(400, {"message": msg, "detail": getattr(exc.diag, "message_detail", None)}) from None
+        raise HTTPException(400, _sql_error(exc)) from None
     truncated = len(rows) > s.sql_max_rows
     rows = rows[: s.sql_max_rows]
     return {
@@ -156,11 +163,18 @@ def run_sql(req: SqlRequest) -> dict:
     }
 
 
-def _strip_literals(q: str) -> str:
-    """Remove quoted strings / identifiers and comments so ';' inside them is ignored."""
-    q = re.sub(r"--[^\n]*", " ", q)
-    q = re.sub(r"/\*.*?\*/", " ", q, flags=re.S)
-    return re.sub(r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"", "''", q)
+ONE_QUERY = "The console runs one query: SELECT, WITH … SELECT, VALUES or TABLE."
+
+
+def _sql_error(exc: psycopg.Error) -> dict:
+    diag = getattr(exc, "diag", None)
+    msg = diag.message_primary if diag and diag.message_primary else str(exc)
+    detail = diag.message_detail if diag else None
+    if isinstance(exc, psycopg.errors.SyntaxError):
+        if "multiple commands" in msg:
+            return {"message": "Run one statement at a time.", "detail": ONE_QUERY}
+        detail = detail or ONE_QUERY
+    return {"message": msg, "detail": detail}
 
 
 def _ms(t0: float) -> int:

@@ -103,7 +103,13 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .step .count { color: var(--text-muted); font-weight: 400; margin-left: 4px; }
 .topbar .spacer { flex: 1; }
 .model-switch { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); }
+.user-menu { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .main { flex: 1; min-height: 0; overflow: auto; position: relative; }
+.login { min-height: 100%; display: grid; place-items: center; padding: 24px 16px; }
+.login-card { width: min(360px, 100%); gap: 14px; padding: 24px; }
+.login-card button[type="submit"] { height: 36px; margin-top: 4px; }
+.login-brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; }
+.login-brand svg { width: 24px; height: 24px; }
 .page { max-width: 1280px; margin: 0 auto; padding: 24px 16px 48px; display: flex; flex-direction: column; gap: 16px; }
 
 /* ------------------------------------------------------------------ primitives */

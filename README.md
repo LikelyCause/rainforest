@@ -28,10 +28,14 @@ Developer docs: [docs/architecture.md](docs/architecture.md) (how the pieces fit
 ## Quick start
 
 ```bash
-cp .env.example .env          # optional — every value has a default
+cp .env.example .env          # then set RAINFOREST_ADMIN_PASSWORD in it (required)
 docker compose up -d --build
 open http://localhost:8080
 ```
+
+Sign in as `admin` (or your `RAINFOREST_ADMIN_USER`) with that password. Until `RAINFOREST_ADMIN_PASSWORD` is set
+(the `.env.example` placeholder doesn't count), the API answers only `/health` and every other request gets a `503`
+saying to set it.
 
 1. **Datasets** → upload a CSV / Parquet file, or use **Generate sample ▾** (1k–2M rows, 30–400 fields, with
    `column_a` / `column_b` targets that are binary + 3-class, both binary or both multiclass). On an empty install,
@@ -222,7 +226,9 @@ Not included: GPU-accelerated Explore (RAPIDS cuML for UMAP and clustering) is a
 ## Querying
 
 Connect any SQL client to `localhost:5432` (user and password from `.env`), or use the SQL tab in Bulk edit.
-The console runs as the SELECT-only `rainforest_ro` role, in a read-only transaction with a statement timeout.
+The console runs one query (`SELECT`, `WITH … SELECT`, `VALUES` or `TABLE`) as the SELECT-only `rainforest_ro` role,
+in a read-only transaction with a statement timeout. Postgres itself parses the text through a server-side cursor, so a
+second statement is refused however it's written, and only the rows shown (up to `SQL_MAX_ROWS`) are fetched rather than the whole result.
 `:dataset` in the console is replaced with the current dataset id.
 
 ```sql
@@ -269,6 +275,10 @@ Compose settings, read from `.env` (see `.env.example`):
 | `UI_PORT`, `API_PORT`, `DB_PORT` | 8080, 8000, 5432 | published ports (`API_PORT` and `DB_PORT` bind to 127.0.0.1) |
 | `API_WORKERS` / `JOB_WORKERS` | 2 / 2 | uvicorn workers / background job threads per worker |
 | `LOG_LEVEL` | info | API log level |
+| `RAINFOREST_ADMIN_USER` | admin | sign-in user name |
+| `RAINFOREST_ADMIN_PASSWORD` | – (**required**) | sign-in password; without it the API refuses everything but `/health` |
+| `RAINFOREST_SESSION_SECRET` | generated | key that signs session cookies; if empty, one is generated on first start and kept in the data volume (`/data/session_secret`) |
+| `RAINFOREST_ALLOWED_HOSTS` | `*` | comma-separated hostnames / IPs the API answers to (`*.example.com` allowed). Set this to the names and addresses you use, e.g. `rainforest.lan,192.168.1.20`; `localhost` is always accepted |
 | `API_EXTRA_PIP` | – | extra packages baked into the API image (e.g. `catboost`) |
 | `XGBOOST_GPU_PKG` | `xgboost==3.4.1` | the CUDA XGBoost package for the GPU image (`xgboost-cu12==3.4.1` for 570–579 drivers) |
 
@@ -283,13 +293,15 @@ The API reads further settings from its environment (`api/app/config.py`). Compo
 | `COPY_BATCH_ROWS` | 100000 | rows per batch when loading `raw.ds_<id>` |
 | `DB_POOL_MAX` | 10 | connections per API worker |
 | `SQL_TIMEOUT_MS`, `SQL_MAX_ROWS` | 15000, 2000 | SQL console guard rails |
+| `SQL_POOL_MAX` | 4 | read-only console connections per API worker (also the number of console queries it runs at once) |
 
 ## Development
 
 ```bash
 # API (needs Postgres: `docker compose up -d db`)
 cd api && python -m venv .venv && . .venv/bin/activate && pip install -r requirements-dev.txt
-DATABASE_URL=postgresql://rainforest:rainforest@localhost:5432/rainforest DATA_DIR=./data uvicorn app.main:app --reload
+RAINFOREST_ADMIN_PASSWORD=dev DATABASE_URL=postgresql://rainforest:rainforest@localhost:5432/rainforest DATA_DIR=./data \
+  uvicorn app.main:app --reload
 
 # UI (proxies /api to :8000; set API_URL to point elsewhere)
 cd ui && npm ci && npm run dev    # http://localhost:5173
@@ -299,8 +311,9 @@ npm run typecheck
 make sample-csv
 ```
 
-**Tests** live in `api/tests` (86 tests). Most need no database; the 7 API tests in `test_explore.py` run against an
-empty Postgres and skip unless `RAINFOREST_TEST_DATABASE_URL` is set.
+**Tests** live in `api/tests`. Most need no database, including the sign-in and request-check tests in
+`test_auth.py`. The API tests in `test_explore.py` and `test_sql_console.py` run against an empty Postgres and skip
+unless `RAINFOREST_TEST_DATABASE_URL` is set; they sign in through the `admin_login` fixture in `conftest.py`.
 
 ```bash
 make test                         # API suite locally; DB-backed tests skip
@@ -320,5 +333,16 @@ service (so nothing skips), the UI typecheck and build, and `docker compose buil
   and export read the Parquet copy. Budget roughly 2–3× the file size.
 * **Samples:** text-field and chart statistics come from a sample, and the UI labels them as such. If you change a
   field's type, the stored statistics still describe the inferred type (the UI says so). The export uses your type.
-* **Security:** there's no authentication. Keep the ports bound to localhost (the default for `db` and `api`) or put
-  the stack behind your SSO proxy.
+* **Security:** the UI port (`UI_PORT`, 8080) listens on every interface so you can reach it over the LAN; `api` and
+  `db` bind to localhost. Every API route except `/health` and sign-in needs the session cookie, file downloads
+  included.
+  * One admin user from `RAINFOREST_ADMIN_USER` / `RAINFOREST_ADMIN_PASSWORD`. The session cookie is signed, `HttpOnly`,
+    `SameSite=Strict`, lasts 7 days, and is `Secure` when the request came over HTTPS. Changing the user or password
+    signs everyone out.
+  * After 10 failed sign-ins from one address within 15 minutes, that address gets `429` until the window passes.
+    The count is kept per API worker.
+  * Requests that change data must be same-origin (`Origin` / `Referer` match the host; `http://localhost:5173` is also
+    accepted for `npm run dev`) and carry an `application/json` body (`multipart/form-data` for uploads), which
+    blocks cross-site form posts. Set `RAINFOREST_ALLOWED_HOSTS` as well, so a DNS-rebound name is refused outright.
+  * On plain HTTP the password and cookie cross the network unencrypted. Anywhere beyond a trusted LAN, put the UI
+    behind a TLS proxy that sets `X-Forwarded-Proto`.
