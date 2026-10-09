@@ -1,6 +1,7 @@
 """Dataset processing job: ingest -> profile -> correlate -> seed decisions."""
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import time
@@ -19,6 +20,12 @@ from .semantics import suggest_all
 log = logging.getLogger(__name__)
 
 LEAKAGE_THRESHOLD = 0.95
+
+SUMMARY_COLS = [
+    "row_count", "null_count", "null_pct", "n_unique", "unique_pct", "mean", "std", "min_value",
+    "max_value", "median", "skewness", "kurtosis", "zeros_pct", "outlier_pct", "top_value",
+    "top_value_pct", "avg_length",
+]
 
 
 class _Status:
@@ -102,7 +109,8 @@ def process_dataset(dataset_id: int, upload_path: str | None, fmt: str) -> None:
             progress=lambda f: st.set("correlating", 0.75 + 0.2 * f, f"Computing associations ({f:.0%})"),
         )
         _persist_correlations(dataset_id, field_ids, assocs)
-        _flag_target_leakage(dataset_id)
+        with connection() as conn:
+            refresh_target_state(conn, dataset_id)
 
         st.set("ready", 1.0, "Ready", force=True)
         execute("UPDATE meta.datasets SET profiled_at = now() WHERE id = %s", (dataset_id,))
@@ -114,17 +122,15 @@ def process_dataset(dataset_id: int, upload_path: str | None, fmt: str) -> None:
                       updated_at = now() WHERE id = %s""",
             (f"{type(exc).__name__}: {exc}\n\n{traceback.format_exc(limit=4)}", dataset_id),
         )
+    finally:
+        if upload_path is not None:
+            Path(upload_path).unlink(missing_ok=True)
 
 
 def _persist_profiles(dataset_id: int, profiles: list[profiling.FieldProfile], db_cols: list[str]) -> list[int]:
-    summary_cols = [
-        "row_count", "null_count", "null_pct", "n_unique", "unique_pct", "mean", "std", "min_value",
-        "max_value", "median", "skewness", "kurtosis", "zeros_pct", "outlier_pct", "top_value",
-        "top_value_pct", "avg_length",
-    ]
     cols = [
         "dataset_id", "ordinal", "name", "db_column", "physical_dtype", "inferred_type",
-        "inference_confidence", "inference_reasons", "is_target", *summary_cols, "stats", "charts", "suggestion",
+        "inference_confidence", "inference_reasons", "is_target", *SUMMARY_COLS, "stats", "charts", "suggestion",
     ]
     insert = sql.SQL("INSERT INTO meta.fields ({}) VALUES ({}) RETURNING id").format(
         sql.SQL(", ").join(map(sql.Identifier, cols)), sql.SQL(", ").join(sql.Placeholder() * len(cols))
@@ -136,7 +142,7 @@ def _persist_profiles(dataset_id: int, profiles: list[profiling.FieldProfile], d
             by_family = suggest_all(p.inferred_type, p.summary, p.is_target)
             row = [
                 dataset_id, p.ordinal, p.name, db_col, p.physical_dtype, p.inferred_type, p.confidence,
-                p.reasons, p.is_target, *[p.summary.get(c) for c in summary_cols],
+                p.reasons, p.is_target, *[p.summary.get(c) for c in SUMMARY_COLS],
                 jsonb(p.stats), jsonb(p.charts), jsonb(by_family),
             ]
             fid = conn.execute(insert, row).fetchone()["id"]
@@ -186,39 +192,67 @@ def _persist_correlations(dataset_id: int, field_ids: list[int], assocs) -> None
                 if fa > fb:
                     fa, fb = fb, fa
                 copy.write_row((dataset_id, fa, fb, a.method, a.value, abs(a.value), a.n_obs))
-        # Strongest association with any target, for quick "most predictive" queries
-        conn.execute(
-            """UPDATE meta.fields f SET max_target_assoc = s.m
-                 FROM (SELECT field_id, max(strength) AS m FROM meta.v_correlations
-                        WHERE dataset_id = %s AND other_is_target GROUP BY field_id) s
-                WHERE f.id = s.field_id AND f.dataset_id = %s AND NOT f.is_target""",
-            (dataset_id, dataset_id),
+
+
+def target_suggestion(t: str, stats: dict, is_target: bool, max_target_assoc: float | None) -> tuple[dict, bool]:
+    """Per-family suggestion and leakage flag; fields almost perfectly associated with a target are probably leaks."""
+    by_family = suggest_all(t, stats, is_target)
+    leak = not is_target and max_target_assoc is not None and max_target_assoc >= LEAKAGE_THRESHOLD
+    if leak:
+        reason = f"association {max_target_assoc:.2f} with a target — likely target leakage"
+        by_family = {
+            fam: {**sugg, "action": "drop", "reasons": [reason, *sugg.get("reasons", [])]}
+            for fam, sugg in by_family.items()
+        }
+    return json.loads(json.dumps(by_family)), leak
+
+
+def refresh_target_state(conn, dataset_id: int) -> None:
+    """Re-derive everything that depends on which fields are targets: max_target_assoc (non-targets only),
+    suggestions, leakage flags, and the action of decisions nobody has touched (source = 'suggested').
+
+    Call after fields.is_target changes or new correlations land. Rows only change when their value does,
+    so updated_at stays meaningful for "changed since export".
+    """
+    conn.execute(
+        """UPDATE meta.fields f SET max_target_assoc = s.m
+             FROM (SELECT f2.id, CASE WHEN f2.is_target THEN NULL ELSE m.m END AS m
+                     FROM meta.fields f2
+                     LEFT JOIN (SELECT c.fid, max(c.strength) AS m
+                                  FROM (SELECT field_a AS fid, field_b AS other, strength FROM meta.field_correlations
+                                         WHERE dataset_id = %(ds)s
+                                        UNION ALL
+                                        SELECT field_b, field_a, strength FROM meta.field_correlations
+                                         WHERE dataset_id = %(ds)s) c
+                                  JOIN meta.fields t ON t.id = c.other AND t.is_target
+                                 GROUP BY c.fid) m ON m.fid = f2.id
+                    WHERE f2.dataset_id = %(ds)s) s
+            WHERE f.id = s.id AND f.max_target_assoc IS DISTINCT FROM s.m""",
+        {"ds": dataset_id},
+    )
+    rows = conn.execute(
+        f"""SELECT id, inferred_type, is_target, max_target_assoc, leakage_flag, suggestion,
+                   {", ".join(SUMMARY_COLS)}
+              FROM meta.fields WHERE dataset_id = %s""",
+        (dataset_id,),
+    ).fetchall()
+    for r in rows:
+        by_family, leak = target_suggestion(
+            r["inferred_type"], {c: r[c] for c in SUMMARY_COLS}, r["is_target"], r["max_target_assoc"]
         )
-
-
-def _flag_target_leakage(dataset_id: int) -> None:
-    """Fields almost perfectly associated with a target are probably leaks: suggest dropping."""
-    with connection() as conn:
-        rows = conn.execute(
-            """SELECT f.id, f.max_target_assoc, f.suggestion FROM meta.fields f
-                WHERE f.dataset_id = %s AND NOT f.is_target AND f.max_target_assoc >= %s""",
-            (dataset_id, LEAKAGE_THRESHOLD),
-        ).fetchall()
-        for r in rows:
-            reason = f"association {r['max_target_assoc']:.2f} with a target — likely target leakage"
-            by_family = {
-                fam: {**sugg, "action": "drop", "reasons": [reason, *sugg.get("reasons", [])]}
-                for fam, sugg in r["suggestion"].items()
-            }
+        if by_family != r["suggestion"] or leak != r["leakage_flag"]:
             conn.execute(
-                "UPDATE meta.fields SET suggestion = %s, leakage_flag = true WHERE id = %s",
-                (jsonb(by_family), r["id"]),
+                "UPDATE meta.fields SET suggestion = %s, leakage_flag = %s WHERE id = %s",
+                (jsonb(by_family), leak, r["id"]),
             )
-            conn.execute(
-                """UPDATE meta.field_decisions SET action = 'drop', updated_at = now()
-                    WHERE field_id = %s AND source = 'suggested'""",
-                (r["id"],),
-            )
+    conn.execute(
+        """UPDATE meta.field_decisions d SET action = s.action, updated_at = now()
+             FROM (SELECT f.id, coalesce(f.suggestion -> ds.model_family ->> 'action', 'keep') AS action
+                     FROM meta.fields f JOIN meta.datasets ds ON ds.id = f.dataset_id
+                    WHERE f.dataset_id = %s) s
+            WHERE d.field_id = s.id AND d.source = 'suggested' AND d.action IS DISTINCT FROM s.action""",
+        (dataset_id,),
+    )
 
 
 def delete_dataset_files(dataset_id: int) -> None:

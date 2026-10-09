@@ -136,6 +136,15 @@ def bootstrap() -> None:
 def mark_interrupted_jobs() -> None:
     """Jobs run in-process; anything still 'running' at startup was killed by a restart."""
     with connection() as conn:
+        # A profiled dataset only loses the associations of targets chosen later; it stays usable.
+        conn.execute(
+            """UPDATE meta.datasets
+                  SET status = 'ready', progress = 1, status_message = 'Ready', updated_at = now(),
+                      warnings = array_append(warnings, 'Associations for the new target(s) were interrupted '
+                                              'by an API restart; choose the targets again to retry.')
+                WHERE status = 'correlating' AND profiled_at IS NOT NULL
+                  AND updated_at < now() - interval '2 minutes'"""
+        )
         conn.execute(
             """UPDATE meta.datasets
                   SET status = 'failed', error = 'Interrupted by an API restart; re-upload or reprocess.',

@@ -156,7 +156,6 @@ Environment variables, set in `.env` or on the `api` service:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DEFAULT_TARGETS` | `column_a,column_b` | target columns when the upload form leaves them blank |
 | `API_EXTRA_PIP` | – | extra packages baked into the API image (e.g. `xgboost`) |
 | `PROFILE_SAMPLE_ROWS` | 500000 | rows for quantiles, histograms and text stats (counts are always exact) |
 | `CORR_SAMPLE_ROWS` | 100000 | rows for associations |

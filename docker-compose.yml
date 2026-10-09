@@ -38,7 +38,6 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-rainforest}:${POSTGRES_PASSWORD:-rainforest}@db:5432/${POSTGRES_DB:-rainforest}
       READONLY_PASSWORD: ${READONLY_PASSWORD:-rainforest_ro}
       DATA_DIR: /data
-      DEFAULT_TARGETS: ${DEFAULT_TARGETS:-column_a,column_b}
       WEB_CONCURRENCY: ${API_WORKERS:-2}
       JOB_WORKERS: ${JOB_WORKERS:-2}
       LOG_LEVEL: ${LOG_LEVEL:-info}

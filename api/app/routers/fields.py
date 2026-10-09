@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 from psycopg import sql
 
 from ..db import connection, fetch_all, fetch_one, jsonb
-from ..processing import upsert_settings
+from ..processing import SUMMARY_COLS, refresh_target_state, upsert_settings
 from ..schemas import BulkDecisionIn, DecisionIn
 from ..semantics import FAMILIES, NON_FEATURE_TYPES, SETTING_KEYS, settings_of, suggest, validate_decision
 from .query import fields_where
@@ -15,6 +15,8 @@ router = APIRouter(prefix="/api", tags=["fields"])
 
 SHARED_COLS = ["action", "semantic_type", "notes", "reviewed"]
 STAT_KEYS = ["null_pct", "skewness", "outlier_pct", "min_value", "n_unique"]
+# Profiling builds no association sample for these, so as targets they need one computed on demand.
+UNCORRELATED_TYPES = {"text", "identifier"}
 
 
 def _field(field_id: int) -> dict:
@@ -309,7 +311,7 @@ def _snapshot(conn, field_ids: list[int]) -> dict:
     return {str(r["field_id"]): {"decision": r["decision"], "settings": r["settings"]} for r in rows}
 
 
-def _write_history(conn, dataset_id: int, family: str, batch_id: uuid.UUID, prev: dict, cur: dict) -> None:
+def _write_history(conn, dataset_id: int, family: str, batch_id: uuid.UUID | None, prev: dict, cur: dict) -> None:
     with conn.cursor() as c:
         c.executemany(
             """INSERT INTO meta.decision_history (field_id, dataset_id, family, previous, current, batch_id)
@@ -319,28 +321,101 @@ def _write_history(conn, dataset_id: int, family: str, batch_id: uuid.UUID, prev
         )
 
 
-def _sync_targets(conn, dataset_id: int) -> None:
-    """Keep fields.is_target / datasets.target_columns / max_target_assoc consistent with decisions."""
+def _sync_targets(conn, dataset_id: int, before: dict[int, dict] | None = None,
+                  order: list[str] | None = None) -> None:
+    """Make is_target, target_columns and every target-derived value follow the decisions.
+
+    Knock-on decision changes (leak drops appearing or clearing) get history rows; pass `before` (taken
+    before the caller's own edits) to record those edits too. `order` fixes the target order, otherwise
+    existing targets keep their place and new ones follow in column order.
+    """
+    ds = conn.execute("SELECT model_family, target_columns FROM meta.datasets WHERE id = %s",
+                      (dataset_id,)).fetchone()
+    fam = ds["model_family"]
+    ids = [r["field_id"] for r in conn.execute(
+        "SELECT field_id FROM meta.field_decisions WHERE dataset_id = %s", (dataset_id,)).fetchall()]
+    if before is None:
+        before = _merged_many(conn, ids, fam)
     conn.execute(
         """UPDATE meta.fields f SET is_target = (d.action = 'target')
-             FROM meta.field_decisions d WHERE d.field_id = f.id AND f.dataset_id = %s""",
+             FROM meta.field_decisions d
+            WHERE d.field_id = f.id AND f.dataset_id = %s AND f.is_target IS DISTINCT FROM (d.action = 'target')""",
         (dataset_id,),
     )
+    names = [r["name"] for r in conn.execute(
+        "SELECT name FROM meta.fields WHERE dataset_id = %s AND is_target ORDER BY ordinal", (dataset_id,)
+    ).fetchall()]
     conn.execute(
-        """UPDATE meta.datasets SET target_columns = coalesce(
-               (SELECT array_agg(name ORDER BY ordinal) FROM meta.fields WHERE dataset_id = %s AND is_target),
-               '{}'), updated_at = now()
-            WHERE id = %s""",
-        (dataset_id, dataset_id),
+        "UPDATE meta.datasets SET target_columns = %s, updated_at = now() WHERE id = %s",
+        (target_order(order if order is not None else list(ds["target_columns"] or []), names), dataset_id),
     )
-    conn.execute(
-        """UPDATE meta.fields f SET max_target_assoc = s.m
-             FROM (SELECT f2.id, (SELECT max(c.strength) FROM meta.v_correlations c
-                                   WHERE c.field_id = f2.id AND c.other_is_target) AS m
-                     FROM meta.fields f2 WHERE f2.dataset_id = %s) s
-            WHERE f.id = s.id""",
+    refresh_target_state(conn, dataset_id)
+    after = _merged_many(conn, ids, fam)
+    changed = {fid: row for fid, row in after.items() if _decision_key(row) != _decision_key(before.get(fid))}
+    if changed:
+        _write_history(conn, dataset_id, fam, None, before, changed)
+
+
+def target_order(preferred: list[str], targets: list[str]) -> list[str]:
+    return [t for t in preferred if t in targets] + [t for t in targets if t not in preferred]
+
+
+def _decision_key(row: dict | None) -> dict | None:
+    return None if row is None else {k: v for k, v in row.items() if k != "updated_at"}
+
+
+def set_targets(conn, dataset_id: int, names: list[str]) -> list[dict]:
+    """Make exactly `names` the targets (in that order). Returns the target fields whose associations were
+    never computed because their profiled type has no association sample (text, identifier)."""
+    fam = conn.execute("SELECT model_family FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()["model_family"]
+    fields = conn.execute(
+        f"""SELECT f.id, f.name, f.inferred_type, d.action, d.semantic_type, s.family, s.source AS settings_source,
+                   {", ".join("f." + c for c in SUMMARY_COLS)}
+              FROM meta.fields f
+              JOIN meta.field_decisions d ON d.field_id = f.id
+              LEFT JOIN meta.field_settings s ON s.field_id = f.id
+             WHERE f.dataset_id = %s ORDER BY f.ordinal
+               FOR UPDATE OF d""",
         (dataset_id,),
+    ).fetchall()
+    by_name: dict[str, dict] = {}
+    suggested_families: dict[int, list[str]] = {}
+    for r in fields:
+        by_name.setdefault(r["name"], r)
+        if r["settings_source"] == "suggested":
+            suggested_families.setdefault(r["id"], []).append(r["family"])
+    unknown = [n for n in names if n not in by_name]
+    if unknown:
+        raise HTTPException(422, {"message": "Unknown column(s)", "errors": unknown})
+    before = _merged_many(conn, [r["id"] for r in by_name.values()], fam)
+    added = [by_name[n]["id"] for n in names if by_name[n]["action"] != "target"]
+    removed = [r for n, r in by_name.items() if r["action"] == "target" and n not in names]
+    conn.execute(
+        "UPDATE meta.field_decisions SET action = 'target', updated_at = now() WHERE field_id = ANY(%s)",
+        (added,),
     )
+    for r in removed:
+        # The action itself is re-derived from the field's (now non-target) suggestion by refresh_target_state.
+        conn.execute(
+            "UPDATE meta.field_decisions SET action = 'keep', source = 'suggested', updated_at = now() "
+            "WHERE field_id = %s",
+            (r["id"],),
+        )
+        stats = {c: r[c] for c in SUMMARY_COLS}
+        for family in suggested_families.get(r["id"], []):
+            upsert_settings(conn, dataset_id, r["id"], family,
+                            suggest(r["semantic_type"], stats, False, family), "suggested")
+    _sync_targets(conn, dataset_id, before=before, order=names)
+    candidates = [by_name[n] for n in names if by_name[n]["inferred_type"] in UNCORRELATED_TYPES]
+    if not candidates:
+        return []
+    ids = [r["id"] for r in candidates]
+    has_corr = {r["fid"] for r in conn.execute(
+        """SELECT field_a AS fid FROM meta.field_correlations WHERE field_a = ANY(%(ids)s)
+           UNION SELECT field_b FROM meta.field_correlations WHERE field_b = ANY(%(ids)s)""",
+        {"ids": ids},
+    ).fetchall()}
+    return [r for r in candidates if r["id"] not in has_corr]
 
 
 def _jsonable(row: dict | None) -> dict | None:

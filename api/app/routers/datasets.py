@@ -1,19 +1,28 @@
 from __future__ import annotations
 
+import logging
 import shutil
 import uuid
 from pathlib import Path
+
+import polars as pl
 
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 
 from .. import jobs
 from ..config import get_settings
+from ..correlations import target_associations
 from ..db import connection, execute, fetch_all, fetch_one
-from ..processing import delete_dataset_files, process_dataset
+from ..modeling.registry import MODELS
+from ..processing import _Status, delete_dataset_files, process_dataset
+from ..profiling import corr_vector, sample_indices
 from ..sample_data import generate
 from ..schemas import DatasetPatch, SampleRequest
-from ..semantics import FAMILIES
+from ..semantics import FAMILIES, NUMERIC
+from .fields import _sync_targets, set_targets
 
+log = logging.getLogger(__name__)
+CORRELATED_TYPES = NUMERIC | {"datetime", "categorical", "binary"}
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 
 DATASET_COLS = """id, name, source_filename, file_format, target_columns, model_family, row_count, column_count, status,
@@ -21,9 +30,10 @@ DATASET_COLS = """id, name, source_filename, file_format, target_columns, model_
 
 
 def _targets(raw: str | None) -> list[str]:
-    if raw is None or not raw.strip():
-        return get_settings().target_list
-    return [t.strip() for t in raw.split(",") if t.strip()]
+    # Targets are picked from the real columns after upload; none is a valid starting point.
+    if raw is None:
+        return []
+    return list(dict.fromkeys(t.strip() for t in raw.split(",") if t.strip()))
 
 
 def _create(name: str, filename: str | None, fmt: str, targets: list[str]) -> dict:
@@ -34,9 +44,62 @@ def _create(name: str, filename: str | None, fmt: str, targets: list[str]) -> di
     )
 
 
+# Metric shown for a run in the dataset list, in order of preference.
+HEADLINE_METRICS = ("roc_auc", "roc_auc_ovr_macro", "accuracy")
+
+
 @router.get("")
 def list_datasets() -> list[dict]:
-    return fetch_all(f"SELECT {DATASET_COLS} FROM meta.datasets ORDER BY created_at DESC")
+    rows = fetch_all(
+        f"""SELECT {", ".join("d." + c.strip() for c in DATASET_COLS.split(","))},
+                   coalesce(c.field_count, 0) AS field_count, coalesce(c.reviewed_count, 0) AS reviewed_count,
+                   coalesce(c.kept_count, 0) AS kept_count, coalesce(c.dropped_count, 0) AS dropped_count,
+                   coalesce(c.target_count, 0) AS target_count,
+                   (SELECT count(*) FROM meta.exports x WHERE x.dataset_id = d.id) AS export_count,
+                   (SELECT count(*) FROM meta.model_runs x WHERE x.dataset_id = d.id) AS run_count,
+                   e.id AS e_id, e.model_family AS e_model_family, e.status AS e_status,
+                   e.created_at AS e_created_at, e.n_features AS e_n_features,
+                   r.id AS r_id, r.model AS r_model, r.status AS r_status, r.report -> 'order' AS r_order,
+                   r.report ->> 'model_label' AS r_label, r.metrics -> 'test' AS r_test
+              FROM meta.datasets d
+              LEFT JOIN (SELECT dataset_id, count(*) AS field_count,
+                                count(*) FILTER (WHERE reviewed) AS reviewed_count,
+                                count(*) FILTER (WHERE action = 'keep') AS kept_count,
+                                count(*) FILTER (WHERE action = 'drop') AS dropped_count,
+                                count(*) FILTER (WHERE action = 'target') AS target_count
+                           FROM meta.field_decisions GROUP BY dataset_id) c ON c.dataset_id = d.id
+              LEFT JOIN LATERAL (SELECT * FROM meta.exports x WHERE x.dataset_id = d.id
+                                  ORDER BY x.created_at DESC, x.id DESC LIMIT 1) e ON true
+              LEFT JOIN LATERAL (SELECT * FROM meta.model_runs x WHERE x.dataset_id = d.id
+                                  ORDER BY x.created_at DESC, x.id DESC LIMIT 1) r ON true
+             ORDER BY d.created_at DESC"""
+    )
+    return [_with_latest(row) for row in rows]
+
+
+def _with_latest(row: dict) -> dict:
+    out = {k: v for k, v in row.items() if not k.startswith(("e_", "r_"))}
+    out["last_export"] = None if row["e_id"] is None else {
+        "id": row["e_id"], "model_family": row["e_model_family"], "status": row["e_status"],
+        "created_at": row["e_created_at"], "n_features": row["e_n_features"],
+    }
+    out["last_run"] = None if row["r_id"] is None else {
+        "id": row["r_id"], "model": row["r_model"],
+        "model_label": row["r_label"] or (MODELS[row["r_model"]].label if row["r_model"] in MODELS else row["r_model"]),
+        "status": row["r_status"],
+        **headline_metric(row["r_status"], row["r_order"], row["r_test"]),
+    }
+    return out
+
+
+def headline_metric(status: str, order: list[str] | None, test: dict | None) -> dict:
+    """Test-split metric for the first target in chain order, so one number can stand for a run."""
+    if status == "done" and order and test:
+        by_metric = test.get(order[0]) or {}
+        for m in HEADLINE_METRICS:
+            if isinstance(by_metric.get(m), (int, float)):
+                return {"metric": m, "value": float(by_metric[m])}
+    return {"metric": None, "value": None}
 
 
 @router.post("/upload", status_code=202)
@@ -105,27 +168,140 @@ def get_dataset(dataset_id: int) -> dict:
 
 @router.patch("/{dataset_id}")
 def update_dataset(dataset_id: int, body: DatasetPatch) -> dict:
-    """Rename a dataset or switch the model family its review settings are shown for."""
-    get_dataset(dataset_id)
+    """Rename a dataset, switch the model family its review settings are shown for, or choose its targets."""
+    ds = get_dataset(dataset_id)
     if body.model_family is not None and body.model_family not in FAMILIES:
         raise HTTPException(422, f"Unknown model family {body.model_family!r}")
-    return fetch_one(
-        f"""UPDATE meta.datasets SET model_family = coalesce(%s, model_family), name = coalesce(%s, name),
-                   updated_at = now() WHERE id = %s RETURNING {DATASET_COLS}""",
-        (body.model_family, body.name, dataset_id),
-    )
+    if body.target_columns is not None and ds["status"] != "ready":
+        raise HTTPException(409, "Targets can be changed once the dataset is ready")
+    uncorrelated: list[dict] = []
+    with connection() as conn:
+        conn.execute(
+            """UPDATE meta.datasets SET model_family = coalesce(%s, model_family), name = coalesce(%s, name),
+                      updated_at = now() WHERE id = %s""",
+            (body.model_family, body.name, dataset_id),
+        )
+        if body.target_columns is not None:
+            uncorrelated = set_targets(conn, dataset_id, list(dict.fromkeys(body.target_columns)))
+            conn.execute(
+                """UPDATE meta.datasets SET warnings = array(
+                       SELECT w FROM unnest(warnings) w WHERE w NOT LIKE 'Target column(s) not found%%')
+                    WHERE id = %s""",
+                (dataset_id,),
+            )
+            if uncorrelated:
+                conn.execute(
+                    """UPDATE meta.datasets SET status = 'correlating', progress = 0,
+                              status_message = 'Queued: associations for new target(s)' WHERE id = %s""",
+                    (dataset_id,),
+                )
+    if uncorrelated:
+        jobs.submit(correlate_targets, dataset_id, [r["id"] for r in uncorrelated])
+    return get_dataset(dataset_id)
 
 
-@router.delete("/{dataset_id}", status_code=204, response_class=Response)
-def delete_dataset(dataset_id: int) -> Response:
-    ds = get_dataset(dataset_id)
-    if ds["status"] in ("pending", "ingesting", "profiling", "correlating"):
-        raise HTTPException(409, "Dataset is still processing")
+def correlate_targets(dataset_id: int, target_ids: list[int]) -> None:
+    """Associations between new targets and every other field, for targets profiled as types that never got
+    an association sample (text, identifier). Treated as class labels, as profiling treats targets."""
+    s = get_settings()
+    st = _Status(dataset_id)
+    try:
+        st.set("correlating", 0.0, "Computing associations for new target(s)", force=True)
+        ds = fetch_one("SELECT parquet_path, row_count FROM meta.datasets WHERE id = %s", (dataset_id,))
+        fields = fetch_all(
+            """SELECT id, name, inferred_type, stats ->> 'datetime_format' AS datetime_format
+                 FROM meta.fields WHERE dataset_id = %s ORDER BY ordinal""",
+            (dataset_id,),
+        )
+        path = Path(ds["parquet_path"])
+        corr_idx = sample_indices(ds["row_count"], s.corr_sample_rows, seed=29)
+        targets, numeric, categorical = [], [], []
+        for k, f in enumerate(fields):
+            is_new = f["id"] in target_ids
+            if not is_new and f["inferred_type"] not in CORRELATED_TYPES:
+                continue
+            col = pl.read_parquet(path, columns=[f["name"]]).to_series()
+            t = "categorical" if is_new else f["inferred_type"]
+            num, codes = corr_vector(col, t, f["datetime_format"], corr_idx, s.corr_max_levels)
+            if is_new:
+                targets.append((k, codes))
+            elif num is not None:
+                numeric.append((k, num))
+            elif codes is not None:
+                categorical.append((k, codes))
+            st.set("correlating", 0.8 * (k + 1) / len(fields), f"Reading {f['name']} ({k + 1}/{len(fields)})")
+        assocs = list(target_associations(targets, numeric, categorical))
+        with connection() as conn:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    """INSERT INTO meta.field_correlations
+                              (dataset_id, field_a, field_b, method, value, strength, n_obs)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (field_a, field_b) DO NOTHING""",
+                    [(dataset_id, *sorted((fields[a.i]["id"], fields[a.j]["id"])), a.method, a.value, abs(a.value),
+                      a.n_obs) for a in assocs],
+                )
+            _sync_targets(conn, dataset_id)
+            conn.execute(
+                """UPDATE meta.datasets SET warnings = array(
+                       SELECT w FROM unnest(warnings) w WHERE w NOT LIKE 'Associations for the new target(s)%%')
+                    WHERE id = %s""",
+                (dataset_id,),
+            )
+        st.set("ready", 1.0, "Ready", force=True)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("target associations for dataset %s failed", dataset_id)
+        # The dataset itself is intact; only the new target's associations are missing.
+        execute(
+            """UPDATE meta.datasets SET status = 'ready', progress = 1, status_message = 'Ready',
+                      warnings = array_append(warnings, %s), updated_at = now() WHERE id = %s""",
+            (f"Associations for the new target(s) could not be computed: {exc}", dataset_id),
+        )
+
+
+@router.delete("/{dataset_id}")
+def delete_dataset(dataset_id: int) -> dict:
+    """Delete a dataset with its fields, exports and model runs, including their files on disk."""
+    s = get_settings()
+    with connection() as conn:
+        ds = conn.execute("SELECT status FROM meta.datasets WHERE id = %s FOR UPDATE", (dataset_id,)).fetchone()
+        if ds is None:
+            raise HTTPException(404, "Dataset not found")
+        if ds["status"] in ("pending", "ingesting", "profiling", "correlating"):
+            raise HTTPException(409, "Dataset is still processing")
+        busy = conn.execute(
+            """SELECT EXISTS (SELECT 1 FROM meta.exports
+                               WHERE dataset_id = %(ds)s AND status IN ('pending', 'running'))
+                   OR EXISTS (SELECT 1 FROM meta.model_runs
+                               WHERE dataset_id = %(ds)s AND status IN ('pending', 'running')) AS busy""",
+            {"ds": dataset_id},
+        ).fetchone()["busy"]
+        if busy:
+            raise HTTPException(409, "An export or model run for this dataset is still running")
+        exports = [r["id"] for r in conn.execute(
+            "SELECT id FROM meta.exports WHERE dataset_id = %s", (dataset_id,)).fetchall()]
+        runs = conn.execute("SELECT id, model_dir FROM meta.model_runs WHERE dataset_id = %s", (dataset_id,)).fetchall()
+        n_fields = conn.execute("SELECT count(*) AS n FROM meta.fields WHERE dataset_id = %s",
+                                (dataset_id,)).fetchone()["n"]
+        conn.execute("DELETE FROM meta.datasets WHERE id = %s", (dataset_id,))
     delete_dataset_files(dataset_id)
-    for e in fetch_all("SELECT id FROM meta.exports WHERE dataset_id = %s", (dataset_id,)):
-        shutil.rmtree(get_settings().exports_dir / str(e["id"]), ignore_errors=True)
-    execute("DELETE FROM meta.datasets WHERE id = %s", (dataset_id,))
-    return Response(status_code=204)
+    for e in exports:
+        shutil.rmtree(s.exports_dir / str(e), ignore_errors=True)
+    for path in _run_dirs(s.models_dir, runs):
+        shutil.rmtree(path, ignore_errors=True)
+    return {"fields": n_fields, "exports": len(exports), "runs": len(runs)}
+
+
+def _run_dirs(models_dir: Path, runs: list[dict]) -> set[Path]:
+    """Every directory a run may have written, including failed runs that never recorded model_dir."""
+    root = models_dir.resolve()
+    out: set[Path] = set()
+    for r in runs:
+        out.update(p.resolve() for p in models_dir.glob(f"run{r['id']}_*") if p.is_dir())
+        if r["model_dir"]:
+            p = Path(r["model_dir"]).resolve()
+            if p.parent == root:
+                out.add(p)
+    return out
 
 
 @router.get("/{dataset_id}/summary")

@@ -17,6 +17,7 @@ class DatasetPatch(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
     model_family: str | None = None
     name: str | None = Field(None, min_length=1, max_length=200)
+    target_columns: list[str] | None = Field(None, max_length=50, description="Exactly these targets; [] for none")
 
 
 class DecisionIn(BaseModel):

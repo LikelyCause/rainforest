@@ -11,7 +11,6 @@ class Settings(BaseSettings):
     readonly_role: str = "rainforest_ro"
     readonly_password: str = "rainforest_ro"
     data_dir: Path = Path("./data")
-    default_targets: str = "column_a,column_b"
 
     job_workers: int = 2
     log_level: str = "info"
@@ -27,10 +26,6 @@ class Settings(BaseSettings):
     # SQL console guard rails
     sql_timeout_ms: int = 15_000
     sql_max_rows: int = 2_000
-
-    @property
-    def target_list(self) -> list[str]:
-        return [t.strip() for t in self.default_targets.split(",") if t.strip()]
 
     @property
     def uploads_dir(self) -> Path:
