@@ -75,9 +75,10 @@ Long-running work returns `202` with a row to poll; its `status` is `pending`, `
 
 | Method | Path | Purpose | Key params |
 |---|---|---|---|
-| GET | `/api/models` | Registered models: key, label, family, NaN support, installed or not, description. | |
+| GET | `/api/models` | Registered models: key, label, family, NaN support, installed or not, description, `devices` (`cpu`, `cuda`). | |
+| GET | `/api/system` | Training hardware: `gpu` is `null`, or `{available, name, memory_mb, driver, count, reason}`. Detected once per worker. | |
 | GET | `/api/exports/{export_id}/models` | Every model with whether it can train on this export, and why not. | |
-| POST | `/api/exports/{export_id}/runs` | Train a `ClassifierChain` on a finished export. `202`. | `model` (default `lightgbm`), `order` (permutation of the export's targets), `cv` (0–10, default 5; 0 chains the ground truth), `seed`, `params` (overrides of the model's defaults) |
+| POST | `/api/exports/{export_id}/runs` | Train a `ClassifierChain` on a finished export. `202`. | `model` (default `lightgbm`), `order` (permutation of the export's targets), `cv` (0–10, default 5; 0 chains the ground truth), `seed`, `params` (overrides of the model's defaults), `device` (`cpu` default, or `cuda`: `422` if the model can't, `409` if no usable GPU) |
 | GET | `/api/datasets/{dataset_id}/runs` | The dataset's runs, newest first, with metrics and report (without top features). | |
 | GET | `/api/runs/{run_id}` | One run, full report. | |
 | GET | `/api/runs/{run_id}/files/{kind}` | Download a finished run's file. | `kind`: `model` (`classifier_chain.joblib`), `report` (`report.json`) |

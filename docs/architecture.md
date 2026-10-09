@@ -27,7 +27,8 @@ add things. For endpoints see [api.md](api.md); for usage see the [README](../RE
 | `semantics.py` | Model families, semantic types, allowed settings per family and type, suggestions, validation, the option catalog. |
 | `processing.py` | The dataset pipeline (`process_dataset`), suggestion seeding, target-derived state (`refresh_target_state`), file cleanup. |
 | `transform.py` | Export: split, fit preprocessing on train rows, chunked transform, manifest. |
-| `modeling/registry.py`, `modeling/train.py` | Model catalog and compatibility; `ClassifierChain` training, evaluation, CLI. |
+| `modeling/registry.py`, `modeling/train.py` | Model catalog, compatibility and device params; `ClassifierChain` training, evaluation, CLI. |
+| `gpu.py` | NVIDIA GPU detection (`nvidia-smi` plus an XGBoost CUDA test fit in a subprocess), cached per process. |
 | `analysis/prep.py`, `analysis/compute.py`, `analysis/runner.py` | Explore jobs: sampling and typing, the numeric work, caching and job lifecycle. |
 | `routers/*.py` | HTTP endpoints, one module per area (datasets, fields, query, exports, runs, explore). |
 | `sample_data.py` | Synthetic dataset generator (also a CLI: `python -m app.sample_data`). |
@@ -97,7 +98,7 @@ the UI polls (`pending → running → done | failed`, with `progress` and `stat
    advisory locks taken by a query don't carry over.
 7. **Export.** `POST …/exports` checks the preview's blocking issues and submits `exports._run`, which calls
    `transform.run_export` and writes `exports/<id>/{model_ready.parquet, preprocessor.joblib, manifest.json}`.
-8. **Training.** `POST /api/exports/{id}/runs` checks model compatibility and submits `runs._run`, which calls
+8. **Training.** `POST /api/exports/{id}/runs` checks model compatibility and the requested device (see `gpu.py`) and submits `runs._run`, which calls
    `modeling.train.train` and writes `models/run<id>_…/{classifier_chain.joblib, report.json}`; metrics and the
    report go to `meta.model_runs`.
 9. **Explore.** See [Analyses](#analyses-explore-jobs).
@@ -157,7 +158,7 @@ the dataset's Parquet copy, raw table, export and model directories.
 ## Where to add things
 
 **A model.** Add a `ModelSpec` to `MODELS` in `api/app/modeling/registry.py` (key, label, family, NaN support,
-builder, default params, importance source, optional `requires` package). The CLI, `/api/models`,
+builder, default params, importance source, optional `requires` package, `cuda_params` if it can train on a GPU). The CLI, `/api/models`,
 `/api/exports/{id}/models` and the Train form pick it up. Compatibility rules are in `registry.compatibility`.
 
 **A migration.** Add `api/app/migrations/NNN_description.sql` with the next number, written to be safe to run once

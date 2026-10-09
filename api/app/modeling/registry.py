@@ -26,6 +26,11 @@ class ModelSpec:
     importance: str = "feature_importances_"  # "booster_gain" | "feature_importances_" | "coef_" | "none"
     requires: str | None = None  # optional import name
     description: str = ""
+    cuda_params: dict[str, Any] | None = None  # set => the model can train on a CUDA GPU
+
+    @property
+    def devices(self) -> list[str]:
+        return ["cpu", "cuda"] if self.cuda_params is not None else ["cpu"]
 
     @property
     def available(self) -> bool:
@@ -84,7 +89,8 @@ MODELS: dict[str, ModelSpec] = {
             {"n_estimators": 600, "learning_rate": 0.05, "max_depth": 6, "subsample": 0.8,
              "colsample_bytree": 0.7, "tree_method": "hist", "n_jobs": -1, "verbosity": 0},
             requires="xgboost",
-            description="Depth-wise gradient boosting (optional: build with API_EXTRA_PIP=xgboost).",
+            description="Depth-wise gradient boosting; trains on an NVIDIA GPU in the GPU image.",
+            cuda_params={"device": "cuda", "tree_method": "hist"},
         ),
         ModelSpec(
             "hist_gradient_boosting", "Histogram GBM (sklearn)", "tree", True, _hgb,
@@ -124,6 +130,15 @@ def get_model(key: str) -> ModelSpec:
     return spec
 
 
+def device_params(spec: ModelSpec, device: str) -> dict[str, Any]:
+    """Parameters that put a model on `device`. CPU adds nothing, so the CPU path is unchanged."""
+    if device == "cpu":
+        return {}
+    if device == "cuda" and spec.cuda_params is not None:
+        return dict(spec.cuda_params)
+    raise ValueError(f"{spec.label} can't train on {device!r} (supports: {', '.join(spec.devices)})")
+
+
 def compatibility(spec: ModelSpec, export_family: str, contains_nan: bool) -> str | None:
     """None if the model can train on an export, else the reason it can't."""
     if contains_nan and not spec.handles_nan:
@@ -137,7 +152,7 @@ def compatibility(spec: ModelSpec, export_family: str, contains_nan: bool) -> st
 def catalog() -> list[dict[str, Any]]:
     return [
         {"key": m.key, "label": m.label, "family": m.family, "handles_nan": m.handles_nan,
-         "available": m.available, "description": m.description}
+         "available": m.available, "description": m.description, "devices": m.devices}
         for m in MODELS.values()
     ]
 

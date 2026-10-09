@@ -61,15 +61,23 @@ def test_linear_export_is_complete_and_scaled(linear_export):
     assert abs(df.filter(pl.col("__split") == "train")[numeric[0]].mean()) < 0.1
 
 
-@pytest.mark.parametrize("model", ["lightgbm", "hist_gradient_boosting", "random_forest"])
+@pytest.mark.parametrize("model", ["lightgbm", "xgboost", "hist_gradient_boosting", "random_forest"])
 def test_tree_models_train_on_tree_export(tree_export, tmp_path, model):
-    fast = {"lightgbm": {"n_estimators": 60}, "hist_gradient_boosting": {"max_iter": 60},
-            "random_forest": {"n_estimators": 60}}[model]
+    fast = {"lightgbm": {"n_estimators": 60}, "xgboost": {"n_estimators": 60},
+            "hist_gradient_boosting": {"max_iter": 60}, "random_forest": {"n_estimators": 60}}[model]
     report = train(tree_export, model, seed=0, params=fast, cv=3, out_dir=tmp_path)
     m = report["metrics"]["test"]
     assert m["column_a"]["roc_auc"] > 0.75
     assert m["column_b"]["accuracy"] > 0.5  # 3 classes -> chance ~0.33-0.4
     assert report["chain_method"] == "predict"
+    assert report["device"] == "cpu"
+    assert report["params"] == {**MODELS[model].default_params, **fast}
+
+
+def test_cuda_run_that_falls_back_to_cpu_fails(tree_export, tmp_path):
+    """No GPU here, so XGBoost silently trains on the CPU; the run must not be recorded as a GPU run."""
+    with pytest.raises(RuntimeError, match="GPU training was requested but XGBoost ran on cpu"):
+        train(tree_export, "xgboost", seed=0, params={"n_estimators": 5}, cv=None, out_dir=tmp_path, device="cuda")
 
 
 def test_linear_model_needs_linear_export(tree_export, linear_export, tmp_path):
