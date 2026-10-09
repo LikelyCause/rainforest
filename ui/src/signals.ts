@@ -63,6 +63,16 @@ export function fieldSignals(f: FieldDetail, targets: TargetAssoc[], decisionTyp
       rule: "Amber above 50 levels or 50% unique; red when every value is unique.",
     });
   }
+  const unparseable = f.stats?.unparseable_count ?? 0;
+  const infinite = f.stats?.inf_count ?? 0;
+  if (unparseable || infinite) {
+    const examples = f.stats?.unparseable_examples?.length ? `\nExamples: ${f.stats.unparseable_examples.join(", ")}` : "";
+    out.push({
+      key: "coerced", label: "Read as missing", value: fmtInt(unparseable + infinite), tone: "warn",
+      rule: `Values the export treats as missing, already counted in Missing: ${fmtInt(unparseable)} that don't parse as ` +
+        `${t === "datetime" ? "dates" : "numbers"}, ${fmtInt(infinite)} infinite.${examples}`,
+    });
+  }
   if (f.inference_confidence !== null && f.inference_confidence < LOW_CONFIDENCE) {
     out.push({ key: "confidence", label: "Type confidence", value: fmtPct(f.inference_confidence, 0), tone: "warn",
       rule: `Inference below ${LOW_CONFIDENCE * 100}% confident: check the type.` });

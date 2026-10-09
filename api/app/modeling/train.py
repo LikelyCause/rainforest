@@ -97,11 +97,13 @@ def build_chain(spec: ModelSpec, target_kinds: list[str], order: list[int], seed
     )
 
 
-def chain_predict_proba(chain: ClassifierChain, X: np.ndarray) -> list[np.ndarray]:
+def chain_predict_proba(chain: ClassifierChain, X: np.ndarray, n_classes: list[int] | None = None) -> list[np.ndarray]:
     """Full class-probability matrix for every target (in original target order).
 
     `ClassifierChain.predict_proba` only returns P(class=1) per target, which is not
     enough for multiclass targets, so walk the fitted chain exactly as sklearn does.
+    Each estimator only knows the classes it saw in training; with `n_classes` (per target,
+    in target order) column j of the result is always encoded class j, zero for unseen ones.
     """
     n_targets = len(chain.estimators_)
     feature_chain = np.zeros((X.shape[0], n_targets))
@@ -110,7 +112,13 @@ def chain_predict_proba(chain: ClassifierChain, X: np.ndarray) -> list[np.ndarra
     for pos, est in enumerate(chain.estimators_):
         X_aug = np.hstack((X, feature_chain[:, :pos]))
         p = est.predict_proba(X_aug)
-        probas[chain.order_[pos]] = p
+        target = chain.order_[pos]
+        if n_classes is not None:
+            full = np.zeros((p.shape[0], n_classes[target]))
+            full[:, np.asarray(est.classes_, dtype=int)] = p
+            probas[target] = full
+        else:
+            probas[target] = p
         feature_chain[:, pos] = p[:, 1] if method == "predict_proba" else est.predict(X_aug)
     return probas  # type: ignore[return-value]
 
@@ -187,6 +195,14 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
         return part.select(feats).to_numpy().astype(np.float32), part.select(targets).to_numpy().astype(np.int64)
 
     X_tr, Y_tr = xy("train")
+    n_classes = [len(manifest["target_classes"][t]) for t in targets]
+    missing_from_train: dict[str, list[str]] = {}
+    for i, t in enumerate(targets):
+        seen = set(np.unique(Y_tr[:, i]).tolist())
+        if len(seen) < 2:
+            raise ValueError(f"Target {t!r} has only one class in the training split; a classifier needs at least two.")
+        if absent := [c for k, c in enumerate(manifest["target_classes"][t]) if k not in seen]:
+            missing_from_train[t] = absent
     say(f"Fitting {spec.label} chain {' → '.join(order_names)} on {X_tr.shape[0]:,} rows × {X_tr.shape[1]:,} features"
         + (" on the GPU" if device == "cuda" else ""))
     chain = build_chain(spec, kinds, order, seed, params, cv)
@@ -207,7 +223,7 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
         if len(X) == 0:
             continue
         with config_context(assume_finite=spec.handles_nan):
-            probas = chain_predict_proba(chain, X)
+            probas = chain_predict_proba(chain, X, n_classes)
             predicted = chain.predict(X).astype(int)
         metrics[split], details[split] = {}, {}
         for i, t in enumerate(targets):
@@ -241,6 +257,7 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
         "chain_method": chain.chain_method_,
         "cv": cv,
         "target_classes": manifest["target_classes"],
+        "missing_from_train": missing_from_train,
         "n_train": int(len(X_tr)),
         "n_features": len(feats),
         "fit_seconds": round(fit_seconds, 1),

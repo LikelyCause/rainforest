@@ -283,7 +283,7 @@ function ExportRow({ e, onStarted }: { e: ExportJob; onStarted: (r: ModelRun) =>
         {e.status === "done" && s.split_counts && (
           <span className="muted small-text num">
             train {fmtInt(s.split_counts.train)} · valid {fmtInt(s.split_counts.valid)} · test {fmtInt(s.split_counts.test)}
-            {s.split_info?.stratified ? " · stratified on the targets" : ""}
+            {s.split_info?.stratified ? ` · stratified on ${s.split_info.stratified_on?.join(" × ") ?? "the targets"}` : ""}
             {s.contains_nan ? " · contains NaN (tree models only)" : ""}
           </span>
         )}

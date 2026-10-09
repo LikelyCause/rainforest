@@ -19,7 +19,7 @@ Long-running work returns `202` with a row to poll; its `status` is `pending`, `
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/health` | Liveness; runs `SELECT 1`. |
-| GET | `/api/options` | Option catalog: semantic types, model families, setting labels, allowed settings per family × type, family notes, default encoder params, non-feature types. |
+| GET | `/api/options` | Option catalog: semantic types, model families, setting labels, allowed settings per family × type, family notes, default encoder params, non-feature types, and `target_rule` (`types`, `max_levels`). |
 
 ## Sign-in (`auth.py`)
 
@@ -37,7 +37,7 @@ Long-running work returns `202` with a row to poll; its `status` is `pending`, `
 | POST | `/api/datasets/upload` | Upload a file and start the pipeline. `202`. | multipart `file` (`.csv`, `.txt`, `.parquet`, `.pq`; `.tsv` is refused), optional `name`, optional `targets` (comma-separated) |
 | POST | `/api/datasets/sample` | Generate a synthetic dataset and start the pipeline. Targets are `column_a`, `column_b`. `202`. | `rows` (1,000–2,000,000, default 50,000), `fields` (30–400, default 150), `seed`, `target_kind` (`mixed`, `binary`, `multiclass`), `name` |
 | GET | `/api/datasets/{dataset_id}` | One dataset. | |
-| PATCH | `/api/datasets/{dataset_id}` | Rename, switch the active model family, or set the targets. Setting targets needs a `ready` dataset (`409` otherwise) and may start a job for targets with no associations yet. | `name`, `model_family` (`tree`, `linear`, `neural`), `target_columns` (exact list in chain order; `[]` for none) |
+| PATCH | `/api/datasets/{dataset_id}` | Rename, switch the active model family, or set the targets. Setting targets needs a `ready` dataset (`409` otherwise) and may start a job for targets with no associations yet. A target must be typed binary, categorical or discrete numeric with at most 100 distinct values (`422` naming each field otherwise). | `name`, `model_family` (`tree`, `linear`, `neural`), `target_columns` (exact list in chain order; `[]` for none) |
 | DELETE | `/api/datasets/{dataset_id}` | Delete the dataset, its fields, exports, runs, analyses and files. `409` while it, or one of its exports or runs, is still running. Returns counts removed. | |
 | GET | `/api/datasets/{dataset_id}/summary` | Field counts by type and by action, reviewed count, top 15 target associations. | |
 | GET | `/api/datasets/{dataset_id}/fields` | Lightweight field rows for the Review sidebar (type, confidence, missing, uniques, target association, leakage, decision, reviewed). | |
@@ -49,7 +49,7 @@ Long-running work returns `202` with a row to poll; its `status` is `pending`, `
 | GET | `/api/fields/{field_id}` | Field profile, the decision merged with one family's settings, that family's suggestion, and target associations. | `family` (default: the dataset's active family) |
 | GET | `/api/fields/{field_id}/correlations` | The field's strongest associations. | `limit` (1–200, default 20), `exclude_targets` |
 | GET | `/api/fields/{field_id}/history` | Last 50 decision changes. | |
-| PUT | `/api/fields/{field_id}/decision` | Save the shared decision and one family's settings; validated per family. A type change re-derives the other families' settings. | body: `family`, `action` (`keep`, `drop`, `target`), `semantic_type`, `imputation`, `impute_value`, `add_missing_indicator`, `transform`, `scaling`, `encoding`, `params`, `notes`, `reviewed` |
+| PUT | `/api/fields/{field_id}/decision` | Save the shared decision and one family's settings; validated per family. `action: target` follows the same target rule as `PATCH …/datasets/{id}`. A type change re-derives the other families' settings. | body: `family`, `action` (`keep`, `drop`, `target`), `semantic_type`, `imputation`, `impute_value`, `add_missing_indicator`, `transform`, `scaling`, `encoding`, `params`, `notes`, `reviewed` |
 | POST | `/api/datasets/{dataset_id}/decisions/bulk` | Apply one change to many fields, or preview it. Never moves a field into or out of the target role. Returns matched / changed / unchanged counts, action transitions, per-field changes and a `batch_id`. | exactly one of `field_ids` or `filters`; `excluded_ids`; at least one of `accept_suggestion`, `action` (`keep`, `drop`), `reviewed`; `dry_run` |
 | POST | `/api/datasets/{dataset_id}/decisions/bulk/{batch_id}/undo` | Restore every field a bulk batch changed (decision and all families' settings). `409` if already undone. | |
 

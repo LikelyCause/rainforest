@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Callable
@@ -67,12 +68,26 @@ def _normalize(lf: pl.LazyFrame) -> tuple[pl.LazyFrame, list[str]]:
 
 
 def to_parquet(src: Path, fmt: str, dest: Path) -> list[str]:
-    """Convert an upload into the canonical Parquet copy. Streams; memory stays bounded."""
+    """Convert an upload into the canonical Parquet copy. Streams; memory stays bounded.
+
+    Writes to a temporary file and renames it into place only once it reads back, so a failed or retried
+    sink never leaves a partial file at `dest`.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_name(dest.name + ".tmp")
+    try:
+        warnings = _sink(src, fmt, tmp)
+        pl.read_parquet_schema(tmp)
+        os.replace(tmp, dest)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return warnings
+
+
+def _sink(src: Path, fmt: str, out: Path) -> list[str]:
     if fmt == "parquet":
-        lf = pl.scan_parquet(src)
-        lf, warnings = _normalize(lf)
-        lf.sink_parquet(dest, row_group_size=100_000)
+        lf, warnings = _normalize(pl.scan_parquet(src))
+        lf.sink_parquet(out, row_group_size=100_000)
         return warnings
 
     def scan(infer_rows: int | None) -> pl.LazyFrame:
@@ -87,12 +102,13 @@ def to_parquet(src: Path, fmt: str, dest: Path) -> list[str]:
 
     try:
         lf, warnings = _normalize(scan(50_000))
-        lf.sink_parquet(dest, row_group_size=100_000)
+        lf.sink_parquet(out, row_group_size=100_000)
     except pl.exceptions.ComputeError as exc:
         # A value late in the file broke the inferred schema; re-infer over the whole file.
         log.warning("CSV schema inference on head failed (%s); rescanning full file", exc)
+        out.unlink(missing_ok=True)
         lf, warnings = _normalize(scan(None))
-        lf.sink_parquet(dest, row_group_size=100_000)
+        lf.sink_parquet(out, row_group_size=100_000)
         warnings.append("CSV schema had to be inferred from the full file (mixed types late in the file).")
     return warnings
 
