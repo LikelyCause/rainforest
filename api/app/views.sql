@@ -14,7 +14,9 @@ SELECT
     f.max_target_assoc,
     dc.action, dc.semantic_type, dc.reviewed, dc.source AS decision_source, dc.notes, dc.updated_at AS decided_at,
     s.imputation, s.transform, s.scaling, s.encoding, s.add_missing_indicator, s.params,
-    s.source AS settings_source
+    s.source AS settings_source,
+    f.suggestion -> d.model_family ->> 'action' AS suggested_action,
+    f.suggestion -> d.model_family ->> 'semantic_type' AS suggested_type
 FROM meta.fields f
 JOIN meta.datasets d ON d.id = f.dataset_id
 LEFT JOIN meta.field_decisions dc ON dc.field_id = f.id
