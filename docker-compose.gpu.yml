@@ -1,0 +1,18 @@
+# GPU training: `make up-gpu`, or
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+# Needs an NVIDIA driver (580+ for the default CUDA 13 build) and nvidia-container-toolkit on the host.
+services:
+  api:
+    build:
+      args:
+        GPU: "1"
+        XGBOOST_GPU_PKG: ${XGBOOST_GPU_PKG:-xgboost==3.4.1}
+    environment:
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

@@ -1,6 +1,6 @@
 import type {
   Analysis, AnalysisKind, AnalysisParams, CorrMatrix, BulkRequest, BulkResult, Correlation, Dataset, DecisionInput, Decision, ExportJob, ExportPreview, FieldFilter,
-  FieldListItem, FieldResponse, ModelOption, ModelRun, OptionCatalog, SqlResult, Summary,
+  FieldListItem, FieldResponse, ModelOption, ModelRun, OptionCatalog, SqlResult, Summary, SystemInfo, Device,
 } from "./types";
 
 export class ApiError extends Error {
@@ -58,7 +58,8 @@ export const api = {
   startExport: (id: number, cfg: Record<string, number | string>) =>
     request<ExportJob>(`/api/datasets/${id}/exports`, json("POST", cfg)),
   modelsForExport: (exportId: number) => request<ModelOption[]>(`/api/exports/${exportId}/models`),
-  startRun: (exportId: number, data: { model: string; order?: string[]; cv?: number; params?: Record<string, unknown> }) =>
+  system: () => request<SystemInfo>("/api/system"),
+  startRun: (exportId: number, data: { model: string; order?: string[]; cv?: number; params?: Record<string, unknown>; device?: Device }) =>
     request<ModelRun>(`/api/exports/${exportId}/runs`, json("POST", data)),
   runs: (datasetId: number) => request<ModelRun[]>(`/api/datasets/${datasetId}/runs`),
   createAnalysis: (datasetId: number, data: { kind: AnalysisKind; params: AnalysisParams; recompute?: boolean }) =>
