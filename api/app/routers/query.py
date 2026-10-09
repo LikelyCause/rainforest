@@ -12,7 +12,7 @@ from psycopg import sql
 
 from ..config import get_settings
 from ..db import fetch_all, readonly_conninfo
-from ..schemas import FieldQuery, SqlRequest
+from ..schemas import FieldFilter, FieldQuery, SqlRequest
 
 router = APIRouter(prefix="/api", tags=["query"])
 
@@ -26,7 +26,7 @@ QUERYABLE: dict[str, str] = {
     "avg_length": "num", "max_target_assoc": "num", "action": "text", "semantic_type": "text",
     "imputation": "text", "transform": "text", "scaling": "text", "encoding": "text",
     "add_missing_indicator": "bool", "reviewed": "bool", "leakage_flag": "bool", "model_family": "text",
-    "settings_source": "text", "decision_source": "text", "notes": "text",
+    "settings_source": "text", "decision_source": "text", "notes": "text", "suggested_action": "text",
 }
 
 SQL_EXAMPLES = [
@@ -62,8 +62,21 @@ SQL_EXAMPLES = [
 
 @router.post("/datasets/{dataset_id}/fields/query")
 def query_fields(dataset_id: int, q: FieldQuery) -> list[dict]:
+    if q.order_by not in QUERYABLE:
+        raise HTTPException(422, f"Cannot order by {q.order_by!r}")
+    query = sql.SQL("SELECT * FROM meta.v_fields WHERE {} ORDER BY {} {} NULLS LAST LIMIT {}").format(
+        fields_where(dataset_id, q.filters),
+        sql.Identifier(q.order_by),
+        sql.SQL("DESC" if q.descending else "ASC"),
+        sql.Literal(q.limit),
+    )
+    return fetch_all(query)
+
+
+def fields_where(dataset_id: int, filters: list[FieldFilter]) -> sql.Composable:
+    """WHERE clause over meta.v_fields for a structured filter; shared by the query and bulk endpoints."""
     clauses = [sql.SQL("dataset_id = {}").format(sql.Literal(dataset_id))]
-    for f in q.filters:
+    for f in filters:
         kind = QUERYABLE.get(f.column)
         if kind is None:
             raise HTTPException(422, f"Unknown column {f.column!r}")
@@ -76,19 +89,19 @@ def query_fields(dataset_id: int, q: FieldQuery) -> list[dict]:
             clauses.append(sql.SQL("{}::text ILIKE {}").format(col, sql.Literal(f"%{f.value}%")))
         elif f.op == "in":
             values = f.value if isinstance(f.value, list) else [v.strip() for v in str(f.value).split(",")]
-            clauses.append(sql.SQL("{}::text = ANY({})").format(col, sql.Literal([str(v) for v in values])))
+            typed = [_coerce(v, kind, f.column) for v in values]
+            if kind == "text":
+                clauses.append(sql.SQL("{} = ANY({}::text[])").format(col, sql.Literal(typed)))
+            else:
+                clauses.append(sql.SQL("{} = ANY({})").format(col, sql.Literal(typed)))
         else:
             value = _coerce(f.value, kind, f.column)
             clauses.append(sql.SQL("{} {} {}").format(col, sql.SQL(f.op), sql.Literal(value)))
-    if q.order_by not in QUERYABLE:
-        raise HTTPException(422, f"Cannot order by {q.order_by!r}")
-    query = sql.SQL("SELECT * FROM meta.v_fields WHERE {} ORDER BY {} {} NULLS LAST LIMIT {}").format(
-        sql.SQL(" AND ").join(clauses),
-        sql.Identifier(q.order_by),
-        sql.SQL("DESC" if q.descending else "ASC"),
-        sql.Literal(q.limit),
-    )
-    return fetch_all(query)
+    return sql.SQL(" AND ").join(clauses)
+
+
+_TRUE = ("1", "true", "yes", "t", "y")
+_FALSE = ("0", "false", "no", "f", "n")
 
 
 def _coerce(value, kind: str, column: str):
@@ -96,7 +109,10 @@ def _coerce(value, kind: str, column: str):
         if kind == "num":
             return float(value)
         if kind == "bool":
-            return str(value).lower() in ("1", "true", "yes", "t")
+            v = str(value).strip().lower()
+            if v in _TRUE or v in _FALSE:
+                return v in _TRUE
+            raise ValueError(value)
         return str(value)
     except (TypeError, ValueError):
         raise HTTPException(422, f"{column} expects a {kind} value") from None

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class SampleRequest(BaseModel):
@@ -17,6 +17,7 @@ class DatasetPatch(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
     model_family: str | None = None
     name: str | None = Field(None, min_length=1, max_length=200)
+    target_columns: list[str] | None = Field(None, max_length=50, description="Exactly these targets; [] for none")
 
 
 class DecisionIn(BaseModel):
@@ -34,13 +35,6 @@ class DecisionIn(BaseModel):
     reviewed: bool = True
 
 
-class BulkDecisionIn(BaseModel):
-    field_ids: list[int] = Field(min_length=1, max_length=5000)
-    accept_suggestion: bool = False
-    action: Literal["keep", "drop"] | None = None
-    reviewed: bool | None = None
-
-
 FilterOp = Literal["=", "!=", ">", ">=", "<", "<=", "in", "contains", "is_null", "not_null"]
 
 
@@ -48,6 +42,25 @@ class FieldFilter(BaseModel):
     column: str
     op: FilterOp
     value: Any = None
+
+
+class BulkDecisionIn(BaseModel):
+    """Target set is either explicit `field_ids` or `filters` resolved server-side (same semantics as /fields/query)."""
+    field_ids: list[int] | None = Field(None, min_length=1, max_length=5000)
+    filters: list[FieldFilter] | None = Field(None, max_length=20)
+    excluded_ids: list[int] = Field(default_factory=list, max_length=5000)
+    accept_suggestion: bool = False
+    action: Literal["keep", "drop"] | None = None
+    reviewed: bool | None = None
+    dry_run: bool = False
+
+    @model_validator(mode="after")
+    def _check(self) -> BulkDecisionIn:
+        if (self.field_ids is None) == (self.filters is None):
+            raise ValueError("Give exactly one of field_ids or filters")
+        if not self.accept_suggestion and self.action is None and self.reviewed is None:
+            raise ValueError("Nothing to change: set accept_suggestion, action or reviewed")
+        return self
 
 
 class FieldQuery(BaseModel):

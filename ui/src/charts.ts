@@ -3,13 +3,17 @@ import type { BarsChart, Correlation, HistogramChart } from "./types";
 import type { ChartTheme } from "./theme";
 import { fmtCompact, fmtInt, fmtNum, fmtPct, METHOD_LABEL } from "./format";
 
+// Tooltips render HTML; dataset values and column names are untrusted (#9).
+const esc = (v: unknown) =>
+  String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+
 const BAR_RADIUS_UP: [number, number, number, number] = [4, 4, 0, 0];
 const BAR_RADIUS_RIGHT: [number, number, number, number] = [0, 4, 4, 0];
 
 function base(t: ChartTheme): EChartsCoreOption {
   return {
-    animationDuration: 200,
-    animationDurationUpdate: 200,
+    // No morphing between fields: the previous field's bars must never ghost behind the new ones.
+    animation: false,
     textStyle: { fontFamily: t.font, color: t.textSecondary },
     tooltip: {
       trigger: "item",
@@ -59,7 +63,7 @@ export function histogramOption(
       ...(base(t) as any).tooltip,
       formatter: (p: any) => {
         const i = p.dataIndex;
-        return `<b>${fmtEdge(h.edges[i])} – ${fmtEdge(h.edges[i + 1])}</b><br/>${fmtInt(h.counts[i])} rows · ${fmtPct(h.counts[i] / Math.max(total, 1))}`;
+        return `<b>${esc(fmtEdge(h.edges[i]))} – ${esc(fmtEdge(h.edges[i + 1]))}</b><br/>${fmtInt(h.counts[i])} rows · ${fmtPct(h.counts[i] / Math.max(total, 1))}`;
       },
     },
     series: [{
@@ -84,7 +88,7 @@ export function barsOption(t: ChartTheme, b: BarsChart, opts: { total?: number }
     yAxis: { type: "category", data: labels, inverse: true, ...axisCommon(t), axisLabel: { color: t.textSecondary, fontSize: 11.5 } },
     tooltip: {
       ...(base(t) as any).tooltip,
-      formatter: (p: any) => `<b>${b.labels[p.dataIndex]}</b><br/>${fmtInt(b.counts[p.dataIndex])} rows · ${fmtPct(b.counts[p.dataIndex] / Math.max(total, 1))}`,
+      formatter: (p: any) => `<b>${esc(b.labels[p.dataIndex])}</b><br/>${fmtInt(b.counts[p.dataIndex])} rows · ${fmtPct(b.counts[p.dataIndex] / Math.max(total, 1))}`,
     },
     series: [{
       type: "bar",
@@ -116,7 +120,7 @@ export function correlationOption(t: ChartTheme, rows: Correlation[]): EChartsCo
       ...(base(t) as any).tooltip,
       formatter: (p: any) => {
         const r = rows[p.dataIndex];
-        return `<b>${r.name}</b>${r.is_target ? " (target)" : ""}<br/>${METHOD_LABEL[r.method]}: ${r.value.toFixed(3)}<br/><span style="opacity:.7">${r.type} · n=${fmtInt(r.n_obs)} · click to open</span>`;
+        return `<b>${esc(r.name)}</b>${r.is_target ? " (target)" : ""}<br/>${METHOD_LABEL[r.method]}: ${r.value.toFixed(3)}<br/><span style="opacity:.7">${esc(r.type)} · n=${fmtInt(r.n_obs)} · click to open</span>`;
       },
     },
     series: [{
@@ -124,7 +128,7 @@ export function correlationOption(t: ChartTheme, rows: Correlation[]): EChartsCo
       data: rows.map((r) => ({
         value: r.value,
         itemStyle: {
-          color: r.value < 0 ? t.negative : t.series,
+          color: r.is_target ? t.target : r.value < 0 ? t.negative : t.series,
           borderRadius: r.value < 0 ? [4, 0, 0, 4] : BAR_RADIUS_RIGHT,
         },
         label: { position: r.value < 0 ? "left" : "right" },

@@ -134,3 +134,23 @@ def compute_associations(
         tick(len(categorical))
     if progress:
         progress(1.0)
+
+
+def target_associations(
+    targets: list[tuple[int, np.ndarray]],
+    numeric: list[tuple[int, np.ndarray]],
+    categorical: list[tuple[int, np.ndarray]],
+) -> Iterator[Assoc]:
+    """Pairs between newly coded targets and every other field (and each other), on the same row sample.
+
+    `targets` hold class codes; `numeric` / `categorical` must not include them.
+    """
+    for k, (it, codes) in enumerate(targets):
+        for ib, x in numeric:
+            v, nobs = correlation_ratio(x, codes)
+            if np.isfinite(v):
+                yield Assoc(ib, it, "correlation_ratio", v, nobs)
+        for ib, c in [*categorical, *targets[k + 1:]]:
+            v = cramers_v(codes, c)
+            if np.isfinite(v):
+                yield Assoc(it, ib, "cramers_v", v, int(codes.size))

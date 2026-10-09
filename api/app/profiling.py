@@ -403,6 +403,22 @@ def _codes(s: pl.Series, max_levels: int) -> np.ndarray:
     return mapped.fill_null(missing).to_numpy().astype(np.int32)
 
 
+def corr_vector(s: pl.Series, t: str, datetime_format: str | None, corr_idx: np.ndarray | None,
+                corr_max_levels: int) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """(numeric, codes) association-sample vectors for a column already typed `t`, as profile_column builds them."""
+    if s.dtype.is_float():
+        s = s.fill_nan(None)
+    if corr_idx is not None:
+        s = s.gather(corr_idx)
+    if t in NUMERIC:
+        return coerce_numeric(s).to_numpy().astype(np.float64), None
+    if t == "datetime":
+        return parse_datetime(s, datetime_format).dt.epoch("s").cast(pl.Float64).to_numpy().astype(np.float64), None
+    if t in ("categorical", "binary"):
+        return None, _codes(s, corr_max_levels)
+    return None, None
+
+
 # --------------------------------------------------------------------------- driver
 def profile_column(
     s: pl.Series,

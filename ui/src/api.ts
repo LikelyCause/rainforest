@@ -1,5 +1,5 @@
 import type {
-  Correlation, Dataset, DecisionInput, Decision, ExportJob, ExportPreview, FieldFilter,
+  BulkRequest, BulkResult, Correlation, Dataset, DecisionInput, Decision, ExportJob, ExportPreview, FieldFilter,
   FieldListItem, FieldResponse, ModelOption, ModelRun, OptionCatalog, SqlResult, Summary,
 } from "./types";
 
@@ -32,8 +32,8 @@ export const api = {
   options: () => request<OptionCatalog>("/api/options"),
   datasets: () => request<Dataset[]>("/api/datasets"),
   dataset: (id: number) => request<Dataset>(`/api/datasets/${id}`),
-  deleteDataset: (id: number) => request<void>(`/api/datasets/${id}`, { method: "DELETE" }),
-  patchDataset: (id: number, data: { model_family?: string; name?: string }) =>
+  deleteDataset: (id: number) => request<{ fields: number; exports: number; runs: number }>(`/api/datasets/${id}`, { method: "DELETE" }),
+  patchDataset: (id: number, data: { model_family?: string; name?: string; target_columns?: string[] }) =>
     request<Dataset>(`/api/datasets/${id}`, json("PATCH", data)),
   createSample: (data: { rows: number; fields: number; seed: number; target_kind: string }) =>
     request<Dataset>("/api/datasets/sample", json("POST", data)),
@@ -44,8 +44,10 @@ export const api = {
     request<Correlation[]>(`/api/fields/${fieldId}/correlations?limit=${limit}`),
   saveDecision: (fieldId: number, d: DecisionInput & { family: string }) =>
     request<Decision>(`/api/fields/${fieldId}/decision`, json("PUT", d)),
-  bulk: (datasetId: number, data: { field_ids: number[]; accept_suggestion?: boolean; action?: string; reviewed?: boolean }) =>
-    request<{ updated: number }>(`/api/datasets/${datasetId}/decisions/bulk`, json("POST", data)),
+  bulk: (datasetId: number, data: BulkRequest) =>
+    request<BulkResult>(`/api/datasets/${datasetId}/decisions/bulk`, json("POST", data)),
+  bulkUndo: (datasetId: number, batchId: string) =>
+    request<{ restored: number }>(`/api/datasets/${datasetId}/decisions/bulk/${batchId}/undo`, { method: "POST" }),
   queryFields: (datasetId: number, data: { filters: FieldFilter[]; order_by: string; descending: boolean; limit?: number }) =>
     request<Record<string, unknown>[]>(`/api/datasets/${datasetId}/fields/query`, json("POST", data)),
   sql: (sql: string) => request<SqlResult>("/api/sql", json("POST", { sql })),

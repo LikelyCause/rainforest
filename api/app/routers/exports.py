@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 import traceback
@@ -61,6 +62,18 @@ def preview(dataset_id: int, family: str | None = None) -> dict:
     by_type: dict[str, int] = {}
     for r in keep:
         by_type[r["semantic_type"]] = by_type.get(r["semantic_type"], 0) + 1
+    last = fetch_one(
+        """SELECT e.id, e.created_at, e.status,
+                  (SELECT count(*) FROM meta.fields f
+                     JOIN meta.field_decisions d ON d.field_id = f.id
+                     LEFT JOIN meta.field_settings s ON s.field_id = f.id AND s.family = e.model_family
+                    WHERE f.dataset_id = e.dataset_id
+                      AND (d.updated_at > e.created_at OR s.updated_at > e.created_at)) AS changed
+             FROM meta.exports e
+            WHERE e.dataset_id = %s AND e.model_family = %s AND e.status = 'done'
+            ORDER BY e.created_at DESC, e.id DESC LIMIT 1""",
+        (dataset_id, fam),
+    )
     blocking = [m for m, bad in [("No target selected", not targets), ("No features kept", not keep)] if bad]
     if invalid:
         blocking.append(f"{len(invalid)} field(s) have settings that aren't valid for {FAMILIES[fam]['label'].lower()}: "
@@ -75,6 +88,8 @@ def preview(dataset_id: int, family: str | None = None) -> dict:
         "unreviewed": len(unreviewed),
         "warnings": warnings,
         "blocking": blocking,
+        "last_export": None if last is None else {k: last[k] for k in ("id", "created_at", "status")},
+        "changed_since_export": None if last is None else last["changed"],
     }
 
 
@@ -101,9 +116,10 @@ def start_export(dataset_id: int, req: ExportRequest) -> dict:
 
 @router.get("/datasets/{dataset_id}/exports")
 def list_exports(dataset_id: int) -> list[dict]:
-    return fetch_all(
+    rows = fetch_all(
         "SELECT * FROM meta.exports WHERE dataset_id = %s ORDER BY created_at DESC", (dataset_id,)
     )
+    return [_backfill_features_by_type(e) for e in rows]
 
 
 @router.get("/exports/{export_id}")
@@ -111,7 +127,37 @@ def get_export(export_id: int) -> dict:
     exp = fetch_one("SELECT * FROM meta.exports WHERE id = %s", (export_id,))
     if exp is None:
         raise HTTPException(404, "Export not found")
-    return exp
+    return _backfill_features_by_type(exp)
+
+
+def features_by_type(manifest: dict) -> dict[str, dict[str, int]]:
+    """Input fields and the output features they expand into, per semantic type."""
+    type_of = {f["name"]: f["semantic_type"] for f in manifest["fields"]}
+    out: dict[str, dict[str, int]] = {}
+    for t in type_of.values():
+        out.setdefault(t, {"fields": 0, "features": 0})["fields"] += 1
+    for source in manifest["feature_source_field"].values():
+        t = type_of.get(source)
+        if t is not None:
+            out[t]["features"] += 1
+    return out
+
+
+def _backfill_features_by_type(exp: dict) -> dict:
+    """Exports made before features_by_type existed get it from their saved manifest, once."""
+    summary = exp.get("summary")
+    if exp["status"] != "done" or not isinstance(summary, dict) or "features_by_type" in summary:
+        return exp
+    try:
+        manifest = json.loads((Path(exp["output_dir"]) / "manifest.json").read_text())
+        by_type = features_by_type(manifest)
+    except (OSError, ValueError, KeyError, TypeError):
+        return exp
+    execute(
+        "UPDATE meta.exports SET summary = summary || %s WHERE id = %s",
+        (jsonb({"features_by_type": by_type}), exp["id"]),
+    )
+    return {**exp, "summary": {**summary, "features_by_type": by_type}}
 
 
 @router.get("/exports/{export_id}/files/{kind}")
@@ -178,6 +224,7 @@ def _run(export_id: int) -> None:
             "fit_sample_rows": manifest["fit_sample_rows"],
             "model_family": fam,
             "contains_nan": manifest["contains_nan"],
+            "features_by_type": features_by_type(manifest),
             "train_command": f"docker compose exec api python -m app.modeling.train --export-id {export_id}"
                              + ("" if fam == "tree" else f" --model {'logistic_regression' if fam == 'linear' else 'mlp'}"),
         }
