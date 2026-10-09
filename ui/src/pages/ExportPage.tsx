@@ -184,7 +184,9 @@ function CopyCommand({ command }: { command: string }) {
 function TrainForm({ e, targets, onStarted }: { e: ExportJob; targets: string[]; onStarted: (r: ModelRun) => void }) {
   const qc = useQueryClient();
   const models = useQuery({ queryKey: ["exportModels", e.id], queryFn: () => api.modelsForExport(e.id), staleTime: 60_000 });
+  const system = useQuery({ queryKey: ["system"], queryFn: api.system, staleTime: Infinity });
   const [model, setModel] = useState("");
+  const [gpuOn, setGpuOn] = useState(false);
   const [reverse, setReverse] = useState(false);
   const [showAll, setShowAll] = useState(false);
   useEffect(() => {
@@ -194,7 +196,7 @@ function TrainForm({ e, targets, onStarted }: { e: ExportJob; targets: string[];
     }
   }, [model, models.data, e.model_family]);
   const start = useMutation({
-    mutationFn: () => api.startRun(e.id, { model, order: reverse ? [...targets].reverse() : targets, cv: 5 }),
+    mutationFn: () => api.startRun(e.id, { model, order: reverse ? [...targets].reverse() : targets, cv: 5, device: useGpu ? "cuda" : "cpu" }),
     onSuccess: (run) => {
       qc.setQueryData<ModelRun[]>(["runs", e.dataset_id], (old) => [run, ...(old ?? []).filter((r) => r.id !== run.id)]);
       qc.invalidateQueries({ queryKey: ["runs", e.dataset_id] });
@@ -203,6 +205,9 @@ function TrainForm({ e, targets, onStarted }: { e: ExportJob; targets: string[];
   });
   const shown = models.data?.filter((m) => showAll || m.compatible) ?? [];
   const selected = models.data?.find((m) => m.key === model);
+  const gpu = system.data?.gpu;
+  const gpuChoice = Boolean(gpu?.available && selected?.devices?.includes("cuda"));
+  const useGpu = gpuChoice && gpuOn;
   return (
     <>
       <label className="field">Model
@@ -211,6 +216,18 @@ function TrainForm({ e, targets, onStarted }: { e: ExportJob; targets: string[];
         </select>
       </label>
       {selected && <span className="muted small-text">{selected.description}</span>}
+      {gpuChoice && gpu && (
+        <div className="stack" style={{ gap: 4 }}>
+          <span className="secondary small-text" id={`device-label-${e.id}`}>Train on</span>
+          <div className="segmented soft" role="radiogroup" aria-labelledby={`device-label-${e.id}`}>
+            {([false, true] as const).map((on) => (
+              <button key={String(on)} type="button" role="radio" aria-checked={gpuOn === on} className={gpuOn === on ? "on" : ""}
+                onClick={() => setGpuOn(on)}>{on ? "GPU" : "CPU"}</button>
+            ))}
+          </div>
+          <span className="muted small-text num">{gpu.name}{gpu.memory_mb ? ` · ${fmtInt(Math.round(gpu.memory_mb / 1024))} GB` : ""}</span>
+        </div>
+      )}
       {models.data?.some((m) => !m.compatible) && (
         <label className="check small-text"><input type="checkbox" checked={showAll} onChange={(ev) => setShowAll(ev.target.checked)} /> show incompatible models</label>
       )}
@@ -336,7 +353,7 @@ function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: 
   return (
     <>
       <tr className="group-head">
-        <td colSpan={5 + targets.length * 2}>
+        <td colSpan={6 + targets.length * 2}>
           Export #{e.id} · {familyShort(e.model_family)}{sc ? ` · ${fmtInt(sc.train)} / ${fmtInt(sc.valid)} / ${fmtInt(sc.test)}` : ""}
         </td>
       </tr>
@@ -356,10 +373,11 @@ function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: 
               {targets.map((t) => <Fragment key={t + "a"}>{cell(r, t, "auc")}</Fragment>)}
               {targets.map((t) => <Fragment key={t + "f"}>{cell(r, t, "f1")}</Fragment>)}
               <td className="num">{r.report?.fit_seconds !== undefined ? `${fmtNum(r.report.fit_seconds, 2)}s` : "—"}</td>
+              <td>{(r.report?.device ?? r.config?.device) === "cuda" ? <span className="badge accent">GPU</span> : <span className="muted small-text">CPU</span>}</td>
               <td>{r.status === "done" && <a href={`/api/runs/${r.id}/files/model`} onClick={(ev) => ev.stopPropagation()}>model</a>}</td>
             </tr>
             {open === r.id && (
-              <tr className="run-detail"><td colSpan={5 + targets.length * 2}><RunDetail run={r} targets={order} /></td></tr>
+              <tr className="run-detail"><td colSpan={6 + targets.length * 2}><RunDetail run={r} targets={order} /></td></tr>
             )}
           </Fragment>
         );
@@ -421,7 +439,7 @@ export function ExportPage() {
                   <th>Model</th><th>Chain order</th><th>Status</th>
                   {headTargets.map((t) => <th key={"a" + t} className="num">{t} AUC</th>)}
                   {headTargets.map((t) => <th key={"f" + t} className="num">{t} F1 (macro)</th>)}
-                  <th className="num">Fit</th><th />
+                  <th className="num">Fit</th><th>Device</th><th />
                 </tr>
               </thead>
               <tbody>

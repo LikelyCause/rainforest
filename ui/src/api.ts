@@ -1,6 +1,6 @@
 import type {
   Analysis, AnalysisKind, AnalysisParams, CorrMatrix, BulkRequest, BulkResult, Correlation, Dataset, DecisionInput, Decision, ExportJob, ExportPreview, FieldFilter,
-  FieldListItem, FieldResponse, ModelOption, ModelRun, OptionCatalog, SqlResult, Summary,
+  FieldListItem, FieldResponse, ModelOption, ModelRun, OptionCatalog, SqlResult, Summary, SystemInfo, Device,
 } from "./types";
 
 export class ApiError extends Error {
@@ -9,11 +9,29 @@ export class ApiError extends Error {
   }
 }
 
+/** Where to send the user back to after signing in; only same-app paths. */
+export function safeNext(next: string | null): string {
+  return next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/login") ? next : "/";
+}
+
+let unauthorizedHandler = (next: string) => window.location.assign(`/login?next=${encodeURIComponent(next)}`);
+
+/** App.tsx swaps in a router navigation so a lapsed session doesn't reload the page. */
+export function setUnauthorizedHandler(fn: (next: string) => void) {
+  unauthorizedHandler = fn;
+}
+
+function signedOut() {
+  if (window.location.pathname === "/login") return;
+  unauthorizedHandler(window.location.pathname + window.location.search);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
     headers: init?.body instanceof FormData ? init.headers : { "content-type": "application/json", ...init?.headers },
   });
+  if (res.status === 401 && path !== "/api/auth/login") signedOut();
   if (res.status === 204) return undefined as T;
   const body = await res.json().catch(() => null);
   if (!res.ok) {
@@ -29,6 +47,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const json = (method: string, data: unknown): RequestInit => ({ method, body: JSON.stringify(data) });
 
 export const api = {
+  me: () => request<{ user: string }>("/api/auth/me"),
+  login: (username: string, password: string) =>
+    request<{ user: string }>("/api/auth/login", json("POST", { username, password })),
+  logout: () => request<void>("/api/auth/logout", { method: "POST" }),
   options: () => request<OptionCatalog>("/api/options"),
   datasets: () => request<Dataset[]>("/api/datasets"),
   dataset: (id: number) => request<Dataset>(`/api/datasets/${id}`),
@@ -58,7 +80,8 @@ export const api = {
   startExport: (id: number, cfg: Record<string, number | string>) =>
     request<ExportJob>(`/api/datasets/${id}/exports`, json("POST", cfg)),
   modelsForExport: (exportId: number) => request<ModelOption[]>(`/api/exports/${exportId}/models`),
-  startRun: (exportId: number, data: { model: string; order?: string[]; cv?: number; params?: Record<string, unknown> }) =>
+  system: () => request<SystemInfo>("/api/system"),
+  startRun: (exportId: number, data: { model: string; order?: string[]; cv?: number; params?: Record<string, unknown>; device?: Device }) =>
     request<ModelRun>(`/api/exports/${exportId}/runs`, json("POST", data)),
   runs: (datasetId: number) => request<ModelRun[]>(`/api/datasets/${datasetId}/runs`),
   createAnalysis: (datasetId: number, data: { kind: AnalysisKind; params: AnalysisParams; recompute?: boolean }) =>
@@ -87,6 +110,7 @@ export function uploadDataset(
     xhr.onload = () => {
       let body: any = null;
       try { body = JSON.parse(xhr.responseText); } catch { /* non-JSON error page */ }
+      if (xhr.status === 401) signedOut();
       if (xhr.status >= 200 && xhr.status < 300) resolve(body);
       else reject(new ApiError(typeof body?.detail === "string" ? body.detail : `Upload failed (${xhr.status})`, xhr.status));
     };
