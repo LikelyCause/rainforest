@@ -93,7 +93,7 @@ families' settings are re-derived for the new type.
 | Text | TF-IDF → 32 SVD components | same | same |
 | Dates | year, month, day, weekday, hour, day-of-year, epoch days | + median impute + scaling | same |
 
-\* XGBoost is optional: `API_EXTRA_PIP=xgboost docker compose build api` (or set it in `.env`).
+\* XGBoost trains on the CPU in the default image and on an NVIDIA GPU in the GPU image (see [GPU](#gpu)).
 
 In the UI, settings a family doesn't use appear as a locked line with the reason, for example *"Not used for tree
 models — they split on value order, so rescaling changes nothing."* The API rejects them too
@@ -169,11 +169,55 @@ make train EXPORT=1                          # LightGBM
 make train EXPORT=1 MODEL=random_forest
 docker compose exec api python -m app.modeling.train --export-id 1 --model xgboost \
     --order column_b,column_a --param n_estimators=1000 --param learning_rate=0.03
-make models                                  # what's registered / installed
+make train EXPORT=1 MODEL=xgboost DEVICE=cuda  # GPU image only
+make models                                  # what's registered / installed, and on which devices
 ```
 
 **Adding a model** means adding one `ModelSpec` to `api/app/modeling/registry.py`: key, family, NaN support,
 builder, default parameters and how to read importances. It then appears in the CLI, the API and the UI.
+
+## GPU
+
+XGBoost can train on an NVIDIA GPU. The default image ships the 5 MB CPU build (`xgboost-cpu`); the GPU image swaps
+in the CUDA build (`xgboost`, built with CUDA 13.3), which adds about 800 MB, mostly its NCCL dependency. Training
+on the GPU is a per-run choice: when the API sees a usable GPU, *Train ▾* shows a CPU / GPU switch with the GPU's
+name for models that support it (XGBoost: `device="cuda"`, `tree_method="hist"`). The runs table has a Device column, and each run's
+`report.json` records `device`. Other models always train on the CPU.
+
+**Host prerequisites**
+
+* NVIDIA driver **580 or newer** for the default CUDA 13 build. Blackwell cards (RTX 50xx) need the open kernel
+  modules (`nvidia-open`). With a 570–579 driver, build with `XGBOOST_GPU_PKG=xgboost-cu12==3.4.1` (CUDA 12.9).
+* [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html),
+  registered with Docker:
+
+  ```bash
+  sudo nvidia-ctk runtime configure --runtime=docker
+  sudo systemctl restart docker
+  ```
+
+* Check that containers can see the GPU:
+
+  ```bash
+  docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi
+  ```
+
+The host needs no CUDA toolkit: the XGBoost wheel bundles its CUDA runtime, and the toolkit mounts the driver.
+
+**Start**
+
+```bash
+make up-gpu      # docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+make gpu-check   # what the API sees: name, memory, driver, and whether XGBoost can use it
+```
+
+`docker-compose.gpu.yml` builds the API with `GPU=1` and reserves the host's GPUs for it. `GET /api/system` reports
+`{"gpu": null}` when no GPU is visible, or the GPU with `available: false` and a `reason` when XGBoost can't use it
+(CPU build, driver too old). The API detects this once per worker with a one-tree test fit, because XGBoost
+otherwise falls back to the CPU silently. A GPU run that falls back anyway fails rather than being recorded as a GPU
+run. Going back to the CPU image is `make up`.
+
+Not included: GPU-accelerated Explore (RAPIDS cuML for UMAP and clustering) is a possible later phase.
 
 ## Querying
 
@@ -225,7 +269,8 @@ Compose settings, read from `.env` (see `.env.example`):
 | `UI_PORT`, `API_PORT`, `DB_PORT` | 8080, 8000, 5432 | published ports (`API_PORT` and `DB_PORT` bind to 127.0.0.1) |
 | `API_WORKERS` / `JOB_WORKERS` | 2 / 2 | uvicorn workers / background job threads per worker |
 | `LOG_LEVEL` | info | API log level |
-| `API_EXTRA_PIP` | – | extra packages baked into the API image (e.g. `xgboost`) |
+| `API_EXTRA_PIP` | – | extra packages baked into the API image (e.g. `catboost`) |
+| `XGBOOST_GPU_PKG` | `xgboost==3.4.1` | the CUDA XGBoost package for the GPU image (`xgboost-cu12==3.4.1` for 570–579 drivers) |
 
 The API reads further settings from its environment (`api/app/config.py`). Compose doesn't pass these through from
 `.env`, so set them under the `api` service's `environment:`:
