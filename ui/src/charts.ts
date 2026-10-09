@@ -4,13 +4,13 @@ import type { ChartTheme } from "./theme";
 import { fmtCompact, fmtInt, fmtNum, fmtPct, METHOD_LABEL } from "./format";
 
 // Tooltips render HTML; dataset values and column names are untrusted (#9).
-const esc = (v: unknown) =>
+export const esc = (v: unknown) =>
   String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 const BAR_RADIUS_UP: [number, number, number, number] = [4, 4, 0, 0];
-const BAR_RADIUS_RIGHT: [number, number, number, number] = [0, 4, 4, 0];
+export const BAR_RADIUS_RIGHT: [number, number, number, number] = [0, 4, 4, 0];
 
-function base(t: ChartTheme): EChartsCoreOption {
+export function base(t: ChartTheme): EChartsCoreOption {
   return {
     // No morphing between fields: the previous field's bars must never ghost behind the new ones.
     animation: false,
@@ -25,7 +25,7 @@ function base(t: ChartTheme): EChartsCoreOption {
   };
 }
 
-const axisCommon = (t: ChartTheme) => ({
+export const axisCommon = (t: ChartTheme) => ({
   axisLine: { lineStyle: { color: t.grid } },
   axisTick: { show: false },
   axisLabel: { color: t.textMuted, fontSize: 11 },

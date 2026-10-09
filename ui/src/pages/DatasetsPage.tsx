@@ -56,7 +56,7 @@ function TargetPicker({ ds, onClose }: { ds: Dataset; onClose: () => void }) {
   const save = useMutation({
     mutationFn: (names: string[]) => api.patchDataset(ds.id, { target_columns: names }),
     onSuccess: () => {
-      for (const k of ["datasets", "dataset", "fields", "field", "corr"]) qc.invalidateQueries({ queryKey: [k] });
+      for (const k of ["datasets", "dataset", "fields", "field", "corr", "corrMatrix", "analysis"]) qc.invalidateQueries({ queryKey: [k] });
       onClose();
     },
   });
@@ -235,7 +235,8 @@ export function DatasetsPage() {
   const fileInput = useRef<HTMLInputElement>(null);
   const upload = useUpload();
   const [dragging, setDragging] = useState(false);
-  const [targetFor, setTargetFor] = useState<number | null>(null);
+  // ?target=<dataset id> opens that dataset's target picker (linked from Explore).
+  const [targetFor, setTargetFor] = useState<number | null>(() => Number(new URLSearchParams(window.location.search).get("target")) || null);
   const [renaming, setRenaming] = useState<number | null>(null);
   const [deleting, setDeleting] = useState<Dataset | null>(null);
   const [fresh, setFresh] = useState<number | null>(null);

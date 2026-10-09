@@ -7,6 +7,7 @@ import { DatasetsPage } from "./pages/DatasetsPage";
 import { ReviewPage } from "./pages/ReviewPage";
 import { BulkEditPage } from "./pages/BulkEditPage";
 import { ExportPage } from "./pages/ExportPage";
+import { ExplorePage } from "./pages/ExplorePage";
 import { DatasetLayout } from "./components/DatasetLayout";
 import { ReviewMeter } from "./components/ui";
 import { familyShort } from "./format";
@@ -78,7 +79,7 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
   const nextTodo = all.find((f) => !f.reviewed);
   const step = ({ isActive }: { isActive: boolean }) => `step${isActive ? " active" : ""}`;
 
-  // U jumps back into review from Bulk edit and Export, matching its meaning on the Review page.
+  // U jumps back into review from Bulk edit, Explore and Export, matching its meaning on the Review page.
   useEffect(() => {
     if (onReview) return;
     const onKey = (e: KeyboardEvent) => {
@@ -98,6 +99,7 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
           <ReviewMeter kept={kept} dropped={dropped} targets={targets} total={all.length} />
         </NavLink>
         <NavLink to={`/d/${ds.id}/bulk`} className={step}><span>Bulk edit</span></NavLink>
+        <NavLink to={`/d/${ds.id}/explore`} className={step}><span>Explore</span></NavLink>
         <NavLink to={`/d/${ds.id}/export`} className={step}>
           <span><span className="n">2</span>Export &amp; train{running > 0 && <span className="badge accent" style={{ marginLeft: 6 }} title={`${running} running`}>{running}</span>}</span>
         </NavLink>
@@ -175,6 +177,7 @@ export default function App() {
             <Route path="review/:fieldId?" element={<ReviewPage />} />
             <Route path="bulk" element={<BulkEditPage />} />
             <Route path="query" element={<Navigate to="../bulk" replace />} />
+            <Route path="explore/:view?" element={<ExplorePage />} />
             <Route path="export" element={<ExportPage />} />
           </Route>
           <Route path="*" element={<div className="empty">Page not found. <NavLink to="/">Go home</NavLink></div>} />

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { useOptions } from "../hooks";
+import { useDebounced, useOptions } from "../hooks";
 import { useDatasetContext } from "../components/DatasetLayout";
 import { Empty, ErrorAlert, StatusGlyph, glyphFor } from "../components/ui";
 import { fmtNum, fmtPct, TYPE_SHORT } from "../format";
@@ -95,15 +95,6 @@ function useFinderState() {
   };
 }
 
-function useDebounced<T>(value: T, ms: number): T {
-  const [v, setV] = useState(value);
-  useEffect(() => {
-    const t = window.setTimeout(() => setV(value), ms);
-    return () => window.clearTimeout(t);
-  }, [value, ms]);
-  return v;
-}
-
 /** Freeze a list of fields as a Review working set and open the first one still to do. */
 export function useOpenWorkingSet(datasetId: number) {
   const nav = useNavigate();
@@ -146,7 +137,7 @@ function FieldFinder({ datasetId, presetLabel }: { datasetId: number; presetLabe
 
   const [pending, setPending] = useState<{ action: BulkAction; preview: BulkResult } | null>(null);
   const invalidate = () => {
-    for (const k of ["fields", "summary", "fieldQuery", "exportPreview"]) qc.invalidateQueries({ queryKey: [k, datasetId] });
+    for (const k of ["fields", "summary", "fieldQuery", "exportPreview", "corrMatrix", "analysis"]) qc.invalidateQueries({ queryKey: [k, datasetId] });
     qc.invalidateQueries({ queryKey: ["field"] });
   };
   const request = (a: BulkAction, dry_run: boolean) =>
