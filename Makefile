@@ -1,4 +1,4 @@
-.PHONY: up down logs ps train models test psql sample-csv clean
+.PHONY: up down logs ps train models test test-db psql sample-csv clean
 
 up:            ## build and start everything (UI on :8080)
 	docker compose up -d --build
@@ -26,8 +26,15 @@ sample-csv:    ## write a 200k-row sample CSV to ./sample.csv for testing upload
 	docker compose exec api python -m app.sample_data --rows 200000 --out /data/sample.csv
 	docker compose cp api:/data/sample.csv ./sample.csv
 
-test:          ## run API unit tests locally (needs `pip install -r api/requirements-dev.txt`)
+test:          ## run API unit tests locally (needs `pip install -r api/requirements-dev.txt`); DB-backed tests skip
 	cd api && pytest -q
+
+TEST_PG_PORT ?= 55432
+test-db:       ## run the full API suite against a throwaway Postgres container
+	docker run -d --rm --name rainforest-testpg -e POSTGRES_PASSWORD=test -p 127.0.0.1:$(TEST_PG_PORT):5432 postgres:16 >/dev/null
+	until docker exec rainforest-testpg pg_isready -q; do sleep 1; done
+	cd api && RAINFOREST_TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:$(TEST_PG_PORT)/postgres pytest -q; \
+	  status=$$?; docker rm -f rainforest-testpg >/dev/null; exit $$status
 
 clean:         ## stop and DELETE all data volumes
 	docker compose down -v

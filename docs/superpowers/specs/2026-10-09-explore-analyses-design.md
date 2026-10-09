@@ -17,7 +17,7 @@ Views:
    panel with both fields' values, the method, n, and links to Review. Raw mode only; reads `meta.field_correlations`, no job.
    Default cap: the 60 fields most associated with the target (or highest max association with no target).
 2. **Map**: 2-D embedding scatter coloured by target. t-SNE default (PCA to 50 first, perplexity control), UMAP optional
-   (n_neighbors control). Fixed seed. Hover shows the row's target and top-variance values.
+   (n_neighbors control). Fixed seed. Hover shows the row's target and the 5 fields with the largest weight in the first two principal components.
 3. **Feature tests**: needs a target. Ranked table: field, test, statistic, effect size, BH-adjusted p, n. Detail panel:
    box plots per class (numeric field) or stacked level bars (categorical field).
    - numeric field × categorical target: one-way ANOVA + Kruskal-Wallis, effect η²
@@ -56,12 +56,12 @@ API:
   else creates one and submits a job. Response adds `stale: bool` (done row exists only for an older version — returned with
   `stale: true` and no new job unless recompute) so the UI can show "out of date · Recompute".
 - `GET /api/analyses/{id}` → row (for polling).
-- `GET /api/datasets/{id}/explore/correlations?kept=0|1&target=&limit=60&add=<field ids>` → `{fields: [{id, name, type}], order:
+- `GET /api/datasets/{id}/explore/correlations?kept=0|1&target=&limit=60&add=<field ids>` → `{fields: [{id, name, type, action}], order:
   [ids], cells: [{a, b, method, value, strength, n}] }` with clustered order.
 - Not-enough-data cases return the row with status `failed` and `error` beginning "Not enough" plus `result.reason`; never 500.
 
-One running analysis per dataset: a new job request cancels (marks failed "Superseded") older pending/running rows for that
-dataset; jobs check their row status between steps and stop when superseded. Startup marks interrupted running rows failed.
+One running analysis per dataset and kind: a new job request cancels (marks failed "Superseded") older pending/running rows
+of the same kind for that dataset; jobs check their row status between steps and stop when superseded. Startup marks interrupted running rows failed.
 Prune: keep the newest 3 rows per (dataset, kind) that are not current. Dataset delete cascades.
 
 ## Dependencies
