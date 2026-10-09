@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
 import type { Dataset } from "./types";
@@ -16,3 +17,12 @@ export const useDataset = (id: number, enabled = true) =>
 
 export const useFields = (id: number, enabled = true) =>
   useQuery({ queryKey: ["fields", id], queryFn: () => api.fields(id), enabled });
+
+export function useDebounced<T>(value: T, ms: number): T {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = window.setTimeout(() => setV(value), ms);
+    return () => window.clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}

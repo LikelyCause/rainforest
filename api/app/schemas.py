@@ -90,3 +90,43 @@ class RunRequest(BaseModel):
     cv: int = Field(5, ge=0, le=10)
     seed: int = 42
     params: dict[str, Any] = Field(default_factory=dict)
+
+
+class AnalysisParams(BaseModel):
+    data: str = Field("raw", pattern=r"^(raw|export:\d+)$")
+    kept: bool = False
+    target: str | None = Field(None, max_length=500)
+    sample: int = Field(5_000, ge=1_000, le=20_000)
+    method: Literal["tsne", "umap"] = "tsne"
+    perplexity: int = Field(30, ge=5, le=100)
+    n_neighbors: int = Field(15, ge=5, le=100)
+
+    def normalised(self, kind: str) -> dict[str, Any]:
+        """Only the keys that change the result for `kind`, so equivalent requests share a cache key."""
+        out: dict[str, Any] = {"data": self.data, "kept": self.kept and self.data == "raw",
+                               "target": self.target or None, "sample": self.sample}
+        if kind == "map":
+            out["method"] = self.method
+            if self.method == "tsne":
+                out["perplexity"] = self.perplexity
+            else:
+                out["n_neighbors"] = self.n_neighbors
+        return out
+
+
+class AnalysisRequest(BaseModel):
+    kind: Literal["map", "tests", "importance"]
+    params: AnalysisParams = Field(default_factory=AnalysisParams)
+    recompute: bool = False
+
+
+class CorrelationQuery(BaseModel):
+    kept: bool = False
+    target: str | None = Field(None, max_length=500)
+    limit: int = Field(60, ge=2, le=400)
+    add: str | None = Field(None, pattern=r"^\s*\d+(\s*,\s*\d+)*\s*$|^\s*$",
+                            description="Comma-separated field ids to include beyond the limit")
+
+    @property
+    def add_ids(self) -> list[int]:
+        return list(dict.fromkeys(int(v) for v in (self.add or "").split(",") if v.strip()))

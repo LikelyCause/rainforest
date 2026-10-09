@@ -9,7 +9,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 from . import db, jobs
 from .config import get_settings
-from .routers import datasets, exports, fields, query, runs
+from .routers import datasets, explore, exports, fields, query, runs
 from .semantics import option_catalog
 
 logging.basicConfig(
@@ -45,6 +45,7 @@ app.include_router(fields.router)
 app.include_router(query.router)
 app.include_router(exports.router)
 app.include_router(runs.router)
+app.include_router(explore.router)
 
 
 @app.get("/health", tags=["meta"])

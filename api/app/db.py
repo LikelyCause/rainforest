@@ -152,7 +152,7 @@ def mark_interrupted_jobs() -> None:
                 WHERE status IN ('pending', 'ingesting', 'profiling', 'correlating')
                   AND updated_at < now() - interval '2 minutes'"""
         )
-        for table in ("exports", "model_runs"):
+        for table in ("exports", "model_runs", "analyses"):
             conn.execute(
                 sql.SQL(
                     """UPDATE meta.{} SET status = 'failed', error = 'Interrupted by an API restart.',

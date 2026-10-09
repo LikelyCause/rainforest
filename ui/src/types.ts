@@ -300,3 +300,97 @@ export interface BulkResult {
   transitions: Record<string, number>;
   changes: { field_id: number; name: string; before: { action: Action; semantic_type: string; reviewed: boolean }; after: { action: Action; semantic_type: string; reviewed: boolean } }[];
 }
+
+export type AnalysisKind = "map" | "tests" | "importance";
+export type TargetKind = "categorical" | "numeric" | null;
+
+export interface AnalysisParams {
+  data: string;
+  kept: boolean;
+  target: string | null;
+  sample: number;
+  method?: "tsne" | "umap";
+  perplexity?: number;
+  n_neighbors?: number;
+}
+
+export interface Skipped { name: string; reason: string }
+
+export interface MapResult {
+  method: string;
+  n: number;
+  target: string | null;
+  target_kind: TargetKind;
+  classes: string[];
+  points: [number, number, number | null][];
+  hover_fields: string[];
+  hover_values: (string | number | null)[][];
+  skipped: Skipped[];
+}
+
+export type TestDetail =
+  | { kind: "box"; groups: { class: string; n: number; min: number; q1: number; median: number; q3: number; max: number }[] }
+  | { kind: "levels"; levels: string[]; counts: number[][] }
+  | { kind: "scatter"; points: [number, number][] };
+
+export interface TestRow {
+  field_id: number | null;
+  name: string;
+  type: string;
+  test: string;
+  statistic: number | null;
+  p: number | null;
+  p_adj: number | null;
+  effect: number | null;
+  effect_name: string;
+  n: number;
+  secondary: { test: string; statistic: number | null; p: number | null } | null;
+  detail: TestDetail | null;
+}
+
+export interface TestsResult {
+  target: string;
+  target_kind: TargetKind;
+  classes: string[];
+  excluded_classes: { name: string; n: number }[];
+  n: number;
+  rows: TestRow[];
+  skipped: Skipped[];
+}
+
+export interface ImportanceResult {
+  target: string | null;
+  target_kind: TargetKind;
+  n: number;
+  mi: { field_id: number | null; name: string; value: number }[];
+  pca: {
+    n_features: number;
+    explained: number[];
+    cumulative: number[];
+    components: { index: number; loadings: { feature: string; value: number }[] }[];
+  } | null;
+  skipped: Skipped[];
+}
+
+export type NotEnoughReason = "no_target" | "too_few_fields" | "too_few_rows" | "single_class";
+
+export interface Analysis<R = unknown> {
+  id: number;
+  dataset_id: number;
+  kind: AnalysisKind;
+  params: AnalysisParams;
+  status: "pending" | "running" | "done" | "failed";
+  progress: number;
+  status_message: string | null;
+  error: string | null;
+  result: R | { reason?: NotEnoughReason } | null;
+  created_at: string;
+  finished_at: string | null;
+  stale?: boolean;
+}
+
+export interface CorrMatrix {
+  fields: { id: number; name: string; type: string; action: Action }[];
+  order: number[];
+  cells: { a: number; b: number; method: CorrMethod; value: number; strength: number; n: number }[];
+}

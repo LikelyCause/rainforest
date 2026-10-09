@@ -11,6 +11,11 @@ export interface ChartTheme {
   muted: string;
   accentWeak: string;
   target: string;
+  categorical: string[];
+  seq0: string;
+  seqLo: string;
+  seqHi: string;
+  divMid: string;
   font: string;
 }
 
@@ -34,6 +39,11 @@ function read(): ChartTheme {
     muted: color("--series-muted"),
     accentWeak: color("--accent-weak"),
     target: color("--target"),
+    categorical: [1, 2, 3, 4, 5, 6, 7, 8].map((i) => color(`--cat-${i}`)),
+    seq0: color("--seq-0"),
+    seqLo: color("--seq-lo"),
+    seqHi: color("--seq-hi"),
+    divMid: color("--div-mid"),
     font: getComputedStyle(document.documentElement).getPropertyValue("--font").trim(),
   };
   probe.remove();

@@ -1,5 +1,5 @@
 import type {
-  BulkRequest, BulkResult, Correlation, Dataset, DecisionInput, Decision, ExportJob, ExportPreview, FieldFilter,
+  Analysis, AnalysisKind, AnalysisParams, CorrMatrix, BulkRequest, BulkResult, Correlation, Dataset, DecisionInput, Decision, ExportJob, ExportPreview, FieldFilter,
   FieldListItem, FieldResponse, ModelOption, ModelRun, OptionCatalog, SqlResult, Summary,
 } from "./types";
 
@@ -61,6 +61,15 @@ export const api = {
   startRun: (exportId: number, data: { model: string; order?: string[]; cv?: number; params?: Record<string, unknown> }) =>
     request<ModelRun>(`/api/exports/${exportId}/runs`, json("POST", data)),
   runs: (datasetId: number) => request<ModelRun[]>(`/api/datasets/${datasetId}/runs`),
+  createAnalysis: (datasetId: number, data: { kind: AnalysisKind; params: AnalysisParams; recompute?: boolean }) =>
+    request<Analysis>(`/api/datasets/${datasetId}/analyses`, json("POST", data)),
+  analysis: (id: number) => request<Analysis>(`/api/analyses/${id}`),
+  corrMatrix: (datasetId: number, q: { kept: boolean; target: string | null; limit?: number; add?: number[] }) => {
+    const p = new URLSearchParams({ kept: q.kept ? "1" : "0", limit: String(q.limit ?? 60) });
+    if (q.target) p.set("target", q.target);
+    if (q.add?.length) p.set("add", q.add.join(","));
+    return request<CorrMatrix>(`/api/datasets/${datasetId}/explore/correlations?${p}`);
+  },
 };
 
 /** Upload with progress (fetch has no upload progress events). */

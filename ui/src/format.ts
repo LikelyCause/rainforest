@@ -51,3 +51,11 @@ export function fmtAgo(s: string | null): string {
   }
   return fmtDate(s);
 }
+
+/** p-values: 0.042, 3e-5, <1e-300 (float underflow reads as 0). */
+export function fmtP(p: number | null | undefined): string {
+  if (p === null || p === undefined || Number.isNaN(p)) return "—";
+  if (p < 1e-300) return "<1e-300";
+  if (p < 1e-3) return p.toExponential(0);
+  return p.toPrecision(2);
+}
