@@ -320,7 +320,11 @@ export interface TargetEvaluation {
   positive_label: string | null;
   confusion_matrix: number[][]; // rows = actual, columns = predicted
   per_class: { label: string; precision: number; recall: number; f1: number; support: number }[];
+  /** One-vs-rest ROC curve per class (only the positive class for binary targets); absent on older runs. */
+  roc?: RocCurve[];
 }
+
+export interface RocCurve { label: string; auc: number; fpr: number[]; tpr: number[] }
 
 export interface ModelRun {
   id: number;

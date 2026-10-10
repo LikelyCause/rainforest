@@ -1,5 +1,5 @@
 import type { EChartsCoreOption } from "echarts/core";
-import type { BarsChart, Correlation, HistogramChart } from "./types";
+import type { BarsChart, Correlation, HistogramChart, RocCurve } from "./types";
 import type { ChartTheme } from "./theme";
 import { fmtCompact, fmtInt, fmtPct, METHOD_LABEL } from "./format";
 
@@ -152,5 +152,37 @@ export function correlationOption(t: ChartTheme, rows: Correlation[]): EChartsCo
       label: { show: true, position: "right", color: t.textSecondary, fontSize: 11, formatter: (p: any) => p.value.toFixed(2) },
       markLine: anyNegative ? { silent: true, symbol: "none", lineStyle: { color: t.textMuted, width: 1, type: "solid" }, label: { show: false }, data: [{ xAxis: 0 }] } : undefined,
     }],
+  };
+}
+
+/** ROC curves on a square plot with the chance diagonal; one line per class, AUC in the legend. */
+export function rocOption(t: ChartTheme, curves: RocCurve[]): EChartsCoreOption {
+  const single = curves.length === 1;
+  const axis = (name: string, nameGap: number) => ({
+    ...axisCommon(t), type: "value", min: 0, max: 1, interval: 0.25, name, nameLocation: "middle", nameGap,
+    nameTextStyle: { color: t.textMuted, fontSize: 11 },
+  });
+  return {
+    ...base(t),
+    color: single ? [t.series] : t.categorical,
+    grid: { left: 48, right: 12, top: single ? 12 : 36, bottom: 40 },
+    legend: single ? undefined : { data: curves.map((c) => `${c.label} · AUC ${c.auc.toFixed(3)}`), top: 0, textStyle: { color: t.textSecondary, fontSize: 11 }, itemWidth: 14 },
+    tooltip: {
+      ...(base(t).tooltip as object), trigger: "item",
+      formatter: (p: any) => `${esc(p.seriesName)}<br/>false positive rate ${p.value[0].toFixed(3)}<br/>true positive rate ${p.value[1].toFixed(3)}`,
+    },
+    xAxis: axis("False positive rate", 24),
+    yAxis: axis("True positive rate", 34),
+    series: [
+      ...curves.map((c) => ({
+        type: "line", name: single ? `AUC ${c.auc.toFixed(3)}` : `${c.label} · AUC ${c.auc.toFixed(3)}`,
+        data: c.fpr.map((x, i) => [x, c.tpr[i]]), showSymbol: false, lineStyle: { width: 2 },
+        areaStyle: single ? { color: t.accentWeak, opacity: 0.6 } : undefined,
+      })),
+      {
+        type: "line", name: "chance", data: [[0, 0], [1, 1]], showSymbol: false, silent: true,
+        lineStyle: { color: t.textMuted, type: "dashed", width: 1 }, tooltip: { show: false },
+      },
+    ],
   };
 }

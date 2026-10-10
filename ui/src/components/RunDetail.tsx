@@ -1,6 +1,9 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { rocOption } from "../charts";
 import { fmtInt, fmtMetric, fmtPct } from "../format";
-import type { ModelRun, TargetEvaluation } from "../types";
+import { useChartTheme } from "../theme";
+import type { ModelRun, RocCurve, TargetEvaluation } from "../types";
+import { Chart } from "./Chart";
 
 type Split = "test" | "valid";
 
@@ -61,16 +64,39 @@ function ConfusionMatrix({ ev, accuracy }: { ev: TargetEvaluation; accuracy?: nu
   );
 }
 
-function TargetCard({ target, m, ev }: { target: string; m: Record<string, number>; ev?: TargetEvaluation }) {
-  const binary = ev ? ev.labels.length === 2 : "precision" in m;
-  const total = ev?.per_class.reduce((a, c) => a + c.support, 0);
-  const tiles: [string, number | undefined, string?][] = [
+function RocChart({ curves, binary }: { curves: RocCurve[]; binary: boolean }) {
+  const t = useChartTheme();
+  const option = useMemo(() => rocOption(t, curves), [t, curves]);
+  return (
+    <div className="stack" style={{ gap: 4 }}>
+      <span className="muted small-text">
+        ROC curve{binary ? ` · positive class ${curves[0]?.label}` : "s · each class against the rest"}
+      </span>
+      <Chart option={option} height={binary ? 240 : 270} ariaLabel={binary ? "ROC curve" : "ROC curves, one per class"} />
+    </div>
+  );
+}
+
+/** Headline tiles: two rows of four. Precision, recall and F1 are the positive class's for a binary target and the
+ * macro average otherwise. */
+export function headlineTiles(m: Record<string, number>, binary: boolean): [string, number | undefined, string?][] {
+  const avg = binary ? undefined : "Macro average over classes";
+  return [
     ["Accuracy", m.accuracy],
     ["Bal. acc.", m.balanced_accuracy, "Balanced accuracy: the mean of each class's recall"],
     ["ROC AUC", m.roc_auc ?? m.roc_auc_ovr_macro, binary ? undefined : "One-vs-rest, macro-averaged over classes"],
     ["Log loss", m.log_loss],
+    ["Precision", binary ? m.precision : m.precision_macro, avg ?? "Positive class"],
+    ["Recall", binary ? m.recall : m.recall_macro, avg ?? "Positive class"],
+    ["F1", binary ? m.f1 : m.f1_macro, avg ?? "Positive class"],
     ["Specificity", binary ? m.specificity : undefined, binary ? undefined : "Binary targets only"],
   ];
+}
+
+function TargetCard({ target, m, ev }: { target: string; m: Record<string, number>; ev?: TargetEvaluation }) {
+  const binary = ev ? ev.labels.length === 2 : "precision" in m;
+  const total = ev?.per_class.reduce((a, c) => a + c.support, 0);
+  const tiles = headlineTiles(m, binary);
   return (
     <section className="card stack target-card">
       <div className="card-head" style={{ marginBottom: 0 }}>
@@ -87,6 +113,11 @@ function TargetCard({ target, m, ev }: { target: string; m: Record<string, numbe
       </div>
       {ev ? <ConfusionMatrix ev={ev} accuracy={m.accuracy} /> : (
         <div className="muted small-text">This run predates confusion matrices — train it again to see them.</div>
+      )}
+      {ev?.roc?.length ? <RocChart curves={ev.roc} binary={binary} /> : ev && (
+        <div className="muted small-text">
+          {ev.roc ? "No ROC curve: this split has only one class." : "This run predates ROC curves — train it again to see them."}
+        </div>
       )}
       <table className="data class-metrics">
         <thead>
