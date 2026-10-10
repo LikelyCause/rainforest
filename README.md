@@ -402,7 +402,9 @@ the recipe (`recipe_id`, shown as *recipe vN* in the list) and its experiment, a
 * **On the page:** each export has *Train ▾* (model and chain order), *Files ▾* (Parquet, preprocessor, manifest) and
   *Use from code* (the CLI command and class mappings). Runs are listed per export, with that export's targets as
   columns, showing test-split AUC and macro-F1. In each of these columns ★ marks the run that scored best on the
-  validation split for that target and metric, so choosing it doesn't use the test split. A run expands into its full metrics and confusion matrices.
+  validation split for that target and metric, so choosing it doesn't use the test split. A run expands into, per
+  target, its headline metrics, a confusion matrix (correct predictions shaded in blue, errors in red) and one per-class
+  table ending in the macro and weighted averages, with *Download model* and a test / validation switch.
 
 ```bash
 make train EXPORT=1                          # LightGBM

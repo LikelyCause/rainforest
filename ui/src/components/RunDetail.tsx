@@ -1,13 +1,21 @@
 import { useState } from "react";
-import { fmtInt, fmtPct } from "../format";
+import { fmtInt, fmtMetric, fmtPct } from "../format";
 import type { ModelRun, TargetEvaluation } from "../types";
 
 type Split = "test" | "valid";
 
-const f3 = (v: number | undefined) => (v === undefined ? "—" : v.toFixed(3));
+/** Background for a cell holding `share` of its actual row: the diagonal in the accent colour (recall), the rest in
+ * the error colour, so mistakes stand out from near-empty cells. */
+export function cellShade(share: number, diag: boolean): { background: string; color: string } {
+  const pct = Math.round(Math.min(1, Math.max(0, share)) * 100);
+  return {
+    background: `color-mix(in srgb, var(${diag ? "--series-1" : "--bad"}) ${diag ? pct : Math.round(pct * 0.8)}%, var(--surface-1))`,
+    color: diag && share > 0.55 ? "#ffffff" : "var(--text-primary)",
+  };
+}
 
-/** Rows = actual, columns = predicted. Shade = share of the actual row, so the diagonal reads as recall. */
-function ConfusionMatrix({ ev }: { ev: TargetEvaluation }) {
+/** Rows = actual, columns = predicted. */
+function ConfusionMatrix({ ev, accuracy }: { ev: TargetEvaluation; accuracy?: number }) {
   const [mode, setMode] = useState<"count" | "row">("count");
   const cm = ev.confusion_matrix;
   const rowTotals = cm.map((r) => r.reduce((a, b) => a + b, 0));
@@ -15,7 +23,9 @@ function ConfusionMatrix({ ev }: { ev: TargetEvaluation }) {
   return (
     <div className="stack" style={{ gap: 6 }}>
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <span className="muted" style={{ fontSize: 12 }}>Confusion matrix · {fmtInt(total)} rows · rows = actual, columns = predicted</span>
+        <span className="muted small-text">
+          Confusion matrix · {fmtInt(total)} rows{accuracy !== undefined ? ` · accuracy ${fmtMetric(accuracy)}` : ""}
+        </span>
         <div className="segmented" role="group" aria-label="Cell values">
           <button className={`small${mode === "count" ? " on" : ""}`} onClick={() => setMode("count")}>counts</button>
           <button className={`small${mode === "row" ? " on" : ""}`} onClick={() => setMode("row")}>row %</button>
@@ -25,7 +35,7 @@ function ConfusionMatrix({ ev }: { ev: TargetEvaluation }) {
         <table className="cm" role="grid">
           <thead>
             <tr>
-              <th className="cm-corner">actual ↓ / predicted →</th>
+              <th className="cm-corner">actual ↓<br />predicted →</th>
               {ev.labels.map((l) => <th key={l} scope="col">{l}</th>)}
             </tr>
           </thead>
@@ -35,17 +45,9 @@ function ConfusionMatrix({ ev }: { ev: TargetEvaluation }) {
                 <th scope="row">{ev.labels[i]}</th>
                 {row.map((v, j) => {
                   const share = rowTotals[i] ? v / rowTotals[i] : 0;
-                  const strong = share > 0.55;
                   return (
-                    <td
-                      key={j}
-                      className={i === j ? "diag" : undefined}
-                      style={{
-                        background: `color-mix(in srgb, var(--series-1) ${Math.round(share * 100)}%, var(--surface-1))`,
-                        color: strong ? "#ffffff" : "var(--text-primary)",
-                      }}
-                      title={`actual ${ev.labels[i]}, predicted ${ev.labels[j]}: ${fmtInt(v)} (${fmtPct(share)} of actual ${ev.labels[i]})`}
-                    >
+                    <td key={j} className={i === j ? "diag" : undefined} style={cellShade(share, i === j)}
+                      title={`actual ${ev.labels[i]}, predicted ${ev.labels[j]}: ${fmtInt(v)} (${fmtPct(share)} of actual ${ev.labels[i]})`}>
                       {mode === "count" ? fmtInt(v) : fmtPct(share)}
                     </td>
                   );
@@ -61,63 +63,60 @@ function ConfusionMatrix({ ev }: { ev: TargetEvaluation }) {
 
 function TargetCard({ target, m, ev }: { target: string; m: Record<string, number>; ev?: TargetEvaluation }) {
   const binary = ev ? ev.labels.length === 2 : "precision" in m;
-  const auc = m.roc_auc ?? m.roc_auc_ovr_macro;
+  const total = ev?.per_class.reduce((a, c) => a + c.support, 0);
+  const tiles: [string, number | undefined, string?][] = [
+    ["Accuracy", m.accuracy],
+    ["Bal. acc.", m.balanced_accuracy, "Balanced accuracy: the mean of each class's recall"],
+    ["ROC AUC", m.roc_auc ?? m.roc_auc_ovr_macro, binary ? undefined : "One-vs-rest, macro-averaged over classes"],
+    ["Log loss", m.log_loss],
+    ["Specificity", binary ? m.specificity : undefined, binary ? undefined : "Binary targets only"],
+  ];
   return (
-    <section className="card stack" style={{ boxShadow: "none" }}>
+    <section className="card stack target-card">
       <div className="card-head" style={{ marginBottom: 0 }}>
         <h3>◎ {target}</h3>
-        {binary && ev?.positive_label && <span className="muted" style={{ fontSize: 12 }}>positive class: <b>{ev.positive_label}</b></span>}
+        {binary && ev?.positive_label && <span className="muted small-text">positive class: <b>{ev.positive_label}</b></span>}
       </div>
-      <div className="stats">
-        <div className="stat"><div className="label">Accuracy</div><div className="value">{f3(m.accuracy)}</div></div>
-        <div className="stat"><div className="label">Balanced acc.</div><div className="value">{f3(m.balanced_accuracy)}</div></div>
-        <div className="stat"><div className="label">{binary ? "ROC AUC" : "ROC AUC (OvR)"}</div><div className="value">{f3(auc)}</div></div>
-        <div className="stat"><div className="label">Log loss</div><div className="value">{f3(m.log_loss)}</div></div>
-        {binary && <div className="stat"><div className="label">Specificity</div><div className="value">{f3(m.specificity)}</div></div>}
+      <div className="stats metric-tiles">
+        {tiles.map(([label, v, hint]) => (
+          <div key={label} className="stat" title={hint}>
+            <div className="label">{label}</div>
+            <div className={`value${v === undefined ? " muted" : ""}`}>{fmtMetric(v)}</div>
+          </div>
+        ))}
       </div>
-      <table className="data">
+      {ev ? <ConfusionMatrix ev={ev} accuracy={m.accuracy} /> : (
+        <div className="muted small-text">This run predates confusion matrices — train it again to see them.</div>
+      )}
+      <table className="data class-metrics">
         <thead>
-          <tr>
-            <th />
-            {binary && <th className="num">Positive class</th>}
-            <th className="num">Macro avg</th>
-            <th className="num">Weighted avg</th>
-          </tr>
+          <tr><th>Class</th><th className="num">Precision</th><th className="num">Recall</th><th className="num">F1</th><th className="num">Support</th></tr>
         </thead>
-        <tbody>
-          {(["precision", "recall", "f1"] as const).map((k) => (
-            <tr key={k}>
-              <td>{k === "f1" ? "F1" : k[0].toUpperCase() + k.slice(1)}</td>
-              {binary && <td className="num">{f3(m[k])}</td>}
-              <td className="num">{f3(m[`${k}_macro`])}</td>
-              <td className="num">{f3(m[`${k}_weighted`])}</td>
+        {ev && (
+          <tbody>
+            {ev.per_class.map((c) => (
+              <tr key={c.label}>
+                <td>{c.label}{binary && c.label === ev.positive_label && <span className="muted small-text"> · positive</span>}</td>
+                <td className="num">{fmtMetric(c.precision)}</td>
+                <td className="num">{fmtMetric(c.recall)}</td>
+                <td className="num">{fmtMetric(c.f1)}</td>
+                <td className="num">{fmtInt(c.support)}</td>
+              </tr>
+            ))}
+          </tbody>
+        )}
+        <tfoot>
+          {(["macro", "weighted"] as const).map((a) => (
+            <tr key={a}>
+              <td>{a === "macro" ? "Macro avg" : "Weighted avg"}</td>
+              <td className="num">{fmtMetric(m[`precision_${a}`])}</td>
+              <td className="num">{fmtMetric(m[`recall_${a}`])}</td>
+              <td className="num">{fmtMetric(m[`f1_${a}`])}</td>
+              <td className="num">{total !== undefined ? fmtInt(total) : ""}</td>
             </tr>
           ))}
-        </tbody>
+        </tfoot>
       </table>
-      {ev ? (
-        <>
-          <ConfusionMatrix ev={ev} />
-          <table className="data">
-            <thead>
-              <tr><th>Class</th><th className="num">Precision</th><th className="num">Recall</th><th className="num">F1</th><th className="num">Support</th></tr>
-            </thead>
-            <tbody>
-              {ev.per_class.map((c) => (
-                <tr key={c.label}>
-                  <td>{c.label}</td>
-                  <td className="num">{f3(c.precision)}</td>
-                  <td className="num">{f3(c.recall)}</td>
-                  <td className="num">{f3(c.f1)}</td>
-                  <td className="num">{fmtInt(c.support)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </>
-      ) : (
-        <div className="muted" style={{ fontSize: 12.5 }}>This run predates confusion matrices — train it again to see them.</div>
-      )}
     </section>
   );
 }
@@ -131,21 +130,19 @@ export function RunDetail({ run, targets }: { run: ModelRun; targets: string[] }
   return (
     <div className="stack" style={{ gap: 12, padding: "8px 4px" }}>
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <span className="secondary" style={{ fontSize: 13 }}>
-          {run.report?.model_label ?? run.model} · chain {(run.report?.order ?? targets).join(" → ")} · predictions use the most likely class
-          (0.5 threshold for binary targets)
-        </span>
-        <div className="segmented" role="group" aria-label="Split">
-          {(["test", "valid"] as Split[]).map((s) => (
-            <button key={s} className={`small${split === s ? " on" : ""}`} onClick={() => setSplit(s)}>{s === "valid" ? "validation" : "test"}</button>
-          ))}
+        <span className="secondary small-text">Predictions use the most likely class (0.5 threshold for binary targets)</span>
+        <div className="row" style={{ gap: 12 }}>
+          <a className="small-text" href={`/api/runs/${run.id}/files/model`}>Download model ↓</a>
+          <div className="segmented" role="group" aria-label="Split">
+            {(["test", "valid"] as Split[]).map((s) => (
+              <button key={s} className={`small${split === s ? " on" : ""}`} onClick={() => setSplit(s)}>{s === "valid" ? "validation" : "test"}</button>
+            ))}
+          </div>
         </div>
       </div>
-      {run.mlflow_url ? (
-        <span className="small-text"><a href={run.mlflow_url} target="_blank" rel="noopener">Open this run in MLflow ↗</a></span>
-      ) : run.report?.mlflow_error ? (
+      {!run.mlflow_url && run.report?.mlflow_error && (
         <div className="alert warn">Not logged to MLflow: {run.report.mlflow_error} (log it later with make mlflow-backfill)</div>
-      ) : null}
+      )}
       {metrics ? (
         <div className="grid-2">
           {targets.filter((t) => metrics[t]).map((t) => (

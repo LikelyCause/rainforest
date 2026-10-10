@@ -9,6 +9,9 @@ export function fmtNum(v: number | null | undefined, digits = 3): string {
   if (Number.isInteger(v)) return grouped.format(v);
   return Number(v.toPrecision(digits + 1)).toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
+/** Model metrics (AUC, F1, accuracy…): always three decimals, so columns line up. */
+export const fmtMetric = (v: number | null | undefined) =>
+  v === null || v === undefined || Number.isNaN(v) ? "—" : v.toFixed(3);
 export const fmtInt = (v: number | null | undefined) => (v === null || v === undefined ? "—" : grouped.format(v));
 export const fmtCompact = (v: number | null | undefined) => (v === null || v === undefined ? "—" : compact.format(v));
 export function fmtPct(v: number | null | undefined, digits = 1): string {
