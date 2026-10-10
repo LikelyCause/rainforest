@@ -14,6 +14,11 @@ export function safeNext(next: string | null): string {
   return next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/login") ? next : "/";
 }
 
+/** Paths nginx serves itself rather than the single-page app, so reaching one needs a full page load. */
+export function isServerPath(path: string): boolean {
+  return path === "/mlflow" || path.startsWith("/mlflow/");
+}
+
 let unauthorizedHandler = (next: string) => window.location.assign(`/login?next=${encodeURIComponent(next)}`);
 
 /** App.tsx swaps in a router navigation so a lapsed session doesn't reload the page. */

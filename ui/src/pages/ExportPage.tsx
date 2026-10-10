@@ -319,6 +319,16 @@ function ExportRow({ e, onStarted }: { e: ExportJob; onStarted: (r: ModelRun) =>
   );
 }
 
+function MlflowCell({ r }: { r: ModelRun }) {
+  if (r.mlflow_url) {
+    return <a href={r.mlflow_url} target="_blank" rel="noopener" onClick={(ev) => ev.stopPropagation()}>MLflow ↗</a>;
+  }
+  if (r.report?.mlflow_error) {
+    return <span className="badge warn" title={`Not logged to MLflow: ${r.report.mlflow_error}`}>not logged</span>;
+  }
+  return <span className="muted small-text">—</span>;
+}
+
 /** One export's runs as their own table: its targets are its columns, and ★ compares only runs on its features. */
 function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: number | null }) {
   const [open, setOpen] = useState<number | null>(null);
@@ -348,7 +358,7 @@ function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: 
     <table className="data runs">
       <thead>
         <tr className="group-head">
-          <td colSpan={6 + targets.length * 2}>
+          <td colSpan={7 + targets.length * 2}>
             Export #{e.id} · {familyShort(e.model_family)}{sc ? ` · ${fmtInt(sc.train)} / ${fmtInt(sc.valid)} / ${fmtInt(sc.test)}` : ""}
           </td>
         </tr>
@@ -356,7 +366,7 @@ function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: 
           <th>Model</th><th>Chain order</th><th>Status</th>
           {targets.map((t) => <th key={"a" + t} className="num">{t} AUC</th>)}
           {targets.map((t) => <th key={"f" + t} className="num">{t} F1 (macro)</th>)}
-          <th className="num">Fit</th><th>Device</th><th />
+          <th className="num">Fit</th><th>Device</th><th>MLflow</th><th />
         </tr>
       </thead>
       <tbody>
@@ -377,10 +387,11 @@ function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: 
               {targets.map((t) => <Fragment key={t + "f"}>{cell(r, t, "f1")}</Fragment>)}
               <td className="num">{r.report?.fit_seconds !== undefined ? `${fmtNum(r.report.fit_seconds, 2)}s` : "—"}</td>
               <td>{(r.report?.device ?? r.config?.device) === "cuda" ? <span className="badge accent">GPU</span> : <span className="muted small-text">CPU</span>}</td>
+              <td><MlflowCell r={r} /></td>
               <td>{r.status === "done" && <a href={`/api/runs/${r.id}/files/model`} onClick={(ev) => ev.stopPropagation()}>model</a>}</td>
             </tr>
             {open === r.id && (
-              <tr className="run-detail"><td colSpan={6 + targets.length * 2}><RunDetail run={r} targets={order} /></td></tr>
+              <tr className="run-detail"><td colSpan={7 + targets.length * 2}><RunDetail run={r} targets={order} /></td></tr>
             )}
           </Fragment>
         );

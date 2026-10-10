@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ApiError, errorFromBody, safeNext } from "./api";
+import { ApiError, errorFromBody, isServerPath, safeNext } from "./api";
 
 describe("errorFromBody", () => {
   it("keeps the message and the details of every error shape", () => {
@@ -26,5 +26,14 @@ describe("safeNext", () => {
     expect(safeNext("https://evil.example")).toBe("/");
     expect(safeNext("/login?next=/x")).toBe("/");
     expect(safeNext(null)).toBe("/");
+  });
+});
+
+describe("isServerPath", () => {
+  it("is true only under /mlflow/", () => {
+    expect(isServerPath("/mlflow/")).toBe(true);
+    expect(isServerPath("/mlflow/#/experiments/1")).toBe(true);
+    expect(isServerPath("/mlflowx")).toBe(false);
+    expect(isServerPath("/d/1/export")).toBe(false);
   });
 });
