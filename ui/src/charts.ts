@@ -186,3 +186,34 @@ export function rocOption(t: ChartTheme, curves: RocCurve[]): EChartsCoreOption 
     ],
   };
 }
+
+/** Predicted against actual for a number target, with the line where they'd be equal. */
+export function scatterOption(t: ChartTheme, actual: number[], predicted: number[]): EChartsCoreOption {
+  const all = [...actual, ...predicted];
+  const lo = Math.min(...all);
+  const hi = Math.max(...all);
+  const axis = (name: string, nameGap: number) => ({
+    ...axisCommon(t), type: "value", min: lo, max: hi, name, nameLocation: "middle", nameGap, scale: true,
+    nameTextStyle: { color: t.textMuted, fontSize: 11 },
+    axisLabel: { color: t.textMuted, fontSize: 11, formatter: (v: number) => fmtCompact(v) },
+  });
+  return {
+    ...base(t),
+    color: [t.series],
+    grid: { left: 52, right: 12, top: 12, bottom: 40 },
+    tooltip: {
+      ...(base(t).tooltip as object), trigger: "item",
+      formatter: (p: any) => (p.seriesType === "scatter"
+        ? `actual ${esc(Number(p.value[0].toPrecision(5)))}<br/>predicted ${esc(Number(p.value[1].toPrecision(5)))}` : ""),
+    },
+    xAxis: axis("Actual", 24),
+    yAxis: axis("Predicted", 38),
+    series: [
+      { type: "scatter", data: actual.map((a, i) => [a, predicted[i]]), symbolSize: 4, itemStyle: { opacity: 0.55 } },
+      {
+        type: "line", data: [[lo, lo], [hi, hi]], showSymbol: false, silent: true,
+        lineStyle: { color: t.textMuted, type: "dashed", width: 1 }, tooltip: { show: false },
+      },
+    ],
+  };
+}

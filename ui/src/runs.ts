@@ -1,14 +1,20 @@
 import type { ModelRun } from "./types";
 
-export type RunMetric = "auc" | "f1";
+/** The two numbers the runs table shows per target: AUC and macro F1 for classes, R² and RMSE for a number. */
+export type RunMetric = "primary" | "secondary";
 export type Split = "valid" | "test";
+
+const isNumber = (x: Record<string, number> | undefined) => !!x && ("r2" in x || "rmse" in x);
 
 export function metricFor(r: ModelRun, split: Split, target: string, m: RunMetric): number | undefined {
   const x = r.metrics?.[split]?.[target];
   if (!x) return undefined;
-  const v = m === "auc" ? x.roc_auc ?? x.roc_auc_ovr_macro : x.f1_macro;
+  const v = isNumber(x) ? (m === "primary" ? x.r2 : x.rmse) : m === "primary" ? x.roc_auc ?? x.roc_auc_ovr_macro : x.f1_macro;
   return typeof v === "number" ? v : undefined;
 }
+
+/** RMSE is the one metric here where lower is better. */
+const lowerIsBetter = (r: ModelRun, target: string, m: RunMetric) => m === "secondary" && isNumber(r.metrics?.valid?.[target]);
 
 /**
  * Which run to star per target and metric (keys `target:metric`, values run ids), among runs of one export.
@@ -18,13 +24,18 @@ export function metricFor(r: ModelRun, split: Split, target: string, m: RunMetri
 export function bestRuns(runs: ModelRun[], targets: string[]): Record<string, number> {
   const out: Record<string, number> = {};
   for (const t of targets) {
-    for (const m of ["auc", "f1"] as const) {
+    for (const m of ["primary", "secondary"] as const) {
       const scored = runs.flatMap((r) => {
         const v = metricFor(r, "valid", t, m);
-        return v === undefined ? [] : [{ id: r.id, v }];
+        return v === undefined ? [] : [{ id: r.id, v, low: lowerIsBetter(r, t, m) }];
       });
-      if (scored.length > 1) out[`${t}:${m}`] = scored.reduce((a, b) => (b.v > a.v ? b : a)).id;
+      if (scored.length > 1) out[`${t}:${m}`] = scored.reduce((a, b) => ((b.low ? b.v < a.v : b.v > a.v) ? b : a)).id;
     }
   }
   return out;
+}
+
+/** Column headings for a target's two numbers. */
+export function columnLabels(kind: string | undefined): [string, string] {
+  return kind === "regression" ? ["R²", "RMSE"] : ["AUC", "F1 (macro)"];
 }

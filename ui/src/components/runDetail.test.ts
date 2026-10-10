@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fmtMetric } from "../format";
-import { cellShade, headlineTiles } from "./RunDetail";
+import { cellShade, headlineTiles, regressionTiles } from "./RunDetail";
 
 describe("fmtMetric", () => {
   it("always shows three decimals", () => {
@@ -37,5 +37,14 @@ describe("headlineTiles", () => {
   it("shows macro averages for multiclass targets, and no specificity", () => {
     const rows = headlineTiles(m, false);
     expect([value(rows, "Precision"), value(rows, "Recall"), value(rows, "F1"), value(rows, "Specificity")]).toEqual([0.5, 0.4, 0.45, undefined]);
+  });
+});
+
+describe("regressionTiles", () => {
+  it("leads with R² and explains a missing MAPE", () => {
+    const rows = regressionTiles({ rmse: 2, mae: 1, r2: 0.9 });
+    expect(rows.map(([l]) => l)).toEqual(["R²", "RMSE", "MAE", "MAPE"]);
+    expect(rows[3][1]).toBeUndefined();
+    expect(rows[3][2]).toMatch(/0/);
   });
 });

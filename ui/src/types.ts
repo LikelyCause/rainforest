@@ -354,6 +354,7 @@ export interface ModelOption {
 export type Metrics = Record<string, Record<string, Record<string, number>>>; // split -> target -> metric
 
 export interface TargetEvaluation {
+  kind?: undefined;
   labels: string[];
   positive_label: string | null;
   confusion_matrix: number[][]; // rows = actual, columns = predicted
@@ -363,6 +364,14 @@ export interface TargetEvaluation {
 }
 
 export interface RocCurve { label: string; auc: number; fpr: number[]; tpr: number[] }
+
+/** A number target's evaluation: sampled (actual, predicted) pairs and a histogram of the errors. */
+export interface RegressionEvaluation {
+  kind: "regression";
+  n: number;
+  scatter: { actual: number[]; predicted: number[] };
+  residuals: { edges: number[]; counts: number[] };
+}
 
 export interface ModelRun {
   id: number;
@@ -382,7 +391,8 @@ export interface ModelRun {
     device?: Device;
     model_label?: string;
     n_features?: number;
-    evaluation?: Record<string, Record<string, TargetEvaluation>>; // split -> target
+    evaluation?: Record<string, Record<string, TargetEvaluation | RegressionEvaluation>>; // split -> target
+    target_kinds?: Record<string, string>;
     mlflow_error?: string;
     /** Run of a private experiment: logged to MLflow once its recipe version reaches review. */
     mlflow_pending?: boolean;

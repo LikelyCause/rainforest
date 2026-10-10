@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, uploadDataset } from "../api";
 import { PROCESSING, useMe } from "../hooks";
 import { eligibleTarget } from "../baselines";
+import { metricLabel } from "../experiments";
 import { defaultTask, taskLabel } from "../decision";
 import { baselineLabel, fmtAgo, fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
 import { ErrorAlert } from "../components/ui";
@@ -503,7 +504,7 @@ export function DatasetsPage() {
                         {ds.last_export ? (
                           <span title={`Export #${ds.last_export.id} · ${ds.last_export.status}`}>
                             v{ds.last_export.id}
-                            {ds.last_run?.status === "done" && ds.last_run.value !== null && ` · ${ds.last_run.model_label ?? ds.last_run.model} ${fmtNum(ds.last_run.value, 2)} ${ds.last_run.metric?.startsWith("roc_auc") ? "AUC" : ds.last_run.metric}`}
+                            {ds.last_run?.status === "done" && ds.last_run.value !== null && ` · ${ds.last_run.model_label ?? ds.last_run.model} ${fmtNum(ds.last_run.value, 2)} ${metricLabel(ds.last_run.metric ?? "")}`}
                           </span>
                         ) : <span className="muted">—</span>}
                       </td>

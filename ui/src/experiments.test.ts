@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addBlocked, baselineDiff, canEdit, filterExperiments, mlflowExperimentUrl, privacyNote, revertedInput, sourceLabel, sourceOptions } from "./experiments";
+import { addBlocked, baselineDiff, metricLabel, canEdit, filterExperiments, mlflowExperimentUrl, privacyNote, revertedInput, sourceLabel, sourceOptions } from "./experiments";
 import type { Experiment } from "./types";
 
 const me = { id: 2, role: "member" as const };
@@ -114,5 +114,12 @@ describe("baseline comparison", () => {
     const tdraft = { ...draft, action: "target" as const, target_task: "regression" as const, target_bins: null };
     expect(baselineDiff(tdraft, tbase)).toEqual(["Predict as", "Bands", "Missing values"]);
     expect(revertedInput(tdraft, tbase)).toMatchObject({ target_task: "bins", target_bins: { k: 4 } });
+  });
+});
+
+describe("metricLabel", () => {
+  it("names AUC and R²", () => {
+    expect(metricLabel("roc_auc_ovr_macro")).toBe("AUC");
+    expect(metricLabel("r2")).toBe("R²");
   });
 });
