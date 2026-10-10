@@ -17,7 +17,8 @@ import logging
 from fastapi import HTTPException
 
 from . import recipes
-from .db import fetch_all
+from .db import fetch_all, jsonb
+from .semantics import SETTING_KEYS
 
 log = logging.getLogger(__name__)
 
@@ -101,6 +102,8 @@ def create(conn, dataset_id: int, name: str, source: str, user: dict, notes: str
            VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
         (dataset_id, name.strip(), user["id"], recipe_id, assessor_id, source_key(recipe_id, assessor_id), notes),
     ).fetchone()
+    x = get(conn, row["id"])
+    seed_copy(conn, x)
     return get(conn, row["id"])
 
 
@@ -118,7 +121,53 @@ def team_for(conn, recipe: dict) -> dict:
            VALUES (%s, %s, %s, %s, true) RETURNING id""",
         (recipe["dataset_id"], team_name(recipe), recipe["id"], source_key(recipe["id"], None)),
     ).fetchone()
+    seed_copy(conn, get(conn, made["id"]))
     return get(conn, made["id"])
+
+
+def seed_copy(conn, x: dict) -> None:
+    """Give a team experiment its own copy of its (finalized) baseline: every field's decision and the settings for
+    the baseline's family, and the baseline's target order. Rows it already has stay."""
+    recipe = recipes.get(conn, x["recipe_id"])
+    if x["assessor_id"] is not None or recipe is None or recipe["phase"] != "finalized":
+        return
+    snap = recipes.snapshot_of(conn, recipe)
+    fam = recipe["family"]
+    fields = conn.execute("SELECT id, name, suggestion FROM meta.fields WHERE dataset_id = %s",
+                          (x["dataset_id"],)).fetchall()
+    decisions, settings = [], []
+    for f in fields:
+        entry = snap["fields"].get(f["name"])
+        if entry is None:
+            continue
+        d = entry["decision"]
+        decisions.append((x["id"], f["id"], d["action"], d["semantic_type"], d.get("notes")))
+        s = entry["settings"].get(fam) or (f["suggestion"] or {}).get(fam) or {}
+        settings.append((x["id"], f["id"], fam, s.get("imputation") or "none", s.get("impute_value"),
+                         bool(s.get("add_missing_indicator")), s.get("transform") or "none",
+                         s.get("scaling") or "none", s.get("encoding") or "none", jsonb(s.get("params") or {})))
+    with conn.cursor() as cur:
+        cur.executemany(
+            """INSERT INTO meta.experiment_decisions (experiment_id, field_id, action, semantic_type, notes)
+               VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""", decisions)
+        cur.executemany(
+            """INSERT INTO meta.experiment_settings (experiment_id, field_id, family, imputation, impute_value,
+                          add_missing_indicator, transform, scaling, encoding, params)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""", settings)
+    conn.execute("UPDATE meta.experiments SET target_order = %s WHERE id = %s AND target_order IS NULL",
+                 (recipes.snapshot_targets(snap), x["id"]))
+
+
+def backfill_copies(conn) -> int:
+    """Copies for team experiments on finalized baselines that have none (made before experiments had them)."""
+    rows = conn.execute(
+        f"""SELECT {COLS} FROM {FROM}
+             WHERE x.assessor_id IS NULL AND xr.phase = 'finalized'
+               AND NOT EXISTS (SELECT 1 FROM meta.experiment_decisions e WHERE e.experiment_id = x.id)"""
+    ).fetchall()
+    for x in rows:
+        seed_copy(conn, x)
+    return len(rows)
 
 
 def team_name(recipe: dict) -> str:
