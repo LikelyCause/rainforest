@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { useDebounced, useOptions } from "../hooks";
+import { useAccess, useDebounced, useOptions } from "../hooks";
 import { useDatasetContext } from "../components/DatasetLayout";
 import { Empty, ErrorAlert, StatusGlyph, glyphFor } from "../components/ui";
 import { fmtNum, fmtPct, TYPE_SHORT } from "../format";
@@ -98,7 +98,9 @@ const ACTIONS: BulkAction[] = [
   { label: "Mark reviewed", verb: "Marked reviewed", body: { reviewed: true } },
 ];
 
-function FieldFinder({ datasetId, presetLabel }: { datasetId: number; presetLabel: (p: string | null) => string }) {
+function FieldFinder({ datasetId, presetLabel, canEdit }: {
+  datasetId: number; presetLabel: (p: string | null) => string; canEdit: boolean;
+}) {
   const qc = useQueryClient();
   const { data: catalog } = useOptions();
   const st = useFinderState();
@@ -122,7 +124,9 @@ function FieldFinder({ datasetId, presetLabel }: { datasetId: number; presetLabe
 
   const [pending, setPending] = useState<{ action: BulkAction; preview: BulkResult } | null>(null);
   const invalidate = () => {
-    for (const k of ["fields", "fieldQuery", "exportPreview", "corrMatrix", "analysis"]) qc.invalidateQueries({ queryKey: [k, datasetId] });
+    for (const k of ["fields", "fieldQuery", "exportPreview", "corrMatrix", "analysis", "team", "reviewQueue"]) {
+      qc.invalidateQueries({ queryKey: [k, datasetId] });
+    }
     qc.invalidateQueries({ queryKey: ["field"] });
   };
   const request = (a: BulkAction, dry_run: boolean) =>
@@ -268,7 +272,7 @@ function FieldFinder({ datasetId, presetLabel }: { datasetId: number; presetLabe
                           <div className="segmented mini-seg" role="radiogroup" aria-label={`Decision for ${r.name}`}>
                             {(["keep", "drop"] as const).map((a) => (
                               <button key={a} type="button" role="radio" aria-checked={r.action === a} className={r.action === a ? `on ${a}` : ""}
-                                onClick={() => r.action !== a && inline.mutate({ id: r.field_id, action: a })}>{a}</button>
+                                disabled={!canEdit} onClick={() => r.action !== a && inline.mutate({ id: r.field_id, action: a })}>{a}</button>
                             ))}
                           </div>
                         )}
@@ -310,7 +314,7 @@ function FieldFinder({ datasetId, presetLabel }: { datasetId: number; presetLabe
             <div className="bulk-bar">
               <span className="grow num">{selectionLabel(rows.length, excluded.size, truncated)}</span>
               {ACTIONS.map((a) => (
-                <button key={a.label} type="button" className="small" disabled={!selected.length || preview.isPending}
+                <button key={a.label} type="button" className="small" disabled={!canEdit || !selected.length || preview.isPending}
                   onClick={() => preview.mutate(a)}>{a.label}</button>
               ))}
               <ErrorAlert error={preview.error} />
@@ -466,6 +470,7 @@ function ResultTable({ result, nameCols, onOpen }: { result: SqlResult; nameCols
 
 export function BulkEditPage() {
   const ds = useDatasetContext();
+  const access = useAccess(ds);
   const st = useFinderState();
   const presetLabel = (p: string | null) => PRESETS.find((x) => x.key === p)?.label ?? "Custom filter";
   return (
@@ -474,11 +479,12 @@ export function BulkEditPage() {
         <h1>Bulk edit</h1>
         <Link to={`/d/${ds.id}/review`} className="muted small-text">Changes here show up in Review at once</Link>
       </div>
+      {access.note && <div className={`alert ${access.canEdit ? "info" : "warn"}`}>{access.note}</div>}
       <div className="tabs-inline" role="tablist">
         <button type="button" role="tab" aria-selected={st.tab === "fields"} className={st.tab === "fields" ? "on" : ""} onClick={() => st.setTab("fields")}>Fields</button>
         <button type="button" role="tab" aria-selected={st.tab === "sql"} className={st.tab === "sql" ? "on" : ""} onClick={() => st.setTab("sql")}>SQL</button>
       </div>
-      {st.tab === "fields" ? <FieldFinder datasetId={ds.id} presetLabel={presetLabel} /> : <SqlConsole datasetId={ds.id} />}
+      {st.tab === "fields" ? <FieldFinder datasetId={ds.id} presetLabel={presetLabel} canEdit={access.canEdit} /> : <SqlConsole datasetId={ds.id} />}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { api, uploadDataset } from "../api";
 import { PROCESSING, useMe, useOptions } from "../hooks";
 import { fmtAgo, fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
 import { ErrorAlert } from "../components/ui";
+import { PhaseBadge } from "./DatasetTeamPage";
 import { showError, toast } from "../toast";
 import type { Dataset, FieldListItem, OptionCatalog } from "../types";
 
@@ -121,6 +122,7 @@ function TargetPicker({ ds, onClose }: { ds: Dataset; onClose: () => void }) {
 }
 
 function RowMenu({ ds, canDelete, onRename, onDelete }: { ds: Dataset; canDelete: boolean; onRename: () => void; onDelete: () => void }) {
+  const nav = useNavigate();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -135,6 +137,9 @@ function RowMenu({ ds, canDelete, onRename, onDelete }: { ds: Dataset; canDelete
       {open && (
         <div className="popover" role="menu" onKeyDown={(e) => e.key === "Escape" && setOpen(false)}>
           <button type="button" role="menuitem" className="ghost menu-item" onClick={() => { setOpen(false); onRename(); }}>Rename</button>
+          {canDelete && ds.status === "ready" && ds.phase === "assessing" && (
+            <button type="button" role="menuitem" className="ghost menu-item" onClick={() => nav(`/d/${ds.id}/team`)}>Assessors…</button>
+          )}
           <button type="button" role="menuitem" className="ghost menu-item" style={{ color: "var(--bad)" }}
             disabled={!canDelete || PROCESSING.has(ds.status)} title={canDelete ? undefined : "Only a lead can delete a dataset"}
             onClick={() => { setOpen(false); onDelete(); }}>Delete…</button>
@@ -384,7 +389,8 @@ export function DatasetsPage() {
               {rows.map((ds) => {
                 const ready = ds.status === "ready";
                 const total = ds.field_count ?? ds.column_count ?? 0;
-                const reviewed = ds.reviewed_count ?? 0;
+                // An assessor sees their own progress; everyone else the team decision's.
+                const reviewed = ds.my_assessment?.reviewed ?? ds.reviewed_count ?? 0;
                 return (
                   <Fragment key={ds.id}>
                     <tr className={`${ready ? "clickable" : ""}${fresh === ds.id ? " fresh" : ""}`}
@@ -407,6 +413,8 @@ export function DatasetsPage() {
                       <td>
                         <div className="row" style={{ flexWrap: "nowrap" }}>
                           <StatusBadge ds={ds} />
+                          {ready && <PhaseBadge phase={ds.phase} version={ds.recipe_version} />}
+                          {ds.my_assessment?.submitted && <span className="badge good" title="You submitted your assessment">✓ submitted</span>}
                           {ds.warnings.length > 0 && (
                             <span className="badge warn" title={ds.warnings.join("\n")}>⚠ {ds.warnings.length}</span>
                           )}

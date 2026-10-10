@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { useFields, useOptions } from "../hooks";
+import { useAccess, useFields, useOptions } from "../hooks";
 import { useDatasetContext } from "../components/DatasetLayout";
 import { FieldList, type StatusFilter, type WorkingSet } from "../components/FieldList";
 import { FieldDetailView } from "../components/FieldDetailView";
@@ -67,6 +67,9 @@ export function ReviewPage() {
   const failed = useFailedSaves();
 
   const family = ds.model_family;
+  const access = useAccess(ds);
+  // Where finishing leads: an assessor submits on the Team page; everyone else goes on to Export.
+  const finishTo = access.source === "mine" ? `/d/${datasetId}/team` : `/d/${datasetId}/export`;
   const fields = useFields(datasetId);
   const options = useOptions();
   const familyLabel = familyShort(family);
@@ -222,10 +225,11 @@ export function ReviewPage() {
         if (e.target instanceof Element && e.target.closest(ACTIVATES_ON_ENTER)) return;
         e.preventDefault();
         if (finish?.kind === "end") return goFirstUnreviewed();
-        if (finish?.kind === "complete") return nav(`/d/${datasetId}/export`);
+        if (finish?.kind === "complete") return nav(finishTo);
         if (!finish) panel.current?.confirm();
         return;
       }
+      if (!access.canEdit && ["x", "a", "z", "n"].includes(k)) return;
       if (finish && !["j", "k", "u", "z", "ArrowRight", "ArrowLeft"].includes(k)) return;
       if (k === "j" || k === "ArrowRight") { e.preventDefault(); next(); }
       else if (k === "k" || k === "ArrowLeft") { e.preventDefault(); if (finish) setFinish(null); else prev(); }
@@ -279,7 +283,7 @@ export function ReviewPage() {
         </div>
         {detail.isFetching && detail.isPlaceholderData && <div className="loading-bar" aria-hidden="true" />}
         {finish ? (
-          <FinishCard finish={finish} scope={scope} datasetId={datasetId} workingSet={workingSet}
+          <FinishCard finish={finish} scope={scope} datasetId={datasetId} workingSet={workingSet} finishTo={finishTo}
             onFirstUnreviewed={goFirstUnreviewed} onStay={() => setFinish(null)} onClearSet={clearSet}
             onOpen={go} />
         ) : missingField ? (
@@ -302,7 +306,9 @@ export function ReviewPage() {
       {current && options.data && !detail.isPlaceholderData && !finish ? (
         <DecisionPanel key={`${current.field.id}:${current.family}:${panelVersion}`} ref={panel} data={current}
           catalog={options.data} familyLabel={familyLabel} typing={typing}
-          onConfirmed={onConfirmed} onShowShortcuts={() => setOverlay(true)} />
+          onConfirmed={onConfirmed} onShowShortcuts={() => setOverlay(true)}
+          readOnly={access.canEdit ? null : access.note}
+          owner={access.source === "mine" ? "Your assessment" : undefined} />
       ) : (
         <aside className="decision" />
       )}
@@ -311,8 +317,8 @@ export function ReviewPage() {
   );
 }
 
-function FinishCard({ finish, scope, datasetId, workingSet, onFirstUnreviewed, onStay, onClearSet, onOpen }: {
-  finish: NonNullable<Finish>; scope: FieldListItem[]; datasetId: number; workingSet: WorkingSet | null;
+function FinishCard({ finish, scope, datasetId, workingSet, finishTo, onFirstUnreviewed, onStay, onClearSet, onOpen }: {
+  finish: NonNullable<Finish>; scope: FieldListItem[]; datasetId: number; workingSet: WorkingSet | null; finishTo: string;
   onFirstUnreviewed: () => void; onStay: () => void; onClearSet: () => void; onOpen: (id: number) => void;
 }) {
   const firstTodo = scope.find((f) => !f.reviewed);
@@ -362,8 +368,8 @@ function FinishCard({ finish, scope, datasetId, workingSet, onFirstUnreviewed, o
         <span className="secondary">Leakage flags: {leaks.length} dropped, 0 kept.</span>
       ))}
       <div className="row">
-        <Link className="btn primary" to={`/d/${datasetId}/export`} style={{ background: "var(--accent-fill)", color: "var(--accent-ink)", borderColor: "var(--accent-fill)" }}>
-          Continue to Export → <kbd>↵</kbd>
+        <Link className="btn primary" to={finishTo} style={{ background: "var(--accent-fill)", color: "var(--accent-ink)", borderColor: "var(--accent-fill)" }}>
+          {finishTo.endsWith("/team") ? "Submit your assessment" : "Continue to Export"} → <kbd>↵</kbd>
         </Link>
         <button type="button" onClick={onStay}>Back to the field</button>
       </div>
