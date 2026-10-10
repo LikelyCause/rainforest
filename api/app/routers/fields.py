@@ -112,13 +112,18 @@ def save_decision(field_id: int, body: DecisionIn) -> dict:
     with connection() as conn:
         conn.execute("SELECT 1 FROM meta.field_decisions WHERE field_id = %s FOR UPDATE", (field_id,))
         prev = _merged(conn, field_id, fam)
+        # Provenance follows real changes: confirming or annotating a suggestion leaves it a suggestion.
+        decided = prev["action"] != d["action"] or prev["semantic_type"] != d["semantic_type"]
         conn.execute(
             f"""UPDATE meta.field_decisions
-                   SET {", ".join(f"{c} = %({c})s" for c in SHARED_COLS)}, source = 'user', updated_at = now()
+                   SET {", ".join(f"{c} = %({c})s" for c in SHARED_COLS)},
+                       source = CASE WHEN %(decided)s THEN 'user' ELSE source END, updated_at = now()
                  WHERE field_id = %(field_id)s""",
-            {**d, "field_id": field_id},
+            {**d, "field_id": field_id, "decided": decided},
         )
-        upsert_settings(conn, f["dataset_id"], field_id, fam, settings_of(d), "user")
+        settings = settings_of(d)
+        upsert_settings(conn, f["dataset_id"], field_id, fam, settings,
+                        prev["settings_source"] if _same_settings(prev, settings) else "user")
         if prev["semantic_type"] != d["semantic_type"]:
             # Other families' settings were chosen for the old type; re-derive them for the new one.
             stats = {k: f[k] for k in STAT_KEYS}
@@ -173,10 +178,12 @@ def bulk_decisions(dataset_id: int, body: BulkDecisionIn) -> dict:
         snapshot = _snapshot(conn, changed_ids)
         prev = _merged_many(conn, changed_ids, fam)
         for c in planned:
+            decided = any(c["after"][k] != c["before"][k] for k in ("action", "semantic_type"))
             conn.execute(
                 """UPDATE meta.field_decisions SET action = %s, semantic_type = %s, reviewed = %s,
-                          source = 'user', updated_at = now() WHERE field_id = %s""",
-                (c["after"]["action"], c["after"]["semantic_type"], c["after"]["reviewed"], c["field_id"]),
+                          source = CASE WHEN %s THEN 'user' ELSE source END, updated_at = now()
+                    WHERE field_id = %s""",
+                (c["after"]["action"], c["after"]["semantic_type"], c["after"]["reviewed"], decided, c["field_id"]),
             )
             for family, sugg in c["settings"].items():
                 upsert_settings(conn, dataset_id, c["field_id"], family, sugg, "suggested")
@@ -267,7 +274,11 @@ def plan_bulk(rows: list[dict], settings: dict[int, dict[str, dict]], body: Bulk
             after["semantic_type"] = first["semantic_type"]
             after["reviewed"] = True
             current = settings.get(r["field_id"], {})
-            new_settings = {f: sg for f, sg in by_family.items() if not _same_settings(current.get(f), sg)}
+            retyped = after["semantic_type"] != before["semantic_type"]
+            # Settings you customised stay, unless the type changes under them and they no longer apply.
+            new_settings = {f: sg for f, sg in by_family.items()
+                            if not _same_settings(current.get(f), sg)
+                            and (retyped or (current.get(f) or {}).get("source") != "user")}
         if (body.action is not None and after["action"] != "target"
                 and not (body.action == "keep" and after["semantic_type"] in NON_FEATURE_TYPES)):
             after["action"] = body.action
@@ -457,10 +468,11 @@ def set_targets(conn, dataset_id: int, names: list[str]) -> tuple[list[dict], li
         (added,),
     )
     for r in removed:
-        # The action itself is re-derived from the field's (now non-target) suggestion by refresh_target_state.
+        # The action itself is re-derived from the field's (now non-target) suggestion by refresh_target_state;
+        # it was reviewed as a target, so as a feature it is unreviewed.
         conn.execute(
-            "UPDATE meta.field_decisions SET action = 'keep', source = 'suggested', updated_at = now() "
-            "WHERE field_id = %s",
+            "UPDATE meta.field_decisions SET action = 'keep', source = 'suggested', reviewed = false, "
+            "updated_at = now() WHERE field_id = %s",
             (r["id"],),
         )
         stats = {c: r[c] for c in SUMMARY_COLS}

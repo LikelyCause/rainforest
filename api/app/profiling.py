@@ -247,12 +247,31 @@ def infer_type(
     if dt.is_numeric() and _looks_yyyymmdd(s, name):
         hints["datetime_format"] = YYYYMMDD
         return "datetime", 0.85, ["integers that read as YYYYMMDD dates"], hints
+    if dt.is_numeric() and n_unique >= 20 and (unit := _epoch_unit(s, name)):
+        return "datetime", 0.7, [f"integers in the range of Unix timestamps in {unit} (2000–2100)"], hints
     if dt.is_numeric():
         t, c, r = _infer_numeric(s.drop_nulls(), name, dt, n_unique, n_nonnull)
         return t, c, r, hints
     if dt == pl.String:
         return _infer_string(s, name, n_unique, n_nonnull)
     return "categorical", 0.4, [f"unrecognised dtype {dt}; treating as categorical"], hints
+
+
+# Epoch values for 2000-01-01 .. 2100-01-01 per unit, the magnitudes _numeric_to_datetime reads them in.
+EPOCH_RANGES = {"seconds": (946_684_800, 4_102_444_800), "milliseconds": (946_684_800e3, 4_102_444_800e3),
+                "microseconds": (946_684_800e6, 4_102_444_800e6), "nanoseconds": (946_684_800e9, 4_102_444_800e9)}
+
+
+def _epoch_unit(s: pl.Series, name: str) -> str | None:
+    """The unit when every value is a whole number inside one unit's 2000–2100 epoch range (and the name
+    isn't key-like), else None."""
+    if ID_NAME_RE.search(name):
+        return None
+    x = s.drop_nulls().cast(pl.Float64)
+    lo, hi = x.min(), x.max()
+    if lo is None or not bool((x == x.round(0)).all()):
+        return None
+    return next((u for u, (a, b) in EPOCH_RANGES.items() if a <= lo and hi <= b), None)
 
 
 def _looks_yyyymmdd(s: pl.Series, name: str) -> bool:

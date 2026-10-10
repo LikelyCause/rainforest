@@ -89,12 +89,29 @@ def test_accept_suggestion_counts_settings_only_changes():
     rows = [_row(1, reviewed=True, suggestion=sugg), _row(2, reviewed=True, suggestion=sugg)]
     settings = {
         1: {"tree": {**SETTINGS, "field_id": 1}, "linear": {**SETTINGS, "scaling": "standard"}},
-        2: {"tree": {**SETTINGS}, "linear": {**SETTINGS, "scaling": "robust", "source": "user"}},
+        2: {"tree": {**SETTINGS}, "linear": {**SETTINGS, "scaling": "robust", "source": "suggested"}},
     }
     planned = plan_bulk(rows, settings, BulkDecisionIn(field_ids=[1, 2], accept_suggestion=True))
     assert [c["field_id"] for c in planned] == [2]
     assert list(planned[0]["settings"]) == ["linear"]
     assert summarize_bulk(2, planned)["transitions"] == {}
+
+
+def test_accept_suggestion_keeps_settings_you_customised():
+    sugg = {"tree": {**SETTINGS, "action": "keep", "semantic_type": "numeric_continuous"},
+            "linear": {**SETTINGS, "action": "keep", "semantic_type": "numeric_continuous", "scaling": "standard"}}
+    settings = {1: {"tree": {**SETTINGS, "source": "suggested"},
+                    "linear": {**SETTINGS, "scaling": "robust", "source": "user"}}}
+    planned = plan_bulk([_row(1, suggestion=sugg)], settings, BulkDecisionIn(field_ids=[1], accept_suggestion=True))
+    assert planned[0]["after"]["reviewed"] and planned[0]["settings"] == {}
+
+
+def test_accept_suggestion_rederives_customised_settings_when_the_type_changes():
+    sugg = {"linear": {**SETTINGS, "action": "keep", "semantic_type": "numeric_continuous", "scaling": "standard"}}
+    settings = {1: {"linear": {**SETTINGS, "encoding": "onehot", "source": "user"}}}
+    planned = plan_bulk([_row(1, stype="categorical", suggestion=sugg)], settings,
+                        BulkDecisionIn(field_ids=[1], accept_suggestion=True))
+    assert planned[0]["after"]["semantic_type"] == "numeric_continuous" and list(planned[0]["settings"]) == ["linear"]
 
 
 def test_accept_suggestion_never_touches_target_role():

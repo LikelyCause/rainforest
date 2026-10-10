@@ -233,7 +233,8 @@ def target_suggestion(t: str, stats: dict, is_target: bool, max_target_assoc: fl
 
 def refresh_target_state(conn, dataset_id: int) -> None:
     """Re-derive everything that depends on which fields are targets: max_target_assoc (non-targets only),
-    suggestions, leakage flags, and the action of decisions nobody has touched (source = 'suggested').
+    suggestions, leakage flags, and the action of decisions nobody has touched (still the suggestion, not yet
+    reviewed).
 
     Call after fields.is_target changes or new correlations land. Rows only change when their value does,
     so updated_at stays meaningful for "changed since export".
@@ -274,7 +275,8 @@ def refresh_target_state(conn, dataset_id: int) -> None:
              FROM (SELECT f.id, coalesce(f.suggestion -> ds.model_family ->> 'action', 'keep') AS action
                      FROM meta.fields f JOIN meta.datasets ds ON ds.id = f.dataset_id
                     WHERE f.dataset_id = %s) s
-            WHERE d.field_id = s.id AND d.source = 'suggested' AND d.action IS DISTINCT FROM s.action""",
+            WHERE d.field_id = s.id AND d.source = 'suggested' AND NOT d.reviewed
+              AND d.action IS DISTINCT FROM s.action""",
         (dataset_id,),
     )
 

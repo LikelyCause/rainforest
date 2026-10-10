@@ -211,6 +211,23 @@ def test_numbers_retyped_to_datetime_are_parsed_by_range():
 
 
 # ------------------------------------------------------------------------------------------- #11 names
+@pytest.mark.parametrize("scale,unit", [(1, "seconds"), (1000, "milliseconds")])
+def test_unique_epoch_integers_are_dates_not_identifiers(scale, unit):
+    start = int(dt.datetime(2021, 3, 1, tzinfo=dt.timezone.utc).timestamp())
+    values = [(start + i * 3600) * scale for i in range(2000)]
+    t, conf, reasons, _ = _infer(values, "created")
+    assert t == "datetime" and unit in reasons[0]
+    p = _profile(values, "created")
+    assert p.inferred_type == "datetime" and p.stats["min"].startswith("2021-03-01")
+    assert p.summary["null_count"] == 0
+
+
+def test_epoch_like_values_under_a_key_name_stay_identifiers():
+    values = list(range(1_600_000_000, 1_600_002_000))
+    assert _infer(values, "event_id")[0] == "identifier"
+    assert _infer([v % 7 for v in values], "bucket")[0] != "datetime"
+
+
 def test_safe_feature_names_reserve_targets_and_internal_columns():
     assert safe_feature_names(["column_a", "x", "column_a"], reserved=["column_a", "__row_id"]) == [
         "column_a_2", "x", "column_a_3"]

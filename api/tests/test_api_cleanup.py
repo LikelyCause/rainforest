@@ -105,6 +105,41 @@ def test_startup_sweep_removes_only_orphaned_old_uploads(client):
             p.unlink(missing_ok=True)
 
 
+SAVED_KEYS = ("action", "semantic_type", "imputation", "impute_value", "add_missing_indicator", "transform",
+              "scaling", "encoding", "params", "notes", "reviewed")
+
+
+def _numbers_csv(n=600, seed=0) -> str:
+    rng = np.random.default_rng(seed)
+    return "x,z,y\n" + "".join(
+        f"{'' if i % 10 == 0 else f'{v:.4f}'},{w:.4f},{'ab'[i % 2]}\n"
+        for i, (v, w) in enumerate(zip(rng.normal(0, 1, n), rng.normal(0, 1, n))))
+
+
+def test_source_is_user_only_for_real_changes(client):
+    ds = upload(client, _numbers_csv(), targets="y")
+    try:
+        fid = fields_of(client, ds)["x"]["id"]
+
+        def save(**patch):
+            cur = client.get(f"/api/fields/{fid}?family=linear").json()["decision"]
+            r = client.put(f"/api/fields/{fid}/decision",
+                           json={**{k: cur[k] for k in SAVED_KEYS}, "family": "linear", **patch})
+            assert r.status_code == 200, r.text
+            return r.json()
+
+        d = save(reviewed=True, notes="looked at it")
+        assert (d["source"], d["settings_source"]) == ("suggested", "suggested")
+        d = save(imputation="mean")
+        assert (d["source"], d["settings_source"]) == ("suggested", "user")
+        d = save(action="drop")
+        assert (d["source"], d["settings_source"]) == ("user", "user")
+        preview = client.get(f"/api/datasets/{ds['id']}/export-preview?family=linear").json()
+        assert preview["customized"] == 0  # dropped fields aren't counted
+    finally:
+        client.delete(f"/api/datasets/{ds['id']}")
+
+
 def _leaky_csv(n=20_000, levels=300, seed=0) -> str:
     rng = np.random.default_rng(seed)
     lv = rng.integers(0, levels, n)

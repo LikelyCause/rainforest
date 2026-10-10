@@ -53,8 +53,12 @@ saying to set it.
 3. **Bulk edit** → find fields with presets (*Unreviewed*, *Missing > 20%*, *Skewed numerics*, *Target-associated*,
    *High-card categoricals*, *Text*, *Possible leaks*, *Edited by you*) or your own filters, then **Accept
    suggestions**, **Keep**, **Drop** or **Mark reviewed**. Each bulk action shows a preview of what will change before
-   you apply it, and can be undone from the toast. *Review these N →* (`R`) opens the matching fields as a working
+   you apply it, and can be undone from the toast. *Accept suggestions* leaves preprocessing settings you customised
+   alone unless it changes the field's type. *Review these N →* (`R`) opens the matching fields as a working
    set in Review. The **SQL** tab is a read-only console with examples.
+   A field counts as *edited by you* once you change its keep / drop or type, and its settings as *customised* once
+   they differ from what was suggested; confirming or annotating a suggestion leaves it a suggestion. Decisions still
+   at the suggestion and not yet reviewed follow target changes (a new leak flag drops them).
 4. **Explore** → correlations heatmap, a 2-D map of rows, per-field statistical tests against a target, and feature
    importance. See [Explore](#explore).
 5. **Export & train** → fit the preprocessing on the training split, write the model-ready Parquet, and train
@@ -118,7 +122,9 @@ text compared with short categorical strings.
   missing. They're also reported as `stats.unparseable_count` (with examples) and `stats.inf_count`, shown as a *Read
   as missing* signal. Unparseable values cap the type confidence at 0.65.
 * Integer columns retyped to datetime are read as `YYYYMMDD` when they are valid dates, otherwise as epoch
-  timestamps whose unit (s, ms, µs, ns) follows from their magnitude.
+  timestamps whose unit (s, ms, µs, ns) follows from their magnitude. Whole numbers that all fall within one
+  unit's 2000–2100 epoch range are inferred as dates in the first place, unless the name looks like a key
+  (`…_id`, `key`, `code`).
 * An upload target with more than 100 distinct values isn't made a target; the dataset gets a warning.
 
 Fields with a ≥ 0.95 association to a target are flagged as **possible leakage** and suggested for dropping.
