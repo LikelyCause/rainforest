@@ -81,6 +81,19 @@ def test_logs_params_metrics_tags_and_artifacts(file_store, tmp_path):
     assert [a.path for a in file_store.list_artifacts(run_id, "model")] == ["model/classifier_chain.joblib"]
 
 
+def test_logs_the_baseline_and_the_experiments_adjustments(file_store, tmp_path):
+    row = {**_run_row(), "baseline": {"recipe_id": 11, "family": "tree", "version": 2, "label": "Trees baseline v2"},
+           "adjustments": {"count": 2, "fields": ["w", "x"], "targets_changed": True,
+                           "targets": {"before": ["y"], "after": ["c"]}, "detail": []}}
+    _, run_id = mlflow_log.log_run(row, "Churn", REPORT, _model_dir(tmp_path), user="ana")
+    run = file_store.get_run(run_id)
+    t = run.data.tags
+    assert t["rainforest.baseline"] == "Trees baseline v2" and t["rainforest.baseline_family"] == "tree"
+    assert t["rainforest.adjusted"] == "2" and t["rainforest.targets_changed"] == "true"
+    assert run.data.params["prep.adjusted_fields"] == "2"
+    assert "adjustments.json" in {a.path for a in file_store.list_artifacts(run_id)}
+
+
 def test_one_experiment_per_dataset_even_after_a_rename(file_store, tmp_path):
     d = _model_dir(tmp_path)
     first, _ = mlflow_log.log_run(_run_row(1), "Churn", REPORT, d)
