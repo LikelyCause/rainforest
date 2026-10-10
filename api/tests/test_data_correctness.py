@@ -160,8 +160,8 @@ def test_decimal_comma_column_is_parsed_as_decimals():
 
 def test_export_uses_the_profiled_number_format():
     s = pl.Series("w", ["1,500", "2,25"])
-    assert coercion_exprs([_spec("w", "numeric_continuous", decimal_comma=True)], None)["w"](s).to_list() == [1.5, 2.25]
-    assert coercion_exprs([_spec("w", "numeric_continuous")], None)["w"](s).to_list() == [1500.0, None]
+    assert coercion_exprs([_spec("w", "numeric_continuous", decimal_comma=True)])["w"](s).to_list() == [1.5, 2.25]
+    assert coercion_exprs([_spec("w", "numeric_continuous")])["w"](s).to_list() == [1500.0, None]
 
 
 # ------------------------------------------------------------------------------------------- #19 dates
