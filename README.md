@@ -547,8 +547,20 @@ experiment, and its manifest's `config` the `source` (`recipe` or `assessment`),
   targets), confusion matrices, a per-class table and ROC curves (one-vs-rest per class for multiclass targets, up to
   200 points each), plus the top importances per chain link. A number gets `rmse`, `mae`, `r2` and `mape` (only when
   no actual value is 0), up to 1,000 sampled (actual, predicted) pairs and a 30-bin histogram of the errors.
-* **On the page:** each export has *Train ▾* (the model, and which of the export's targets to train in which chain
-  order: tick one target for a single model, or several and order them), *Files ▾* (Parquet, preprocessor, manifest) and
+* **Model settings:** under the model picker in *Train ▾*, *Model settings* (LightGBM so far) lists the model's
+  parameters with a control each: a dropdown for a choice (boosting type, loss, class weights), a number with its range,
+  an on/off switch. They are grouped (run, trees, learning, sampling, regularization, then settings for class targets
+  and for number targets, shown only when the export has such a target), and every other parameter that changes the
+  model sits under a folded, searchable *Advanced*. Each shows its default and a one-line explanation; a changed one is
+  marked and has ↺. Settings that depend on another appear only when it calls for them (DART's drop settings with
+  DART, alpha with the Huber or quantile loss). A value outside its range blocks *Train*, and a combination LightGBM
+  refuses (random forest without bagging or a feature sample, say) is caught when the run is asked for, by fitting the
+  settings on 64 synthetic rows. A loss that needs non-negative numbers (Poisson, Tweedie; gamma needs positive ones)
+  is refused for a target whose training minimum breaks it. The menu remembers each model's last settings per export
+  in your browser. A run stores the settings that differ from the defaults; its detail lists them, with *Train again
+  with these settings*.
+* **On the page:** each export has *Train ▾* (the model, its settings, and which of the export's targets to train in
+  which chain order: tick one target for a single model, or several and order them), *Files ▾* (Parquet, preprocessor, manifest) and
   *Use from code* (the CLI command and class mappings). Runs are listed per export, with that export's targets as
   columns, showing test-split AUC and macro-F1 (R² and RMSE for a number). In each of these columns ★ marks the run
   that scored best on the validation split for that target and metric (lowest for RMSE), so choosing it doesn't use

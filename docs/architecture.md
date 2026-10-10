@@ -43,6 +43,7 @@ for one run.
 | `transform.py` | Export: targets and split (`prepare_targets`: class codes, float64 numbers, bands cut on the training rows; numbers stratified on bands), fit preprocessing on train rows, chunked transform, manifest. |
 | `bands.py` | Cutting a numeric target into bands: equal-count edges, chosen cut points, labels (`< 10`, `[10, 25)`, `≥ 80`), assignment and the fewer-than-2-rows check. |
 | `parquet_rows.py` | `read_rows`: selected rows of a Parquet file, read a few column chunks at a time (export fit sample, Explore samples). |
+| `modeling/params.py` | Each model's settings as data (LightGBM's so far): groups, kinds, ranges, options, defaults, which links a value reaches (`applies`) and which settings another depends on (`when`); the checks and routing a run's `params` go through. |
 | `modeling/registry.py`, `modeling/train.py` | Model catalog (a classifier and a regressor per model, with the classifier-only parameters left out of regressors), compatibility and device params; training (`ClassifierChain` when every target is classes, `TargetChain` when any is a number), classification and regression evaluation, CLI. |
 | `modeling/mlflow_log.py`, `modeling/mlflow_backfill.py` | Logging a finished model run to MLflow (experiment per dataset, params, metrics, tags, artifacts), and the CLI that logs runs that have no MLflow run yet. |
 | `gpu.py` | NVIDIA GPU detection (`nvidia-smi` plus an XGBoost CUDA test fit in a subprocess), started in a background thread at startup and cached per process. |
@@ -410,7 +411,9 @@ the dataset's Parquet copy, raw table, export and model directories.
 **A model.** Add a `ModelSpec` to `MODELS` in `api/app/modeling/registry.py` (key, label, family, NaN support,
 builder, default params, importance source, optional `requires` package, `cuda_params` if it can train on a GPU,
 and `build_regressor` with `regressor_defaults` for number targets). The CLI, `/api/models`,
-`/api/exports/{id}/models` and the Train form pick it up. Compatibility rules are in `registry.compatibility`.
+`/api/exports/{id}/models` and the Train form pick it up. Compatibility rules are in `registry.compatibility`. To give
+it settings in the Train menu, add its list of `Setting`s to `CATALOG` in `api/app/modeling/params.py`; the form,
+the checks, the dry fit and the routing to classifiers and regressors follow from it.
 
 **A migration.** Add `api/app/migrations/NNN_description.sql` with the next number, written to be safe to run once
 (`IF NOT EXISTS` where it helps). If a view needs the new column, edit `views.sql`. If the table holds job state,
