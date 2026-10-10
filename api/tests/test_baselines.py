@@ -168,3 +168,20 @@ def test_diff_compares_by_id_and_across_families_by_decision_only(people):
     assert all(c["family"] is None for c in d["fields"][0]["changes"])
     other = upload(lead)
     assert lead.get(f"/api/datasets/{other['id']}/recipes/diff?a={trees}&b={linear}").status_code == 404
+
+
+def test_dataset_shows_its_baselines_and_refuses_family_switch(people):
+    lead = people["lead"]
+    ds = upload(lead)
+    d = lead.get(f"/api/datasets/{ds['id']}").json()
+    assert d["baseline"]["label"] == "Trees baseline v1" and d["baseline"]["setup"] is True
+    assert [b["family"] for b in d["baselines"]] == ["tree"]
+    r = lead.patch(f"/api/datasets/{ds['id']}", json={"model_family": "linear"})
+    assert r.status_code == 422 and "baseline" in r.json()["detail"]
+    start(lead, ds, "tree", [lead])
+    submit_and_finalize(lead, ds)
+    start(lead, ds, "linear", [lead])
+    row = next(x for x in lead.get("/api/datasets").json() if x["id"] == ds["id"])
+    assert row["baseline"]["label"] == "Linear baseline v1" and row["baseline"]["setup"] is False
+    assert {b["family"]: (b["version"], b["phase"], b["latest_finalized_id"] is not None)
+            for b in row["baselines"]} == {"tree": (1, "finalized", True), "linear": (1, "assessing", False)}
