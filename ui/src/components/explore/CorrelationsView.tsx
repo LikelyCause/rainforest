@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api";
+import { viewKey } from "../../view";
 import { useFields } from "../../hooks";
 import { useChartTheme } from "../../theme";
 import { fmtInt, METHOD_LABEL, TYPE_SHORT } from "../../format";
@@ -30,8 +31,8 @@ function Heatmap({ ds, st }: { ds: Dataset; st: ExploreState }) {
   const add = useMemo(() => (st.get("add") ?? "").split(",").map(Number).filter((n) => n > 0), [st.params]);
   const threshold = Math.min(Math.max(Number(st.get("min") ?? 0) || 0, 0), 0.95);
   const q = useQuery({
-    queryKey: ["corrMatrix", ds.id, st.kept, st.target, add],
-    queryFn: () => api.corrMatrix(ds.id, { kept: st.kept, target: st.target, limit: 60, add }),
+    queryKey: ["corrMatrix", ds.id, st.kept, st.target, add, viewKey(st.view)],
+    queryFn: () => api.corrMatrix(ds.id, { kept: st.kept, target: st.target, limit: 60, add, view: st.view }),
     placeholderData: (prev) => prev,
   });
   const m = q.data;

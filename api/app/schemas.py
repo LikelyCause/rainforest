@@ -132,10 +132,13 @@ class AnalysisRequest(BaseModel):
     kind: Literal["map", "tests", "importance"]
     params: AnalysisParams = Field(default_factory=AnalysisParams)
     recompute: bool = False
+    view: str | None = Field(None, max_length=40, description="Whose decisions raw-data analyses use: "
+                             "experiment:<id> or baseline:<recipe_id>; default the baseline in progress")
 
 
 class CorrelationQuery(BaseModel):
     kept: bool = False
+    view: str | None = Field(None, max_length=40)
     target: str | None = Field(None, max_length=500)
     limit: int = Field(60, ge=2, le=400)
     add: str | None = Field(None, pattern=r"^\s*\d+(\s*,\s*\d+)*\s*$|^\s*$",

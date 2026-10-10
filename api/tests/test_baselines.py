@@ -289,3 +289,40 @@ def test_personal_experiments_keep_their_versions_carried_fields(people):
     e = export(lead, ds, x)
     man = lead.get(f"/api/exports/{e['id']}/files/manifest").json()
     assert "w" not in {fl["name"] for fl in man["fields"]}
+
+
+def test_a_finalized_baseline_can_be_browsed_read_only(people):
+    lead = people["lead"]
+    ds = upload(lead)
+    start(lead, ds, "tree", [lead])
+    f = fields(lead, ds)
+    assert save(lead, f["w"]["id"], action="drop", reviewed=True).status_code == 200
+    trees = submit_and_finalize(lead, ds)["recipe"]["id"]
+    start(lead, ds, "linear", [lead])  # the working copy now holds Linear's start: w kept
+    view = f"baseline:{trees}"
+    seen = fields(people["c"], ds, view)
+    assert seen["w"]["action"] == "drop" and fields(lead, ds)["w"]["action"] == "keep"
+    d = people["c"].get(f"/api/fields/{f['x']['id']}?view={view}").json()
+    assert d["family"] == "tree" and d["decision"]["imputation"] is not None
+    assert save(lead, f["w"]["id"], view, action="keep").status_code == 409
+
+
+def test_explore_uses_the_decisions_it_is_given(people):
+    lead = people["lead"]
+    ds = upload(lead)
+    start(lead, ds, "tree", [lead])
+    f = fields(lead, ds)
+    assert save(lead, f["w"]["id"], action="drop", reviewed=True).status_code == 200
+    trees = submit_and_finalize(lead, ds)["recipe"]["id"]
+    start(lead, ds, "linear", [lead])
+    c = people["c"]
+    r = c.get(f"/api/datasets/{ds['id']}/explore/correlations?kept=1&view=baseline:{trees}")
+    assert r.status_code == 200 and "w" not in {x["name"] for x in r.json()["fields"]}
+    r = c.get(f"/api/datasets/{ds['id']}/explore/correlations?kept=1")
+    assert "w" in {x["name"] for x in r.json()["fields"]}
+    an = c.post(f"/api/datasets/{ds['id']}/analyses", json={
+        "kind": "importance", "view": f"baseline:{trees}", "params": {"target": "y", "kept": True, "sample": 1000}})
+    assert an.status_code == 200 and an.json()["params"]["decisions"] == f"baseline:{trees}"
+    assert c.get(f"/api/analyses/{an.json()['id']}").status_code == 200
+    assert c.post(f"/api/datasets/{ds['id']}/analyses", json={
+        "kind": "importance", "view": "baseline:999999", "params": {"target": "y", "kept": True}}).status_code == 404

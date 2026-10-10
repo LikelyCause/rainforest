@@ -117,7 +117,7 @@ export const api = {
     request<ExperimentDetail>(`/api/experiments/${id}/adjustments/revert`, json("POST", { field_ids: fieldIds })),
   patchExperiment: (id: number, data: { name?: string; notes?: string | null; archived?: boolean }) =>
     request<Experiment>(`/api/experiments/${id}`, json("PATCH", data)),
-  createAnalysis: (datasetId: number, data: { kind: AnalysisKind; params: AnalysisParams; recompute?: boolean }) =>
+  createAnalysis: (datasetId: number, data: { kind: AnalysisKind; params: AnalysisParams; recompute?: boolean; view?: View }) =>
     request<Analysis>(`/api/datasets/${datasetId}/analyses`, json("POST", data)),
   analysis: (id: number) => request<Analysis>(`/api/analyses/${id}`),
   team: (datasetId: number) => request<TeamState>(`/api/datasets/${datasetId}/team`),
@@ -147,8 +147,9 @@ export const api = {
     request<TeamState>(`/api/datasets/${datasetId}/recipes`, json("POST", { family, reopen })),
   applyRecipe: (datasetId: number, recipeId: number) =>
     request<TeamState>(`/api/datasets/${datasetId}/recipes/apply`, json("POST", { recipe_id: recipeId })),
-  corrMatrix: (datasetId: number, q: { kept: boolean; target: string | null; limit?: number; add?: number[] }) => {
+  corrMatrix: (datasetId: number, q: { kept: boolean; target: string | null; limit?: number; add?: number[]; view?: View }) => {
     const p = new URLSearchParams({ kept: q.kept ? "1" : "0", limit: String(q.limit ?? 60) });
+    if (q.view) p.set("view", q.view);
     if (q.target) p.set("target", q.target);
     if (q.add?.length) p.set("add", q.add.join(","));
     return request<CorrMatrix>(`/api/datasets/${datasetId}/explore/correlations?${p}`);
