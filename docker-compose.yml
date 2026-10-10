@@ -41,7 +41,7 @@ services:
       DATA_DIR: /data
       WEB_CONCURRENCY: ${API_WORKERS:-2}
       JOB_WORKERS: ${JOB_WORKERS:-2}
-      JOB_SLOTS: ${JOB_SLOTS:-2}
+      JOB_SLOTS: ${JOB_SLOTS:-1}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # Sign-in (README › Sign-in): "pick" doesn't authenticate; team deployments use "oidc".
       RAINFOREST_AUTH_MODE: ${RAINFOREST_AUTH_MODE:-pick}

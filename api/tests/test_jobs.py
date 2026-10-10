@@ -149,6 +149,36 @@ def test_slots_bound_concurrency_across_processes(database, monkeypatch):
         get_settings.cache_clear()
 
 
+def test_queued_jobs_start_oldest_first(database, monkeypatch):
+    monkeypatch.setenv("JOB_SLOTS", "1")
+    get_settings.cache_clear()
+    other = psycopg.connect(DB_URL, autocommit=True)
+    try:
+        other.execute("SELECT pg_advisory_lock(%s, 0)", (jobs.SLOT_LOCK,))
+        order: list[int] = []
+        done = threading.Semaphore(0)
+        for i in range(4):
+            jobs.submit(lambda i=i: (order.append(i), time.sleep(0.05), done.release()))
+        time.sleep(1.5)  # every waiter is polling before the slot frees up
+        other.execute("SELECT pg_advisory_unlock(%s, 0)", (jobs.SLOT_LOCK,))
+        for _ in range(4):
+            assert done.acquire(timeout=30)
+        assert order == [0, 1, 2, 3]
+
+        # An older job waiting in another process goes first, even with the slot free.
+        older = other.execute("SELECT nextval('meta.job_ticket')").fetchone()[0]
+        other.execute("SELECT pg_advisory_lock(%s, %s)", (jobs.TICKET_LOCK, older))
+        started = threading.Event()
+        jobs.submit(started.set)
+        assert not started.wait(1.5)
+        other.execute("SELECT pg_advisory_unlock(%s, %s)", (jobs.TICKET_LOCK, older))
+        assert started.wait(10)
+    finally:
+        other.close()
+        monkeypatch.undo()
+        get_settings.cache_clear()
+
+
 def test_cpu_threads_divides_cpus_between_slots(monkeypatch):
     cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count()
     monkeypatch.setenv("JOB_SLOTS", "2")

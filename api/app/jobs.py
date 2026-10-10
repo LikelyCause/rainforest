@@ -9,7 +9,9 @@ that id on the job rows it creates (`owner`). A job whose owner no longer holds 
 recently it reported progress, so `sweep()` can run whenever a worker starts without touching a sibling's jobs.
 
 Concurrency: a job runs only while it holds one of JOB_SLOTS advisory-lock slots, shared by every process, and
-its native thread pools are limited to cpu_count // JOB_SLOTS threads.
+its native thread pools are limited to cpu_count // JOB_SLOTS threads. Waiting jobs start oldest first: each takes a
+ticket on submit and holds a lock on it (on the owner connection) until it gets a slot, and a job takes a free slot
+only when no lower ticket is still held.
 """
 from __future__ import annotations
 
@@ -33,6 +35,7 @@ log = logging.getLogger(__name__)
 # Advisory-lock class ids (two-key form, a separate key space from db.py's single-key schema lock).
 OWNER_LOCK = 7_311_205
 SLOT_LOCK = 7_311_206
+TICKET_LOCK = 7_311_207
 KEEPALIVE_S = 30.0
 SLOT_POLL_S = 1.0
 
@@ -48,6 +51,11 @@ _DEAD = f"""(owner IS NULL OR NOT EXISTS (
                 WHERE l.locktype = 'advisory' AND l.granted AND l.classid = {OWNER_LOCK}::oid
                   AND l.objid = owner::oid AND l.objsubid = 2
                   AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())))"""
+
+_AHEAD = f"""SELECT EXISTS (SELECT 1 FROM pg_locks l
+                 WHERE l.locktype = 'advisory' AND l.granted AND l.classid = {TICKET_LOCK}::oid
+                   AND l.objid::text::bigint < %s AND l.objsubid = 2
+                   AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database()))"""
 
 
 def cpu_threads() -> int:
@@ -132,19 +140,48 @@ def start() -> None:
     sweep()
 
 
+def _take_ticket() -> int:
+    """Join the queue: a ticket, locked on the owner connection until the job gets a slot (or the process ends)."""
+    owner_id()
+    with _owner_mutex:
+        assert _owner_conn is not None
+        ticket = _owner_conn.execute("SELECT nextval('meta.job_ticket')").fetchone()[0]
+        _owner_conn.execute("SELECT pg_advisory_lock(%s, %s)", (TICKET_LOCK, ticket))
+    return ticket
+
+
+def _leave_queue(ticket: int) -> None:
+    with _owner_mutex:
+        if _owner_conn is None or _owner_conn.closed:
+            return  # a lost connection already released it
+        try:
+            _owner_conn.execute("SELECT pg_advisory_unlock(%s, %s)", (TICKET_LOCK, ticket))
+        except psycopg.Error:
+            log.warning("could not release job ticket %s", ticket)
+
+
 @contextmanager
-def _slot() -> Iterator[bool]:
-    """Hold one of JOB_SLOTS global slots for the duration; yields False if the process stops while waiting."""
+def _slot(ticket: int) -> Iterator[bool]:
+    """Hold one of JOB_SLOTS global slots for the duration, taken in ticket order; yields False if the process stops
+    while waiting."""
     s = get_settings()
-    with psycopg.connect(s.database_url, autocommit=True) as conn:
-        while True:
-            for k in range(max(1, s.job_slots)):
-                if conn.execute("SELECT pg_try_advisory_lock(%s, %s)", (SLOT_LOCK, k)).fetchone()[0]:
-                    yield True
+    queued = True
+    try:
+        with psycopg.connect(s.database_url, autocommit=True) as conn:
+            while True:
+                if not conn.execute(_AHEAD, (ticket,)).fetchone()[0]:
+                    for k in range(max(1, s.job_slots)):
+                        if conn.execute("SELECT pg_try_advisory_lock(%s, %s)", (SLOT_LOCK, k)).fetchone()[0]:
+                            _leave_queue(ticket)
+                            queued = False
+                            yield True
+                            return
+                if _stop.wait(SLOT_POLL_S):
+                    yield False
                     return
-            if _stop.wait(SLOT_POLL_S):
-                yield False
-                return
+    finally:
+        if queued:
+            _leave_queue(ticket)
 
 
 def _get() -> ThreadPoolExecutor:
@@ -156,9 +193,11 @@ def _get() -> ThreadPoolExecutor:
 
 def submit(fn: Callable[..., Any], *args: Any) -> None:
     """Queue `fn(*args)`. Its job row must carry `owner = owner_id()` so a restart can tell it was interrupted."""
+    ticket = _take_ticket()
+
     def run() -> None:
         try:
-            with _slot() as ok:
+            with _slot(ticket) as ok:
                 if ok:
                     with threadpool_limits(cpu_threads()):
                         fn(*args)
