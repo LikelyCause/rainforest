@@ -178,3 +178,17 @@ def test_views_of_private_or_unfinished_sources_are_refused(people):
     assert a.get(f"/api/datasets/{ds['id']}/fields?view=experiment:{x['id']}").status_code == 409
     assert b.get(f"/api/datasets/{ds['id']}/fields?view=experiment:{x['id']}").status_code == 404
     assert lead.get(f"/api/datasets/{ds['id']}/fields?view=baseline:{rid}").status_code == 404
+
+
+def test_bulk_in_an_experiment_reaches_every_field_whatever_its_version_reopened(people):
+    lead = people["lead"]
+    ds, rid = finalized_trees(lead)
+    xid = fields(lead, ds)["x"]["id"]
+    lead.post(f"/api/datasets/{ds['id']}/recipes", json={"family": "tree", "reopen": [xid]})
+    lead.post(f"/api/datasets/{ds['id']}/assessors", json={"user_id": lead.user["id"]})
+    from .team_helpers import submit_and_finalize
+    v2 = submit_and_finalize(lead, ds)["recipe"]["id"]
+    x = experiment(lead, ds, v2, "all fields")
+    r = lead.post(f"/api/datasets/{ds['id']}/decisions/bulk?view=experiment:{x['id']}",
+                  json={"filters": [], "action": "drop", "dry_run": True})
+    assert r.status_code == 200 and r.json()["matched"] == len(fields(lead, ds)), r.json()

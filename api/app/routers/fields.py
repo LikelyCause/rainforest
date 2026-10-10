@@ -236,7 +236,7 @@ def bulk_decisions(dataset_id: int, body: BulkDecisionIn, user: CurrentUser, vie
         else:
             target = sql.SQL("d.field_id = ANY({})").format(sql.Literal(body.field_ids))
         # Fields carried over into this version are locked; bulk edits pass over them.
-        if (open_ := recipes.open_field_ids(conn, src.recipe)) is not None:
+        if src.kind in ("team", "assessment") and (open_ := recipes.open_field_ids(conn, src.recipe)) is not None:
             target = sql.SQL("{} AND d.field_id = ANY({})").format(target, sql.Literal(open_))
         # Resolve and lock in one statement so the set can't drift between preview and write. An assessor's rows
         # are only theirs to change, so they are locked right after.

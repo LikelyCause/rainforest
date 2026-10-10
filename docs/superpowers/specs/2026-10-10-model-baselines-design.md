@@ -11,10 +11,12 @@ Decisions made with the owner (2026-10-10):
   selectable.
 - Focus: the Trees baseline with LightGBM is the path that must work end to end and is tested on dev-01; the other
   types keep working as they do but aren't the subject of this work.
-- The model type is chosen when a baseline is started and can't change afterwards. The top-bar Model switch goes away.
+- The model type is chosen when a baseline is started and can't change afterwards. The top-bar Model switch goes away;
+  the top bar shows a baseline chip linking to the Baselines page instead.
 - A new baseline starts either from scratch (the suggestions for its model type) or populated from another baseline of
   the same dataset.
-- The lead is an assessor like anyone else and finalizes once every assigned assessor has submitted.
+- The lead is an assessor like anyone else (included by ticking themself) and finalizes once every assigned assessor
+  has submitted.
 - Experiments use a finalized baseline as their starting point and can adjust it, including a field's type and the
   targets; adjustments belong to the experiment, are shown as differences from the baseline, and are logged to MLflow.
 - Unchanged from the team design: blind assessment, review opening by itself, lead-only finalize, versioned and
@@ -36,12 +38,19 @@ baseline in progress, if any, to be finalized first. (Alternative: key the worki
 be assessed at once. It touches about 50 queries in 13 modules and doubles the blind-data surface to test; not worth it
 for one team. Revisit if teams run baselines in parallel.)
 
-`meta.datasets.model_family` is removed; the family comes from the baseline in view.
+`meta.datasets.model_family` stays, maintained by the server as the current baseline's family (set whenever a
+baseline or version starts and loads the working tables); a `PATCH` with a different family is refused with 422. It
+keeps the SQL views, the suggestion columns and older queries working without a join; clients can't set
+it.
 
 ## 2. Starting a baseline
 
-A lead starts one from the dataset's **Baselines** page (today's Versions page, renamed), or, for a new dataset, from
-the prompt that replaces "nobody is assigned yet". One dialog:
+A lead starts one from the dataset's **Baselines** page (today's Versions page, renamed; `/versions` redirects), or,
+for a new dataset, from the Team page. A new dataset already has a first baseline row (Trees v1, assessing, nobody
+assigned); while nobody has started on it, it is **set up in place**: the start dialog changes its family, starting
+point and targets on that row and assigns the assessors, rather than adding a v2 or a second baseline. API:
+`POST /api/datasets/{id}/baselines` (`family`, `start` = `scratch | baseline | recipe`, `source_recipe_id`, `targets`,
+`assessors`); `GET …/baselines` lists them per family. One dialog:
 1. **Model type**: Trees, Linear or Neural. Types that already have a baseline are offered as "new version of …".
 2. **Start from**: *Scratch* (the suggestions for this type) or *Another baseline* (a finalized baseline of this
    dataset, any type; shows its type, version and finalized date). Populating copies keep / drop / target, types and
@@ -60,47 +69,82 @@ As today, scoped to the baseline: assessors see one model type's settings; the d
 type as a fixed badge. Review, adoption rules and finalizing are unchanged. Finalizing records the snapshot for the
 baseline's family.
 
+Starting any baseline or version loads the working tables from its starting point (`recipes.load_working`): the source
+snapshot's decisions, its settings where valid for the new family, else the suggestions. The working tables therefore
+always hold exactly the version in progress; finalized baselines are only ever read from their snapshots.
+
 ## 4. Experiments
 
 An experiment's source is a finalized baseline version (team experiment) or one assessor's assessment of a baseline in
 progress (personal, as today). The export's model type is the baseline's.
 
 **Adjustments.** The experiment owner can change, per field: the role (keep / drop / target), the type, and the prep
-settings (imputation, missing indicator, transform, scaling, encoding and encoder parameters). Changing a type resets
-that field's settings to the suggestion for the new type, as it does in assessment. Stored in
-`meta.experiment_adjustments` (experiment_id, field_id, action, semantic_type, settings columns, updated_by,
-updated_at); a field without a row follows the baseline.
+settings (imputation, missing indicator, transform, scaling, encoding and encoder parameters), within the baseline's
+model type. A type change whose settings don't fit the new type takes the new type's suggested settings.
+
+Storage (decided in implementation): each team experiment gets a **full copy** of its baseline when it is created,
+shaped like the working tables (`meta.experiment_decisions`, `meta.experiment_settings`, `meta.experiment_batches`
+for bulk undo; `experiments.target_order`; migration 013). The adjustments are computed, not stored: the diff between
+the baseline snapshot and the copy. A sparse override table was the first idea; the copy won because every existing
+read and write path (Review, Bulk edit, the finder, bulk undo, Explore) already works on relations of that shape, so an
+experiment is just another decision source. Revert deletes a field's rows (or all) and reseeds them from the snapshot.
+
+The copy is read and written through `view=experiment:<id>` on the field routes (`GET …/fields`, `GET
+/api/fields/{id}`, `PUT …/decision`, bulk and its undo, `…/fields/query`) and Explore. `view=baseline:<recipe_id>`
+reads a finalized baseline's snapshot the same way, read-only. Without a view, routes work on the baseline in progress
+as before.
+
+**Who adjusts.** Only the experiment's owner, while it isn't archived. The default per-baseline Team experiments
+(`is_default`, named like "Team · Trees v1", made on the first export without an experiment) are not adjustable, so the
+baseline's own results stay as agreed; neither are Imported or personal experiments. Anyone else wanting changes
+starts their own experiment from the baseline.
 
 **Changed targets.** Targets are the baseline's by default; an experiment may add or remove targets (a run then picks
 among the experiment's targets, as today). Because the baseline's choices were made against its targets, an experiment
 with different targets:
-- recomputes target associations and leakage flags for its new targets (the existing associations job) and shows any
-  kept field that now looks like a leak, before export;
+- is checked for leakage against its own target set at preview time (`leakage.leak_names` over the stored
+  associations), so any kept field that looks like a leak of its targets is warned about before export; a field newly
+  made a target gets the leak screen in the background, and a target with no associations at all is named ("No leak
+  check has run for target(s) …"). The dataset's stored leakage flags and target state, which belong to the working
+  copy, are left alone;
 - has its export split stratified on its own targets;
 - is badged "targets changed" on the experiment page, in run comparisons and in MLflow (`rainforest.targets_changed`
-  tag), so its results aren't read as comparable with experiments on the baseline's targets. Editing reuses Review and Bulk edit in an
-**experiment mode** (entered from the experiment page): the panel shows the baseline value next to each changed setting
-and *Revert to baseline*. The experiment page lists the adjustments ("4 fields adjusted from Trees baseline v2").
+  tag), and its export preview warns "Targets differ from …", so its results aren't read as comparable with
+  experiments on the baseline's targets.
+
+Editing reuses Review and Bulk edit in an **experiment mode** (*Adjust fields* on the experiment page opens
+`?view=experiment:<id>`, with a mode bar): the panel says which settings changed from the baseline, with *Revert to
+baseline*. The experiment page has an Adjustments card (per-field revert, revert everything) and "N adjusted" /
+"targets changed" badges.
 
 Exports of an experiment are built from the baseline snapshot plus its adjustments, frozen at export time. The
-manifest and the MLflow run record the baseline (id, family, version) and the adjustments (as a JSON artifact, a count
-param and a `rainforest.adjusted` tag), so a result can always be traced to the exact preparation.
+export's model family is always the baseline's (another `family` is a 422). The manifest config records `baseline`
+(recipe id, family, version, label) and `adjustments` (count, fields, targets changed, targets, per-field detail); the
+MLflow run records them as tags (`rainforest.baseline`, `rainforest.baseline_family`, `rainforest.adjusted`,
+`rainforest.targets_changed`), the param `prep.adjusted_fields` and the artifact `adjustments.json`, so a result can
+always be traced to the exact preparation.
 
 Team experiments stay visible to everyone; only the owner adjusts them. Personal experiments behave as today.
 
 ## 5. Elsewhere
 
-- **Explore** has a baseline picker where it uses decisions ("Kept only"): any finalized baseline, or the one in
-  progress (the viewer's own assessment while assessing). The cache key includes it.
+- **Explore** has a "Decisions" picker (`?decisions=`) for raw data: the baseline in progress (the viewer's own
+  assessment for "Kept only" while assessing), any finalized baseline, or an adjustable team experiment's copy. The
+  cache key includes it (`team | assessment:r:u | experiment:x | baseline:r`).
 - **Reuse on new data** reuses one finalized baseline into a new dataset's baseline of the same family.
 - **Datasets list** shows each dataset's baselines as chips (type, version, phase).
-- **SQL views** (`v_fields`, `v_model_metrics`) gain the baseline family and version.
+- **SQL views**: `v_field_profiles` / `v_fields` gain `baseline_family`, `baseline_version`; `v_model_metrics` gains
+  `experiment_id`, `baseline_family`, `baseline_version`.
+- **Planned models** (`linear_svm`, `knn`, `cnn`, `rnn`) are listed by `/api/models` and per export with
+  `planned: true`; training one is a 422.
 
 ## 6. Migration
 
 Existing recipe versions become baselines of the dataset's current `model_family`, keeping their snapshots (settings
-for the other families are dropped from the snapshot's use but left in the stored JSON). Existing experiments point at
-those baselines with no adjustments. dev-01 currently has no datasets.
+for the other families are dropped from the snapshot's use but left in the stored JSON); versions become unique per
+(dataset, family) (migration 012). Default Team experiments are flagged `is_default` and renamed "Team · Trees vN".
+Existing team experiments get their copy at startup (`experiments.backfill_copies`) and so start with no
+adjustments. dev-01 currently has no datasets.
 
 ## Build order
 
