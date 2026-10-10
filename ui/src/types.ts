@@ -228,6 +228,42 @@ export interface ExportPreview {
   last_export?: { id: number; created_at: string; status: string; recipe_id: number | null } | null;
   changed_since_export?: number | null;
   recipe?: { id: number; version: number; phase: Phase };
+  /** "assessment": the preview of a personal experiment, from its assessor's assessment as it stands. */
+  source?: "recipe" | "assessment";
+  experiment_id?: number | null;
+}
+
+/** Where exports and runs live. Built from a finalized recipe version (team) or one assessor's assessment
+ * (personal), which only its assessor sees while that version is assessing. */
+export interface Experiment {
+  id: number;
+  dataset_id: number;
+  name: string;
+  /** Who created it; null for the Team and Imported experiments the app makes. */
+  owner: number | null;
+  owner_name: string | null;
+  recipe_id: number;
+  recipe_version: number;
+  recipe_phase: Phase;
+  /** Set on a personal experiment: whose assessment it is built from. */
+  assessor_id: number | null;
+  /** `recipe:<recipe_id>` or `assessment:<recipe_id>:<user_id>`. */
+  source: string;
+  notes: string | null;
+  created_at: string;
+  archived_at: string | null;
+  /** Personal and its version still assessing: only its assessor can see it. */
+  private: boolean;
+  export_count?: number;
+  run_count?: number;
+  mlflow_experiment_id?: string | null;
+  /** Its best finished run on the validation split. */
+  best?: { metric: string; value: number; run_id: number; target: string } | null;
+}
+
+export interface ExperimentDetail extends Experiment {
+  exports: ExportJob[];
+  runs: ModelRun[];
 }
 
 export interface ExportJob {
@@ -241,6 +277,8 @@ export interface ExportJob {
   config: Record<string, any>;
   recipe_id: number | null;
   recipe_version: number | null;
+  experiment_id: number;
+  experiment_name: string | null;
   n_rows: number | null;
   n_features: number | null;
   summary: Record<string, any>;
@@ -304,7 +342,10 @@ export interface ModelRun {
     n_features?: number;
     evaluation?: Record<string, Record<string, TargetEvaluation>>; // split -> target
     mlflow_error?: string;
+    /** Run of a private experiment: logged to MLflow once its recipe version reaches review. */
+    mlflow_pending?: boolean;
   };
+  experiment_id: number;
   mlflow_run_id: string | null;
   /** The run in the MLflow UI (served at /mlflow/); null when it wasn't logged. */
   mlflow_url: string | null;

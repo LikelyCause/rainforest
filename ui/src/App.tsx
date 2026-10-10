@@ -11,7 +11,7 @@ import { TeamPage } from "./pages/TeamPage";
 import { VersionsPage } from "./pages/VersionsPage";
 import { ReviewPage } from "./pages/ReviewPage";
 import { BulkEditPage } from "./pages/BulkEditPage";
-import { ExportPage } from "./pages/ExportPage";
+import { ExperimentPage, ExperimentsPage } from "./pages/ExperimentsPage";
 import { ExplorePage } from "./pages/ExplorePage";
 import { DatasetTeamPage, PhaseBadge } from "./pages/DatasetTeamPage";
 import { DatasetLayout } from "./components/DatasetLayout";
@@ -62,7 +62,7 @@ function ModelSwitch({ ds }: { ds: Dataset }) {
 function DatasetSteps({ ds }: { ds: Dataset }) {
   const nav = useNavigate();
   const onReview = useMatch("/d/:datasetId/review/*");
-  const onExport = useMatch("/d/:datasetId/export");
+  const onExperiments = useMatch("/d/:datasetId/experiments/*");
   const onTeam = useMatch("/d/:datasetId/team");
   const access = useAccess(ds);
   const fields = useFields(ds.id);
@@ -78,7 +78,7 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
   const nextTodo = access.canEdit ? all.find((f) => !f.reviewed) : undefined;
   const step = ({ isActive }: { isActive: boolean }) => `step${isActive ? " active" : ""}`;
 
-  // U jumps back into review from Bulk edit, Explore and Export, matching its meaning on the Review page.
+  // U jumps back into review from Bulk edit, Explore and Experiments, matching its meaning on the Review page.
   useEffect(() => {
     if (onReview) return;
     const onKey = (e: KeyboardEvent) => {
@@ -102,16 +102,16 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
         <NavLink to={`/d/${ds.id}/team`} className={step} title="Assessors, team review and finalizing">
           <span>Team <PhaseBadge phase={ds.phase} /></span>
         </NavLink>
-        <NavLink to={`/d/${ds.id}/export`} className={step}>
-          <span><span className="n">2</span>Export &amp; train{running > 0 && <span className="badge accent" style={{ marginLeft: 6 }} title={`${running} running`}>{running}</span>}</span>
+        <NavLink to={`/d/${ds.id}/experiments`} className={step} title="Exports and model runs, grouped into experiments">
+          <span><span className="n">2</span>Experiments{running > 0 && <span className="badge accent" style={{ marginLeft: 6 }} title={`${running} running`}>{running}</span>}</span>
         </NavLink>
       </nav>
       <div className="spacer" />
       <ModelSwitch ds={ds} />
       {!onReview && all.length > 0 && (nextTodo ? (
         <Link className="btn" to={`/d/${ds.id}/review/${nextTodo.id}`}>Next unreviewed › <kbd>U</kbd></Link>
-      ) : ds.phase === "finalized" ? !onExport && (
-        <Link className="btn" to={`/d/${ds.id}/export`} style={{ background: "var(--good)", borderColor: "var(--good)", color: "#fff" }}>All reviewed → Export</Link>
+      ) : ds.phase === "finalized" ? !onExperiments && (
+        <Link className="btn" to={`/d/${ds.id}/experiments`} style={{ background: "var(--good)", borderColor: "var(--good)", color: "#fff" }}>All reviewed → Experiments</Link>
       ) : !onTeam && access.source === "mine" && access.canEdit ? (
         <Link className="btn" to={`/d/${ds.id}/team`} style={{ background: "var(--good)", borderColor: "var(--good)", color: "#fff" }}>All reviewed → Submit</Link>
       ) : null)}
@@ -243,7 +243,9 @@ export default function App() {
             <Route path="bulk" element={<BulkEditPage />} />
             <Route path="query" element={<Navigate to="../bulk" replace />} />
             <Route path="explore/:view?" element={<ExplorePage />} />
-            <Route path="export" element={<ExportPage />} />
+            <Route path="export" element={<Navigate to="../experiments" replace />} />
+            <Route path="experiments" element={<ExperimentsPage />} />
+            <Route path="experiments/:experimentId" element={<ExperimentPage />} />
             <Route path="team" element={<DatasetTeamPage />} />
             <Route path="versions" element={<VersionsPage />} />
           </Route>

@@ -2,7 +2,7 @@ import type {
   Analysis, AnalysisKind, AnalysisParams, CorrMatrix, BulkRequest, BulkResult, Correlation, Dataset, DecisionInput, Decision, ExportJob, ExportPreview, FieldFilter,
   FieldListItem, FieldResponse, ModelOption, ModelRun, OptionCatalog, SqlResult, SystemInfo, Device,
   AuthConfig, Me, PickUser, Role, TeamUser, TeamState, ReviewQueue, FieldReview, ReviewComment,
-  RecipeVersion, FinalizedRecipe, RecipeDiff,
+  RecipeVersion, FinalizedRecipe, RecipeDiff, Experiment, ExperimentDetail,
 } from "./types";
 
 export class ApiError extends Error {
@@ -94,16 +94,24 @@ export const api = {
     request<Record<string, unknown>[]>(`/api/datasets/${datasetId}/fields/query`, json("POST", data)),
   sql: (sql: string) => request<SqlResult>("/api/sql", json("POST", { sql })),
   sqlExamples: () => request<{ title: string; sql: string }[]>("/api/sql/examples"),
-  exportPreview: (id: number, family: string, recipeId?: number | null) =>
-    request<ExportPreview>(`/api/datasets/${id}/export-preview?family=${family}${recipeId ? `&recipe_id=${recipeId}` : ""}`),
-  exports: (id: number) => request<ExportJob[]>(`/api/datasets/${id}/exports`),
+  exportPreview: (id: number, family: string, recipeId?: number | null, experimentId?: number | null) =>
+    request<ExportPreview>(`/api/datasets/${id}/export-preview?family=${family}${recipeId ? `&recipe_id=${recipeId}` : ""}${experimentId ? `&experiment_id=${experimentId}` : ""}`),
+  exports: (id: number, experimentId?: number) =>
+    request<ExportJob[]>(`/api/datasets/${id}/exports${experimentId ? `?experiment_id=${experimentId}` : ""}`),
   startExport: (id: number, cfg: Record<string, number | string | null>) =>
     request<ExportJob>(`/api/datasets/${id}/exports`, json("POST", cfg)),
   modelsForExport: (exportId: number) => request<ModelOption[]>(`/api/exports/${exportId}/models`),
   system: () => request<SystemInfo>("/api/system"),
   startRun: (exportId: number, data: { model: string; order?: string[]; cv?: number; params?: Record<string, unknown>; device?: Device }) =>
     request<ModelRun>(`/api/exports/${exportId}/runs`, json("POST", data)),
-  runs: (datasetId: number) => request<ModelRun[]>(`/api/datasets/${datasetId}/runs`),
+  runs: (datasetId: number, experimentId?: number) =>
+    request<ModelRun[]>(`/api/datasets/${datasetId}/runs${experimentId ? `?experiment_id=${experimentId}` : ""}`),
+  experiments: (datasetId: number) => request<Experiment[]>(`/api/datasets/${datasetId}/experiments`),
+  experiment: (id: number) => request<ExperimentDetail>(`/api/experiments/${id}`),
+  createExperiment: (datasetId: number, data: { name: string; source: string; notes?: string | null }) =>
+    request<Experiment>(`/api/datasets/${datasetId}/experiments`, json("POST", data)),
+  patchExperiment: (id: number, data: { name?: string; notes?: string | null; archived?: boolean }) =>
+    request<Experiment>(`/api/experiments/${id}`, json("PATCH", data)),
   createAnalysis: (datasetId: number, data: { kind: AnalysisKind; params: AnalysisParams; recompute?: boolean }) =>
     request<Analysis>(`/api/datasets/${datasetId}/analyses`, json("POST", data)),
   analysis: (id: number) => request<Analysis>(`/api/analyses/${id}`),

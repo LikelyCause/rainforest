@@ -17,12 +17,13 @@ export function useInvalidateTeam(datasetId: number) {
   const qc = useQueryClient();
   return () => {
     for (const k of ["team", "reviewQueue", "dataset", "fields", "fieldQuery", "exportPreview", "corrMatrix", "analysis",
-      "versions", "recipeDiff"]) {
+      "versions", "recipeDiff", "experiments", "exports", "runs"]) {
       qc.invalidateQueries({ queryKey: [k, datasetId] });
     }
     qc.invalidateQueries({ queryKey: ["datasets"] });
     qc.invalidateQueries({ queryKey: ["field"] });
     qc.invalidateQueries({ queryKey: ["fieldReview"] });
+    qc.invalidateQueries({ queryKey: ["experiment"] });
   };
 }
 
@@ -224,7 +225,7 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
           {finalized ? (
             <span className="small-text secondary">
               Finalized {fmtAgo(team.recipe.finalized_at)}{team.recipe.finalized_by_name ? ` by ${team.recipe.finalized_by_name}` : ""}.{" "}
-              <Link to={`/d/${ds.id}/export`}>Export →</Link>{" "}
+              <Link to={`/d/${ds.id}/experiments`}>Experiments →</Link>{" "}
               <Link to={`/d/${ds.id}/versions`}>{me?.role === "lead" ? "Start a new version →" : "Versions →"}</Link>
             </span>
           ) : me?.role === "lead" ? (

@@ -65,11 +65,11 @@ sign-in, see [Sign-in](#sign-in) (`make up-keycloak` runs a ready-made Keycloak 
    at the suggestion and not yet reviewed follow target changes (a new leak flag drops them).
 4. **Explore** → correlations heatmap, a 2-D map of rows, per-field statistical tests against a target, and feature
    importance. See [Explore](#explore).
-5. **Export & train** → fit the preprocessing on the training split, write the model-ready Parquet, and train
-   chains with any compatible model. Runs on an export are compared side by side, and the best on the validation
-   split is starred.
+5. **Experiments** → in an experiment, fit the preprocessing on the training split, write the model-ready
+   Parquet, and train chains with any compatible model. Runs on an export are compared side by side, and the best on
+   the validation split is starred. See [Experiments](#experiments).
 
-The top bar shows the workflow steps **Review · Bulk edit · Explore · Team · Export & train** (the Team step carries
+The top bar shows the workflow steps **Review · Bulk edit · Explore · Team · Experiments** (the Team step carries
 the dataset's phase: *Assessing*, *Review* or *Finalized*) and the **Model** switch (*Trees* · *Linear* · *Neural*),
 and on the right **Team** (the user list), who you're signed in as with your role, and *Sign out*.
 
@@ -80,7 +80,7 @@ uploads, exports, model runs, Explore analyses). A user is a **lead** or a **mem
 
 | | Member | Lead |
 |---|---|---|
-| Upload, Explore, export a finalized recipe, train | ✓ | ✓ |
+| Upload, Explore, experiment (export a finalized recipe or your own assessment, train) | ✓ | ✓ |
 | Review and bulk edit their own assessment when assigned; comment in team review | ✓ | ✓ |
 | Assign assessors, set the team decision in review, finalize | | ✓ |
 | Delete datasets | | ✓ |
@@ -202,13 +202,39 @@ Recipe fields missing from the new data are listed. The recipe's targets carry o
 here. The summary stays on the dataset's Team and Versions pages, and the version records the recipe it came from.
 If nothing needs assessing, the version opens in team review and a lead confirms it by finalizing.
 
-**Exports** are built from a finalized version's snapshot (the latest by default; Export has a version selector),
-never from the decisions being worked on, so an old version always exports the same way while a newer one is in
-progress. Explore is shared: raw-data analyses use the team decision, except that while assessing, *Kept only* uses
+**Exports** live in [experiments](#experiments). A team export is built from a finalized version's snapshot, never
+from the decisions being worked on, so an old version always exports the same way while a newer one is in progress;
+an assessor can also export their own assessment, privately, while they assess. Explore is shared: raw-data analyses use the team decision, except that while assessing, *Kept only* uses
 your own choices, and results are cached per decision source so they never mix people's choices.
 
 Datasets that existed before recipes became recipe v1, finalized from their decisions at the time by the first lead,
 and their exports point at it.
+
+## Experiments
+
+Exports and the model runs trained on them belong to an **experiment**: the dataset's **Experiments** step lists
+them (*All*, *Mine*, *Team*, *Archived*) with their export and run counts and their best run on the validation split.
+*New experiment* asks for a name and what it is built from:
+
+* **A finalized recipe version** (a team experiment). Everyone sees it and anyone can add exports and runs to it.
+  Exporting a finalized version from the API without naming an experiment puts the export in that version's
+  **Team · vN** experiment, made on first use.
+* **My assessment (vN)** (a personal experiment), offered while you are an assessor of the version being worked.
+  Its exports use your own choices as they stand when you export; fields a later version carried over (locked) take
+  the team's values. The export freezes that snapshot, so it rebuilds the same way after you change your assessment.
+  Only you add exports and runs to it.
+
+**Privacy.** A personal experiment is **private** (🔒) while its recipe version is assessing: nobody else sees it,
+the lead included, nor its exports, runs, files, Explore results on its exports or anything about it in the Datasets
+list, and opening one by URL answers *doesn't exist*. From team review onwards it is visible to the whole team, like
+the assessment it was built from. The SQL console never shows a private experiment, its exports, runs or metrics
+(row-level security; the console doesn't know who is asking, so this includes the owner).
+
+An experiment's page shows how it was built and whether it is private, its notes, and the export and train panel
+scoped to it: build an export from its source, train on it, compare the runs, and *MLflow ↗* for its runs there. Its
+owner (for a personal one, its assessor) or a lead renames it, edits its notes and archives or unarchives it; an
+archived experiment takes no new exports or runs. Exports and runs made before experiments existed are in one
+**Imported** experiment per dataset, on the newest recipe version they were exported from.
 
 ## Decisions: shared vs per model family
 
@@ -300,9 +326,10 @@ of failing.
 
 ## Export → ClassifierChain
 
-Exports are built from a finalized recipe version's snapshot, the latest unless you pick another (see
-[Team workflow](#team-workflow)); each export records the recipe (`recipe_id`, shown as *recipe vN* in the list), and
-its manifest's `config` the recipe id and version.
+Exports are built from an experiment's source: a finalized recipe version's snapshot, or for a personal
+experiment its assessor's assessment frozen at export time (see [Experiments](#experiments)). Each export records
+the recipe (`recipe_id`, shown as *recipe vN* in the list) and its experiment, and its manifest's `config` the
+`source` (`recipe` or `assessment`), recipe id and version, `experiment_id` and, for a personal export, `assessor_id`.
 
 * **Leakage-safe split:** the train / valid / test split is assigned first, stratified on the target combination
   (single-row combinations are pooled; if the combinations still can't be stratified, on one target, else not at
@@ -421,15 +448,21 @@ the sign-in page (and back) if it isn't. The server has no published port of its
 * **Artifacts:** `report.json` and `model/classifier_chain.joblib`, the same files *Files* offers on the run. The
   server stores them on the `mlartifacts` volume and proxies uploads and downloads, so clients only talk HTTP to it.
 * **Tags:** `rainforest.dataset_id`, `rainforest.dataset_name`, `rainforest.export_id`, `rainforest.recipe_id`
-  and `rainforest.recipe_version` (the recipe version the export was built from), `rainforest.run_id`,
+  and `rainforest.recipe_version` (the recipe version the export was built from), `rainforest.experiment_id` and
+  `rainforest.experiment_name` (the Rainforest experiment), `rainforest.run_id`,
   `rainforest.model`, `rainforest.model_family`, and `rainforest.git_sha` when the image was built with `GIT_SHA`
   (`make up` passes the checkout's commit).
-* **Links:** the runs table has an *MLflow ↗* link per logged run, and the run's detail links to it too.
+* **Private experiments wait.** MLflow has no access control of its own: anyone who can sign in to Rainforest can
+  browse everything in it. So a run in a [private experiment](#experiments) is not logged while its recipe version
+  is assessing (the runs table shows *after review*); when review opens, those runs are logged, and runs that finish
+  after that are logged at once. The API also flushes any still waiting when it starts.
+* **Links:** the runs table has an *MLflow ↗* link per logged run, and the run's detail links to it too; an
+  experiment's page links to the dataset's MLflow experiment filtered to its runs.
   `meta.model_runs` stores `mlflow_experiment_id` and `mlflow_run_id`, and the API returns `mlflow_url`.
 * **When MLflow is down** the run still finishes; logging gives up after a short timeout (15 s per request, two
   retries) and the run records the reason as `mlflow_error` in its report. The runs table shows *not logged* with the
   reason, and nothing is lost: `make mlflow-backfill` logs every finished run without an MLflow run, including runs
-  trained before MLflow was set up. It never runs on its own.
+  trained before MLflow was set up, except runs of an experiment that is still private. It never runs on its own.
 * **Turning it off:** set `MLFLOW_TRACKING_URI=` (empty) in `.env`. Runs are then not logged and show no link. The
   `mlflow` service still starts; stop it with `docker compose stop mlflow` if you don't want it.
 * **Storage:** the tracking data lives in a database named `mlflow` in the same Postgres. The `mlflow` service
@@ -471,14 +504,17 @@ WHERE dataset_id = 1 AND split = 'test' AND metric IN ('roc_auc', 'roc_auc_ovr_m
 | `meta.field_correlations` | pairwise associations (one row per unordered pair) |
 | `meta.users` | users: name, email, role (`lead` / `member`), active, OIDC subject, last seen |
 | `meta.recipes` | recipe versions per dataset: phase (`assessing` / `review` / `finalized`), who finalized it, and the frozen `snapshot` |
-| `meta.exports`, `meta.model_runs` | export jobs; training runs with metrics and report |
+| `meta.experiments` | experiments per dataset: name, owner, `source` (`recipe:<id>` or `assessment:<recipe id>:<user id>`), notes, archived |
+| `meta.exports`, `meta.model_runs` | export jobs; training runs with metrics and report; each with its `experiment_id` |
 | `meta.analyses` | Explore jobs (map, tests, importance): params, data version, status, result JSONB |
 | `meta.v_fields`, `meta.v_field_settings`, `meta.v_correlations`, `meta.v_model_metrics` | query-friendly views |
 | `raw.ds_<id>` | the uploaded data (sanitized column names; see `meta.fields.db_column`) |
 
 Assessments are private while a dataset is assessed, so the console's role can't read `meta.assessments`,
 `meta.assessment_settings`, `meta.assessment_batches`, `meta.dataset_assessors` or `meta.review_comments`, and sees
-only the team's Explore results in `meta.analyses`.
+only the team's Explore results in `meta.analyses`. Personal experiments are private while assessing, so row-level
+security hides them from the console in `meta.experiments`, with their rows in `meta.exports`, `meta.model_runs`,
+`meta.v_model_metrics` and `meta.analyses`.
 
 **Schema changes** go in `api/app/migrations/NNN_name.sql`. The API applies new migrations once on startup, under an
 advisory lock, and records them in `meta.schema_migrations`. Views live in `api/app/views.sql` and are recreated on

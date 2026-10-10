@@ -2,14 +2,14 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { useFields, useOptions } from "../hooks";
-import { useDatasetContext } from "../components/DatasetLayout";
+import { useFields } from "../hooks";
 import { ErrorAlert } from "../components/ui";
 import { RunDetail } from "../components/RunDetail";
 import { familyShort, fmtAgo, fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
 import { toast } from "../toast";
 import { bestRuns, metricFor, type RunMetric } from "../runs";
-import type { ExportJob, ModelRun } from "../types";
+import { sourceLabel } from "../experiments";
+import type { Dataset, Experiment, ExportJob, ModelRun } from "../types";
 
 const FAMILY_EXPLAINER: Record<string, string> = {
   tree: "Missing values stay as NaN for the trees to route; no scaling or log transforms; mid/high-cardinality categoricals become compact ordinal codes.",
@@ -57,15 +57,12 @@ function SplitBar({ valid, test, rows }: { valid: number; test: number; rows: nu
   );
 }
 
-function BuildPanel({ datasetId, family, rows }: { datasetId: number; family: string; rows: number | null }) {
+function BuildPanel({ datasetId, family, rows, x }: { datasetId: number; family: string; rows: number | null; x: Experiment }) {
   const qc = useQueryClient();
-  const fields = useFields(datasetId);
-  const versions = useQuery({ queryKey: ["versions", datasetId], queryFn: () => api.versions(datasetId) });
-  const finalized = (versions.data ?? []).filter((v) => v.phase === "finalized");
-  // null: the latest finalized version, which is what the API builds from by default.
-  const [recipeId, setRecipeId] = useState<number | null>(null);
-  const preview = useQuery({ queryKey: ["exportPreview", datasetId, family, recipeId], queryFn: () => api.exportPreview(datasetId, family, recipeId) });
-  const exports = useQuery({ queryKey: ["exports", datasetId], queryFn: () => api.exports(datasetId) });
+  const personal = x.assessor_id !== null;
+  const fields = useFields(datasetId, personal);
+  const preview = useQuery({ queryKey: ["exportPreview", datasetId, family, x.id], queryFn: () => api.exportPreview(datasetId, family, null, x.id) });
+  const exports = useQuery({ queryKey: ["exports", datasetId, x.id], queryFn: () => api.exports(datasetId, x.id) });
   const [valid, setValid] = useState("15");
   const [test, setTest] = useState("15");
   const [seed, setSeed] = useState(42);
@@ -80,9 +77,10 @@ function BuildPanel({ datasetId, family, rows }: { datasetId: number; family: st
 
   const start = useMutation({
     mutationFn: (cfg: { valid_size: number; test_size: number; seed: number; fit_sample_rows: number }) =>
-      api.startExport(datasetId, { ...cfg, model_family: family, recipe_id: recipeId }),
+      api.startExport(datasetId, { ...cfg, model_family: family, experiment_id: x.id }),
     onSuccess: (e) => {
       qc.invalidateQueries({ queryKey: ["exports", datasetId] });
+      qc.invalidateQueries({ queryKey: ["experiment", x.id] });
       toast({ message: `Export #${e.id} started` });
     },
   });
@@ -98,15 +96,10 @@ function BuildPanel({ datasetId, family, rows }: { datasetId: number; family: st
     <section className="card build-panel">
       <div className="stack" style={{ gap: 10, minWidth: 0 }}>
         <div className="row" style={{ justifyContent: "space-between" }}>
-          <h2>What will be exported</h2>
-          {finalized.length > 0 && (
-            <label className="field row" style={{ gap: 6 }}>Recipe
-              <select value={recipeId ?? ""} aria-label="Recipe version" onChange={(e) => setRecipeId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">latest finalized (v{finalized[0].version})</option>
-                {finalized.map((v) => <option key={v.id} value={v.id}>v{v.version} · {v.finalized_by_name ?? "—"}, {fmtAgo(v.finalized_at)}</option>)}
-              </select>
-            </label>
-          )}
+          <h2>What will be exported <abbr className="muted" style={{ fontSize: 13, fontWeight: 400 }} title={`${HOW_IT_WORKS}\n\n${familyShort(family)}: ${FAMILY_EXPLAINER[family] ?? ""}`}>ⓘ</abbr></h2>
+          <span className="secondary small-text" title={personal ? "Your assessment as it stands when you export; later edits don't change an export already made." : "The version's frozen snapshot."}>
+            from {sourceLabel(x)}{personal ? ", as it stands now" : ""}
+          </span>
         </div>
         <ErrorAlert error={preview.error} />
         {p && (
@@ -120,7 +113,7 @@ function BuildPanel({ datasetId, family, rows }: { datasetId: number; family: st
             {p.unreviewed > 0 && (
               <div className="alert warn">
                 <span className="grow">{p.unreviewed} unreviewed — their suggested settings will be used.</span>
-                {firstTodo && <Link to={`/d/${datasetId}/review/${firstTodo.id}`}>Review next →</Link>}
+                {personal && firstTodo && <Link to={`/d/${datasetId}/review/${firstTodo.id}`}>Review next →</Link>}
               </div>
             )}
             {p.warnings.filter((w) => !w.includes("not reviewed")).map((w) => <div key={w} className="alert warn">⚠ {w}</div>)}
@@ -213,8 +206,9 @@ function TrainForm({ e, targets, onStarted }: { e: ExportJob; targets: string[];
   const start = useMutation({
     mutationFn: () => api.startRun(e.id, { model, order: reverse ? [...targets].reverse() : targets, cv: 5, device: useGpu ? "cuda" : "cpu" }),
     onSuccess: (run) => {
-      qc.setQueryData<ModelRun[]>(["runs", e.dataset_id], (old) => [run, ...(old ?? []).filter((r) => r.id !== run.id)]);
+      qc.setQueryData<ModelRun[]>(["runs", e.dataset_id, e.experiment_id], (old) => [run, ...(old ?? []).filter((r) => r.id !== run.id)]);
       qc.invalidateQueries({ queryKey: ["runs", e.dataset_id] });
+      qc.invalidateQueries({ queryKey: ["experiment", e.experiment_id] });
       onStarted(run);
     },
   });
@@ -266,7 +260,7 @@ function featuresByType(e: ExportJob): string {
   return Object.entries(by).map(([t, x]) => `${t.replace("_", " ")}: ${x.fields} → ${x.features}`).join("\n");
 }
 
-function ExportRow({ e, onStarted }: { e: ExportJob; onStarted: (r: ModelRun) => void }) {
+function ExportRow({ e, onStarted, canAdd }: { e: ExportJob; onStarted: (r: ModelRun) => void; canAdd: boolean }) {
   const s = e.summary ?? {};
   const by = s.features_by_type as Record<string, { fields: number }> | undefined;
   const inputs = by ? Object.values(by).reduce((a, x) => a + x.fields, 0) : null;
@@ -309,7 +303,7 @@ function ExportRow({ e, onStarted }: { e: ExportJob; onStarted: (r: ModelRun) =>
       </div>
       {e.status === "done" && (
         <div className="row" style={{ flexWrap: "nowrap" }}>
-          <Pop label="Train ▾" primary>{() => <TrainForm e={e} targets={s.targets ?? []} onStarted={onStarted} />}</Pop>
+          {canAdd && <Pop label="Train ▾" primary>{() => <TrainForm e={e} targets={s.targets ?? []} onStarted={onStarted} />}</Pop>}
           <Pop label="Files ▾">{() => (
             <>
               <a className="btn" href={`/api/exports/${e.id}/files/data`}>Dataset (.parquet)</a>
@@ -337,6 +331,9 @@ function ExportRow({ e, onStarted }: { e: ExportJob; onStarted: (r: ModelRun) =>
 function MlflowCell({ r }: { r: ModelRun }) {
   if (r.mlflow_url) {
     return <a href={r.mlflow_url} target="_blank" rel="noopener" onClick={(ev) => ev.stopPropagation()}>MLflow ↗</a>;
+  }
+  if (r.report?.mlflow_pending) {
+    return <span className="badge" title="This experiment is private while the recipe version is being assessed, and MLflow can't keep runs private. The run is logged when review opens.">after review</span>;
   }
   if (r.report?.mlflow_error) {
     return <span className="badge warn" title={`Not logged to MLflow: ${r.report.mlflow_error}`}>not logged</span>;
@@ -416,20 +413,19 @@ function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: 
   );
 }
 
-export function ExportPage() {
-  const ds = useDatasetContext();
+/** An experiment's exports and runs: build an export from its source, train on it, compare the runs. */
+export function ExperimentWorkspace({ ds, x, canAdd }: { ds: Dataset; x: Experiment; canAdd: boolean }) {
   const datasetId = ds.id;
-  useOptions();
   const family = ds.model_family;
   const [fresh, setFresh] = useState<number | null>(null);
   const exports = useQuery({
-    queryKey: ["exports", datasetId],
-    queryFn: () => api.exports(datasetId),
+    queryKey: ["exports", datasetId, x.id],
+    queryFn: () => api.exports(datasetId, x.id),
     refetchInterval: (q) => ((q.state.data as ExportJob[] | undefined)?.some((e) => isActive(e.status)) ? 1000 : false),
   });
   const runs = useQuery({
-    queryKey: ["runs", datasetId],
-    queryFn: () => api.runs(datasetId),
+    queryKey: ["runs", datasetId, x.id],
+    queryFn: () => api.runs(datasetId, x.id),
     refetchInterval: (q) => ((q.state.data as ModelRun[] | undefined)?.some((r) => isActive(r.status)) ? 1500 : false),
   });
   const onStarted = (r: ModelRun) => {
@@ -440,19 +436,15 @@ export function ExportPage() {
     .map((e) => ({ e, runs: (runs.data ?? []).filter((r) => r.export_id === e.id) }))
     .filter((g) => g.runs.length);
 
-
   return (
-    <div className="page">
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <h1>Export &amp; train <abbr className="muted" style={{ fontSize: 14, fontWeight: 400 }} title={`${HOW_IT_WORKS}\n\n${familyShort(family)}: ${FAMILY_EXPLAINER[family] ?? ""}`}>ⓘ How export works</abbr></h1>
-      </div>
-      <BuildPanel datasetId={datasetId} family={family} rows={ds.row_count} />
+    <>
+      {canAdd && <BuildPanel datasetId={datasetId} family={family} rows={ds.row_count} x={x} />}
 
       <section className="card stack" style={{ gap: 0 }}>
         <div className="card-head"><h2>Exports</h2></div>
         <ErrorAlert error={exports.error} />
-        {exports.data?.length === 0 && <div className="empty">No exports yet. Build one above, then train models on it.</div>}
-        {exports.data?.map((e) => <ExportRow key={e.id} e={e} onStarted={onStarted} />)}
+        {exports.data?.length === 0 && <div className="empty">No exports yet.{canAdd ? " Build one above, then train models on it." : ""}</div>}
+        {exports.data?.map((e) => <ExportRow key={e.id} e={e} onStarted={onStarted} canAdd={canAdd} />)}
       </section>
 
       <section className="card stack">
@@ -469,6 +461,6 @@ export function ExportPage() {
           <div className="empty">Train a chain on a finished export to compare models here.</div>
         )}
       </section>
-    </div>
+    </>
   );
 }

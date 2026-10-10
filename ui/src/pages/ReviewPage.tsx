@@ -69,7 +69,7 @@ export function ReviewPage() {
   const family = ds.model_family;
   const access = useAccess(ds);
   // Where finishing leads: an assessor submits on the Team page; everyone else goes on to Export.
-  const finishTo = access.source === "mine" ? `/d/${datasetId}/team` : `/d/${datasetId}/export`;
+  const finishTo = access.source === "mine" ? `/d/${datasetId}/team` : `/d/${datasetId}/experiments`;
   const fields = useFields(datasetId);
   const options = useOptions();
   const familyLabel = familyShort(family);

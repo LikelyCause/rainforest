@@ -65,7 +65,7 @@ function Toolbar({ ds, st, sampled }: { ds: Dataset; st: ExploreState; sampled: 
           <option value="raw">Raw fields</option>
           {done.map((e) => (
             <option key={e.id} value={`export:${e.id}`}>
-              Export #{e.id} · {familyShort(e.model_family)} · train split · {new Date(e.finished_at ?? e.created_at).toLocaleDateString()}
+              Export #{e.id}{e.experiment_name ? ` · ${e.experiment_name}` : ""} · {familyShort(e.model_family)} · train split · {new Date(e.finished_at ?? e.created_at).toLocaleDateString()}
             </option>
           ))}
           {unknown && <option value={st.data}>Export #{st.data.slice(7)}</option>}
