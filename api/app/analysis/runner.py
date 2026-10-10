@@ -6,6 +6,7 @@ import json
 import logging
 from pathlib import Path
 
+from .. import jobs
 from ..db import execute, fetch_all, fetch_one, jsonb
 from . import compute
 from .prep import AnalysisError, NotEnough, prepare_export, prepare_raw
@@ -67,9 +68,9 @@ def find_or_create(conn, dataset_id: int, kind: str, params: dict, recompute: bo
         (dataset_id, kind),
     )
     row = conn.execute(
-        f"""INSERT INTO meta.analyses (dataset_id, kind, params, params_key, data_version, status_message)
-            VALUES (%s, %s, %s, %s, %s, 'Queued') RETURNING {ROW_COLS}""",
-        (dataset_id, kind, jsonb(params), key, version),
+        f"""INSERT INTO meta.analyses (dataset_id, kind, params, params_key, data_version, status_message, owner)
+            VALUES (%s, %s, %s, %s, %s, 'Queued', %s) RETURNING {ROW_COLS}""",
+        (dataset_id, kind, jsonb(params), key, version, jobs.owner_id()),
     ).fetchone()
     _prune(conn, dataset_id, kind, version)
     return public(row, version), True

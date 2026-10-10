@@ -24,7 +24,7 @@ async def lifespan(app: FastAPI):
     for d in (s.uploads_dir, s.datasets_dir, s.exports_dir, s.models_dir):
         d.mkdir(parents=True, exist_ok=True)
     db.bootstrap()
-    db.mark_interrupted_jobs()
+    jobs.start()
     yield
     jobs.shutdown()
     db.close_pool()

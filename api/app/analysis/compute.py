@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import math
-import os
 import warnings
 from typing import Callable
 
@@ -15,6 +14,7 @@ from scipy import stats
 from sklearn.decomposition import PCA
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 
+from ..jobs import cpu_threads
 from .prep import (
     OTHER, SEED, AnalysisError, Column, NotEnough, Prepared, code_matrix, design_matrix, display_values,
 )
@@ -28,7 +28,6 @@ HOVER_FIELDS = 5
 PCA_COMPONENTS = 20
 LOADING_COMPONENTS = 5
 TOP_LOADINGS = 20
-N_JOBS = max(1, (os.cpu_count() or 2) - 1)
 
 
 def _noop(frac: float, msg: str) -> None:
@@ -94,8 +93,9 @@ def run_map(p: Prepared, method: str = "tsne", perplexity: int = 30, n_neighbors
 
         Z = pca.transform(X) if X.shape[1] > 50 else X
         check(0.2, f"Running t-SNE on {p.n:,} rows")
+        n_jobs = cpu_threads()
         emb = TSNE(n_components=2, perplexity=perplexity, init="pca", learning_rate="auto",
-                   random_state=SEED, n_jobs=N_JOBS).fit_transform(Z)
+                   random_state=SEED, n_jobs=n_jobs).fit_transform(Z)
     check(0.95, "Preparing points")
     if p.target_kind == "categorical":
         colour = [int(v) for v in p.y]
@@ -299,13 +299,14 @@ def run_importance(p: Prepared, check: Check = _noop) -> dict:
         check(0.1, "Mutual information with the target")
         X, discrete = code_matrix(p.columns)
         # Threads, not loky processes: spawning workers from inside the API costs more than it saves here.
-        with parallel_config(backend="threading", n_jobs=N_JOBS):
+        n_jobs = cpu_threads()
+        with parallel_config(backend="threading", n_jobs=n_jobs):
             if p.target_kind == "categorical":
-                scores = mutual_info_classif(X, p.y, discrete_features=discrete, random_state=SEED, n_jobs=N_JOBS)
+                scores = mutual_info_classif(X, p.y, discrete_features=discrete, random_state=SEED, n_jobs=n_jobs)
             else:
                 m = ~np.isnan(p.y)
                 scores = mutual_info_regression(X[m], p.y[m], discrete_features=discrete, random_state=SEED,
-                                                n_jobs=N_JOBS)
+                                                n_jobs=n_jobs)
         mi = sorted(
             ({"field_id": c.field_id, "name": c.name, "value": _num(s)} for c, s in zip(p.columns, scores)),
             key=lambda r: -(r["value"] or 0.0),

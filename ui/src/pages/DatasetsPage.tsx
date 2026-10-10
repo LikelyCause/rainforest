@@ -163,6 +163,10 @@ function SampleMenu({ onCreated }: { onCreated: (ds: Dataset) => void }) {
   const [fields, setFields] = useState("150");
   const [kind, setKind] = useState("mixed");
   const ref = useRef<HTMLDivElement>(null);
+  const limits = useQuery({ queryKey: ["sample-limits"], queryFn: api.sampleLimits, enabled: open, staleTime: Infinity });
+  // rows × fields is capped server-side to bound generation memory.
+  const maxRows = Math.min(2000000, Math.floor((limits.data?.max_cells ?? Infinity) / Math.max(Number(fields) || 30, 30)));
+  const overBudget = Number(rows) > maxRows;
   const m = useMutation({
     mutationFn: () => api.createSample({ rows: Number(rows), fields: Number(fields), seed: 42, target_kind: kind }),
     onSuccess: (ds) => { qc.invalidateQueries({ queryKey: ["datasets"] }); setOpen(false); onCreated(ds); },
@@ -184,8 +188,8 @@ function SampleMenu({ onCreated }: { onCreated: (ds: Dataset) => void }) {
           </span>
           <div className="row" style={{ gap: 10, alignItems: "flex-start" }}>
             <label className="field" style={{ flex: 1 }}>Rows
-              <input type="number" min={1000} max={2000000} step={1000} value={rows} onChange={(e) => setRows(e.target.value)} />
-              <span className="muted" style={{ fontWeight: 400 }}>1,000 – 2,000,000</span>
+              <input type="number" min={1000} max={maxRows} step={1000} value={rows} onChange={(e) => setRows(e.target.value)} />
+              <span className="muted" style={{ fontWeight: 400 }}>1,000 – {fmtInt(maxRows)}{maxRows < 2000000 ? ` at ${fields} fields` : ""}</span>
             </label>
             <label className="field" style={{ width: 96 }}>Fields
               <input type="number" min={30} max={400} value={fields} onChange={(e) => setFields(e.target.value)} />
@@ -199,8 +203,16 @@ function SampleMenu({ onCreated }: { onCreated: (ds: Dataset) => void }) {
               <option value="multiclass">both multiclass</option>
             </select>
           </label>
+          {overBudget && (
+            <span className="small-text" role="alert">
+              Too large: rows × fields is capped at {fmtInt(limits.data?.max_cells)}.{" "}
+              <button type="button" className="link" onClick={() => setRows(String(Math.floor(maxRows / 1000) * 1000))}>
+                Use {fmtInt(Math.floor(maxRows / 1000) * 1000)} rows
+              </button>
+            </span>
+          )}
           <ErrorAlert error={m.error} />
-          <button type="submit" className="primary" disabled={m.isPending}>Generate</button>
+          <button type="submit" className="primary" disabled={m.isPending || overBudget}>Generate</button>
         </form>
       )}
     </div>

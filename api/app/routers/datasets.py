@@ -38,9 +38,10 @@ def _targets(raw: str | None) -> list[str]:
 
 def _create(name: str, filename: str | None, fmt: str, targets: list[str]) -> dict:
     return fetch_one(
-        f"""INSERT INTO meta.datasets (name, source_filename, file_format, target_columns, status, status_message)
-            VALUES (%s, %s, %s, %s, 'pending', 'Queued') RETURNING {DATASET_COLS}""",
-        (name, filename, fmt, targets),
+        f"""INSERT INTO meta.datasets (name, source_filename, file_format, target_columns, status, status_message,
+                                       owner)
+            VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s) RETURNING {DATASET_COLS}""",
+        (name, filename, fmt, targets, jobs.owner_id()),
     )
 
 
@@ -128,8 +129,18 @@ def upload(
     return ds
 
 
+@router.get("/sample/limits")
+def sample_limits() -> dict:
+    return {"max_cells": get_settings().sample_max_cells}
+
+
 @router.post("/sample", status_code=202)
 def create_sample(req: SampleRequest) -> dict:
+    cap = get_settings().sample_max_cells
+    if req.rows * req.fields > cap:
+        raise HTTPException(
+            422, f"rows × fields must be at most {cap:,} (asked for {req.rows:,} × {req.fields} = "
+                 f"{req.rows * req.fields:,}). With {req.fields} fields, use up to {cap // req.fields:,} rows.")
     ds = _create(
         req.name or f"sample-{req.rows // 1000}k-{req.fields}f-{req.target_kind}",
         None, "generated", ["column_a", "column_b"],
@@ -148,7 +159,8 @@ def _generate_and_process(dataset_id: int, req: dict) -> None:
             "updated_at=now() WHERE id=%s",
             (dataset_id,),
         )
-        generate(req["rows"], req["fields"], req["seed"], req["target_kind"]).write_parquet(out)
+        generate(req["rows"], req["fields"], req["seed"], req["target_kind"]).write_parquet(
+            out, row_group_size=100_000)  # as ingest writes uploads
     except Exception as exc:  # noqa: BLE001
         execute(
             "UPDATE meta.datasets SET status='failed', error=%s, updated_at=now() WHERE id=%s",
@@ -191,9 +203,9 @@ def update_dataset(dataset_id: int, body: DatasetPatch) -> dict:
             )
             if uncorrelated:
                 conn.execute(
-                    """UPDATE meta.datasets SET status = 'correlating', progress = 0,
+                    """UPDATE meta.datasets SET status = 'correlating', progress = 0, owner = %s,
                               status_message = 'Queued: associations for new target(s)' WHERE id = %s""",
-                    (dataset_id,),
+                    (jobs.owner_id(), dataset_id),
                 )
     if uncorrelated:
         jobs.submit(correlate_targets, dataset_id, [r["id"] for r in uncorrelated])

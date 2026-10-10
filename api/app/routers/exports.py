@@ -106,9 +106,9 @@ def start_export(dataset_id: int, req: ExportRequest) -> dict:
     if req.valid_size + req.test_size >= 0.9:
         raise HTTPException(422, "valid_size + test_size must be < 0.9")
     exp = fetch_one(
-        """INSERT INTO meta.exports (dataset_id, status, status_message, model_family, config)
-           VALUES (%s, 'pending', 'Queued', %s, %s) RETURNING *""",
-        (dataset_id, pv["family"], jsonb(req.model_dump(exclude={"model_family"}))),
+        """INSERT INTO meta.exports (dataset_id, status, status_message, model_family, config, owner)
+           VALUES (%s, 'pending', 'Queued', %s, %s, %s) RETURNING *""",
+        (dataset_id, pv["family"], jsonb(req.model_dump(exclude={"model_family"})), jobs.owner_id()),
     )
     jobs.submit(_run, exp["id"])
     return exp

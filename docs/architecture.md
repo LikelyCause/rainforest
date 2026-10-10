@@ -16,16 +16,17 @@ add things. For endpoints see [api.md](api.md); for usage see the [README](../RE
 
 | Module | Responsibility |
 |---|---|
-| `main.py` | App, middleware, router registration, `/health`, `/api/options`. Startup runs `db.bootstrap()` and `db.mark_interrupted_jobs()`. |
+| `main.py` | App, middleware, router registration, `/health`, `/api/options`. Startup runs `db.bootstrap()` and `jobs.start()`. |
 | `config.py` | `Settings` (pydantic-settings, read from the environment). |
-| `db.py` | Connection pool, query helpers, migrations, read-only role setup, restart cleanup. |
-| `jobs.py` | `submit(fn, *args)` onto a `ThreadPoolExecutor` of `JOB_WORKERS` threads. |
+| `db.py` | Connection pool, query helpers, migrations, read-only role setup. |
+| `jobs.py` | `submit(fn, *args)` onto a `ThreadPoolExecutor` of `JOB_WORKERS` threads; job ownership, the restart sweep and the global job slots. |
 | `ingest.py` | CSV / Parquet → Parquet, identifier sanitising, `COPY` into `raw.ds_<id>`. |
 | `profiling.py` | Type inference, statistics, charts, association sample vectors. |
 | `correlations.py` | Pairwise associations (Spearman, Cramér's V, correlation ratio). |
 | `semantics.py` | Model families, semantic types, allowed settings per family and type, suggestions, validation, the option catalog. |
 | `processing.py` | The dataset pipeline (`process_dataset`), suggestion seeding, target-derived state (`refresh_target_state`), file cleanup. |
 | `transform.py` | Export: split, fit preprocessing on train rows, chunked transform, manifest. |
+| `parquet_rows.py` | `read_rows`: selected rows of a Parquet file, read one column chunk at a time (export fit sample, Explore samples). |
 | `modeling/registry.py`, `modeling/train.py` | Model catalog and compatibility; `ClassifierChain` training, evaluation, CLI. |
 | `analysis/prep.py`, `analysis/compute.py`, `analysis/runner.py` | Explore jobs: sampling and typing, the numeric work, caching and job lifecycle. |
 | `routers/*.py` | HTTP endpoints, one module per area (datasets, fields, query, exports, runs, explore). |
@@ -83,9 +84,18 @@ the UI polls (`pending → running → done | failed`, with `progress` and `stat
 ## Background jobs
 
 All jobs go through `jobs.submit`, run on a thread pool in the API worker that accepted the request, and keep their
-state in Postgres, so any worker can serve the polling. On startup `db.mark_interrupted_jobs` marks datasets,
-exports, runs and analyses that were mid-flight (not updated for 2 minutes) as failed; a dataset that was only
-correlating new targets goes back to `ready` with a warning.
+state in Postgres, so any worker can serve the polling.
+
+* **Ownership.** Each API process holds a session advisory lock on a random owner id (class `jobs.OWNER_LOCK`) on a
+  dedicated connection for its lifetime, and stamps that id in the `owner` column of every job row it creates. On
+  startup `jobs.start()` runs `jobs.sweep()`, which fails pending and running datasets, exports, runs and analyses
+  whose owner no longer holds its lock (found in `pg_locks`), however recently they reported progress. A sibling
+  worker's jobs are never touched. A dataset that was only correlating new targets goes back to `ready` with a
+  warning.
+* **Slots.** A queued job starts only once it holds one of `JOB_SLOTS` advisory locks (class `jobs.SLOT_LOCK`),
+  shared by every process, and runs with its native thread pools limited to `jobs.cpu_threads()`
+  (`cpu_count // JOB_SLOTS`). Model runs pass that as `n_jobs` to estimators that take one; Explore's t-SNE and
+  mutual information use it too.
 
 | Job | Entry point | State in |
 |---|---|---|
@@ -128,6 +138,7 @@ recreated from that file. Bootstrap also (re)creates the `rainforest_ro` role an
 | `001_initial.sql` | `meta.datasets`, `fields`, `field_correlations`, `field_decisions`, `field_settings`, `decision_history`, `exports`, `model_runs` |
 | `002_bulk_batches.sql` | `meta.bulk_batches`, `decision_history.batch_id` |
 | `003_analyses.sql` | `meta.analyses` |
+| `004_job_owner.sql` | `owner` on `meta.datasets`, `exports`, `model_runs` and `analyses` |
 
 Child tables reference `meta.datasets` with `ON DELETE CASCADE`; `DELETE /api/datasets/{id}` removes the rows and then
 the dataset's Parquet copy, raw table, export and model directories.
@@ -140,7 +151,7 @@ builder, default params, importance source, optional `requires` package). The CL
 
 **A migration.** Add `api/app/migrations/NNN_description.sql` with the next number, written to be safe to run once
 (`IF NOT EXISTS` where it helps). If a view needs the new column, edit `views.sql`. If the table holds job state,
-add it to the loop in `db.mark_interrupted_jobs`.
+stamp `owner = jobs.owner_id()` where its rows are created and add it to `jobs.sweep`.
 
 **An analysis.**
 1. Add the kind to the `CHECK` on `meta.analyses.kind` (new migration) and to `AnalysisRequest.kind` in `schemas.py`.

@@ -40,6 +40,7 @@ services:
       DATA_DIR: /data
       WEB_CONCURRENCY: ${API_WORKERS:-2}
       JOB_WORKERS: ${JOB_WORKERS:-2}
+      JOB_SLOTS: ${JOB_SLOTS:-2}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - appdata:/data

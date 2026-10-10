@@ -41,6 +41,8 @@ from sklearn.preprocessing import (
     StandardScaler,
 )
 
+from .config import get_settings
+from .parquet_rows import read_rows
 from .profiling import coerce_numeric, parse_datetime
 from .semantics import DEFAULT_FAMILY, DEFAULT_PARAMS, FAMILIES, NON_FEATURE_TYPES, NUMERIC
 
@@ -310,10 +312,11 @@ def coercion_exprs(specs: list[FieldSpec], schema: pl.Schema) -> dict[str, Calla
     return out
 
 
-def to_pandas_frame(df: pl.DataFrame, specs: list[FieldSpec], coercers) -> pd.DataFrame:
+def to_pandas_frame(df: pl.DataFrame, specs: list[FieldSpec], coercers, consume: bool = False) -> pd.DataFrame:
+    """`consume` drops each column from `df` once converted, so the two copies never coexist in full."""
     data: dict[str, Any] = {}
     for f in specs:
-        s = coercers[f.name](df[f.name])
+        s = coercers[f.name](df.drop_in_place(f.name) if consume else df[f.name])
         if f.semantic_type in NUMERIC:
             data[f.name] = s.to_numpy().astype(np.float64)
         elif f.semantic_type == "datetime":
@@ -355,6 +358,41 @@ def safe_feature_names(names: list[str]) -> list[str]:
 
 
 # =========================================================================== export
+def estimated_width(specs: list[FieldSpec]) -> int:
+    """Upper bound on the output features, known before fitting."""
+    n = 0
+    for f in specs:
+        p = {**DEFAULT_PARAMS.get(f.encoding, {}), **(f.params or {})}
+        if f.semantic_type in NUMERIC:
+            n += 1 + int(f.add_missing_indicator)
+        elif f.semantic_type == "text":
+            n += int(p.get("svd_components", 32)) if f.encoding == "tfidf_svd" else 2
+        elif f.semantic_type == "datetime":
+            n += len(DatetimeParts.PARTS)
+        elif f.semantic_type == "categorical" and f.encoding == "onehot":
+            n += int(p.get("max_categories", 30))
+        else:
+            n += 1
+    return max(n, 1)
+
+
+def transform_into(pre: ColumnTransformer, frame: pd.DataFrame, n_out: int) -> np.ndarray:
+    """`pre.transform(frame)` as column-major float32, filled one transformer at a time, so the float64 blocks
+    and their hstack never exist at once. Column-major hands Arrow each feature as a contiguous buffer."""
+    out = np.empty((len(frame), n_out), dtype=np.float32, order="F")
+    for name, trans, cols in pre.transformers_:
+        sl = pre.output_indices_[name]
+        if sl.start == sl.stop or isinstance(trans, str):
+            continue
+        out[:, sl] = trans.transform(frame[cols])
+    return out
+
+
+def rows_for_budget(mb: int, width: int, floor: int = 1_000) -> int:
+    """Rows whose dense float64 output fits in `mb` megabytes."""
+    return max(floor, (mb << 20) // (8 * max(width, 1)))
+
+
 def assign_splits(
     y: pd.DataFrame, valid_size: float, test_size: float, seed: int
 ) -> tuple[np.ndarray, dict[str, Any]]:
@@ -425,6 +463,7 @@ def run_export(
     import joblib
     import sklearn
 
+    settings = get_settings()
     out_dir.mkdir(parents=True, exist_ok=True)
     seed = int(config.get("seed", 42))
     chunk_rows = int(config.get("chunk_rows", 200_000))
@@ -450,23 +489,19 @@ def run_export(
     progress(0.08, "Fitting preprocessing pipeline on training rows")
     train_idx = np.flatnonzero(split == 0)
     rng = np.random.default_rng(seed)
-    fit_idx = np.sort(rng.choice(train_idx, size=min(fit_rows, train_idx.size), replace=False))
+    # Fitting materialises the whole fit sample's output, so wide exports fit on fewer rows.
+    fit_cap = rows_for_budget(settings.export_fit_mb, estimated_width(specs))
+    fit_idx = np.sort(rng.choice(train_idx, size=min(fit_rows, fit_cap, train_idx.size), replace=False))
     feature_cols = [f.name for f in specs]
-    fit_df = (
-        pl.scan_parquet(parquet_path)
-        .select(feature_cols)
-        .with_row_index("__i")
-        .filter(pl.col("__i").is_in(pl.Series(fit_idx, dtype=pl.UInt32)))
-        .drop("__i")
-        .collect()
-    )
     coercers = coercion_exprs(specs, schema)
+    frame = to_pandas_frame(read_rows(parquet_path, feature_cols, fit_idx), specs, coercers, consume=True)
     pre = build_preprocessor(specs, seed)
-    pre.fit(to_pandas_frame(fit_df, specs, coercers))
-    del fit_df
+    pre.fit(frame)
+    del frame
     raw_names = readable_feature_names(pre)
     feat_names = safe_feature_names(raw_names)
     feature_source = _feature_sources(pre, feat_names)
+    chunk_rows = min(chunk_rows, rows_for_budget(settings.export_chunk_mb, len(feat_names)))
 
     # 3. stream transform -> Parquet ---------------------------------------------------
     data_path = out_dir / "model_ready.parquet"
@@ -484,6 +519,7 @@ def run_export(
     with pq.ParquetWriter(data_path, arrow_schema, compression="zstd") as writer:
         for batch in pf.iter_batches(batch_size=chunk_rows, columns=feature_cols):
             df = pl.from_arrow(batch)
+            del batch
             assert isinstance(df, pl.DataFrame)
             rows = np.arange(offset, offset + df.height)
             offset += df.height
@@ -492,8 +528,12 @@ def run_export(
                 continue
             df = df.filter(pl.Series(keep))
             rows = rows[keep]
-            X = pre.transform(to_pandas_frame(df, specs, coercers)).astype(np.float32)
-            nan_counts += np.isnan(X).sum(axis=0)
+            frame = to_pandas_frame(df, specs, coercers, consume=True)
+            del df
+            X = transform_into(pre, frame, len(feat_names))
+            del frame
+            for k in range(X.shape[1]):
+                nan_counts[k] += np.count_nonzero(np.isnan(X[:, k]))
             if not FAMILIES[family]["handles_nan"] and nan_counts.any():
                 bad = [feat_names[k] for k in np.flatnonzero(nan_counts)][:10]
                 raise ValueError(
@@ -504,6 +544,7 @@ def run_export(
             cols += [pa.array(X[:, k]) for k in range(X.shape[1])]
             cols += [pa.array(y_enc[t].to_numpy()[rows].astype(np.int32)) for t in targets]
             writer.write_table(pa.Table.from_arrays(cols, schema=arrow_schema))
+            del X, cols
             written += int(keep.sum())
             progress(0.15 + 0.8 * offset / max(n_rows, 1), f"Transformed {offset:,} / {n_rows:,} rows")
 
@@ -525,6 +566,7 @@ def run_export(
         "split_counts": split_counts,
         "split_info": split_info,
         "fit_sample_rows": int(fit_idx.size),
+        "chunk_rows": chunk_rows,
         "config": config,
         "fields": [f.__dict__ for f in specs],
         "versions": {"sklearn": sklearn.__version__, "polars": pl.__version__, "numpy": np.__version__},

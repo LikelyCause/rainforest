@@ -64,9 +64,9 @@ def start_run(export_id: int, req: RunRequest) -> dict:
     if req.order and sorted(req.order) != sorted(manifest["targets"]):
         raise HTTPException(422, f"order must be a permutation of {manifest['targets']}")
     run = fetch_one(
-        f"""INSERT INTO meta.model_runs (export_id, dataset_id, model, family, status, status_message, config)
-            VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s) RETURNING {RUN_COLS}""",
-        (export_id, exp["dataset_id"], spec.key, spec.family, jsonb(req.model_dump())),
+        f"""INSERT INTO meta.model_runs (export_id, dataset_id, model, family, status, status_message, config, owner)
+            VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s) RETURNING {RUN_COLS}""",
+        (export_id, exp["dataset_id"], spec.key, spec.family, jsonb(req.model_dump()), jobs.owner_id()),
     )
     jobs.submit(_run, run["id"], exp["output_dir"], req.model_dump())
     return run
@@ -113,7 +113,10 @@ def _run(run_id: int, export_dir: str, req: dict) -> None:
     try:
         progress("Loading export")
         out_dir = get_settings().models_dir / f"run{run_id}_{req['model']}_{int(time.time())}"
-        report = train(Path(export_dir), req["model"], req.get("order"), req["seed"], req.get("params") or {},
+        params = req.get("params") or {}
+        if "n_jobs" in MODELS[req["model"]].default_params:
+            params = {"n_jobs": jobs.cpu_threads(), **params}
+        report = train(Path(export_dir), req["model"], req.get("order"), req["seed"], params,
                        req["cv"] or None, out_dir, progress)
         execute(
             """UPDATE meta.model_runs SET status = 'done', status_message = 'Done', metrics = %s, report = %s,
