@@ -41,6 +41,7 @@ from sklearn.metrics import (
     log_loss,
     precision_recall_fscore_support,
     roc_auc_score,
+    roc_curve,
 )
 from sklearn.multioutput import ClassifierChain
 
@@ -123,11 +124,32 @@ def chain_predict_proba(chain: ClassifierChain, X: np.ndarray, n_classes: list[i
     return probas  # type: ignore[return-value]
 
 
+ROC_MAX_POINTS = 200
+
+
+def roc_curves(y_true: np.ndarray, proba: np.ndarray, names: list[str]) -> list[dict[str, Any]]:
+    """ROC curve per class, one-vs-rest (only the positive class for a binary target), thinned to at most
+    ROC_MAX_POINTS points. A class with no positives or no negatives in the split has no curve."""
+    k = proba.shape[1]
+    out = []
+    for c in ([1] if k == 2 else range(k)):
+        hit = y_true == c
+        if hit.all() or not hit.any():
+            continue
+        fpr, tpr, _ = roc_curve(hit, proba[:, c])
+        if len(fpr) > ROC_MAX_POINTS:
+            keep = np.unique(np.linspace(0, len(fpr) - 1, ROC_MAX_POINTS).round().astype(int))
+            fpr, tpr = fpr[keep], tpr[keep]
+        out.append({"label": names[c], "auc": float(roc_auc_score(hit, proba[:, c])),
+                    "fpr": [round(float(v), 4) for v in fpr], "tpr": [round(float(v), 4) for v in tpr]})
+    return out
+
+
 def evaluate(y_true: np.ndarray, proba: np.ndarray, labels: list[str] | None = None) -> tuple[dict[str, float], dict[str, Any]]:
     """Score one target. Predictions are the argmax class (i.e. a 0.5 threshold for binary targets).
 
     Returns (scalars, details): scalars are single numbers (stored in `metrics`, queryable via
-    meta.v_model_metrics); details hold the confusion matrix and per-class table.
+    meta.v_model_metrics); details hold the confusion matrix, per-class table and ROC curves.
     """
     k = proba.shape[1]
     classes = list(range(k))
@@ -168,6 +190,7 @@ def evaluate(y_true: np.ndarray, proba: np.ndarray, labels: list[str] | None = N
              "support": int(support[c])}
             for c in classes
         ],
+        "roc": roc_curves(y_true, proba, names),
     }
     return out, details
 

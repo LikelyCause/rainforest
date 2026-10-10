@@ -398,12 +398,14 @@ the recipe (`recipe_id`, shown as *recipe vN* in the list) and its experiment, a
   target with a single class in the training split stops the run before fitting.
 * **Metrics** per target on the valid and test splits: accuracy, balanced accuracy, log-loss, ROC-AUC (one-vs-rest
   macro for multiclass), precision / recall / F1 (macro and weighted, plus positive-class and specificity for binary
-  targets), confusion matrices and a per-class table, plus the top importances per chain link.
+  targets), confusion matrices, a per-class table and ROC curves (one-vs-rest per class for multiclass targets, up to
+  200 points each), plus the top importances per chain link.
 * **On the page:** each export has *Train ▾* (model and chain order), *Files ▾* (Parquet, preprocessor, manifest) and
   *Use from code* (the CLI command and class mappings). Runs are listed per export, with that export's targets as
   columns, showing test-split AUC and macro-F1. In each of these columns ★ marks the run that scored best on the
   validation split for that target and metric, so choosing it doesn't use the test split. A run expands into, per
-  target, its headline metrics, a confusion matrix (correct predictions shaded in blue, errors in red) and one per-class
+  target, its headline metrics (precision, recall and F1 are the positive class's for a binary target and macro averages
+  otherwise), a confusion matrix (correct predictions shaded in blue, errors in red), its ROC curves and one per-class
   table ending in the macro and weighted averages, with *Download model* and a test / validation switch.
 
 ```bash

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fmtMetric } from "../format";
-import { cellShade } from "./RunDetail";
+import { cellShade, headlineTiles } from "./RunDetail";
 
 describe("fmtMetric", () => {
   it("always shows three decimals", () => {
@@ -22,5 +22,20 @@ describe("cellShade", () => {
     expect(cellShade(0.8, true).color).toBe("#ffffff");
     expect(cellShade(0.8, false).color).toBe("var(--text-primary)");
     expect(cellShade(0.3, true).color).toBe("var(--text-primary)");
+  });
+});
+
+describe("headlineTiles", () => {
+  const m = { accuracy: 0.8, precision: 0.7, recall: 0.6, f1: 0.65, specificity: 0.9, precision_macro: 0.5,
+    recall_macro: 0.4, f1_macro: 0.45 };
+  const value = (rows: ReturnType<typeof headlineTiles>, label: string) => rows.find((r) => r[0] === label)?.[1];
+  it("shows the positive class for binary targets", () => {
+    const rows = headlineTiles(m, true);
+    expect(rows.map((r) => r[0])).toEqual(["Accuracy", "Bal. acc.", "ROC AUC", "Log loss", "Precision", "Recall", "F1", "Specificity"]);
+    expect([value(rows, "Precision"), value(rows, "Recall"), value(rows, "F1"), value(rows, "Specificity")]).toEqual([0.7, 0.6, 0.65, 0.9]);
+  });
+  it("shows macro averages for multiclass targets, and no specificity", () => {
+    const rows = headlineTiles(m, false);
+    expect([value(rows, "Precision"), value(rows, "Recall"), value(rows, "F1"), value(rows, "Specificity")]).toEqual([0.5, 0.4, 0.45, undefined]);
   });
 });

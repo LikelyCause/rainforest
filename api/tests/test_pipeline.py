@@ -148,6 +148,10 @@ def test_evaluate_reports_precision_recall_f1_and_confusion():
     assert abs(m["f1"] - 0.75) < 1e-12 and abs(m["f1_macro"] - 0.75) < 1e-12
     assert [c["label"] for c in d["per_class"]] == ["no", "yes"] and d["positive_label"] == "yes"
     assert sum(c["support"] for c in d["per_class"]) == 8
+    (roc,) = d["roc"]  # binary: the positive class only
+    assert roc["label"] == "yes" and abs(roc["auc"] - m["roc_auc"]) < 1e-12
+    assert roc["fpr"][0] == 0 and roc["tpr"][0] == 0 and roc["fpr"][-1] == 1 and roc["tpr"][-1] == 1
+    assert roc["fpr"] == sorted(roc["fpr"]) and roc["tpr"] == sorted(roc["tpr"])
 
     y3 = np.array([0, 1, 2, 2])
     p3 = np.array([[.8, .1, .1], [.2, .7, .1], [.1, .2, .7], [.5, .3, .2]])
@@ -155,3 +159,12 @@ def test_evaluate_reports_precision_recall_f1_and_confusion():
     assert d3["confusion_matrix"] == [[1, 0, 0], [0, 1, 0], [1, 0, 1]]
     assert "precision" not in m3 and {"precision_macro", "recall_weighted", "f1_macro"} <= m3.keys()
     assert all(isinstance(v, float) for v in m3.values())  # scalars only -> safe for v_model_metrics
+    assert [c["label"] for c in d3["roc"]] == ["a", "b", "c"]  # one-vs-rest
+
+    from app.modeling.train import ROC_MAX_POINTS, roc_curves
+    rng = np.random.default_rng(0)
+    yb = rng.integers(0, 2, 5000)
+    pb = np.clip(yb * 0.3 + rng.random(5000) * 0.7, 0, 1)
+    (big,) = roc_curves(yb, np.column_stack([1 - pb, pb]), ["n", "y"])
+    assert len(big["fpr"]) <= ROC_MAX_POINTS and big["fpr"][-1] == 1 and big["tpr"][-1] == 1
+    assert roc_curves(np.zeros(4, dtype=int), np.full((4, 2), 0.5), ["n", "y"]) == []  # no positives: no curve

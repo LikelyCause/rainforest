@@ -474,10 +474,10 @@ table.cm th.cm-corner { width: 84px; font-size: 11px; line-height: 1.3; color: v
 table.cm td { padding: 10px 8px; text-align: center; vertical-align: middle; border-radius: 4px; }
 table.cm td.diag { font-weight: 700; }
 .target-card { box-shadow: none; container-type: inline-size; }
-.stats.metric-tiles { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.stats.metric-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 .metric-tiles .stat { padding: 6px 7px; min-width: 0; }
 .metric-tiles .stat .label { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-@container (max-width: 360px) { .stats.metric-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@container (max-width: 300px) { .stats.metric-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 table.class-metrics tfoot td { border-top: 1px solid var(--border-strong); color: var(--text-secondary); }
 table.class-metrics tfoot tr + tr td { border-top: none; }
 tr.run-row { cursor: pointer; }
