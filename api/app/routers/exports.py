@@ -140,9 +140,6 @@ def preview(dataset_id: int, user: CurrentUser, family: str | None = None, recip
     leaks = [r["name"] for r in keep if r["leakage"]]
     if leaks:
         warnings.append(f"Kept field(s) flagged as possible target leakage: {', '.join(leaks)}")
-    if len(targets) == 1:
-        warnings.append("One target selected: the ClassifierChain is a single classifier, with no earlier "
-                        "prediction to chain.")
     invalid = [r["name"] for r in keep if validate_decision({**r, "action": "keep"}, fam)]
     by_type: dict[str, int] = {}
     for r in keep:

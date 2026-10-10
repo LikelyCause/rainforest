@@ -196,3 +196,15 @@ def importances(spec: ModelSpec, est: Any, names: list[str]) -> np.ndarray | Non
     except (AttributeError, ValueError):
         return None
     return None
+
+
+def order_problem(order: list[str], targets: list[str]) -> str | None:
+    """What's wrong with a run's `order`: the export targets to train, once each, in chain order. One target trains a
+    single classifier; a subset leaves the other targets out of the run."""
+    if not order:
+        return "Choose at least one target"
+    if len(set(order)) != len(order):
+        return "Each target can appear only once in the order"
+    if unknown := [t for t in order if t not in targets]:
+        return f"Not targets of this export: {', '.join(unknown)} (its targets: {', '.join(targets)})"
+    return None

@@ -14,7 +14,7 @@ from .. import experiments, gpu, jobs
 from ..auth import CurrentUser
 from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..modeling import mlflow_log
-from ..modeling.registry import MODELS, catalog, compatibility, param_problems
+from ..modeling.registry import MODELS, catalog, compatibility, order_problem, param_problems
 from ..schemas import RunRequest
 from .exports import visible_export
 
@@ -80,8 +80,8 @@ def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
         raise HTTPException(409, f"No usable GPU: {info['reason']}" if info else "No GPU is available to the API")
     if problems := param_problems(spec, req.params):
         raise HTTPException(422, {"message": "Invalid model parameters", "errors": problems})
-    if req.order and sorted(req.order) != sorted(manifest["targets"]):
-        raise HTTPException(422, f"order must be a permutation of {manifest['targets']}")
+    if req.order is not None and (problem := order_problem(req.order, manifest["targets"])):
+        raise HTTPException(422, problem)
     with connection() as conn:
         experiments.require_writable(experiments.get_visible(conn, exp["experiment_id"], user), user)
     run = fetch_one(

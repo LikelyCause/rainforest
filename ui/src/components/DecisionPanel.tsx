@@ -233,8 +233,8 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
 
           {sugg.reasons.length > 0 && (
             <div className="why">
-              <h3>Why</h3>
-              <ul>{sugg.reasons.slice(0, 3).map((r) => <li key={r}>{r}</li>)}</ul>
+              <h3>Why these suggestions</h3>
+              <ul>{sugg.reasons.map((r) => <li key={r}><Reason text={r} /></li>)}</ul>
             </div>
           )}
 
@@ -302,4 +302,10 @@ function ParamInput({ id, title, step, value, rule, onChange }: {
         onBlur={() => problem && setText(value === undefined ? "" : String(value))} />
     </div>
   );
+}
+
+/** "Setting: explanation" with the setting in bold; reasons from before the labels show as they are. */
+function Reason({ text }: { text: string }) {
+  const m = /^([A-Z][\w /-]{1,24}): (.*)$/.exec(text);
+  return m ? <><b>{m[1]}</b>: {m[2]}</> : <>{text}</>;
 }

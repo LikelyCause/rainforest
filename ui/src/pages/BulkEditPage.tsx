@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useAccess, useDebounced, useOptions } from "../hooks";
+import { JoinAssessment } from "../components/JoinAssessment";
 import { useDatasetContext } from "../components/DatasetLayout";
 import { Empty, ErrorAlert, StatusGlyph, glyphFor } from "../components/ui";
 import { fmtNum, fmtPct, TYPE_SHORT } from "../format";
@@ -479,6 +480,7 @@ export function BulkEditPage() {
         <h1>Bulk edit</h1>
         <Link to={`/d/${ds.id}/review`} className="muted small-text">Changes here show up in Review at once</Link>
       </div>
+      <JoinAssessment ds={ds} />
       {access.note && <div className={`alert ${access.canEdit ? "info" : "warn"}`}>{access.note}</div>}
       <div className="tabs-inline" role="tablist">
         <button type="button" role="tab" aria-selected={st.tab === "fields"} className={st.tab === "fields" ? "on" : ""} onClick={() => st.setTab("fields")}>Fields</button>

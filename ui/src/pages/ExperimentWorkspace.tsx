@@ -195,7 +195,7 @@ function TrainForm({ e, targets, onStarted }: { e: ExportJob; targets: string[];
   const system = useQuery({ queryKey: ["system"], queryFn: api.system, staleTime: Infinity });
   const [model, setModel] = useState("");
   const [gpuOn, setGpuOn] = useState(false);
-  const [reverse, setReverse] = useState(false);
+  const [order, setOrder] = useState<string[]>(targets);
   const [showAll, setShowAll] = useState(false);
   useEffect(() => {
     if (!model && models.data) {
@@ -204,7 +204,7 @@ function TrainForm({ e, targets, onStarted }: { e: ExportJob; targets: string[];
     }
   }, [model, models.data, e.model_family]);
   const start = useMutation({
-    mutationFn: () => api.startRun(e.id, { model, order: reverse ? [...targets].reverse() : targets, cv: 5, device: useGpu ? "cuda" : "cpu" }),
+    mutationFn: () => api.startRun(e.id, { model, order, cv: 5, device: useGpu ? "cuda" : "cpu" }),
     onSuccess: (run) => {
       qc.setQueryData<ModelRun[]>(["runs", e.dataset_id, e.experiment_id], (old) => [run, ...(old ?? []).filter((r) => r.id !== run.id)]);
       qc.invalidateQueries({ queryKey: ["runs", e.dataset_id] });
@@ -240,17 +240,44 @@ function TrainForm({ e, targets, onStarted }: { e: ExportJob; targets: string[];
       {models.data?.some((m) => !m.compatible) && (
         <label className="check small-text"><input type="checkbox" checked={showAll} onChange={(ev) => setShowAll(ev.target.checked)} /> show incompatible models</label>
       )}
-      {targets.length === 2 && (
-        <label className="field">Chain order
-          <select value={reverse ? "rev" : "fwd"} onChange={(ev) => setReverse(ev.target.value === "rev")}>
-            <option value="fwd">{targets[0]} → {targets[1]}</option>
-            <option value="rev">{targets[1]} → {targets[0]}</option>
-          </select>
-        </label>
-      )}
+      {targets.length > 1 && <TargetOrder targets={targets} order={order} onChange={setOrder} />}
       <ErrorAlert error={start.error} />
-      <button type="button" className="primary" disabled={!model || !selected?.compatible || start.isPending} onClick={() => start.mutate()}>Train chain</button>
+      <button type="button" className="primary" disabled={!model || !selected?.compatible || order.length === 0 || start.isPending} onClick={() => start.mutate()}>
+        {order.length > 1 ? "Train chain" : "Train"}
+      </button>
     </>
+  );
+}
+
+/** Which of the export's targets a run trains, and in what chain order: the ticked ones, top to bottom. */
+function TargetOrder({ targets, order, onChange }: { targets: string[]; order: string[]; onChange: (o: string[]) => void }) {
+  const rows = [...order, ...targets.filter((t) => !order.includes(t))];
+  const move = (t: string) => {
+    const i = order.indexOf(t);
+    onChange([...order.slice(0, i - 1), t, order[i - 1], ...order.slice(i + 1)]);
+  };
+  return (
+    <fieldset className="field bare target-order">
+      <legend>Targets</legend>
+      {rows.map((t) => {
+        const i = order.indexOf(t);
+        return (
+          <div key={t} className="row" style={{ gap: 8 }}>
+            <label className="check">
+              <input type="checkbox" checked={i >= 0}
+                onChange={(ev) => onChange(ev.target.checked ? [...order, t] : order.filter((x) => x !== t))} />
+              {i >= 0 && order.length > 1 ? `${i + 1}. ` : ""}{t}
+            </label>
+            {i > 0 && <button type="button" className="link small-text" onClick={() => move(t)} aria-label={`Move ${t} earlier`}>↑ earlier</button>}
+          </div>
+        );
+      })}
+      <span className="muted small-text">
+        {order.length === 0 ? "Choose at least one target."
+          : order.length === 1 ? "One target: a single model, no chain."
+          : `Chain: ${order.join(" → ")}. Each model also sees the predictions of the ones before it.`}
+      </span>
+    </fieldset>
   );
 }
 

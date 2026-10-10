@@ -47,7 +47,7 @@ from sklearn.multioutput import ClassifierChain
 
 from ..gpu import effective_device
 from .registry import (DEFAULT_MODEL, MODELS, ModelSpec, catalog, compatibility, device_params, get_model,
-                       importances, param_problems)
+                       importances, order_problem, param_problems)
 
 log = logging.getLogger("train")
 
@@ -209,12 +209,13 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
     problem = compatibility(spec, export_family, bool(manifest.get("contains_nan", False)))
     if problem:
         raise ValueError(problem)
-    targets: list[str] = manifest["targets"]
     feats: list[str] = manifest["feature_names"]
     split_col = manifest["split_column"]
-    order_names = order_names or targets
-    if sorted(order_names) != sorted(targets):
-        raise ValueError(f"order must be a permutation of {targets}")
+    order_names = order_names or manifest["targets"]
+    if problem := order_problem(order_names, manifest["targets"]):
+        raise ValueError(problem)
+    # The run's targets: those in `order`, kept in manifest order so Y's columns line up with the export.
+    targets: list[str] = [t for t in manifest["targets"] if t in order_names]
     order = [targets.index(t) for t in order_names]
     kinds = [manifest["target_kinds"][t] for t in targets]
     say = progress or (lambda msg: log.info(msg))
@@ -310,8 +311,8 @@ def main() -> None:
     g.add_argument("--export-dir", type=Path)
     g.add_argument("--list-models", action="store_true")
     ap.add_argument("--model", default=DEFAULT_MODEL, choices=list(MODELS))
-    ap.add_argument("--order", help="chain order as the export's target names, comma-separated (default: the "
-                    "order listed under \"targets\" in its manifest.json)")
+    ap.add_argument("--order", help="targets to train, in chain order, comma-separated; a subset leaves the others out "
+                    "(default: every target, in the order listed under \"targets\" in its manifest.json)")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--cv", type=int, default=5,
                     help="folds for out-of-fold chain features: 0 chains the ground truth, else 2 or more")
