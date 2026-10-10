@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
+import { can } from "../can";
 import { useAccess, useMe, useOptions, useTeam } from "../hooks";
 import { useDatasetContext } from "../components/DatasetLayout";
 import { DecisionPanel } from "../components/DecisionPanel";
@@ -119,7 +120,7 @@ function Assessors({ ds, team }: { ds: Dataset; team: TeamState }) {
   const users = useQuery({ queryKey: ["users"], queryFn: api.users, enabled: lead });
   const [pick, setPick] = useState("");
   const assigned = new Set(team.assessors.map((a) => a.user_id));
-  const candidates = (users.data ?? []).filter((u) => u.active && !assigned.has(u.id));
+  const candidates = (users.data ?? []).filter((u) => u.active && u.role !== "viewer" && !assigned.has(u.id));
   const assign = useMutation({
     mutationFn: (userId: number) => api.assign(ds.id, userId),
     onSuccess: () => { setPick(""); invalidate(); },
@@ -263,7 +264,7 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
       <section className="detail">
         <ErrorAlert error={queue.error} />
         {item && catalog ? (
-          <Comparison item={item} family={ds.model_family} catalog={catalog} canComment={!finalized} />
+          <Comparison item={item} family={ds.model_family} catalog={catalog} canComment={!finalized && can(me, "comment")} />
         ) : queue.data && items.length > 0 ? null : team.recipe.reuse ? (
           <ReuseCard reuse={team.recipe.reuse} label={team.recipe.label ?? ""} />
         ) : (

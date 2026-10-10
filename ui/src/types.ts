@@ -546,7 +546,7 @@ export interface CorrMatrix {
   cells: { a: number; b: number; method: CorrMethod; value: number; strength: number; n: number }[];
 }
 
-export type Role = "lead" | "member";
+export type Role = "lead" | "member" | "viewer";
 export type AuthMode = "pick" | "oidc";
 
 export interface Me {

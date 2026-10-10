@@ -2,7 +2,8 @@ import { useMemo, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api";
-import { useFields } from "../../hooks";
+import { can } from "../../can";
+import { useFields, useMe } from "../../hooks";
 import { Empty, ErrorAlert } from "../ui";
 import { fmtAgo, fmtInt } from "../../format";
 import type { Analysis, AnalysisKind, AnalysisParams, Dataset, NotEnoughReason, Skipped } from "../../types";
@@ -82,6 +83,7 @@ export function AnalysisState<R>({ a, datasetId, children }: {
   a: AnalysisHandle<R>; datasetId: number; children: (result: R, row: Analysis<R>) => ReactNode;
 }) {
   const { row, query } = a;
+  const mayRecompute = can(useMe().data, "recompute");
   if (!row) {
     if (query.error) {
       return (
@@ -100,7 +102,7 @@ export function AnalysisState<R>({ a, datasetId, children }: {
       return (
         <div className="card">
           <Empty title={info.title}
-            action={reason === "no_target" ? <Link className="btn" to={`/?target=${datasetId}`}>Choose a target</Link> : undefined}>
+            action={reason === "no_target" && mayRecompute ? <Link className="btn" to={`/?target=${datasetId}`}>Choose a target</Link> : undefined}>
             {info.body}
           </Empty>
         </div>
@@ -121,14 +123,16 @@ export function AnalysisState<R>({ a, datasetId, children }: {
       {row.stale ? (
         <div className="alert warn">
           <span className="grow">Out of date: decisions changed since this ran ({fmtAgo(row.finished_at)}).</span>
-          <button type="button" className="small" disabled={a.recomputing} onClick={a.recompute}>Recompute</button>
+          {mayRecompute && <button type="button" className="small" disabled={a.recomputing} onClick={a.recompute}>Recompute</button>}
         </div>
       ) : (
         <div className="analysis-bar">
           <span>As of {fmtAgo(row.finished_at)}{n != null && <> · {fmtInt(n)} rows</>}</span>
-          <button type="button" className="small ghost" disabled={a.recomputing} onClick={a.recompute}>
-            {a.recomputing ? "Starting…" : "Recompute"}
-          </button>
+          {mayRecompute && (
+            <button type="button" className="small ghost" disabled={a.recomputing} onClick={a.recompute}>
+              {a.recomputing ? "Starting…" : "Recompute"}
+            </button>
+          )}
         </div>
       )}
       <ErrorAlert error={a.recomputeError} />

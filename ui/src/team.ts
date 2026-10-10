@@ -16,6 +16,11 @@ export interface Access {
 export function accessOf(ds: Pick<Dataset, "phase"> & { baseline: Pick<NonNullable<Dataset["baseline"]>, "label"> | null },
   me: Pick<Me, "id" | "role">, team: Pick<TeamState, "me"> | undefined): Access {
   const v = ds.baseline?.label ?? "baseline";
+  if (me.role === "viewer") {
+    return { source: "team", canEdit: false, note: ds.phase === "assessing"
+      ? `${v} is being assessed; as a Viewer you see its decisions from team review on. Shown: the latest finalized baseline, or the suggestions.`
+      : "You're a Viewer: you can look at everything the team shares but not change it." };
+  }
   if (ds.phase === "assessing") {
     if (team?.me) {
       return team.me.submitted
