@@ -1,7 +1,7 @@
 import type { StartBaselineForm } from "./baselines";
 import { type View, viewQuery } from "./view";
 import type {
-  BaselineLine, FamilyKey,
+  BaselineLine, FamilyKey, LibraryEntry,
   Analysis, AnalysisKind, AnalysisParams, CorrMatrix, BulkRequest, BulkResult, Correlation, Dataset, DecisionInput, Decision, ExportJob, ExportPreview, FieldFilter,
   FieldListItem, FieldResponse, ModelOption, ModelRun, OptionCatalog, SqlResult, SystemInfo, Device,
   AuthConfig, Me, PickUser, Role, TeamUser, TeamState, ReviewQueue, FieldReview, ReviewComment,
@@ -82,6 +82,8 @@ export const api = {
     request<Dataset>(`/api/datasets/${id}`, json("PATCH", data)),
   createSample: (data: { rows: number; fields: number; seed: number; target_kind: string }) =>
     request<Dataset>("/api/datasets/sample", json("POST", data)),
+  library: () => request<LibraryEntry[]>("/api/datasets/library"),
+  addFromLibrary: (key: string) => request<Dataset>(`/api/datasets/library/${key}`, json("POST", {})),
   sampleLimits: () => request<{ max_cells: number }>("/api/datasets/sample/limits"),
   fields: (id: number, view: View = null) => request<FieldListItem[]>(`/api/datasets/${id}/fields${viewQuery(view)}`),
   field: (fieldId: number, view: View = null) => request<FieldResponse>(`/api/fields/${fieldId}${viewQuery(view)}`),

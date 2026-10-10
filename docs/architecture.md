@@ -34,7 +34,8 @@ for one run.
 | `config.py` | `Settings` (pydantic-settings, read from the environment). |
 | `db.py` | Connection pools (the app's, and a small one for the console's read-only role), query helpers, migrations, read-only role setup. |
 | `jobs.py` | `submit(fn, *args)` onto a `ThreadPoolExecutor` of `JOB_WORKERS` threads; job ownership, the restart sweep and the global job slots. |
-| `ingest.py` | CSV / Parquet → Parquet, identifier sanitising, `COPY` into `raw.ds_<id>`. |
+| `ingest.py` | CSV / Parquet → Parquet (the separator of a text file is detected), identifier sanitising, `COPY` into `raw.ds_<id>`. |
+| `sample_library/` | The real datasets that ship with the app: the catalog (`LIBRARY`), their Parquet files under `data/`, and `build.py`, which rebuilds the files from their UCI sources. |
 | `profiling.py` | Type inference, statistics, charts, association sample vectors. |
 | `correlations.py` | Pairwise associations (Spearman, Cramér's V, correlation ratio). |
 | `semantics.py` | Model families, semantic types, allowed settings per family and type, suggestions, validation, the option catalog. |

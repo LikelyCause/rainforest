@@ -721,3 +721,15 @@ export interface FieldReview {
   assessments: (Assessment & { settings: Record<string, SettingsRow> })[];
   comments: ReviewComment[];
 }
+
+/** A real dataset that ships with the app (GET /api/datasets/library). */
+export interface LibraryEntry {
+  key: string;
+  name: string;
+  description: string;
+  targets: string[];
+  rows: number;
+  columns: number;
+  source_url: string;
+  citation: string;
+}

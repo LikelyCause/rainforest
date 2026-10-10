@@ -81,10 +81,13 @@ type, start a baseline of that type there (it can start from the one you finaliz
 [Team workflow](#team-workflow) and [Experiments](#experiments) describe each step in full. The walkthrough below
 covers each screen.
 
-1. **Datasets** → upload a CSV / Parquet file, or use **Generate sample ▾** (1k–2M rows, 30–400 fields, at most
-   60M cells, with `column_a` / `column_b` targets that are binary + 3-class, both binary or both multiclass). On an
-   empty install, *Open the 50k × 150 demo* does the same in one click. The upload is converted to Parquet, loaded into
-   `raw.ds_<id>`, profiled and correlated, with live progress.
+1. **Datasets** → upload a CSV / Parquet file, or use **Samples ▾**: *Real datasets* (the
+   [sample library](#sample-library)) or *Generate* (1k–2M rows, 30–400 fields, at most 60M cells, with `column_a` /
+   `column_b` targets that are binary + 3-class, both binary or both multiclass). On an empty install, *Open the
+   50k × 150 demo* generates one in one click. The upload is converted to Parquet, loaded into `raw.ds_<id>`, profiled
+   and correlated, with live progress. Text files may separate columns with commas, semicolons, tabs or pipes (the
+   separator is detected; anything but a comma is noted on the dataset), and a cell holding only `?`, `NA`, `N/A`,
+   `NaN`, `null`, `None` or `#N/A` is missing.
    Then **Choose target ▾** on the dataset's row (once set, click the target chips to change them): pick one or more
    columns, or *No target (unsupervised)*. A target must be binary, categorical or discrete numeric with at most 100
    distinct values; other fields are disabled in the picker with the reason, and the API refuses them. Saving
@@ -139,6 +142,23 @@ right **Team** (the user list), who you're signed in as with your role, and *Sig
 | `/` | search fields |
 | `Esc` | leave a control, back to review |
 | `?` | show or hide the shortcut list |
+
+## Sample library
+
+*Samples ▾ → Real datasets* on the Datasets page adds a real dataset that ships with the app, with its targets set,
+to try Rainforest on real data. Each one goes through the same processing as an upload. All four come from the
+[UCI Machine Learning Repository](https://archive.ics.uci.edu/) under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/):
+
+| Dataset | Rows × columns | Targets | What it exercises | Source |
+|---|---|---|---|---|
+| Diabetes readmission | 101,766 × 50 | `readmitted` (3 classes) | heavy missingness, ID columns, high-cardinality diagnosis codes | Clore, Cios, DeShazo & Strack (2014), [doi:10.24432/C5230J](https://doi.org/10.24432/C5230J) |
+| Student grades | 649 × 33 | `G1`, `G2`, `G3` (grades 0–20) | a chain where each grade helps predict the next | Cortez (2008), [doi:10.24432/C5TG7T](https://doi.org/10.24432/C5TG7T) |
+| Student dropout | 4,424 × 37 | `Target` (dropout, enrolled, graduate) | an imbalanced target; categoricals stored as numeric codes | Realinho, Vieira Martins, Machado & Baptista (2021), [doi:10.24432/C5MC89](https://doi.org/10.24432/C5MC89) |
+| Steel plate faults | 1,941 × 34 | seven yes/no fault types | long chains | Buscema, Terzi & Tastle (2010), [doi:10.24432/C5J88N](https://doi.org/10.24432/C5J88N) |
+
+The files are under `api/app/sample_library/data/`, rebuilt from their sources with
+`docker compose exec api python -m app.sample_library.build` (or the same module from `api/` locally).
 
 ## Sign-in
 
