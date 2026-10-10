@@ -27,37 +27,46 @@ Developer docs: [docs/architecture.md](docs/architecture.md) (how the pieces fit
 
 ## Quick start
 
+Needs Docker with Compose v2.
+
 ```bash
-cp .env.example .env
-docker compose up -d --build
-open http://localhost:8080
+cp .env.example .env    # then set POSTGRES_PASSWORD and READONLY_PASSWORD
+make up                 # docker compose up -d --build; the first build takes a few minutes
 ```
+
+Set the passwords before the first start: Postgres takes them only when it creates its data volume.
+
+Then open `http://localhost:8080` (the Docker host's address from another machine; `UI_PORT` sets the port).
+Everything `make up` starts is configured in `.env`, which Compose reads on every command; see
+[Configuration](#configuration).
 
 Out of the box sign-in is in *pick* mode: the sign-in page lists the team and you choose who you are, starting with
 the built-in lead **Admin**. That's for one person, dev and demos; it doesn't authenticate anyone. A team sets up OIDC
-sign-in, see [Sign-in](#sign-in) (`make up-keycloak` runs a ready-made Keycloak to try it).
+sign-in: see [Deploying for a team](#deploying-for-a-team) (`make up-keycloak` runs a ready-made Keycloak to try it).
 
 1. **Datasets** → upload a CSV / Parquet file, or use **Generate sample ▾** (1k–2M rows, 30–400 fields, at most
-   60M cells, with `column_a` / `column_b` targets that are binary + 3-class, both binary or both multiclass). On an empty install,
-   *Open the 50k × 150 demo* does the same in one click. The upload is converted to Parquet, loaded into
+   60M cells, with `column_a` / `column_b` targets that are binary + 3-class, both binary or both multiclass). On an
+   empty install, *Open the 50k × 150 demo* does the same in one click. The upload is converted to Parquet, loaded into
    `raw.ds_<id>`, profiled and correlated, with live progress.
-   Then **Choose target ▾** on the dataset's row: pick one or more columns, or *No target (unsupervised)*. A target
-   must be binary, categorical or discrete numeric with at most 100 distinct values; other fields are disabled in the
-   picker with the reason, and the API refuses them. Saving refreshes the target associations and leakage flags.
-   Generated samples already have their two targets set. The row menu also renames or deletes a dataset (deleting removes its fields, exports, model runs and their files).
+   Then **Choose target ▾** on the dataset's row (once set, click the target chips to change them): pick one or more
+   columns, or *No target (unsupervised)*. A target must be binary, categorical or discrete numeric with at most 100
+   distinct values; other fields are disabled in the picker with the reason, and the API refuses them. Saving
+   refreshes the target associations and leakage flags. Generated samples already have their two targets set. The row
+   menu also renames or deletes a dataset (deleting removes its fields, exports, model runs and their files).
    A new dataset starts as recipe v1 in **Assessing**: a lead assigns assessors (row menu → *Assessors…*, or the
    **Team** step), each of them reviews every field blind, and the team settles the disagreements before a lead
    finalizes. See [Team workflow](#team-workflow).
 2. **Review** → walk the fields. Each field shows its signals (missing, skew, outliers, levels, target association
    with a leakage flag), its distribution and quantile strip, top tokens or weekdays, and its strongest
    **associations** (click a bar to jump to that field). Decisions autosave. The sidebar filters by status
-   (*To do* · *Kept* · *Dropped* · *All*), by type, and by *Needs attention* (leakage, mostly missing or constant, low
-   type confidence, failed saves).
+   (*To do* · *Kept* · *Dropped* · *All*), by type, and by *Needs attention* (unreviewed fields with a leakage flag,
+   mostly missing or constant, with low type confidence, or whose save failed).
 3. **Bulk edit** → find fields with presets (*Unreviewed*, *Missing > 20%*, *Skewed numerics*, *Target-associated*,
    *High-card categoricals*, *Text*, *Possible leaks*, *Edited by you*) or your own filters, then **Accept
    suggestions**, **Keep**, **Drop** or **Mark reviewed**. Each bulk action shows a preview of what will change before
-   you apply it, and can be undone from the toast. The table shows the first 500 matches; bulk actions apply to every
-   match except the rows you untick, and the bar says so. *Accept suggestions* leaves preprocessing settings you
+   you apply it, and can be undone from the toast. Bulk actions never move a field into or out of the target role,
+   and *Keep* passes over identifier and constant fields. The table shows the first 500 matches; bulk actions apply
+   to every match except the rows you untick, and the bar says so. *Accept suggestions* leaves preprocessing settings you
    customised alone unless it changes the field's type. *Review these N →* (`R`) opens the shown fields as a
    working set in Review. The **SQL** tab is a read-only console with examples.
    A field counts as *edited by you* once you change its keep / drop or type, and its settings as *customised* once
@@ -69,9 +78,25 @@ sign-in, see [Sign-in](#sign-in) (`make up-keycloak` runs a ready-made Keycloak 
    Parquet, and train chains with any compatible model. Runs on an export are compared side by side, and the best on
    the validation split is starred. See [Experiments](#experiments).
 
-The top bar shows the workflow steps **Review · Bulk edit · Explore · Team · Experiments** (the Team step carries
-the dataset's phase: *Assessing*, *Review* or *Finalized*) and the **Model** switch (*Trees* · *Linear* · *Neural*),
-and on the right **Team** (the user list), who you're signed in as with your role, and *Sign out*.
+The top bar shows the dataset switcher, the workflow steps **Review · Bulk edit · Explore · Team · Experiments**
+(Review carries the reviewed count, the Team step the dataset's phase: *Assessing*, *Review* or *Finalized*), the
+**Model** switch (*Trees* · *Linear* · *Neural*), *Next unreviewed* (`U`) while fields are left, and on the right
+**Team** (the user list), who you're signed in as with your role, and *Sign out*.
+
+### Keyboard shortcuts (Review)
+
+| Key | Action |
+|---|---|
+| `J` / `→` · `K` / `←` | next / previous field |
+| `U` | next unreviewed field (also jumps into Review from the dataset's other pages) |
+| `X` | toggle keep / drop |
+| `Enter` | confirm and go next |
+| `A` | use the suggestion and confirm |
+| `Z` | undo the last confirm |
+| `N` | add a note |
+| `/` | search fields |
+| `Esc` | leave a control, back to review |
+| `?` | show or hide the shortcut list |
 
 ## Sign-in
 
@@ -84,7 +109,7 @@ uploads, exports, model runs, Explore analyses). A user is a **lead** or a **mem
 | Review and bulk edit their own assessment when assigned; comment in team review | ✓ | ✓ |
 | Assign assessors, set the team decision in review, finalize | | ✓ |
 | Delete datasets | | ✓ |
-| Manage users on the **Team** page | | ✓ (pick mode: add, rename, set role, deactivate; OIDC: deactivate / reactivate) |
+| Manage users on the **Team** page | | ✓ (pick mode: add, rename, edit email, set role, deactivate / reactivate; OIDC: deactivate / reactivate) |
 
 `RAINFOREST_AUTH_MODE` chooses how people sign in:
 
@@ -92,25 +117,48 @@ uploads, exports, model runs, Explore analyses). A user is a **lead** or a **mem
   with PKCE, run by the API. The sign-in page shows *Sign in with <provider>*. A user is created the first time they
   sign in, and their name, email and role are refreshed from the ID token every time. The role comes from the
   token's groups claim: `RAINFOREST_LEAD_GROUP` (default `rainforest-lead`) makes a lead, `RAINFOREST_MEMBER_GROUP`
-  (default `rainforest-member`) a member. Someone in neither group gets a *No access* page. *Sign out* also ends the
-  provider's session. Register Rainforest at the provider as a confidential client with the redirect URI
-  `<Rainforest URL>/api/auth/oidc/callback` (and `<Rainforest URL>/login` as a post-logout redirect URI), and
-  configure a groups claim in the ID token.
+  (default `rainforest-member`) a member. Someone in neither group, or deactivated, gets a *No access* page. *Sign
+  out* also ends the provider's session. Register Rainforest at the provider as a confidential client with the
+  redirect URI `<Rainforest URL>/api/auth/oidc/callback` (and `<Rainforest URL>/login` as a post-logout redirect URI),
+  and configure a groups claim in the ID token.
 * **`pick`** (the default; dev, demos, a single person or a trusted single-team network). The sign-in page lists the
   active users and choosing one signs you in as them; the page says plainly that this doesn't authenticate. Leads
   manage the list on the Team page. The first start creates one lead, *Admin*.
 
 Deactivating a user, or changing their role, signs them out everywhere at once. The last active lead can't be
-demoted or deactivated. Users are never deleted, so their history keeps its names; matching is by the provider's
-subject id, never by email. Work recorded before users existed is attributed to *Admin*.
+demoted or deactivated, and the Team page doesn't offer to deactivate yourself. Users are never deleted, so their
+history keeps its names; matching is by the provider's subject id, never by email.
+
+## Deploying for a team
+
+`.env` is the whole configuration: Compose reads it on every command, so `make up` (and `make down`, `make logs`, …)
+always applies it, and it is what you keep and back up besides the data volumes. A team deployment sets, in `.env`
+(the commented *team deployment* block in `.env.example` has all of them):
+
+1. **Sign-in:** `RAINFOREST_AUTH_MODE=oidc` and the `RAINFOREST_OIDC_*` settings for your provider (see
+   [Sign-in](#sign-in) and [Configuration](#configuration)). To run the reference Keycloak alongside, add
+   `COMPOSE_PROFILES=keycloak`, set `KEYCLOAK_URL` and `RAINFOREST_URL` to the URLs browsers use, and point the OIDC
+   settings at it (see [Keycloak](#keycloak)).
+2. **GPU** (optional): `COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml` builds the API with CUDA XGBoost and
+   gives it the host's NVIDIA GPUs (see [GPU](#gpu)).
+3. **Access:** `RAINFOREST_ALLOWED_HOSTS` set to the names and addresses people use, and real passwords for Postgres
+   and the console role. Anywhere beyond a trusted LAN, also put a TLS proxy in front of the UI port (see
+   [Operational notes](#operational-notes-and-limits)).
+
+Then `make up`. Any combination works, Keycloak with the GPU image included, and every later `make up` keeps it.
+
+`make up-keycloak` and `make up-gpu` are shortcuts for trying an option without editing `.env`: they start the stack
+as `.env` describes plus the GPU image, or plus the Keycloak profile with the reference Keycloak's sign-in settings
+for any that `.env` leaves empty (none when `.env` names its own issuer), for that run only, and print what to add to
+`.env` to keep it. The next `make up` starts the stack as `.env` describes. `make up-keycloak` stops with an error
+when `.env` sets `RAINFOREST_AUTH_MODE` to something other than `oidc`.
 
 ### Keycloak
 
-`make up-keycloak` starts everything plus [Keycloak](https://www.keycloak.org/) on `:8081` as a reference identity
-provider, and switches the API to OIDC against it. Keycloak keeps its own `keycloak` database in the existing
-Postgres and imports the `rainforest` realm on first start (`keycloak/realm-rainforest.json`): the confidential client
-`rainforest`, the groups `rainforest-lead` and `rainforest-member` mapped into the ID token's `groups` claim, and these
-users:
+The `keycloak` profile runs [Keycloak](https://www.keycloak.org/) on `:8081` (`KEYCLOAK_PORT`) as a reference
+identity provider. Keycloak keeps its own `keycloak` database in the same Postgres and imports the `rainforest`
+realm on first start (`keycloak/realm-rainforest.json`): the confidential client `rainforest`, the groups
+`rainforest-lead` and `rainforest-member` mapped into the ID token's `groups` claim, and these users:
 
 | User | Password | Group |
 |---|---|---|
@@ -119,42 +167,29 @@ users:
 | `ds2` | `ds2-dev-password` | rainforest-member |
 | `guest1` | `guest1-dev-password` | none (shows the *No access* page) |
 
-Keycloak's own admin console is at `http://localhost:8081/admin` (`admin` / `KEYCLOAK_ADMIN_PASSWORD`, default
-`admin`).
+With a fresh `.env`, `make up-keycloak` runs it at `http://localhost:8081` and signs Rainforest in against it.
+Keycloak's own admin console is at `<KEYCLOAK_URL>/admin` (`admin` / `KEYCLOAK_ADMIN_PASSWORD`, default `admin`).
+Keycloak takes a minute or so to start, and signing in fails until it is ready.
 
 **This is a development setup, not a production one:** Keycloak runs in `start-dev` mode over plain HTTP, the
 client secret (`rainforest-dev-secret`) and passwords above are public, and the realm allows HTTP from anywhere.
 For real use, run Keycloak (or any OIDC provider) in production mode behind TLS, and set the `RAINFOREST_OIDC_*`
-settings yourself.
+settings for it.
 
-Tokens name their issuer by the URL browsers use, so Keycloak runs with `KC_HOSTNAME` set to that URL and the API
-checks tokens against the same issuer. The API container can't reach `localhost:8081`, though, so it reads discovery
-from `http://keycloak:8080` (`RAINFOREST_OIDC_DISCOVERY_URL`), and Keycloak's dynamic backchannel
+Tokens name their issuer by the URL browsers use, so Keycloak runs with `KC_HOSTNAME` set to `KEYCLOAK_URL` and the
+API checks tokens against the same issuer. The API container can't reach that URL when it names `localhost`, so it
+reads discovery from `http://keycloak:8080` (`RAINFOREST_OIDC_DISCOVERY_URL`), and Keycloak's dynamic backchannel
 (`KC_HOSTNAME_BACKCHANNEL_DYNAMIC`) answers it with token and key URLs on that internal name while the issuer and
-the browser-facing URLs stay external. To use it from other machines, give both URLs as they see them:
+the browser-facing URLs stay external. For use from other machines, set both URLs in `.env` as those machines see
+them, e.g. `KEYCLOAK_URL=http://rainforest.lan:8081` and `RAINFOREST_URL=http://rainforest.lan:8080`, with the issuer
+and redirect URL to match (`.env.example` shows the set). `make up-keycloak` derives the issuer and redirect URL from
+the two URLs when `.env` leaves them empty, and takes them on its command line too (`make up-keycloak
+KEYCLOAK_URL=… RAINFOREST_URL=…`).
 
-```bash
-make up-keycloak KEYCLOAK_URL=http://rainforest.lan:8081 RAINFOREST_URL=http://rainforest.lan:8080
-```
-
-The redirect URIs are written into the realm on its first import only; after changing `RAINFOREST_URL`, edit the
-client in Keycloak's admin console (or `docker compose down`, drop the `keycloak` database and start again).
-`make up` afterwards goes back to the settings in `.env`.
-
-### Keyboard shortcuts (Review)
-
-| Key | Action |
-|---|---|
-| `J` / `→` · `K` / `←` | next / previous field |
-| `U` | next unreviewed field (also jumps into Review from Bulk edit, Explore and Export) |
-| `X` | toggle keep / drop |
-| `Enter` | confirm and go next |
-| `A` | use the suggestion and confirm |
-| `Z` | undo the last confirm |
-| `N` | add a note |
-| `/` | search fields |
-| `Esc` | leave a control, back to review |
-| `?` | show or hide the shortcut list |
+The redirect URIs are written into the realm on its first import only. After changing `RAINFOREST_URL`, edit the
+`rainforest` client in Keycloak's admin console, or reimport: stop Keycloak (`docker compose stop keycloak`), drop its
+database (`docker compose exec db dropdb -U <POSTGRES_USER> keycloak`) and start it again (`make up` with the profile
+in `.env`, or `make up-keycloak`).
 
 ## Team workflow
 
@@ -197,18 +232,16 @@ any dataset: *Start from a recipe* on its Versions page (the upload toast links 
 on the upload API. Fields match by name. A matched field whose inferred type is unchanged and whose stats haven't
 drifted (missing share within 10 points, distinct values within half to double) is carried over and locked, with
 the recipe's decision, settings and notes. Everything else is reopened for assessment: new fields, changed types,
-drift (with the numbers), a carried target that's no longer a valid target, settings no longer valid for the data.
+drift (with the numbers), a recipe target that isn't a valid target here, settings that aren't valid for this data.
 Recipe fields missing from the new data are listed. The recipe's targets carry over when they're still valid targets
 here. The summary stays on the dataset's Team and Versions pages, and the version records the recipe it came from.
 If nothing needs assessing, the version opens in team review and a lead confirms it by finalizing.
 
 **Exports** live in [experiments](#experiments). A team export is built from a finalized version's snapshot, never
 from the decisions being worked on, so an old version always exports the same way while a newer one is in progress;
-an assessor can also export their own assessment, privately, while they assess. Explore is shared: raw-data analyses use the team decision, except that while assessing, *Kept only* uses
-your own choices, and results are cached per decision source so they never mix people's choices.
-
-Datasets that existed before recipes became recipe v1, finalized from their decisions at the time by the first lead,
-and their exports point at it.
+an assessor can also export their own assessment, privately, while they assess. Explore is shared: raw-data analyses
+use the team decision, except that while assessing, *Kept only* uses your own choices, and results are cached per
+decision source so they never mix people's choices.
 
 ## Experiments
 
@@ -226,15 +259,14 @@ them (*All*, *Mine*, *Team*, *Archived*) with their export and run counts and th
 
 **Privacy.** A personal experiment is **private** (🔒) while its recipe version is assessing: nobody else sees it,
 the lead included, nor its exports, runs, files, Explore results on its exports or anything about it in the Datasets
-list, and opening one by URL answers *doesn't exist*. From team review onwards it is visible to the whole team, like
+list, and opening one by URL answers as if it didn't exist. From team review onwards it is visible to the whole team, like
 the assessment it was built from. The SQL console never shows a private experiment, its exports, runs or metrics
 (row-level security; the console doesn't know who is asking, so this includes the owner).
 
 An experiment's page shows how it was built and whether it is private, its notes, and the export and train panel
 scoped to it: build an export from its source, train on it, compare the runs, and *MLflow ↗* for its runs there. Its
 owner (for a personal one, its assessor) or a lead renames it, edits its notes and archives or unarchives it; an
-archived experiment takes no new exports or runs. Exports and runs made before experiments existed are in one
-**Imported** experiment per dataset, on the newest recipe version they were exported from.
+archived experiment takes no new exports or runs.
 
 ## Decisions: shared vs per model family
 
@@ -312,8 +344,8 @@ more than 20 distinct values is treated as numeric, otherwise as classes.
 
 | View | What it computes |
 |---|---|
-| **Correlations** | Clustered heatmap of the stored associations (no job, raw data only): the 60 fields most associated with the target, or with the strongest associations overall, ordered by average-linkage clustering on 1 − strength. A slider hides weak cells, you can add fields beyond the 60, and clicking a cell shows the pair with links to Review. |
-| **Map** | 2-D embedding of the sampled rows, coloured by the target. **t-SNE** (default; PCA to 50 components first, perplexity 5–100, default 30) or **UMAP** (neighbours 5–100, default 15), fixed seed. Numerics are median-filled and standardised, categoricals one-hot. Hover shows the 5 fields that spread the rows most (largest weight in the first two principal components). |
+| **Correlations** | Clustered heatmap of the stored associations (no job, raw data only): the target and the 59 fields most associated with it, or the 60 with the strongest associations overall, ordered by average-linkage clustering on 1 − strength. A slider hides weak cells, you can add fields beyond the 60, and clicking a cell shows the pair with links to Review. |
+| **Map** | 2-D embedding of the sampled rows, coloured by the target. **t-SNE** (default; PCA to 50 components first when there are more features, perplexity 5–100, default 30) or **UMAP** (neighbours 5–100, default 15), fixed seed. Numerics are median-filled and standardised, categoricals one-hot. Hover shows the 5 fields that spread the rows most (largest weight in the first two principal components). |
 | **Feature tests** | One test per field against the target, with Benjamini–Hochberg adjusted p-values (the UI marks adjusted p < 0.05). Numeric field × class target: one-way ANOVA (effect η²) plus Kruskal–Wallis, box plots per class. Categorical field × class target: χ² (effect Cramér's V), level counts per class. Numeric target: Spearman (effect \|ρ\|) plus Pearson, a scatter of up to 500 points; or ANOVA of the target across the field's levels. Classes with fewer than 5 sampled rows are excluded and listed. |
 | **Importance** | Mutual information of each field with the target (needs a target), and PCA: explained variance for up to 20 components with the cumulative line, plus loadings of the first 5 components for the top 20 features. |
 
@@ -369,8 +401,8 @@ the recipe (`recipe_id`, shown as *recipe vN* in the list) and its experiment, a
   targets), confusion matrices and a per-class table, plus the top importances per chain link.
 * **On the page:** each export has *Train ▾* (model and chain order), *Files ▾* (Parquet, preprocessor, manifest) and
   *Use from code* (the CLI command and class mappings). Runs are listed per export, with that export's targets as
-  columns, showing test-split AUC and macro-F1. The ★ marks the run that scored best on the validation split, so
-  choosing it doesn't use the test split. A run expands into its full metrics and confusion matrices.
+  columns, showing test-split AUC and macro-F1. In each of these columns ★ marks the run that scored best on the
+  validation split for that target and metric, so choosing it doesn't use the test split. A run expands into its full metrics and confusion matrices.
 
 ```bash
 make train EXPORT=1                          # LightGBM
@@ -385,16 +417,18 @@ make models                                  # what's registered / installed, an
 `classifier_chain.joblib` and `report.json` under `/data/models/export<id>_<model>_<time>/` but aren't recorded in
 `meta.model_runs`, so they don't appear in the UI's runs table or `meta.v_model_metrics`.
 
-**Adding a model** means adding one `ModelSpec` to `api/app/modeling/registry.py`: key, family, NaN support,
-builder, default parameters and how to read importances. It then appears in the CLI, the API and the UI.
+**Adding a model** means adding one `ModelSpec` to `api/app/modeling/registry.py`: key, label, family, NaN support,
+builder, default parameters and how to read importances, plus optionally a description, the package it requires and
+`cuda_params` for GPU training. It then appears in the CLI, the API and the UI.
 
 ## GPU
 
 XGBoost can train on an NVIDIA GPU. The default image ships the 5 MB CPU build (`xgboost-cpu`); the GPU image swaps
 in the CUDA build (`xgboost`, built with CUDA 13.3), which adds about 800 MB, mostly its NCCL dependency. Training
 on the GPU is a per-run choice: when the API sees a usable GPU, *Train ▾* shows a CPU / GPU switch with the GPU's
-name for models that support it (XGBoost: `device="cuda"`, `tree_method="hist"`). The runs table has a Device column, and each run's
-`report.json` records `device`. Other models always train on the CPU.
+name for models that support it (XGBoost: `device="cuda"`, `tree_method="hist"`). The runs table has a Device
+column, and each run's `report.json` records `device`. Other models always train on the CPU, and Explore's analyses
+run on the CPU.
 
 **Host prerequisites**
 
@@ -418,18 +452,21 @@ The host needs no CUDA toolkit: the XGBoost wheel bundles its CUDA runtime, and 
 
 **Start**
 
+Add `COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml` to `.env` (with `XGBOOST_GPU_PKG` for a 570–579
+driver), then:
+
 ```bash
-make up-gpu      # docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+make up          # every later `make up` keeps the GPU image while .env names the GPU file
 make gpu-check   # what the API sees: name, memory, driver, and whether XGBoost can use it
 ```
+
+`make up-gpu` builds and starts the GPU image for one run without editing `.env`.
 
 `docker-compose.gpu.yml` builds the API with `GPU=1` and reserves the host's GPUs for it. `GET /api/system` reports
 `{"gpu": null}` when no GPU is visible, or the GPU with `available: false` and a `reason` when XGBoost can't use it
 (CPU build, driver too old). Each API worker detects this once, in the background as it starts, with a one-tree
 test fit, because XGBoost otherwise falls back to the CPU silently. A GPU run that falls back anyway fails rather than
-being recorded as a GPU run. Going back to the CPU image is `make up`.
-
-Not included: GPU-accelerated Explore (RAPIDS cuML for UMAP and clustering) is a possible later phase.
+being recorded as a GPU run. With `COMPOSE_FILE` unset (or without the GPU file), `make up` builds the CPU image.
 
 ## MLflow
 
@@ -440,18 +477,19 @@ the sign-in page (and back) if it isn't. The server has no published port of its
 
 * **Layout:** one MLflow experiment per dataset, named `rainforest/<dataset id>-<dataset name>` (found again by its
   `rainforest.dataset_id` tag, so renaming a dataset keeps its experiment), and one MLflow run per model run, named
-  `run <id> · <model>`.
+  `run <id> · <model label>` (e.g. `run 12 · LightGBM`).
 * **Params:** `model`, `order`, `cv`, `seed`, `device`, `chain_method`, `export_family`, `n_train`, `n_features`, and
   every effective estimator parameter as `estimator.<name>` (defaults, your overrides and the device settings).
 * **Metrics:** each scalar metric per split and target as `<split>.<target>.<metric>` (e.g. `test.column_a.roc_auc`),
   plus `fit_seconds`. Characters MLflow doesn't allow in a key become `_`.
-* **Artifacts:** `report.json` and `model/classifier_chain.joblib`, the same files *Files* offers on the run. The
+* **Artifacts:** `report.json` and `model/classifier_chain.joblib`, the same files the API serves for the run. The
   server stores them on the `mlartifacts` volume and proxies uploads and downloads, so clients only talk HTTP to it.
 * **Tags:** `rainforest.dataset_id`, `rainforest.dataset_name`, `rainforest.export_id`, `rainforest.recipe_id`
   and `rainforest.recipe_version` (the recipe version the export was built from), `rainforest.experiment_id` and
-  `rainforest.experiment_name` (the Rainforest experiment), `rainforest.run_id`,
-  `rainforest.model`, `rainforest.model_family`, and `rainforest.git_sha` when the image was built with `GIT_SHA`
-  (`make up` passes the checkout's commit).
+  `rainforest.experiment_name` (the Rainforest experiment), `rainforest.run_id`, `rainforest.model`,
+  `rainforest.model_family` (the family the export was prepared for), `rainforest.user` (who started the run), and
+  `rainforest.git_sha` with `mlflow.source.git.commit` when the image was built with `GIT_SHA` (`make up` passes the
+  checkout's commit).
 * **Private experiments wait.** MLflow has no access control of its own: anyone who can sign in to Rainforest can
   browse everything in it. So a run in a [private experiment](#experiments) is not logged while its recipe version
   is assessing (the runs table shows *after review*); when review opens, those runs are logged, and runs that finish
@@ -461,8 +499,9 @@ the sign-in page (and back) if it isn't. The server has no published port of its
   `meta.model_runs` stores `mlflow_experiment_id` and `mlflow_run_id`, and the API returns `mlflow_url`.
 * **When MLflow is down** the run still finishes; logging gives up after a short timeout (15 s per request, two
   retries) and the run records the reason as `mlflow_error` in its report. The runs table shows *not logged* with the
-  reason, and nothing is lost: `make mlflow-backfill` logs every finished run without an MLflow run, including runs
-  trained before MLflow was set up, except runs of an experiment that is still private. It never runs on its own.
+  reason, and nothing is lost: `make mlflow-backfill` logs every finished run that has no MLflow run (one trained
+  while MLflow was down or turned off, for example), except runs of an experiment that is still private. It runs
+  only when you start it.
 * **Turning it off:** set `MLFLOW_TRACKING_URI=` (empty) in `.env`. Runs are then not logged and show no link. The
   `mlflow` service still starts; stop it with `docker compose stop mlflow` if you don't want it.
 * **Storage:** the tracking data lives in a database named `mlflow` in the same Postgres. The `mlflow` service
@@ -472,7 +511,8 @@ CLI runs (`make train`) aren't model runs in `meta.model_runs`, so they aren't l
 
 ## Querying
 
-Connect any SQL client to `localhost:5432` (user and password from `.env`), or use the SQL tab in Bulk edit.
+Connect any SQL client to `localhost:5432` on the Docker host (`DB_PORT`; user and password from `.env`), or use the
+SQL tab in Bulk edit.
 The console runs one query (`SELECT`, `WITH … SELECT`, `VALUES` or `TABLE`) as the SELECT-only `rainforest_ro` role,
 in a read-only transaction with a statement timeout. Postgres itself parses the text through a server-side cursor, so a
 second statement is refused however it's written, and only the rows shown (up to `SQL_MAX_ROWS`) are fetched rather than the whole result.
@@ -482,7 +522,7 @@ second statement is refused however it's written, and only the rows shown (up to
 -- all text fields
 SELECT name, null_pct, avg_length FROM meta.v_fields WHERE dataset_id = 1 AND inferred_type = 'text';
 
--- fields with more than 20% missing that I'm keeping
+-- fields with more than 20% missing that the team keeps
 SELECT name, null_pct, imputation FROM meta.v_fields WHERE dataset_id = 1 AND null_pct > 0.2 AND action = 'keep';
 
 -- how one field is prepared for each model family
@@ -503,11 +543,12 @@ WHERE dataset_id = 1 AND split = 'test' AND metric IN ('roc_auc', 'roc_auc_ovr_m
 | `meta.bulk_batches` | each applied bulk edit: summary and a pre-change snapshot used by undo |
 | `meta.field_correlations` | pairwise associations (one row per unordered pair) |
 | `meta.users` | users: name, email, role (`lead` / `member`), active, OIDC subject, last seen |
-| `meta.recipes` | recipe versions per dataset: phase (`assessing` / `review` / `finalized`), who finalized it, and the frozen `snapshot` |
+| `meta.recipes` | recipe versions per dataset: phase (`assessing` / `review` / `finalized`), `scope` (`all` / `reopened`), who finalized it, the frozen `snapshot`, and `reuse` (the summary when it started from a recipe) |
+| `meta.recipe_reopened` | the fields a `reopened` version works on |
 | `meta.experiments` | experiments per dataset: name, owner, `source` (`recipe:<id>` or `assessment:<recipe id>:<user id>`), notes, archived |
 | `meta.exports`, `meta.model_runs` | export jobs; training runs with metrics and report; each with its `experiment_id` |
 | `meta.analyses` | Explore jobs (map, tests, importance): params, data version, status, result JSONB |
-| `meta.v_fields`, `meta.v_field_settings`, `meta.v_correlations`, `meta.v_model_metrics` | query-friendly views |
+| `meta.v_field_profiles`, `meta.v_fields`, `meta.v_field_settings`, `meta.v_correlations`, `meta.v_model_metrics` | query-friendly views (`v_fields` and `v_field_settings` show the team decision) |
 | `raw.ds_<id>` | the uploaded data (sanitized column names; see `meta.fields.db_column`) |
 
 Assessments are private while a dataset is assessed, so the console's role can't read `meta.assessments`,
@@ -522,11 +563,14 @@ every start.
 
 ## Configuration
 
-Compose settings, read from `.env` (see `.env.example`):
+Compose settings, read from `.env` (see `.env.example`) on every `docker compose` / `make` command. A literal `$` in a
+value is written `$$`.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | rainforest | database name and owner |
+| `COMPOSE_FILE` | `docker-compose.yml` | `docker-compose.yml:docker-compose.gpu.yml` for the GPU image (see [GPU](#gpu)) |
+| `COMPOSE_PROFILES` | – | `keycloak` to run the reference Keycloak (see [Keycloak](#keycloak)) |
+| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | rainforest | database name and owner; Postgres applies them when it creates the `pgdata` volume, so set them before the first start |
 | `READONLY_PASSWORD` | rainforest_ro | password for the SQL console's `rainforest_ro` role |
 | `UI_PORT`, `API_PORT`, `DB_PORT` | 8080, 8000, 5432 | published ports (`API_PORT` and `DB_PORT` bind to 127.0.0.1) |
 | `API_WORKERS` / `JOB_WORKERS` | 2 / 2 | uvicorn workers / background job threads per worker |
@@ -536,15 +580,15 @@ Compose settings, read from `.env` (see `.env.example`):
 | `RAINFOREST_OIDC_ISSUER` | – | the provider's issuer URL, exactly as it appears in its tokens (e.g. `https://sso.example.com/realms/rainforest`). Required in `oidc` mode |
 | `RAINFOREST_OIDC_CLIENT_ID`, `RAINFOREST_OIDC_CLIENT_SECRET` | – | the confidential client registered for Rainforest. Required in `oidc` mode |
 | `RAINFOREST_OIDC_REDIRECT_URL` | from the request | `<Rainforest URL>/api/auth/oidc/callback`; set it when Rainforest sits behind a proxy |
-| `RAINFOREST_OIDC_DISCOVERY_URL` | issuer + `/.well-known/openid-configuration` | where the API reads discovery, when it can't reach the issuer URL itself (the Keycloak profile) |
+| `RAINFOREST_OIDC_DISCOVERY_URL` | issuer + `/.well-known/openid-configuration` | where the API reads discovery, when it can't reach the issuer URL itself (the Keycloak profile: `http://keycloak:8080/realms/rainforest/.well-known/openid-configuration`) |
 | `RAINFOREST_OIDC_SCOPES` | `openid profile email` | requested scopes |
 | `RAINFOREST_OIDC_GROUPS_CLAIM` | `groups` | ID token claim with the user's groups (Keycloak's full group paths like `/rainforest-lead` also work) |
 | `RAINFOREST_OIDC_PROVIDER_NAME` | `SSO` | the name on the *Sign in with …* button |
 | `RAINFOREST_LEAD_GROUP`, `RAINFOREST_MEMBER_GROUP` | `rainforest-lead`, `rainforest-member` | groups that make a lead or a member |
-| `KEYCLOAK_URL`, `RAINFOREST_URL` | `http://localhost:8081`, `http://localhost:8080` | Keycloak profile only: the URLs browsers use for Keycloak and Rainforest |
+| `KEYCLOAK_URL`, `RAINFOREST_URL` | `http://localhost:8081`, `http://localhost:8080` | Keycloak profile only: the URLs browsers use for Keycloak (its issuer) and Rainforest (written into the realm's redirect URIs on first import) |
 | `KEYCLOAK_PORT`, `KEYCLOAK_ADMIN_PASSWORD` | 8081, admin | Keycloak profile only: published port and admin console password |
 | `RAINFOREST_SESSION_SECRET` | generated | key that signs session cookies; if empty, one is generated on first start and kept in the data volume (`/data/session_secret`) |
-| `RAINFOREST_ALLOWED_HOSTS` | `*` | comma-separated hostnames / IPs the API answers to (`*.example.com` allowed). Set this to the names and addresses you use, e.g. `rainforest.lan,192.168.1.20`; `localhost` is always accepted |
+| `RAINFOREST_ALLOWED_HOSTS` | `*` | comma-separated hostnames / IPs the API answers to (`*.example.com` allowed). Set this to the names and addresses you use, e.g. `rainforest.lan,192.168.1.20`; `localhost`, `127.0.0.1` and `::1` are always accepted |
 | `MLFLOW_TRACKING_URI` | `http://mlflow:5000/mlflow` | where the API logs model runs; empty turns MLflow logging off (see [MLflow](#mlflow)) |
 | `GIT_SHA` | – | commit tagged on MLflow runs, baked into the API image; `make up` sets it from the checkout |
 | `API_EXTRA_PIP` | – | extra packages baked into the API image (e.g. `catboost`) |
@@ -566,10 +610,12 @@ Tuning settings for the API (`api/app/config.py`), also read from `.env`:
 
 ## Development
 
+Each block starts from the repository root.
+
 ```bash
-# API (needs Postgres: `docker compose up -d db`)
+# API, against the compose Postgres (`docker compose up -d db`; user and password as in .env)
 cd api && python -m venv .venv && . .venv/bin/activate && pip install -r requirements-dev.txt
-DATABASE_URL=postgresql://rainforest:rainforest@localhost:5432/rainforest DATA_DIR=./data \
+DATABASE_URL=postgresql://rainforest:<POSTGRES_PASSWORD>@localhost:5432/rainforest DATA_DIR=./data \
   uvicorn app.main:app --reload
 
 # UI (proxies /api to :8000; set API_URL to point elsewhere)
@@ -583,8 +629,8 @@ make sample-csv
 **Tests** live in `api/tests`. Most need no database, including the pick-mode sign-in and request-check tests in
 `test_auth.py` and the OIDC redirect and ID-token checks in `test_oidc.py` (against an in-process provider,
 `tests/oidc_provider.py`). The API tests in `test_explore.py`, `test_sql_console.py`, `test_data_correctness.py`,
-`test_api_cleanup.py`, `test_users.py` and the OIDC sign-in flows in `test_oidc.py`, and the job tests in
-`test_jobs.py`, run against an empty Postgres and skip unless `RAINFOREST_TEST_DATABASE_URL` is set; the API tests
+`test_api_cleanup.py`, `test_users.py`, `test_team.py`, `test_recipes.py`, `test_experiments.py` and the OIDC
+sign-in flows in `test_oidc.py`, and the job tests in `test_jobs.py`, run against an empty Postgres and skip unless `RAINFOREST_TEST_DATABASE_URL` is set; the API tests
 sign in with the `login_as(client, role)` fixture in `conftest.py`.
 `test_mlflow.py` logs to a temporary file store, so it needs no server; its database-backed tests follow the same
 rule, and one more test runs against a real tracking server when `MLFLOW_TEST_URI` is set (CI runs one).
@@ -597,21 +643,24 @@ RAINFOREST_TEST_DATABASE_URL=postgresql://user:pw@host:5432/db pytest   # from a
 ```
 
 **CI** (`.github/workflows/ci.yml`) runs on pushes to `main` and on pull requests: the API tests with a Postgres
-service (so nothing skips), the UI typecheck, tests and build, and `docker compose build` for the images.
+service (so nothing skips) and an MLflow server container, the UI typecheck, tests and build, and
+`docker compose build` for the images.
 
 ## Operational notes and limits
 
 * **Background jobs** (ingest, target associations, export, training, Explore analyses) run in a thread pool inside
   the API process, and their state lives in Postgres. At most `JOB_SLOTS` run at once across all workers; the rest
   wait as *Queued*. Each job row records the process that runs it, and when a worker starts it fails the queued and
-  running jobs of processes that are gone, leaving its siblings' jobs alone. For multi-node deployments, swap
+  running jobs of processes that are gone, leaving its siblings' jobs alone (an interrupted target-associations job
+  leaves its dataset ready, with a warning to choose the targets again). For multi-node deployments, swap
   `app/jobs.py` for a queue (RQ, Celery, Arq).
 * **Disk:** uploads stream to the `/data` volume, and Postgres keeps a full typed copy (`raw.*`). Profiling, Explore
   and export read the Parquet copy. Budget roughly 2–3× the file size.
 * **Samples:** text-field and chart statistics come from a sample, and the UI labels them as such. If you change a
   field's type, the stored statistics still describe the inferred type (the UI says so). The export uses your type.
 * **Security:** the UI port (`UI_PORT`, 8080) listens on every interface so you can reach it over the LAN; `api` and
-  `db` bind to localhost, and `mlflow` publishes no port. Every API route except `/health` and sign-in needs the
+  `db` bind to localhost, `mlflow` publishes no port, and the `keycloak` profile publishes `KEYCLOAK_PORT` (8081) on
+  every interface. Every API route except `/health` and sign-in needs the
   session cookie, file downloads included, and so does the MLflow UI at `/mlflow/`.
   * Use `RAINFOREST_AUTH_MODE=oidc` for anything but a single person or a trusted network: pick mode lets anyone who
     reaches the UI act as any user, including a lead.
@@ -624,8 +673,8 @@ service (so nothing skips), the UI typecheck, tests and build, and `docker compo
     nonce are derived from it with the server's secret, so nothing else is stored. ID tokens are checked against
     the provider's published keys (asymmetric algorithms only), issuer, audience, expiry and nonce. Provider tokens
     are never stored or sent to the browser.
-  * Requests that change data must be same-origin (`Origin` / `Referer` match the host; `http://localhost:5173` is also
-    accepted for `npm run dev`) and carry an `application/json` body (`multipart/form-data` for uploads), which
-    blocks cross-site form posts. Set `RAINFOREST_ALLOWED_HOSTS` as well, so a DNS-rebound name is refused outright.
+  * Browser requests that change data must be same-origin (`Origin` / `Referer` match the host;
+    `http://localhost:5173` and `http://127.0.0.1:5173` are also accepted for `npm run dev`), and a body must be
+    `application/json` (`multipart/form-data` for uploads), which blocks cross-site form posts. Set `RAINFOREST_ALLOWED_HOSTS` as well, so a DNS-rebound name is refused outright.
   * On plain HTTP the session cookie crosses the network unencrypted. Anywhere beyond a trusted LAN, put the UI
     behind a TLS proxy that sets `X-Forwarded-Proto`.

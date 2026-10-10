@@ -11,14 +11,19 @@ add things. For endpoints see [api.md](api.md); for usage see the [README](../RE
 | `mlflow` | `mlflow/` | MLflow 3.17 tracking server (the official image plus psycopg). Backend store: database `mlflow` in `db`, created by `mlflow/start.py` on every start if missing. Artifacts on the `mlartifacts` volume, served through the server (`--serve-artifacts`). Everything, REST API included, is under `--static-prefix /mlflow`. No published port. |
 | `api` | `api/app/` | FastAPI on uvicorn (`API_WORKERS` processes). Owns the schema, runs every background job in-process. |
 | `db` | Postgres 16 | `meta.*` holds metadata, decisions, jobs and results; `raw.ds_<id>` holds each dataset as a typed table. |
-| `/data` volume | `appdata` | `uploads/` (transient), `datasets/<id>/raw.parquet`, `exports/<id>/`, `models/run<id>_<model>_<ts>/`. |
+| `keycloak` | `keycloak/` | Optional (`keycloak` Compose profile): a dev-mode Keycloak with the `rainforest` realm baked in, as a reference OIDC provider; its database `keycloak` in `db` is created by the one-shot `keycloak-db` service. |
+| `/data` volume | `appdata` | `uploads/` (transient), `datasets/<id>/raw.parquet`, `exports/<id>/`, `models/run<id>_<model>_<ts>/` (CLI runs: `models/export<id>_<model>_<ts>/`), `session_secret` when generated. |
+
+Compose reads `.env` for every setting, including `COMPOSE_FILE` (`docker-compose.gpu.yml` adds the CUDA build of the
+API and the host's GPUs) and `COMPOSE_PROFILES` (`keycloak`); the Makefile's `up-gpu` and `up-keycloak` add those
+for one run.
 
 ### API modules
 
 | Module | Responsibility |
 |---|---|
-| `main.py` | App, middleware (gzip for API responses, not file downloads), router registration, `/health`, `/api/options`. Startup loads the session secret, runs `db.bootstrap()` and `jobs.start()`, removes orphaned uploads, queues `experiments.startup_flush` (MLflow logging of runs that waited for review) and starts GPU detection. |
-| `auth.py` | Sign-in routes (`/api/auth/*`: pick mode and the OIDC login / callback), the signed session cookie, the session secret, `SecurityMiddleware`, and the `current_user` / `require_lead` dependencies. |
+| `main.py` | App, middleware (gzip for API responses, not file downloads; CORS for the Vite dev server), router registration, `/health`, `/api/options`. Startup loads the session secret, runs `db.bootstrap()` and `jobs.start()`, removes orphaned uploads, queues `experiments.startup_flush` (MLflow logging of runs that waited for review) and starts GPU detection. |
+| `auth.py` | Sign-in routes (`/api/auth/*`: config, me, check, logout, pick mode's users and pick, and the OIDC login / callback), the signed session cookie, the session secret, `SecurityMiddleware`, and the `current_user` / `require_lead` dependencies. |
 | `oidc.py` | The OIDC relying party: discovery and JWKS (cached; an unknown key id refetches), the authorization URL with PKCE, the code exchange, ID token verification, role from the groups claim. Uses httpx and PyJWT. |
 | `recipes.py` | Recipe versions of a dataset: the current one (with the row lock phase changes and decision writes take), the latest finalized one, creating v1 and the next version, which fields a version works on (`open_field_ids`) and the lock on the rest (`locked_problem`), the snapshot and schema fingerprint, finalizing, snapshotting versions migrated without one, the export spec rows read from a snapshot (`spec_rows`, `snapshot_targets`) and the diff between two snapshots. |
 | `reuse.py` | Reusing a finalized recipe on new data: the drift rule, matching by name (`match`), and `apply`, which carries fields into the team decision, sets the targets and records the reopened fields and the summary. |
@@ -39,7 +44,7 @@ add things. For endpoints see [api.md](api.md); for usage see the [README](../RE
 | `modeling/mlflow_log.py`, `modeling/mlflow_backfill.py` | Logging a finished model run to MLflow (experiment per dataset, params, metrics, tags, artifacts), and the CLI that logs runs that have no MLflow run yet. |
 | `gpu.py` | NVIDIA GPU detection (`nvidia-smi` plus an XGBoost CUDA test fit in a subprocess), started in a background thread at startup and cached per process. |
 | `analysis/prep.py`, `analysis/compute.py`, `analysis/runner.py` | Explore jobs: sampling and typing, the numeric work, caching and job lifecycle. |
-| `routers/*.py` | HTTP endpoints, one module per area (datasets, fields, query, exports, runs, experiments, explore, users, team, recipes). `routers/team.py` holds the phase transitions: assigning, submitting, opening review (adoption), the queue, comments and finalizing; `routers/recipes.py` the version history, diffs, starting a new version and applying a recipe. |
+| `routers/*.py` | HTTP endpoints, one module per area (datasets, fields, query, exports, runs, experiments, explore, users, team, recipes). `routers/team.py` holds the phase transitions: assigning, submitting, opening review (adoption), the queue, comments and finalizing; `routers/recipes.py` the finalized recipes across datasets, the version history, diffs, starting a new version and applying a recipe. |
 | `sample_data.py` | Synthetic dataset generator (also a CLI: `python -m app.sample_data`). |
 | `schemas.py` | Request bodies and query models. |
 
@@ -49,16 +54,18 @@ add things. For endpoints see [api.md](api.md); for usage see the [README](../RE
 |---|---|
 | `App.tsx` | Routes, the sign-in gate (`RequireAuth`), and the top bar (dataset switcher, workflow steps, Model switch, Team, the user and role, Sign out). |
 | `api.ts`, `types.ts` | Typed fetch client for every endpoint; response types. Any `401` (fetch or the upload XHR) sends the user to `/login?next=<current path>`. |
-| `hooks.ts` | Shared queries (`useMe`, `useDataset`, `useFields`, `useOptions`) and `useDebounced`. |
+| `hooks.ts` | Shared queries (`useMe`, `useDataset`, `useFields`, `useOptions`, `useTeam`), `useAccess` (wraps `accessOf`), `PROCESSING` (the dataset statuses still processing) and `useDebounced`. |
 | `saveQueue.ts` | Review decision saves: one serial lane per field, latest draft wins, failures surface with Retry, flushes on page hide. |
 | `pages/` | `LoginPage` (user picker or *Sign in with …*), `ForbiddenPage` (OIDC user in neither group, or deactivated), `TeamPage` (users), `DatasetsPage`, `ReviewPage`, `BulkEditPage`, `ExplorePage`, `ExperimentsPage` (the list with its filters and the *New experiment* dialog; `ExperimentPage`, one experiment's header, notes and archive, around `ExperimentWorkspace`), `ExperimentWorkspace` (the export build panel, exports and runs of one experiment), `DatasetTeamPage` (a dataset's assessors and your assessment while assessing; the review queue, side-by-side comparison, comments, team decision and Finalize from review on), `VersionsPage` (version history, comparing two versions, starting the next version with its field picker, starting from a recipe). |
-| `components/` | `DatasetLayout` (gates dataset pages on status), `FieldList`, `FieldDetailView`, `DecisionPanel`, `RunDetail`, `Chart`, `ReuseCard` (the reuse summary); `components/explore/` holds the four Explore views, their shared state (`state.tsx`) and chart options (`options.ts`). |
-| `signals.ts`, `format.ts`, `theme.ts`, `charts.ts`, `toast.tsx` | Field signal thresholds, formatting and labels, chart theming, toasts. |
+| `components/` | `DatasetLayout` (gates dataset pages on status), `FieldList`, `FieldDetailView`, `DecisionPanel`, `RunDetail`, `Chart`, `ReuseCard` (the reuse summary), `ui.tsx` (error alert, empty state, status glyphs, review meter), `Logo`; `components/explore/` holds the four Explore views, their shared state (`state.tsx`) and chart options (`options.ts`). |
+| `signals.ts`, `format.ts`, `theme.ts`, `charts.ts`, `toast.tsx` | Field signal thresholds, formatting and labels, chart theme, shared chart options, toasts. |
+| `main.tsx`, `styles.css` | Entry point (query client, providers) and global styles. |
 | `decision.ts`, `finder.ts`, `runs.ts`, `team.ts`, `recipes.ts`, `experiments.ts`, `components/explore/params.ts` | Pure logic behind the pages: retyping a draft and encoder-param checks, Bulk edit's presets and URL state, run ranking, the experiment list filters, source options and labels, privacy notes and who may edit or add, what the viewer may edit in each phase (`accessOf`, used through `useAccess`) and the review queue's helpers, the reuse summary's grouping and reasons, diff formatting and the reopen picker's filter, Explore's URL state. |
 
-Routes: `/login`, `/forbidden`, `/` (datasets), `/team`, `/d/:id/review/:fieldId?`, `/d/:id/bulk`, `/d/:id/explore/:view?`,
-`/d/:id/team` (`?field=` selects a queue item), `/d/:id/versions`, `/d/:id/experiments`, `/d/:id/experiments/:experimentId`
-(`/d/:id/export` redirects to the list). The top bar's step is *Experiments* rather than a default experiment's
+Routes: `/login`, `/forbidden`, `/` (datasets), `/team`, `/d/:id/review/:fieldId?`, `/d/:id/bulk`,
+`/d/:id/explore/:view?`, `/d/:id/team` (`?field=` selects a queue item), `/d/:id/versions`, `/d/:id/experiments`,
+`/d/:id/experiments/:experimentId`. `/d/:id` redirects to Review, `/d/:id/query` to Bulk edit and `/d/:id/export` to
+the experiments list; anything else shows *Page not found*. The top bar's step is *Experiments* rather than a default experiment's
 *Export & train*: while a version is assessing there is no finalized recipe and so no team experiment to land in, and
 the experiments an assessor can use then are personal ones that only the list shows.
 
@@ -71,11 +78,12 @@ Review page passes to the panel as its read-only note.
 
 Every request first passes `auth.SecurityMiddleware`, before routing (so file downloads are covered too):
 
-1. **Host.** Unless `RAINFOREST_ALLOWED_HOSTS` is `*`, the `Host` header must match it (`localhost` always does).
-   `400` otherwise.
+1. **Host.** Unless `RAINFOREST_ALLOWED_HOSTS` is `*`, the `Host` header must match it (`localhost`, `127.0.0.1` and
+   `::1` always do). `400` otherwise. `/health` skips every check.
 2. **Unsafe methods** (`POST`, `PUT`, `PATCH`, `DELETE`): `Origin`, or failing that `Referer`, must be same-origin with
    `Host` or `X-Forwarded-Host`, or be the Vite dev server (`403`); requests with neither header are not from a
-   browser and pass. A body must be `application/json`, or `multipart/form-data` on `/api/datasets/upload` (`415`).
+   browser and pass. A request with a body must send `application/json`, or `multipart/form-data` on
+   `/api/datasets/upload` (`415`); `/api/auth/check` is exempt.
 3. **Session.** Everything except `/health` and the open sign-in paths (`auth.OPEN_PATHS`) needs a valid `rf_session`
    cookie naming an active user whose session version still matches (one indexed lookup, run off the event loop;
    `401`). The user `{id, name, email, role}` is left in `request.state.user`. In `oidc` mode with settings missing,
@@ -135,8 +143,8 @@ the UI polls (`pending → running → done | failed`, with `progress` and `stat
    decision and settings, re-derives other families' settings on a type change and, for the team decision only,
    appends `meta.decision_history` and keeps the target state in step. See [Team process](#team-process) for whose
    decision that is.
-5. **Bulk edit.** The field filter compiles to a `WHERE` over `meta.v_fields` (`query.fields_where`, a whitelist of
-   columns and operators). `POST …/decisions/bulk` resolves and locks the set in one statement, plans per-field
+5. **Bulk edit.** The field filter compiles to a `WHERE` over the viewer's `fields_view()` (`meta.v_fields` for the
+   team decision; `query.fields_where`, a whitelist of columns and operators). `POST …/decisions/bulk` resolves and locks the set in one statement, plans per-field
    changes, and either returns the plan (`dry_run`) or applies it, storing a pre-change snapshot in
    `meta.bulk_batches` (an assessor's in `meta.assessment_batches`) for undo.
 6. **SQL console.** `POST /api/sql` takes a connection from the `rainforest_ro` pool (`SQL_POOL_MAX`; `503` when
@@ -161,10 +169,10 @@ the UI polls (`pending → running → done | failed`, with `progress` and `stat
 9. **MLflow UI.** nginx sends each `/mlflow/` request through `auth_request` to `GET /api/auth/check` (always as a
    `GET`, without the body), which the middleware answers `401` without a valid session and the route `204`. A `401`
    becomes a relative redirect to `/login?next=/mlflow/`, and the login page does a full page load for that path
-   (`isServerPath` in `api.ts`) since it is outside the single-page app. Toward MLflow, nginx sends `Host: mlflow`
+   (`isServerPath` in `api.ts`) since it is outside the single-page app. nginx resolves `api` and `mlflow` per request
+   through Docker's DNS (`resolver 127.0.0.11`), so it starts without them and follows a recreated container. Toward MLflow, nginx sends `Host: mlflow`
    (its `--allowed-hosts`) and drops `Origin`, as MLflow's own cross-origin check only knows localhost; cross-site
-   requests can't get through anyway, because the `SameSite=Strict` cookie is what `auth_request` checks. MLflow is
-   resolved per request, so nginx starts while it is down.
+   requests can't get through anyway, because the `SameSite=Strict` cookie is what `auth_request` checks.
 10. **Explore.** See [Analyses](#analyses-explore-jobs).
 
 ## Team process
@@ -232,9 +240,9 @@ the user isn't its assessor. Phases only move forward, so once visible it stays 
 and latest export / run too), and `get_visible` answers `404`. Everything reached through an export or run id
 (files, the models listing, training, the preview, Explore `export:<id>` data and its cached results) goes through
 those lookups. For the SQL console, which has no user, migration 010 adds row-level security: `meta.experiments`
-shows only non-private rows, and `meta.exports`, `meta.model_runs` and `meta.analyses` (results on an export) show
-a row only when its experiment is visible (`experiment_id IN (SELECT id FROM meta.experiments)`, which applies the
-experiments policy in turn). The app's role owns these tables, so the policies don't apply to it.
+shows only non-private rows, `meta.exports` and `meta.model_runs` show a row only when its experiment is visible
+(`experiment_id IN (SELECT id FROM meta.experiments)`, which applies the experiments policy in turn), and
+`meta.analyses` shows a result on an export only when that export is visible (`… IN (SELECT id FROM meta.exports)`). The app's role owns these tables, so the policies don't apply to it.
 `meta.v_model_metrics` is `security_invoker`, so the console reads it under those policies. Rows with no
 experiment are visible to nobody; `meta.import_orphan_experiments()` (run by migration 010 and by bootstrap) moves
 them into the dataset's **Imported** experiment.
@@ -253,13 +261,13 @@ state in Postgres, so any worker can serve the polling.
 
 * **Ownership.** Each API process holds a session advisory lock on a random owner id (class `jobs.OWNER_LOCK`) on a
   dedicated connection for its lifetime, and stamps that id in the `owner` column of every job row it creates. On
-  startup `jobs.start()` runs `jobs.sweep()`, which fails pending and running datasets, exports, runs and analyses
-  whose owner no longer holds its lock (found in `pg_locks`), however recently they reported progress. A sibling
+  startup `jobs.start()` runs `jobs.sweep()`, which fails datasets still processing and pending or running exports,
+  runs and analyses whose owner doesn't hold its lock (found in `pg_locks`), however recently they reported progress. A sibling
   worker's jobs are never touched. A dataset that was only correlating new targets goes back to `ready` with a
   warning.
 * **Slots.** A queued job starts only once it holds one of `JOB_SLOTS` advisory locks (class `jobs.SLOT_LOCK`),
   shared by every process, and runs with its native thread pools limited to `jobs.cpu_threads()`
-  (`cpu_count // JOB_SLOTS`). Model runs pass that as `n_jobs` to estimators that take one; Explore's t-SNE and
+  (usable CPUs `// JOB_SLOTS`, at least 1). Model runs pass that as `n_jobs` to estimators that take one; Explore's t-SNE and
   mutual information use it too.
 
 | Job | Entry point | State in |
@@ -275,16 +283,18 @@ state in Postgres, so any worker can serve the polling.
 
 `POST /api/datasets/{id}/analyses` with `{kind, params, recompute}`:
 
-1. `AnalysisParams.normalised(kind)` keeps only the keys that affect that kind; its canonical JSON is `params_key`.
+1. `AnalysisParams.normalised(kind)` keeps only the keys that affect that kind; for raw data the route adds the
+   decision source (`decisions`). The canonical JSON of the result is `params_key`.
 2. `runner.data_version`: for raw data, an md5 over every field's `(field_id, action, semantic_type)` in the params'
    decision source (`decisions`: `team`, or `assessment:<recipe>:<user>` for an assessor's *kept only*), so any write
    path (single save, bulk, undo, target change) invalidates without hooking into it; for export data,
    `export:<id>`.
 3. `runner.find_or_create` (under a lock on the dataset row) returns, in order: a done row for the same key and
    version; a pending or running one; a done row from an older version (returned with `stale: true`, no new job).
-   Otherwise, or with `recompute`, it marks older pending/running rows of the same dataset and kind as failed
-   (`Superseded`), inserts a row, prunes old results (keeps the current one per key plus the 3 newest others per
-   dataset and kind) and submits `run_analysis`.
+   Otherwise, or with `recompute`, it marks older pending/running rows of the same dataset, kind and decision source as
+   failed (`Superseded`), inserts a row, prunes old done and failed results (keeping, per dataset and kind, the newest
+   done row per key on the current data version or on an export, plus the 3 newest others) and submits
+   `run_analysis`.
 4. `run_analysis` prepares a sample (`prep.prepare_raw` or `prep.prepare_export`), calls `compute.run_map`,
    `run_tests` or `run_importance`, and stores `result`. Each progress update checks the row is still active and
    stops the job if it was superseded. `NotEnough` failures store `result.reason`
@@ -360,8 +370,9 @@ as the built-in Admin (a lead) or a user with that role, created on first use. `
 its startup hook and with an in-memory user store, so it needs no database. `test_oidc.py` runs OIDC against an
 in-process provider (`tests/oidc_provider.py`, served through `httpx.MockTransport` by setting `oidc.transport`): the
 redirect and token checks need no database, the provisioning flows do. The API tests in `test_explore.py`,
-`test_sql_console.py`, `test_data_correctness.py`, `test_api_cleanup.py`, `test_users.py`, `test_team.py`, `test_experiments.py` and
-`test_recipes.py` start the app against `RAINFOREST_TEST_DATABASE_URL` and skip without it. `test_mlflow.py` logs to a temporary MLflow file store
+`test_sql_console.py`, `test_data_correctness.py`, `test_api_cleanup.py`, `test_users.py`, `test_team.py`,
+`test_experiments.py` and `test_recipes.py` start the app against `RAINFOREST_TEST_DATABASE_URL` and skip without it;
+`test_jobs.py` (job ownership, the restart sweep and the slots) needs that database too. `test_mlflow.py` logs to a temporary MLflow file store
 (always runs), drives `runs._run` and the backfill against the database (skips without it), and has one test against a
 real tracking server that runs when `MLFLOW_TEST_URI` is set. `make test` runs the suite locally, `make test-db` runs it
 against a throwaway `postgres:16` container.
@@ -380,7 +391,7 @@ experiment, role checks, the Imported migration and MLflow logging deferred unti
 straight to a phase with `conftest.set_phase`.
 
 `ui` uses Vitest (`npm test`) for the pure logic: field signals, formatting, the save queue (with the API mocked),
-retype rules, the Bulk edit and Explore URL state, error parsing, run ranking, phase access and the experiment
-helpers. Tests sit next to the code as
+retype rules, the Bulk edit and Explore URL state, error parsing, run ranking, phase access, the experiment
+helpers, and the reuse summary, diff formatting and reopen picker. Tests sit next to the code as
 `*.test.ts`. CI (`.github/workflows/ci.yml`, on pushes to `main` and pull requests) runs the API tests with a
 Postgres service and an MLflow server container, the UI typecheck, tests and build, and `docker compose build`.
