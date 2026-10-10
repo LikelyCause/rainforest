@@ -12,7 +12,7 @@ add things. For endpoints see [api.md](api.md); for usage see the [README](../RE
 | `api` | `api/app/` | FastAPI on uvicorn (`API_WORKERS` processes). Owns the schema, runs every background job in-process. |
 | `db` | Postgres 16 | `meta.*` holds metadata, decisions, jobs and results; `raw.ds_<id>` holds each dataset as a typed table. |
 | `keycloak` | `keycloak/` | Optional (`keycloak` Compose profile): a dev-mode Keycloak with the `rainforest` realm baked in, as a reference OIDC provider; its database `keycloak` in `db` is created by the one-shot `keycloak-db` service. |
-| `/data` volume | `appdata` | `uploads/` (transient), `datasets/<id>/raw.parquet`, `exports/<id>/`, `models/run<id>_<model>_<ts>/` (CLI runs: `models/export<id>_<model>_<ts>/`), `session_secret` when generated. |
+| `/data` volume | `appdata` | `uploads/` (transient), `datasets/<id>/raw.parquet`, `exports/<id>/`, `models/run<id>_<model>_<ts>/` (CLI runs: `models/export<id>_<model>_<ts>/`), `session_secret` when generated, `avatars/<user id>-<hash>.webp` (profile pictures). |
 
 Compose reads `.env` for every setting, including `COMPOSE_FILE` (`docker-compose.gpu.yml` adds the CUDA build of the
 API and the host's GPUs) and `COMPOSE_PROFILES` (`keycloak`); the Makefile's `up-gpu` and `up-keycloak` add those
@@ -23,16 +23,17 @@ for one run.
 | Module | Responsibility |
 |---|---|
 | `main.py` | App, middleware (gzip for API responses, not file downloads; CORS for the Vite dev server), router registration, `/health`, `/api/options`. Startup loads the session secret, runs `db.bootstrap()` and `jobs.start()`, removes orphaned uploads, queues `experiments.startup_flush` (MLflow logging of runs that waited for review) and starts GPU detection. |
-| `auth.py` | Sign-in routes (`/api/auth/*`: config, me, check, logout, pick mode's users and pick, and the OIDC login / callback), the signed session cookie, the session secret, `SecurityMiddleware`, and the `current_user` / `require_lead` dependencies. |
+| `auth.py` | Sign-in routes (`/api/auth/*`: config, me, check, logout, the open profile pictures, pick mode's users and pick, and the OIDC login / callback), the signed session cookie, the session secret, `SecurityMiddleware` (with the Viewer write refusal, `viewer_refused` and its `VIEWER_ALLOWED` list), and the `current_user` / `require_lead` dependencies. |
 | `oidc.py` | The OIDC relying party: discovery and JWKS (cached; an unknown key id refetches), the authorization URL with PKCE, the code exchange, ID token verification, role from the groups claim. Uses httpx and PyJWT. |
 | `recipes.py` | Baselines (rows of `meta.recipes`, one per version of one model family): `FAMILY_LABEL` and `label` (`Trees baseline v2`), the current version (the latest started, with the row lock phase changes and decision writes take), the latest finalized one (of a family), creating the first and the next version (`create_first`, `start_version`, `next_version`), the one-in-progress rule (`require_none_in_progress`, serialised by `lock_dataset`), `is_setup`, `load_working` (makes the working tables a baseline's starting point), which fields a version works on (`open_field_ids`) and the lock on the rest (`locked_problem`), the snapshot and schema fingerprint, finalizing, snapshotting versions migrated without one, the export spec rows read from a snapshot (`spec_rows`, `snapshot_targets`, `snapshot_target_tasks`) and the diff between two snapshots. |
 | `reuse.py` | Reusing a finalized baseline on new data: the drift rule, matching by name (`match`), and `apply`, which gives the new baseline the source's family, carries fields into the team decision, sets the targets and records the reopened fields and the summary. |
 | `experiments.py` | Experiments and who sees them: `visible_ids(user_id)` (the SQL every list and lookup of experiments, exports and runs filters on), `get_visible` (`404` for a private one), the add / edit / adjust rules (`adjust_denied`, `can_adjust`), creating one, the per-version default Team experiment (`team_for`), a team experiment's copy of its baseline (`seed_copy`, `backfill_copies`), what an export of it is built from (`snapshot_for`), its `adjustments` and `revert`, the list with counts, adjustments and the best run, and MLflow deferral (`run_is_private`, `flush_deferred`). |
-| `assessment.py` | Decision sources and blind assessment: `Source` (whose decisions a request sees, as SQL relations shaped like `field_decisions`, `field_settings` and `v_fields`, plus whether it may write; see [Team process](#team-process)), `source_for` (with `view` for an experiment or a finalized baseline), `from_key` / `key_owner` for stored source keys, the write helpers every writable kind shares, seeding assessors, progress, the adoption rule (`adopt`, `disagreements`), and `personal_snapshot` (one assessor's assessment shaped like a snapshot, carried fields from the version's own values). |
+| `assessment.py` | Decision sources and blind assessment: `Source` (whose decisions a request sees, as SQL relations shaped like `field_decisions`, `field_settings` and `v_fields`, plus whether it may write; see [Team process](#team-process)), `source_for` (with `view` for an experiment or a finalized baseline; `viewer_source` for a Viewer while assessing), `from_key` / `key_owner` for stored source keys, the write helpers every writable kind shares, seeding assessors, progress, the adoption rule (`adopt`, `disagreements`), and `personal_snapshot` (one assessor's assessment shaped like a snapshot, carried fields from the version's own values). |
 | `leakage.py` | `leak_names`: the fields whose stored association with any of a given set of targets reaches the leakage threshold, for sources whose targets aren't the working copy's (export previews, experiment and baseline views). |
-| `users.py` | User queries: the per-request session lookup, OIDC provisioning, Team edits (with the last-lead guard and session-version bumps). |
+| `users.py` | User queries: the per-request session lookup, the picker's list, accounts from `RAINFOREST_USERS` (`parse_accounts`, `sync_accounts`, `managed_by_env`), OIDC provisioning, Team edits (with the last-lead guard and session-version bumps), and `public`, which turns the stored picture hash into `avatar_url`. |
+| `avatars.py` | Profile pictures: decode a JPEG, PNG or WebP with Pillow (5 MB, 40 megapixels at most), re-encode it as a 256 × 256 WebP named by its hash under `DATA_DIR/avatars`, remove the old one; `path_for` resolves a picture URL to its file. |
 | `config.py` | `Settings` (pydantic-settings, read from the environment). |
-| `db.py` | Connection pools (the app's, and a small one for the console's read-only role), query helpers, migrations, read-only role setup. |
+| `db.py` | Connection pools (the app's, and a small one for the console's read-only role), query helpers, migrations, read-only role setup; `bootstrap` also checks and syncs `RAINFOREST_USERS` (or creates *Admin* on an empty install without it). |
 | `jobs.py` | `submit(fn, *args)` onto a `ThreadPoolExecutor` of `JOB_WORKERS` threads; job ownership, the restart sweep and the global job slots. |
 | `ingest.py` | CSV / Parquet → Parquet (the separator of a text file is detected), identifier sanitising, `COPY` into `raw.ds_<id>`. |
 | `sample_library/` | The real datasets that ship with the app: the catalog (`LIBRARY`), their Parquet files under `data/`, and `build.py`, which rebuilds the files from their UCI sources. |
@@ -56,13 +57,14 @@ for one run.
 
 | Path | Responsibility |
 |---|---|
-| `App.tsx` | Routes, the sign-in gate (`RequireAuth`), and the top bar (dataset switcher, workflow steps, the baseline chip, which names the experiment instead in experiment mode, Team, the user and role, Sign out). |
+| `App.tsx` | Routes, the sign-in gate (`RequireAuth`), and the top bar (dataset switcher, workflow steps, the baseline chip, which names the experiment instead in experiment mode, Team, and `UserMenu`: picture, name and role, opening *Change picture…*, *Team* and *Switch profile* / *Sign out*). |
+| `can.ts`, `avatar.ts` | `can(me, action)`: what a role may do, behind the edit controls outside Review, Bulk edit and experiments, where `accessOf` and the experiment helpers refuse a Viewer the same way (a Viewer only changes their own picture); initials and a stable colour slot for an account without a picture. |
 | `api.ts`, `types.ts` | Typed fetch client for every endpoint; response types. Any `401` (fetch or the upload XHR) sends the user to `/login?next=<current path>`. |
 | `hooks.ts` | Shared queries (`useMe`, `useDataset`, `useFields` (per view), `useOptions`, `useTeam`, `useExperiment`), `useAccess(ds, view)` (wraps `accessOf`; in an experiment or a finalized baseline it answers from the view), `PROCESSING` (the dataset statuses still processing) and `useDebounced`. |
 | `saveQueue.ts` | Review decision saves: one serial lane per field and view, latest draft wins, failures surface with Retry, flushes on page hide. |
 | `view.ts` | The decision source Review, Bulk edit and the finder work on, carried as `?view=` (`experiment:<id>`, `baseline:<id>`; none for the baseline in progress): `useView`, `parseView`, `withView`, and the query-key part `viewKey`. |
-| `pages/` | `LoginPage` (user picker or *Sign in with …*), `ForbiddenPage` (OIDC user in neither group, or deactivated), `TeamPage` (users), `DatasetsPage`, `ReviewPage`, `BulkEditPage`, `ExplorePage`, `ExperimentsPage` (the list with its filters and the *New experiment* dialog; `ExperimentPage`, one experiment's header, notes and archive, around `ExperimentWorkspace`), `ExperimentWorkspace` (the export build panel, exports and runs of one experiment), `DatasetTeamPage` (setting up a new dataset's first baseline; a dataset's assessors and your assessment while assessing; the review queue, side-by-side comparison, comments, team decision and Finalize from review on), `BaselinesPage` (one card per baseline with its version history, starting a baseline, starting the next version with its field picker, comparing two versions). `ExperimentPage` also holds the Adjustments card (per-field revert). |
-| `components/` | `DatasetLayout` (gates dataset pages on status), `FieldList`, `FieldDetailView`, `DecisionPanel` (in an experiment, what differs from the baseline and *Revert to baseline*), `StartBaseline` (the start / set-up form: model type, start from, targets, assessors), `ExperimentModeBar` (the bar Review and Bulk edit show under a `view`), `JoinAssessment` (*Assess it myself*), `RunDetail`, `Chart`, `ReuseCard` (the reuse summary), `ui.tsx` (error alert, empty state, status glyphs, review meter), `Logo`; `components/explore/` holds the four Explore views, their shared state (`state.tsx`) and chart options (`options.ts`). |
+| `pages/` | `LoginPage` (a centred grid of profiles to pick, or *Sign in with …*), `ForbiddenPage` (OIDC user in neither group, or deactivated), `TeamPage` (users and their pictures; read-only with `RAINFOREST_USERS`), `DatasetsPage`, `ReviewPage`, `BulkEditPage`, `ExplorePage`, `ExperimentsPage` (the list with its filters and the *New experiment* dialog; `ExperimentPage`, one experiment's header, notes and archive, around `ExperimentWorkspace`), `ExperimentWorkspace` (the export build panel, exports and runs of one experiment), `DatasetTeamPage` (setting up a new dataset's first baseline; a dataset's assessors and your assessment while assessing; the review queue, side-by-side comparison, comments, team decision and Finalize from review on), `BaselinesPage` (one card per baseline with its version history, starting a baseline, starting the next version with its field picker, comparing two versions). `ExperimentPage` also holds the Adjustments card (per-field revert). |
+| `components/` | `DatasetLayout` (gates dataset pages on status), `FieldList`, `FieldDetailView`, `DecisionPanel` (in an experiment, what differs from the baseline and *Revert to baseline*), `StartBaseline` (the start / set-up form: model type, start from, targets, assessors), `ExperimentModeBar` (the bar Review and Bulk edit show under a `view`), `JoinAssessment` (*Assess it myself*), `RunDetail`, `Chart`, `ReuseCard` (the reuse summary), `Avatar` (picture or initials), `PictureDialog` (choose, preview, save or remove a picture), `ui.tsx` (error alert, empty state, status glyphs, review meter), `Logo`; `components/explore/` holds the four Explore views, their shared state (`state.tsx`) and chart options (`options.ts`). |
 | `signals.ts`, `format.ts`, `theme.ts`, `charts.ts`, `toast.tsx` | Field signal thresholds, formatting and labels, chart theme, shared chart options, toasts. |
 | `main.tsx`, `styles.css` | Entry point (query client, providers) and global styles. |
 | `decision.ts`, `finder.ts`, `runs.ts`, `team.ts`, `recipes.ts`, `baselines.ts`, `experiments.ts`, `components/explore/params.ts` | Pure logic behind the pages: retyping a draft and encoder-param checks, Bulk edit's presets and URL state, run ranking, what the viewer may edit in each phase (`accessOf`, used through `useAccess`) and the review queue's helpers, the reuse summary's grouping and reasons, diff formatting and the reopen picker's filter, the start form's defaults and target rule, the experiment list filters, source options and labels, privacy notes, who may edit or add, and a field's differences from its baseline (`baselineDiff`, `revertedInput`), Explore's URL state. |
@@ -90,14 +92,20 @@ Every request first passes `auth.SecurityMiddleware`, before routing (so file do
 2. **Unsafe methods** (`POST`, `PUT`, `PATCH`, `DELETE`): `Origin`, or failing that `Referer`, must be same-origin with
    `Host` or `X-Forwarded-Host`, or be the Vite dev server (`403`); requests with neither header are not from a
    browser and pass. A request with a body must send `application/json`, or `multipart/form-data` on
-   `/api/datasets/upload` (`415`); `/api/auth/check` is exempt.
-3. **Session.** Everything except `/health` and the open sign-in paths (`auth.OPEN_PATHS`) needs a valid `rf_session`
-   cookie naming an active user whose session version still matches (one indexed lookup, run off the event loop;
-   `401`). The user `{id, name, email, role}` is left in `request.state.user`. In `oidc` mode with settings missing,
-   nothing but those paths is served (`503`).
+   `/api/datasets/upload` and `/api/users/{id}/avatar` (`415`); `/api/auth/check` is exempt.
+3. **Session.** Everything except `/health`, the open sign-in paths (`auth.OPEN_PATHS`) and `GET` / `HEAD` of a
+   profile picture (`/api/auth/avatars/…`) needs a valid `rf_session` cookie naming an active user whose session
+   version still matches (one indexed lookup, run off the event loop; `401`). The user `{id, name, email, role, key,
+   avatar_url}` is left in `request.state.user`. In `oidc` mode with settings missing, nothing but those paths is
+   served (`503`).
+4. **Viewer.** A Viewer's unsafe method gets `403` unless it matches `auth.VIEWER_ALLOWED` (Explore analysis
+   requests, the field finder, the SQL console, their own picture), so a route added later is refused by default. On
+   `/api/auth/check` the method judged is the `X-Original-Method` nginx sends, so a Viewer browses MLflow but can't
+   change it.
 
 Routes take the user through the `CurrentUser` / `LeadUser` dependencies (`Annotated` aliases of `current_user` and
-`require_lead` in `auth.py`); `LeadUser` answers members with `403`. Writes pass `user["id"]` to the row they create.
+`require_lead` in `auth.py`); `LeadUser` answers members and Viewers with `403`. Writes pass `user["id"]` to the row
+they create.
 
 The cookie is `base64(claims).HMAC`, with claims `{u, v, exp}`: user id, session version, expiry. Deactivating a user
 or changing their role increments `meta.users.session_version`, which ends their sessions on the next request. Each
@@ -183,7 +191,8 @@ the UI polls (`pending → running → done | failed`, with `progress` and `stat
    timeouts and two retries, deletes any half-logged MLflow run and lands in the report as `mlflow_error`; success
    stores `mlflow_experiment_id` and `mlflow_run_id`, from which the runs endpoints derive `mlflow_url`.
 9. **MLflow UI.** nginx sends each `/mlflow/` request through `auth_request` to `GET /api/auth/check` (always as a
-   `GET`, without the body), which the middleware answers `401` without a valid session and the route `204`. A `401`
+   `GET`, without the body, and with `X-Original-Method`), which the middleware answers `401` without a valid
+   session, `403` for a Viewer's unsafe method, and the route `204`. A `401`
    becomes a relative redirect to `/login?next=/mlflow/`, and the login page does a full page load for that path
    (`isServerPath` in `api.ts`) since it is outside the single-page app. nginx resolves `api` and `mlflow` per request
    through Docker's DNS (`resolver 127.0.0.11`), so it starts without them and follows a recreated container. Toward MLflow, nginx sends `Host: mlflow`
@@ -210,7 +219,7 @@ it (`recipes.is_setup`: v1, assessing, no parent, no reuse, no assessors or asse
 `POST …/baselines` then changes its family, starting point and targets on that row instead of starting a new one.
 
 **Sources.** Every route that touches decisions starts from `assessment.source_for(conn, dataset_id, user, view=…)`,
-which returns a `Source` of one of four kinds, each a set of SQL relations shaped like `field_decisions`,
+which returns a `Source` of one of five kinds, each a set of SQL relations shaped like `field_decisions`,
 `field_settings` and `v_fields`, a stored key, and the reason writes are refused (or none):
 
 * **team** (`team`): the working tables. While **assessing** it is read-only for everyone but is still the starting
@@ -224,8 +233,12 @@ which returns a `Source` of one of four kinds, each a set of SQL relations shape
   the dataset; a target change updates the experiment's `target_order`.
 * **baseline** (`baseline:<recipe_id>`, from `view`): a finalized version's snapshot, read through `jsonb_each`;
   never writable.
+* **suggested** (`suggested:<recipe_id>`): each field's suggestion for the version's family, read-only.
 
-Without a `view`, the team or assessment source follows from the phase and the viewer, as above. Experiment and
+Without a `view`, the team or assessment source follows from the phase and the viewer, as above. A Viewer while
+assessing gets `viewer_source` instead: the dataset's latest finalized baseline (a **baseline** source), else
+**suggested**, so they never see a version's work in progress; field history is empty for them then, and Explore
+hides team-keyed results from them. Experiment and
 baseline sources take their targets from their own decisions, and their leak flags from `leakage.leak_names` against
 those targets, rather than the dataset's stored flags.
 
@@ -402,6 +415,7 @@ grants it `SELECT` on `meta` and `raw`, except the tables in `db.PRIVATE_TABLES`
 | `012_baselines.sql` | `family` on `meta.recipes` (`tree`, `linear`, `neural`; existing versions take their dataset's `model_family`), versions unique per dataset and family; `experiments.is_default`, set on the existing default Team experiments, which are renamed *Team · Trees vN* style |
 | `013_experiment_adjustments.sql` | `meta.experiment_decisions`, `experiment_settings` and `experiment_batches` (a team experiment's copy of its baseline and its bulk edits); `experiments.target_order` |
 | `014_target_tasks.sql` | `target_task` and `target_bins` on `field_decisions`, `assessments` and `experiment_decisions`; `meta.default_target_task` and the trigger that keeps a decision's task coherent with its role and type |
+| `015_profile_accounts.sql` | `key` (unique; an account from `RAINFOREST_USERS`) and `avatar` (the picture's hash) on `meta.users`; `viewer` in the role check |
 
 Child tables reference `meta.datasets` with `ON DELETE CASCADE`; `DELETE /api/datasets/{id}` removes the rows and then
 the dataset's Parquet copy, raw table, export and model directories.
@@ -445,7 +459,8 @@ assessment goes in `db.PRIVATE_TABLES`.
 
 **An endpoint.** Add it to the matching `routers/*.py` module (or a new router registered in `main.py`), with request
 bodies in `schemas.py`, and list it in [api.md](api.md). Take `user: CurrentUser` to know who is acting (and record
-`user["id"]` on rows it creates), or `_: LeadUser` for lead-only actions.
+`user["id"]` on rows it creates), or `_: LeadUser` for lead-only actions. A `POST` that only reads (as Explore's
+does) needs its path in `auth.VIEWER_ALLOWED`, or Viewers get `403`.
 
 ## Testing and CI
 
@@ -456,7 +471,8 @@ its startup hook and with an in-memory user store, so it needs no database. `tes
 in-process provider (`tests/oidc_provider.py`, served through `httpx.MockTransport` by setting `oidc.transport`): the
 redirect and token checks need no database, the provisioning flows do. The API tests in `test_explore.py`,
 `test_sql_console.py`, `test_data_correctness.py`, `test_api_cleanup.py`, `test_users.py`, `test_team.py`,
-`test_experiments.py`, `test_recipes.py`, `test_baselines.py`, `test_adjustments.py` and `test_target_tasks.py` (helpers in
+`test_experiments.py`, `test_recipes.py`, `test_baselines.py`, `test_adjustments.py`, `test_target_tasks.py` and
+`test_profile_accounts.py` (its `RAINFOREST_USERS` parsing tests need none; helpers in
 `team_helpers.py`) start the app against `RAINFOREST_TEST_DATABASE_URL` and skip without it;
 `test_jobs.py` (job ownership, the restart sweep and the slots) needs that database too. `test_mlflow.py` logs to a temporary MLflow file store
 (always runs), drives `runs._run` and the backfill against the database (skips without it), and has one test against a
@@ -486,6 +502,6 @@ with `conftest.set_phase`.
 `ui` uses Vitest (`npm test`) for the pure logic: field signals, formatting, the save queue (with the API mocked),
 retype rules, the Bulk edit and Explore URL state, error parsing, run ranking, phase access, the experiment
 helpers (including a field's differences from its baseline), the start form's defaults and target rule, the view
-URL helpers, and the reuse summary, diff formatting and reopen picker. Tests sit next to the code as
+URL helpers, `can` for every role and action, initials, and the reuse summary, diff formatting and reopen picker. Tests sit next to the code as
 `*.test.ts`. CI (`.github/workflows/ci.yml`, on pushes to `main` and pull requests) runs the API tests with a
 Postgres service and an MLflow server container, the UI typecheck, tests and build, and `docker compose build`.
