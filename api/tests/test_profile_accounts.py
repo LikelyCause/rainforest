@@ -204,3 +204,82 @@ def test_viewers_cant_assess(people, viewer):
     start(lead, ds, "tree", [lead])
     r = lead.post(f"/api/datasets/{ds['id']}/assessors", json={"user_id": viewer.user["id"]})
     assert r.status_code == 422 and "Viewer" in r.text
+
+
+# ------------------------------------------------------------------------------------------- pictures
+import io  # noqa: E402
+
+from PIL import Image  # noqa: E402
+
+
+def _png(w=400, h=300, color=(200, 40, 40)) -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), color).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _put(client, uid, data, name="me.png", ctype="image/png"):
+    return client.put(f"/api/users/{uid}/avatar", files={"file": (name, data, ctype)})
+
+
+@pytest.fixture
+def member(people):
+    return people["a"]
+
+
+@needs_db
+def test_avatar_is_stored_square_and_served(member, app_):
+    from app.config import get_settings
+    r = _put(member, member.user["id"], _png())
+    assert r.status_code == 200, r.text
+    url = r.json()["avatar_url"]
+    got = TestClient(app_).get(url)  # open before sign-in: the picker shows it
+    assert got.status_code == 200 and got.headers["content-type"] == "image/webp"
+    assert "immutable" in got.headers["cache-control"] and got.headers["x-content-type-options"] == "nosniff"
+    assert "sandbox" in got.headers["content-security-policy"]
+    assert Image.open(io.BytesIO(got.content)).size == (256, 256)
+    assert any(u["avatar_url"] == url for u in TestClient(app_).get("/api/auth/users").json())
+    old = get_settings().avatars_dir / url.rsplit("/", 2)[-2:][0]
+    r2 = _put(member, member.user["id"], _png(color=(10, 200, 10)))
+    files = sorted(p.name for p in get_settings().avatars_dir.glob(f"{member.user['id']}-*.webp"))
+    assert r2.json()["avatar_url"] != url and len(files) == 1, (old, files)
+    assert member.delete(f"/api/users/{member.user['id']}/avatar").status_code == 200
+    assert not list(get_settings().avatars_dir.glob(f"{member.user['id']}-*.webp"))
+    assert TestClient(app_).get(url).status_code == 404
+
+
+@needs_db
+@pytest.mark.parametrize("data,name,code", [
+    (b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>', "x.svg", 400),
+    (b"<html><script>alert(1)</script></html>", "x.png", 400),
+    (b"\x89PNG" + b"0" * (6 * 1024 * 1024), "big.png", 413),
+], ids=["svg", "html-named-png", "too-big"])
+def test_avatar_refuses_bad_files(member, data, name, code):
+    from app.config import get_settings
+    before = set(get_settings().avatars_dir.glob("*"))
+    assert _put(member, member.user["id"], data, name).status_code == code
+    assert set(get_settings().avatars_dir.glob("*")) == before
+
+
+@needs_db
+def test_avatar_refuses_a_pixel_bomb(member):
+    buf = io.BytesIO()
+    Image.new("1", (9000, 9000)).save(buf, "PNG")  # tiny file, 81 megapixels
+    assert _put(member, member.user["id"], buf.getvalue()).status_code == 400
+
+
+@needs_db
+def test_avatar_permissions(people, viewer):
+    a, c, lead = people["a"], people["c"], people["lead"]
+    assert _put(c, a.user["id"], _png()).status_code == 403
+    assert _put(lead, a.user["id"], _png()).status_code == 200
+    assert _put(viewer, viewer.user["id"], _png()).status_code == 200
+    assert _put(viewer, a.user["id"], _png()).status_code == 403
+
+
+@needs_db
+def test_avatar_paths_cant_escape(app_):
+    c = TestClient(app_)
+    assert c.get("/api/auth/avatars/1/../../session_secret").status_code in (401, 404)  # never the file
+    assert c.get("/api/auth/avatars/1/0123456789abcdef.webp").status_code == 404
+    assert c.get("/api/auth/avatars/x/0123456789abcdef.webp").status_code == 404

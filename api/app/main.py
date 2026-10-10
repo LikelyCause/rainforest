@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     s = get_settings()
-    for d in (s.uploads_dir, s.datasets_dir, s.exports_dir, s.models_dir):
+    for d in (s.uploads_dir, s.datasets_dir, s.exports_dir, s.models_dir, s.avatars_dir):
         d.mkdir(parents=True, exist_ok=True)
     auth.session_secret()
     if problem := auth.config_problem():
@@ -49,7 +49,7 @@ class JsonGZip(GZipMiddleware):
     """Gzip API responses but not file downloads: Parquet and joblib are already compressed, and compressing
     them on the fly costs CPU and drops Content-Length, so the browser can't show download progress."""
 
-    DOWNLOADS = re.compile(r"^/api/(exports|runs)/\d+/files/")
+    DOWNLOADS = re.compile(r"^/api/((exports|runs)/\d+/files|auth/avatars)/")
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] == "http" and self.DOWNLOADS.match(scope["path"]):

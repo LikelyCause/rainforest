@@ -17,7 +17,7 @@ from typing import Annotated
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
@@ -37,6 +37,8 @@ OPEN_PATHS = {"/health", "/api/auth/config", "/api/auth/logout", "/api/auth/user
               f"{OIDC_PATH}/login", f"{OIDC_PATH}/callback"}
 CHECK_PATH = "/api/auth/check"
 UPLOAD_PATH = "/api/datasets/upload"
+AVATAR_UPLOAD = re.compile(r"/api/users/\d+/avatar")
+AVATAR_PREFIX = "/api/auth/avatars/"  # open to GET: the picker shows pictures before anyone signs in
 DEV_ORIGINS = {"http://localhost:5173", "http://127.0.0.1:5173"}
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
@@ -180,7 +182,7 @@ def body_type_problem(request: Request) -> str | None:
     if not has_body:
         return None
     ctype = request.headers.get("content-type", "").split(";")[0].strip().lower()
-    if request.url.path == UPLOAD_PATH:
+    if request.url.path == UPLOAD_PATH or AVATAR_UPLOAD.fullmatch(request.url.path):
         return None if ctype == "multipart/form-data" else "Uploads must be sent as multipart/form-data."
     return None if ctype == "application/json" else "Send the request body as application/json."
 
@@ -200,7 +202,7 @@ async def check_request(request: Request) -> JSONResponse | None:
         problem = None if path == CHECK_PATH else body_type_problem(request)
         if problem:
             return JSONResponse({"detail": problem}, 415)
-    if path in OPEN_PATHS:
+    if path in OPEN_PATHS or (path.startswith(AVATAR_PREFIX) and request.method in ("GET", "HEAD")):
         return None
     problem = config_problem()
     if problem:
@@ -307,6 +309,19 @@ def _provider_logout_url(request: Request) -> str | None:
         return None
     redirect = urlsplit(redirect_uri(request))
     return oidc.end_session_url(f"{redirect.scheme}://{redirect.netloc}/login")
+
+
+@router.get("/avatars/{user_id}/{name}")
+def avatar(user_id: str, name: str) -> FileResponse:
+    from . import avatars
+
+    path = avatars.path_for(int(user_id), name) if user_id.isdigit() else None
+    if path is None:
+        raise HTTPException(404, "No such picture")
+    # The name is the picture's hash, so a changed picture has a new URL and this one can be cached for good.
+    return FileResponse(path, media_type="image/webp", headers={
+        "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox"})
 
 
 # Pick mode ---------------------------------------------------------------------------------------
