@@ -2,10 +2,18 @@ import { useMemo, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api";
+import { useFields } from "../../hooks";
 import { Empty, ErrorAlert } from "../ui";
 import { fmtAgo, fmtInt } from "../../format";
 import type { Analysis, AnalysisKind, AnalysisParams, Dataset, NotEnoughReason, Skipped } from "../../types";
 import { parseExploreParams } from "./params";
+import { parseView, type View, viewKey } from "../../view";
+
+/** Whose decisions raw-data views use (?decisions=experiment:<id> | baseline:<id>), else the baseline in progress. */
+export function decisionsView(params: URLSearchParams): View {
+  const v = params.get("decisions");
+  return parseView(v) ? v : null;
+}
 
 export { SAMPLES } from "./params";
 const isActive = (s?: string) => s === "pending" || s === "running";
@@ -13,21 +21,27 @@ const isActive = (s?: string) => s === "pending" || s === "running";
 /** Toolbar state shared by every view; all of it lives in the URL. */
 export function useExploreState(ds: Dataset) {
   const [params, setParams] = useSearchParams();
-  const { data, isRaw, kept, target, sample } = parseExploreParams(params, ds.target_columns);
+  const view = decisionsView(params);
+  // The targets of the decisions in use: an experiment or another baseline may have its own.
+  const viewFields = useFields(ds.id, view !== null, view);
+  const targets = view ? (viewFields.data ?? []).filter((f) => f.action === "target").map((f) => f.name) : ds.target_columns;
+  const { data, isRaw, kept, target, sample } = parseExploreParams(params, targets);
   const base: AnalysisParams = useMemo(() => ({ data, kept, target, sample }), [data, kept, target, sample]);
   const set = (patch: Record<string, string | null>) => {
     const next = new URLSearchParams(params);
     for (const [k, v] of Object.entries(patch)) v === null ? next.delete(k) : next.set(k, v);
     setParams(next, { replace: true });
   };
-  return { params, data, isRaw, kept, target, sample, base, set, get: (k: string) => params.get(k) };
+  return { params, data, isRaw, kept, target, sample, view, targets, base, set, get: (k: string) => params.get(k) };
 }
 export type ExploreState = ReturnType<typeof useExploreState>;
 
 /** POSTs when the params change (the API returns a cached row when it can), then polls the row until it settles. */
 export function useAnalysis<R>(datasetId: number, kind: AnalysisKind, params: AnalysisParams) {
   const qc = useQueryClient();
-  const key = ["analysis", datasetId, kind, params];
+  const [search] = useSearchParams();
+  const view = params.data === "raw" ? decisionsView(search) : null;
+  const key = ["analysis", datasetId, kind, params, viewKey(view)];
   const q = useQuery({
     queryKey: key,
     queryFn: async (): Promise<Analysis> => {
@@ -37,13 +51,13 @@ export function useAnalysis<R>(datasetId: number, kind: AnalysisKind, params: An
         // Another view's job replaced this one while we were away; ask again.
         if (!(row.status === "failed" && row.error?.startsWith("Superseded"))) return { ...row, stale: row.stale ?? false };
       }
-      return api.createAnalysis(datasetId, { kind, params });
+      return api.createAnalysis(datasetId, { kind, params, view });
     },
     refetchInterval: (query) => (isActive((query.state.data as Analysis | undefined)?.status) ? 1000 : false),
     retry: false,
   });
   const m = useMutation({
-    mutationFn: () => api.createAnalysis(datasetId, { kind, params, recompute: true }),
+    mutationFn: () => api.createAnalysis(datasetId, { kind, params, recompute: true, view }),
     onSuccess: (row) => qc.setQueryData(key, row),
   });
   return {

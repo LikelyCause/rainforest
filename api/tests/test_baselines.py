@@ -1,0 +1,347 @@
+"""Baselines: one per model type, each assessed and finalized like a recipe version, started from scratch, from
+another baseline, or from another dataset's. Needs RAINFOREST_TEST_DATABASE_URL."""
+from .conftest import set_phase
+from .team_helpers import app_, people  # noqa: F401  (fixtures)
+from .team_helpers import experiment, export, fields, finalized_trees, save, start, submit_and_finalize, upload
+
+
+def test_recipes_have_a_family_and_versions_count_per_family(app_):
+    from app.db import connection
+
+    with connection() as conn:
+        cols = {r["column_name"] for r in conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema='meta' AND table_name='recipes'")}
+        assert "family" in cols
+        idx = conn.execute("SELECT indexdef FROM pg_indexes WHERE schemaname='meta' AND tablename='recipes'").fetchall()
+        assert any("(dataset_id, family, version)" in r["indexdef"] for r in idx)
+        xcols = {r["column_name"] for r in conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema='meta' AND table_name='experiments'")}
+        assert "is_default" in xcols
+
+
+def test_labels_and_per_family_versions(people):
+    from app import recipes
+    from app.db import connection
+
+    ds = upload(people["lead"])
+    with connection() as conn:
+        r = recipes.current(conn, ds["id"])
+        assert r["family"] == "tree" and recipes.label(r) == "Trees baseline v1"
+        assert recipes.next_version(conn, ds["id"], "linear") == 1
+        assert recipes.next_version(conn, ds["id"], "tree") == 2
+
+
+def test_snapshot_holds_only_the_baselines_family(people):
+    from app import recipes
+    from app.db import connection
+
+    ds = upload(people["lead"])
+    set_phase(ds["id"], "finalized")
+    with connection() as conn:
+        snap = recipes.snapshot_of(conn, recipes.current(conn, ds["id"]))
+    assert snap["fields"] and all(set(f["settings"]) == {"tree"} for f in snap["fields"].values())
+
+
+def test_a_new_version_reproduces_its_parent_exactly(people):
+    """Retyped and customised fields carry over as they were, not re-derived from suggestions."""
+    from app import recipes
+    from app.db import connection
+
+    lead = people["lead"]
+    ds = upload(lead)
+    start(lead, ds, "linear", [lead])
+    f = fields(lead, ds)
+    assert save(lead, f["z"]["id"], semantic_type="numeric_discrete", reviewed=True).status_code == 200
+    assert save(lead, f["x"]["id"], imputation="constant", impute_value="7", reviewed=True).status_code == 200
+    st = submit_and_finalize(lead, ds)
+    with connection() as conn:
+        parent = recipes.get(conn, st["recipe"]["id"])
+        child = recipes.start_version(conn, ds["id"], lead.user["id"], "linear", "review")
+        assert child["family"] == "linear" and child["version"] == 2
+        now = recipes.snapshot(conn, ds["id"], family="linear")
+        assert recipes.diff(recipes.snapshot_of(conn, parent), now, "linear")["fields"] == []
+
+
+def test_new_version_loads_its_own_parent_not_the_last_worked_baseline(people):
+    lead = people["lead"]
+    ds = upload(lead)
+    f = fields(lead, ds)
+    start(lead, ds, "tree", [lead])
+    assert save(lead, f["x"]["id"], action="drop", reviewed=True).status_code == 200
+    submit_and_finalize(lead, ds)
+    start(lead, ds, "linear", [lead])
+    assert fields(lead, ds)["x"]["action"] == "keep"
+    submit_and_finalize(lead, ds)
+    r = lead.post(f"/api/datasets/{ds['id']}/recipes", json={"family": "tree", "reopen": []})
+    assert r.status_code == 200, r.text
+    assert (r.json()["recipe"]["family"], r.json()["recipe"]["version"]) == ("tree", 2)
+    assert fields(lead, ds)["x"]["action"] == "drop"
+
+
+def test_start_sets_up_the_first_baseline_in_place(people):
+    lead, a = people["lead"], people["a"]
+    ds = upload(lead)
+    st = start(lead, ds, "linear", [lead, a])
+    assert (st["recipe"]["family"], st["recipe"]["version"], st["recipe"]["phase"]) == ("linear", 1, "assessing")
+    assert {x["user_id"] for x in st["assessors"]} == {lead.user["id"], a.user["id"]}
+    d = lead.get(f"/api/datasets/{ds['id']}").json()
+    assert d["model_family"] == "linear" and d["recipe_id"] == st["recipe"]["id"]
+    assert fields(a, ds)["y"]["action"] == "target"
+    start(lead, ds, "tree", [lead], expect=409)  # fixed once assessment started
+
+
+def test_start_validates_its_input(people):
+    lead, a = people["lead"], people["a"]
+    ds = upload(lead)
+    base = {"family": "tree", "start": "scratch", "targets": ["y"], "assessors": [lead.user["id"]]}
+    for patch, code in (({"family": "svm"}, 422), ({"assessors": []}, 422), ({"assessors": [999999]}, 422),
+                        ({"targets": []}, 422), ({"targets": ["z"]}, 422), ({"targets": ["nope"]}, 422),
+                        ({"start": "baseline", "source_recipe_id": 999999}, 404),
+                        ({"start": "baseline"}, 422)):
+        r = lead.post(f"/api/datasets/{ds['id']}/baselines", json={**base, **patch})
+        assert r.status_code == code, (patch, r.text)
+    assert a.post(f"/api/datasets/{ds['id']}/baselines", json=base).status_code == 403
+    assert lead.get(f"/api/datasets/{ds['id']}").json()["baseline"]["phase"] == "assessing"  # nothing half-done
+    assert lead.get(f"/api/datasets/{ds['id']}/team").json()["assessors"] == []
+
+
+def test_populate_copies_decisions_and_only_valid_settings(people):
+    lead = people["lead"]
+    ds = upload(lead)
+    f = fields(lead, ds)
+    start(lead, ds, "tree", [lead])
+    assert save(lead, f["w"]["id"], action="drop", reviewed=True).status_code == 200
+    trees = submit_and_finalize(lead, ds)["recipe"]["id"]
+    start(lead, ds, "linear", [lead], start="baseline", source=trees)
+    now = fields(lead, ds)
+    assert now["w"]["action"] == "drop" and not now["w"]["reviewed"]
+    x = lead.get(f"/api/fields/{f['x']['id']}").json()["decision"]
+    assert x["family"] == "linear" and x["imputation"] != "none"  # trees' "leave missing" isn't valid for linear
+
+
+def test_one_baseline_in_progress_at_a_time(people):
+    lead = people["lead"]
+    ds = upload(lead)
+    start(lead, ds, "tree", [lead])
+    submit_and_finalize(lead, ds)
+    start(lead, ds, "linear", [lead])
+    r = lead.post(f"/api/datasets/{ds['id']}/baselines", json={"family": "neural", "start": "scratch",
+                  "targets": ["y"], "assessors": [lead.user["id"]]})
+    assert r.status_code == 409 and "finalize" in r.json()["detail"]
+    assert lead.post(f"/api/datasets/{ds['id']}/recipes", json={"family": "tree", "reopen": []}).status_code == 409
+
+
+def test_baselines_are_listed_per_family(people):
+    lead = people["lead"]
+    ds = upload(lead)
+    start(lead, ds, "tree", [lead])
+    submit_and_finalize(lead, ds)
+    start(lead, ds, "linear", [lead])
+    out = lead.get(f"/api/datasets/{ds['id']}/baselines").json()
+    assert [b["family"] for b in out] == ["tree", "linear"]
+    assert out[0]["label"] == "Trees" and out[0]["latest_finalized_id"] == out[0]["versions"][0]["id"]
+    assert out[1]["latest_finalized_id"] is None and out[1]["versions"][0]["label"] == "Linear baseline v1"
+
+
+def test_start_from_another_datasets_baseline(people):
+    lead, a = people["lead"], people["a"]
+    src = upload(lead)
+    start(lead, src, "linear", [lead])
+    rid = submit_and_finalize(lead, src)["recipe"]["id"]
+    ds = upload(lead)
+    st = start(lead, ds, "tree", [lead, a], start="recipe", source=rid)
+    assert st["recipe"]["family"] == "linear" and st["recipe"]["reuse"]["source"]["recipe_id"] == rid
+    assert st["recipe"]["phase"] in ("assessing", "review")
+
+
+def test_diff_compares_by_id_and_across_families_by_decision_only(people):
+    lead = people["lead"]
+    ds = upload(lead)
+    f = fields(lead, ds)
+    start(lead, ds, "tree", [lead])
+    trees = submit_and_finalize(lead, ds)["recipe"]["id"]
+    start(lead, ds, "linear", [lead], start="baseline", source=trees)
+    assert save(lead, f["w"]["id"], action="drop", reviewed=True).status_code == 200
+    linear = submit_and_finalize(lead, ds)["recipe"]["id"]
+    d = lead.get(f"/api/datasets/{ds['id']}/recipes/diff?a={trees}&b={linear}").json()
+    assert [x["name"] for x in d["fields"]] == ["w"]
+    assert all(c["family"] is None for c in d["fields"][0]["changes"])
+    other = upload(lead)
+    assert lead.get(f"/api/datasets/{other['id']}/recipes/diff?a={trees}&b={linear}").status_code == 404
+
+
+def test_dataset_shows_its_baselines_and_refuses_family_switch(people):
+    lead = people["lead"]
+    ds = upload(lead)
+    d = lead.get(f"/api/datasets/{ds['id']}").json()
+    assert d["baseline"]["label"] == "Trees baseline v1" and d["baseline"]["setup"] is True
+    assert [b["family"] for b in d["baselines"]] == ["tree"]
+    r = lead.patch(f"/api/datasets/{ds['id']}", json={"model_family": "linear"})
+    assert r.status_code == 422 and "baseline" in r.json()["detail"]
+    start(lead, ds, "tree", [lead])
+    submit_and_finalize(lead, ds)
+    start(lead, ds, "linear", [lead])
+    row = next(x for x in lead.get("/api/datasets").json() if x["id"] == ds["id"])
+    assert row["baseline"]["label"] == "Linear baseline v1" and row["baseline"]["setup"] is False
+    assert {b["family"]: (b["version"], b["phase"], b["latest_finalized_id"] is not None)
+            for b in row["baselines"]} == {"tree": (1, "finalized", True), "linear": (1, "assessing", False)}
+
+
+def test_exports_take_the_baselines_family_and_name_it(people):
+    lead = people["lead"]
+    ds = upload(lead)
+    start(lead, ds, "linear", [lead])
+    submit_and_finalize(lead, ds)
+    pv = lead.get(f"/api/datasets/{ds['id']}/export-preview").json()
+    assert pv["family"] == "linear" and pv["recipe"]["label"] == "Linear baseline v1"
+    assert lead.get(f"/api/datasets/{ds['id']}/export-preview?family=tree").status_code == 422
+    r = lead.post(f"/api/datasets/{ds['id']}/exports", json={})
+    assert r.status_code == 202, r.text
+    assert r.json()["model_family"] == "linear" and r.json()["experiment_name"] == "Team · Linear v1"
+    xs = lead.get(f"/api/datasets/{ds['id']}/experiments").json()
+    team = next(x for x in xs if x["name"] == "Team · Linear v1")
+    assert team["is_default"] and team["recipe_family"] == "linear"
+
+
+def test_leak_names_follow_the_target_set(people):
+    from app.db import connection
+    from app.leakage import leak_names
+
+    csv = "x,cc,c,y\n" + "".join(f"{i % 7},{'PQR'[i % 3]},{'pqr'[i % 3]},{'ab'[(i // 3) % 2]}\n" for i in range(600))
+    ds = upload(people["lead"], csv)
+    with connection() as conn:
+        assert "cc" in leak_names(conn, ds["id"], ["c"])
+        assert "cc" not in leak_names(conn, ds["id"], ["y"])
+
+
+def test_finalized_baselines_list_names_their_type(people):
+    lead = people["lead"]
+    ds = upload(lead)
+    start(lead, ds, "neural", [lead])
+    rid = submit_and_finalize(lead, ds)["recipe"]["id"]
+    row = next(r for r in lead.get("/api/recipes").json() if r["id"] == rid)
+    assert row["family"] == "neural" and row["label"] == "Neural baseline v1"
+
+
+def test_planned_models_are_listed_but_not_trainable(people):
+    from app.modeling.registry import catalog
+
+    assert {m["key"] for m in catalog() if m.get("planned")} == {"linear_svm", "knn", "cnn", "rnn"}
+    lead = people["lead"]
+    ds, rid = finalized_trees(lead)
+    e = export(lead, ds, experiment(lead, ds, rid, "planned"))
+    models = {m["key"]: m for m in lead.get(f"/api/exports/{e['id']}/models").json()}
+    assert models["knn"]["planned"] and not models["knn"]["compatible"] and models["knn"]["reason"] == "planned"
+    assert models["lightgbm"]["compatible"] and not models["lightgbm"]["planned"]
+    r = lead.post(f"/api/exports/{e['id']}/runs", json={"model": "knn"})
+    assert r.status_code == 422 and "planned" in r.json()["detail"]
+
+
+def test_team_state_names_the_baseline(people):
+    lead = people["lead"]
+    ds = upload(lead)
+    t = lead.get(f"/api/datasets/{ds['id']}/team").json()
+    assert t["recipe"]["label"] == "Trees baseline v1" and t["recipe"]["setup"] is True
+    t = start(lead, ds, "neural", [lead])
+    assert t["recipe"]["label"] == "Neural baseline v1" and t["recipe"]["setup"] is False
+
+
+LEAKY = "x,cc,c,y\n" + "".join(f"{i % 7},{'PQR'[i % 3]},{'pqr'[i % 3]},{'ab'[(i // 3) % 2]}\n" for i in range(600))
+
+
+def test_populating_keeps_the_sources_decisions_whatever_the_last_worked_targets(people):
+    """cc leaks c. Trees v1 (target y) drops cc on purpose; Linear v1 targets c, so cc's stored suggestion becomes
+    "drop" too. Populating Neural from Trees v1 (target y again) must keep Trees' drop, not re-derive it."""
+    lead = people["lead"]
+    ds = upload(lead, LEAKY)
+    start(lead, ds, "tree", [lead])
+    assert save(lead, fields(lead, ds)["cc"]["id"], action="drop", reviewed=True).status_code == 200
+    trees = submit_and_finalize(lead, ds)["recipe"]["id"]
+    start(lead, ds, "linear", [lead], targets=["c"])
+    submit_and_finalize(lead, ds)
+    start(lead, ds, "neural", [lead], start="baseline", source=trees)
+    import time
+    time.sleep(3)  # any leak screen the start queued has run
+    assert fields(lead, ds)["cc"]["action"] == "drop"
+
+
+def test_a_new_baseline_from_scratch_has_no_parent(people):
+    lead = people["lead"]
+    ds, rid = finalized_trees(lead)
+    other, orid = finalized_trees(lead)
+    st = start(lead, ds, "linear", [lead], start="scratch", source=orid)
+    assert st["recipe"]["parent_id"] is None
+
+
+def test_personal_experiments_keep_their_versions_carried_fields(people):
+    lead = people["lead"]
+    ds = upload(lead)
+    start(lead, ds, "tree", [lead])
+    f = fields(lead, ds)
+    assert save(lead, f["w"]["id"], action="drop", reviewed=True).status_code == 200
+    submit_and_finalize(lead, ds)
+    v2 = lead.post(f"/api/datasets/{ds['id']}/recipes", json={"family": "tree", "reopen": [f["x"]["id"]]}).json()
+    lead.post(f"/api/datasets/{ds['id']}/assessors", json={"user_id": lead.user["id"]})
+    x = lead.post(f"/api/datasets/{ds['id']}/experiments", json={
+        "name": "mine", "source": f"assessment:{v2['recipe']['id']}:{lead.user['id']}"}).json()
+    submit_and_finalize(lead, ds)
+    start(lead, ds, "linear", [lead])  # the working copy now holds Linear's decisions: w kept
+    e = export(lead, ds, x)
+    man = lead.get(f"/api/exports/{e['id']}/files/manifest").json()
+    assert "w" not in {fl["name"] for fl in man["fields"]}
+
+
+def test_a_finalized_baseline_can_be_browsed_read_only(people):
+    lead = people["lead"]
+    ds = upload(lead)
+    start(lead, ds, "tree", [lead])
+    f = fields(lead, ds)
+    assert save(lead, f["w"]["id"], action="drop", reviewed=True).status_code == 200
+    trees = submit_and_finalize(lead, ds)["recipe"]["id"]
+    start(lead, ds, "linear", [lead])  # the working copy now holds Linear's start: w kept
+    view = f"baseline:{trees}"
+    seen = fields(people["c"], ds, view)
+    assert seen["w"]["action"] == "drop" and fields(lead, ds)["w"]["action"] == "keep"
+    d = people["c"].get(f"/api/fields/{f['x']['id']}?view={view}").json()
+    assert d["family"] == "tree" and d["decision"]["imputation"] is not None
+    assert save(lead, f["w"]["id"], view, action="keep").status_code == 409
+
+
+def test_explore_uses_the_decisions_it_is_given(people):
+    lead = people["lead"]
+    ds = upload(lead)
+    start(lead, ds, "tree", [lead])
+    f = fields(lead, ds)
+    assert save(lead, f["w"]["id"], action="drop", reviewed=True).status_code == 200
+    trees = submit_and_finalize(lead, ds)["recipe"]["id"]
+    start(lead, ds, "linear", [lead])
+    c = people["c"]
+    r = c.get(f"/api/datasets/{ds['id']}/explore/correlations?kept=1&view=baseline:{trees}")
+    assert r.status_code == 200 and "w" not in {x["name"] for x in r.json()["fields"]}
+    r = c.get(f"/api/datasets/{ds['id']}/explore/correlations?kept=1")
+    assert "w" in {x["name"] for x in r.json()["fields"]}
+    an = c.post(f"/api/datasets/{ds['id']}/analyses", json={
+        "kind": "importance", "view": f"baseline:{trees}", "params": {"target": "y", "kept": True, "sample": 1000}})
+    assert an.status_code == 200 and an.json()["params"]["decisions"] == f"baseline:{trees}"
+    assert c.get(f"/api/analyses/{an.json()['id']}").status_code == 200
+    assert c.post(f"/api/datasets/{ds['id']}/analyses", json={
+        "kind": "importance", "view": "baseline:999999", "params": {"target": "y", "kept": True}}).status_code == 404
+
+
+def test_sql_views_name_the_baseline(people):
+    from app.db import connection
+
+    lead = people["lead"]
+    ds, rid = finalized_trees(lead)
+    x = experiment(lead, ds, rid, "views")
+    e = export(lead, ds, x)
+    run = lead.post(f"/api/exports/{e['id']}/runs", json={"model": "lightgbm", "cv": 0, "params": {"n_estimators": 5}})
+    from .team_helpers import wait
+    wait(lambda: lead.get(f"/api/runs/{run.json()['id']}").json()["status"] in ("done", "failed"))
+    with connection() as conn:
+        row = conn.execute("SELECT baseline_family, baseline_version FROM meta.v_fields WHERE dataset_id = %s LIMIT 1",
+                           (ds["id"],)).fetchone()
+        assert (row["baseline_family"], row["baseline_version"]) == ("tree", 1)
+        m = conn.execute("""SELECT baseline_family, baseline_version, experiment_id FROM meta.v_model_metrics
+                             WHERE dataset_id = %s LIMIT 1""", (ds["id"],)).fetchone()
+        assert (m["baseline_family"], m["baseline_version"], m["experiment_id"]) == ("tree", 1, x["id"])

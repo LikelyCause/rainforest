@@ -14,7 +14,7 @@ from .. import experiments, gpu, jobs
 from ..auth import CurrentUser
 from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..modeling import mlflow_log
-from ..modeling.registry import MODELS, catalog, compatibility, order_problem, param_problems
+from ..modeling.registry import MODELS, PLANNED, catalog, compatibility, order_problem, param_problems
 from ..schemas import RunRequest
 from .exports import visible_export
 
@@ -53,6 +53,9 @@ def models_for_export(export_id: int, user: CurrentUser) -> list[dict]:
     exp, manifest = _export_manifest(export_id, user)
     out = []
     for m in catalog():
+        if m["planned"]:
+            out.append({**m, "compatible": False, "reason": "planned"})
+            continue
         spec = MODELS[m["key"]]
         reason = None if spec.available else "not installed"
         reason = reason or compatibility(spec, exp["model_family"], bool(manifest.get("contains_nan")))
@@ -65,6 +68,8 @@ def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
     exp, manifest = _export_manifest(export_id, user)
     if req.experiment_id is not None and req.experiment_id != exp["experiment_id"]:
         raise HTTPException(422, f"Export #{export_id} belongs to experiment {exp['experiment_id']}; its runs do too")
+    if req.model in PLANNED:
+        raise HTTPException(422, f"{PLANNED[req.model]['label']} is planned and can't be trained yet.")
     spec = MODELS.get(req.model)
     if spec is None:
         raise HTTPException(422, f"Unknown model {req.model!r}")

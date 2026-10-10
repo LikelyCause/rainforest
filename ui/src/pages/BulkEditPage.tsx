@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useAccess, useDebounced, useOptions } from "../hooks";
 import { JoinAssessment } from "../components/JoinAssessment";
+import { ExperimentModeBar } from "../components/ExperimentModeBar";
+import { useView, type View, viewKey, withView } from "../view";
 import { useDatasetContext } from "../components/DatasetLayout";
 import { Empty, ErrorAlert, StatusGlyph, glyphFor } from "../components/ui";
 import { fmtNum, fmtPct, TYPE_SHORT } from "../format";
@@ -82,12 +84,13 @@ function useFinderState() {
 /** Freeze a list of fields as a Review working set and open the first one still to do. */
 export function useOpenWorkingSet(datasetId: number) {
   const nav = useNavigate();
+  const view = useView();
   return (label: string, rows: { field_id: number; reviewed?: boolean }[], startAt?: number) => {
     if (!rows.length) return;
     const key = Math.random().toString(36).slice(2, 10);
     try { sessionStorage.setItem(`set:${key}`, JSON.stringify({ label, ids: rows.map((r) => r.field_id) })); } catch { /* storage unavailable */ }
     const first = startAt ?? (rows.find((r) => !r.reviewed) ?? rows[0]).field_id;
-    nav(`/d/${datasetId}/review/${first}?set=${key}`);
+    nav(withView(`/d/${datasetId}/review/${first}?set=${key}`, view));
   };
 }
 
@@ -99,8 +102,8 @@ const ACTIONS: BulkAction[] = [
   { label: "Mark reviewed", verb: "Marked reviewed", body: { reviewed: true } },
 ];
 
-function FieldFinder({ datasetId, presetLabel, canEdit }: {
-  datasetId: number; presetLabel: (p: string | null) => string; canEdit: boolean;
+function FieldFinder({ datasetId, presetLabel, canEdit, view }: {
+  datasetId: number; presetLabel: (p: string | null) => string; canEdit: boolean; view: View;
 }) {
   const qc = useQueryClient();
   const { data: catalog } = useOptions();
@@ -112,9 +115,9 @@ function FieldFinder({ datasetId, presetLabel, canEdit }: {
   const desc = st.sort.startsWith("-");
 
   const q = useQuery({
-    queryKey: ["fieldQuery", datasetId, complete, st.sort],
+    queryKey: ["fieldQuery", datasetId, complete, st.sort, viewKey(view)],
     // One row past the limit tells a full page from a truncated one.
-    queryFn: () => api.queryFields(datasetId, { filters: complete, order_by: sortCol, descending: desc, limit: QUERY_LIMIT + 1 }),
+    queryFn: () => api.queryFields(datasetId, { filters: complete, order_by: sortCol, descending: desc, limit: QUERY_LIMIT + 1 }, view),
     placeholderData: (prev) => prev,
   });
   const truncated = (q.data?.length ?? 0) > QUERY_LIMIT;
@@ -125,19 +128,20 @@ function FieldFinder({ datasetId, presetLabel, canEdit }: {
 
   const [pending, setPending] = useState<{ action: BulkAction; preview: BulkResult } | null>(null);
   const invalidate = () => {
-    for (const k of ["fields", "fieldQuery", "exportPreview", "corrMatrix", "analysis", "team", "reviewQueue"]) {
+    for (const k of ["fields", "fieldQuery", "exportPreview", "corrMatrix", "analysis", "team", "reviewQueue", "experiments"]) {
       qc.invalidateQueries({ queryKey: [k, datasetId] });
     }
     qc.invalidateQueries({ queryKey: ["field"] });
+    qc.invalidateQueries({ queryKey: ["experiment"] });
   };
   const request = (a: BulkAction, dry_run: boolean) =>
-    api.bulk(datasetId, { ...a.body, filters: complete, excluded_ids: [...excluded], dry_run });
+    api.bulk(datasetId, { ...a.body, filters: complete, excluded_ids: [...excluded], dry_run }, view);
   const preview = useMutation({
     mutationFn: (a: BulkAction) => request(a, true).then((preview) => ({ action: a, preview })),
     onSuccess: setPending,
   });
   const undo = useMutation({
-    mutationFn: (batch: string) => api.bulkUndo(datasetId, batch),
+    mutationFn: (batch: string) => api.bulkUndo(datasetId, batch, view),
     onSuccess: (r) => { invalidate(); toast({ message: `Restored ${r.restored} field${r.restored === 1 ? "" : "s"}` }); },
     onError: (e) => showError("Couldn't undo", e),
   });
@@ -154,7 +158,7 @@ function FieldFinder({ datasetId, presetLabel, canEdit }: {
     },
   });
   const inline = useMutation({
-    mutationFn: ({ id, action }: { id: number; action: "keep" | "drop" }) => api.bulk(datasetId, { field_ids: [id], action }),
+    mutationFn: ({ id, action }: { id: number; action: "keep" | "drop" }) => api.bulk(datasetId, { field_ids: [id], action }, view),
     onSuccess: invalidate,
     onError: (e) => showError("Couldn't save", e),
   });
@@ -471,22 +475,23 @@ function ResultTable({ result, nameCols, onOpen }: { result: SqlResult; nameCols
 
 export function BulkEditPage() {
   const ds = useDatasetContext();
-  const access = useAccess(ds);
+  const view = useView();
+  const access = useAccess(ds, view);
   const st = useFinderState();
   const presetLabel = (p: string | null) => PRESETS.find((x) => x.key === p)?.label ?? "Custom filter";
   return (
     <div className="page">
       <div className="row" style={{ justifyContent: "space-between" }}>
         <h1>Bulk edit</h1>
-        <Link to={`/d/${ds.id}/review`} className="muted small-text">Changes here show up in Review at once</Link>
+        <Link to={withView(`/d/${ds.id}/review`, view)} className="muted small-text">Changes here show up in Review at once</Link>
       </div>
-      <JoinAssessment ds={ds} />
+      {view ? <ExperimentModeBar ds={ds} view={view} /> : <JoinAssessment ds={ds} />}
       {access.note && <div className={`alert ${access.canEdit ? "info" : "warn"}`}>{access.note}</div>}
       <div className="tabs-inline" role="tablist">
         <button type="button" role="tab" aria-selected={st.tab === "fields"} className={st.tab === "fields" ? "on" : ""} onClick={() => st.setTab("fields")}>Fields</button>
         <button type="button" role="tab" aria-selected={st.tab === "sql"} className={st.tab === "sql" ? "on" : ""} onClick={() => st.setTab("sql")}>SQL</button>
       </div>
-      {st.tab === "fields" ? <FieldFinder datasetId={ds.id} presetLabel={presetLabel} canEdit={access.canEdit} /> : <SqlConsole datasetId={ds.id} />}
+      {st.tab === "fields" || view ? <FieldFinder datasetId={ds.id} presetLabel={presetLabel} canEdit={access.canEdit} view={view} /> : <SqlConsole datasetId={ds.id} />}
     </div>
   );
 }

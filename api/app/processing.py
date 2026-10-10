@@ -162,7 +162,8 @@ def _apply_pending_recipe(dataset_id: int) -> None:
             start = queue_target_work(conn, dataset_id, uncorrelated, added, inline=True)
         start()
     except HTTPException as exc:
-        execute("UPDATE meta.recipes SET parent_id = NULL WHERE dataset_id = %s AND version = 1", (dataset_id,))
+        execute("""UPDATE meta.recipes SET parent_id = NULL
+                    WHERE id = (SELECT min(id) FROM meta.recipes WHERE dataset_id = %s)""", (dataset_id,))
         execute("UPDATE meta.datasets SET warnings = array_append(warnings, %s) WHERE id = %s",
                 (f"Could not start from the recipe: {exc.detail}", dataset_id))
 

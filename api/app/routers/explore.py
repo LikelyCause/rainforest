@@ -11,7 +11,7 @@ from .. import experiments, jobs
 from psycopg import sql
 
 from ..analysis.runner import ROW_COLS, data_version, find_or_create, public, run_analysis
-from ..assessment import Source, key_owner, source_for
+from ..assessment import Source, from_key, key_owner, source_for
 from ..auth import CurrentUser
 from ..db import connection, fetch_all
 from ..schemas import AnalysisRequest, CorrelationQuery
@@ -39,12 +39,14 @@ def _export_visible(conn, data: str, user: dict) -> bool:
 def _validate_source(conn, dataset_id: int, params: dict, user: dict) -> None:
     target = params["target"]
     if params["data"] == "raw":
+        # The target must be one in the decisions the analysis reads (an experiment may have its own).
+        dec = from_key(conn, dataset_id, params.get("decisions") or "team").decisions()
         if target is not None and conn.execute(
-            """SELECT 1 FROM meta.fields f JOIN meta.field_decisions d ON d.field_id = f.id
-                WHERE f.dataset_id = %s AND f.name = %s AND d.action = 'target'""",
+            sql.SQL("""SELECT 1 FROM meta.fields f JOIN {} d ON d.field_id = f.id
+                        WHERE f.dataset_id = %s AND f.name = %s AND d.action = 'target'""").format(dec),
             (dataset_id, target),
         ).fetchone() is None:
-            raise HTTPException(422, f"{target!r} is not a target of this dataset")
+            raise HTTPException(422, f"{target!r} is not a target in these decisions")
         return
     exp = conn.execute(
         "SELECT status, summary FROM meta.exports WHERE id = %s AND dataset_id = %s",
@@ -58,8 +60,11 @@ def _validate_source(conn, dataset_id: int, params: dict, user: dict) -> None:
         raise HTTPException(422, f"{target!r} is not a target of this export")
 
 
-def decision_source(conn, dataset_id: int, user: dict, kept: bool) -> Source:
-    """Explore reads the team decision, except that "Kept only" while assessing uses the viewer's own choices."""
+def decision_source(conn, dataset_id: int, user: dict, kept: bool, view: str | None = None) -> Source:
+    """Explore reads the team decision, except that "Kept only" while assessing uses the viewer's own choices, and
+    `view` picks an experiment's copy or a finalized baseline instead."""
+    if view:
+        return source_for(conn, dataset_id, user, view=view)
     src = source_for(conn, dataset_id, user)
     return src if kept and src.personal else Source(src.recipe)
 
@@ -72,7 +77,7 @@ def request_analysis(dataset_id: int, req: AnalysisRequest, user: CurrentUser) -
         _ready_dataset(conn, dataset_id, lock=True)  # serialises concurrent requests for one dataset
         if params["data"] == "raw":
             # Part of the cache key, so results computed from different people's choices never mix.
-            params["decisions"] = decision_source(conn, dataset_id, user, params["kept"]).key
+            params["decisions"] = decision_source(conn, dataset_id, user, params["kept"], req.view).key
         _validate_source(conn, dataset_id, params, user)
         row, created = find_or_create(conn, dataset_id, req.kind, params, req.recompute, user["id"])
     if created:
@@ -84,7 +89,13 @@ def request_analysis(dataset_id: int, req: AnalysisRequest, user: CurrentUser) -
 def get_analysis(analysis_id: int, user: CurrentUser) -> dict:
     with connection() as conn:
         row = conn.execute(f"SELECT {ROW_COLS} FROM meta.analyses WHERE id = %s", (analysis_id,)).fetchone()
-        owner = key_owner(row["params"].get("decisions")) if row else None
+        key = (row["params"].get("decisions") or "team") if row else "team"
+        owner = key_owner(key)
+        if key.startswith("experiment:"):
+            try:
+                experiments.get_visible(conn, int(key.split(":")[1]), user)
+            except HTTPException:
+                owner = -1  # not visible to this viewer: answer as for a missing analysis
         if row is None or (owner is not None and owner != user["id"]) or (
                 row["params"].get("data", "raw").startswith("export:")
                 and not _export_visible(conn, row["params"]["data"], user)):
@@ -99,7 +110,7 @@ def correlations(dataset_id: int, q: Annotated[CorrelationQuery, Query()], user:
     fields with the strongest associations overall."""
     with connection() as conn:
         _ready_dataset(conn, dataset_id)
-        dec = decision_source(conn, dataset_id, user, q.kept).decisions()
+        dec = decision_source(conn, dataset_id, user, q.kept, q.view).decisions()
     fields = fetch_all(
         sql.SQL("""SELECT f.id, f.name, d.semantic_type AS type, d.action
                      FROM meta.fields f JOIN {} d ON d.field_id = f.id

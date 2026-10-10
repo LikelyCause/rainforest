@@ -1,4 +1,7 @@
+import type { StartBaselineForm } from "./baselines";
+import { type View, viewQuery } from "./view";
 import type {
+  BaselineLine, FamilyKey,
   Analysis, AnalysisKind, AnalysisParams, CorrMatrix, BulkRequest, BulkResult, Correlation, Dataset, DecisionInput, Decision, ExportJob, ExportPreview, FieldFilter,
   FieldListItem, FieldResponse, ModelOption, ModelRun, OptionCatalog, SqlResult, SystemInfo, Device,
   AuthConfig, Me, PickUser, Role, TeamUser, TeamState, ReviewQueue, FieldReview, ReviewComment,
@@ -75,23 +78,23 @@ export const api = {
   datasets: () => request<Dataset[]>("/api/datasets"),
   dataset: (id: number) => request<Dataset>(`/api/datasets/${id}`),
   deleteDataset: (id: number) => request<{ fields: number; exports: number; runs: number }>(`/api/datasets/${id}`, { method: "DELETE" }),
-  patchDataset: (id: number, data: { model_family?: string; name?: string; target_columns?: string[] }) =>
+  patchDataset: (id: number, data: { name?: string; target_columns?: string[] }) =>
     request<Dataset>(`/api/datasets/${id}`, json("PATCH", data)),
   createSample: (data: { rows: number; fields: number; seed: number; target_kind: string }) =>
     request<Dataset>("/api/datasets/sample", json("POST", data)),
   sampleLimits: () => request<{ max_cells: number }>("/api/datasets/sample/limits"),
-  fields: (id: number) => request<FieldListItem[]>(`/api/datasets/${id}/fields`),
-  field: (fieldId: number, family: string) => request<FieldResponse>(`/api/fields/${fieldId}?family=${family}`),
+  fields: (id: number, view: View = null) => request<FieldListItem[]>(`/api/datasets/${id}/fields${viewQuery(view)}`),
+  field: (fieldId: number, view: View = null) => request<FieldResponse>(`/api/fields/${fieldId}${viewQuery(view)}`),
   correlations: (fieldId: number, limit = 20) =>
     request<Correlation[]>(`/api/fields/${fieldId}/correlations?limit=${limit}`),
-  saveDecision: (fieldId: number, d: DecisionInput & { family: string }) =>
-    request<Decision>(`/api/fields/${fieldId}/decision`, json("PUT", d)),
-  bulk: (datasetId: number, data: BulkRequest) =>
-    request<BulkResult>(`/api/datasets/${datasetId}/decisions/bulk`, json("POST", data)),
-  bulkUndo: (datasetId: number, batchId: string) =>
-    request<{ restored: number }>(`/api/datasets/${datasetId}/decisions/bulk/${batchId}/undo`, { method: "POST" }),
-  queryFields: (datasetId: number, data: { filters: FieldFilter[]; order_by: string; descending: boolean; limit?: number }) =>
-    request<Record<string, unknown>[]>(`/api/datasets/${datasetId}/fields/query`, json("POST", data)),
+  saveDecision: (fieldId: number, d: DecisionInput, view: View = null) =>
+    request<Decision>(`/api/fields/${fieldId}/decision${viewQuery(view)}`, json("PUT", d)),
+  bulk: (datasetId: number, data: BulkRequest, view: View = null) =>
+    request<BulkResult>(`/api/datasets/${datasetId}/decisions/bulk${viewQuery(view)}`, json("POST", data)),
+  bulkUndo: (datasetId: number, batchId: string, view: View = null) =>
+    request<{ restored: number }>(`/api/datasets/${datasetId}/decisions/bulk/${batchId}/undo${viewQuery(view)}`, { method: "POST" }),
+  queryFields: (datasetId: number, data: { filters: FieldFilter[]; order_by: string; descending: boolean; limit?: number }, view: View = null) =>
+    request<Record<string, unknown>[]>(`/api/datasets/${datasetId}/fields/query${viewQuery(view)}`, json("POST", data)),
   sql: (sql: string) => request<SqlResult>("/api/sql", json("POST", { sql })),
   sqlExamples: () => request<{ title: string; sql: string }[]>("/api/sql/examples"),
   exportPreview: (id: number, family: string, recipeId?: number | null, experimentId?: number | null) =>
@@ -110,9 +113,11 @@ export const api = {
   experiment: (id: number) => request<ExperimentDetail>(`/api/experiments/${id}`),
   createExperiment: (datasetId: number, data: { name: string; source: string; notes?: string | null }) =>
     request<Experiment>(`/api/datasets/${datasetId}/experiments`, json("POST", data)),
+  revertAdjustments: (id: number, fieldIds: number[] | null) =>
+    request<ExperimentDetail>(`/api/experiments/${id}/adjustments/revert`, json("POST", { field_ids: fieldIds })),
   patchExperiment: (id: number, data: { name?: string; notes?: string | null; archived?: boolean }) =>
     request<Experiment>(`/api/experiments/${id}`, json("PATCH", data)),
-  createAnalysis: (datasetId: number, data: { kind: AnalysisKind; params: AnalysisParams; recompute?: boolean }) =>
+  createAnalysis: (datasetId: number, data: { kind: AnalysisKind; params: AnalysisParams; recompute?: boolean; view?: View }) =>
     request<Analysis>(`/api/datasets/${datasetId}/analyses`, json("POST", data)),
   analysis: (id: number) => request<Analysis>(`/api/analyses/${id}`),
   team: (datasetId: number) => request<TeamState>(`/api/datasets/${datasetId}/team`),
@@ -131,15 +136,20 @@ export const api = {
   finalize: (datasetId: number, acceptOpen: boolean) =>
     request<TeamState>(`/api/datasets/${datasetId}/finalize`, json("POST", { accept_open: acceptOpen })),
   versions: (datasetId: number) => request<RecipeVersion[]>(`/api/datasets/${datasetId}/recipes`),
+  baselines: (datasetId: number) => request<BaselineLine[]>(`/api/datasets/${datasetId}/baselines`),
+  startBaseline: (datasetId: number, data: StartBaselineForm) =>
+    request<TeamState>(`/api/datasets/${datasetId}/baselines`, json("POST", data)),
   finalizedRecipes: () => request<FinalizedRecipe[]>("/api/recipes"),
+  /** `a` and `b` are recipe ids. */
   recipeDiff: (datasetId: number, a: number, b: number) =>
     request<RecipeDiff>(`/api/datasets/${datasetId}/recipes/diff?a=${a}&b=${b}`),
-  newVersion: (datasetId: number, reopen: number[]) =>
-    request<TeamState>(`/api/datasets/${datasetId}/recipes`, json("POST", { reopen })),
+  newVersion: (datasetId: number, family: FamilyKey, reopen: number[]) =>
+    request<TeamState>(`/api/datasets/${datasetId}/recipes`, json("POST", { family, reopen })),
   applyRecipe: (datasetId: number, recipeId: number) =>
     request<TeamState>(`/api/datasets/${datasetId}/recipes/apply`, json("POST", { recipe_id: recipeId })),
-  corrMatrix: (datasetId: number, q: { kept: boolean; target: string | null; limit?: number; add?: number[] }) => {
+  corrMatrix: (datasetId: number, q: { kept: boolean; target: string | null; limit?: number; add?: number[]; view?: View }) => {
     const p = new URLSearchParams({ kept: q.kept ? "1" : "0", limit: String(q.limit ?? 60) });
+    if (q.view) p.set("view", q.view);
     if (q.target) p.set("target", q.target);
     if (q.add?.length) p.set("add", q.add.join(","));
     return request<CorrMatrix>(`/api/datasets/${datasetId}/explore/correlations?${p}`);

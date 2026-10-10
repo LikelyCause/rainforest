@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
 import { accessOf, type Access } from "./team";
 import type { Dataset } from "./types";
+import { parseView, type View, viewKey } from "./view";
 
 export const PROCESSING = new Set(["pending", "ingesting", "profiling", "correlating"]);
 
@@ -24,15 +25,29 @@ export const useTeam = (id: number, enabled = true) =>
 
 /** What the viewer works on in this dataset now and whether they can change it. Read-only until the team state
  * has loaded, so nobody briefly edits something they can't save. */
-export function useAccess(ds: Dataset): Access {
+export function useAccess(ds: Dataset, view: View = null): Access {
   const me = useMe().data;
-  const team = useTeam(ds.id, ds.phase === "assessing");
+  const v = parseView(view);
+  const team = useTeam(ds.id, !v && ds.phase === "assessing");
+  const x = useExperiment(v?.kind === "experiment" ? v.id : null);
+  if (v?.kind === "experiment") {
+    if (!x.data) return { source: "experiment", canEdit: false, note: "Loading…" };
+    return x.data.can_adjust
+      ? { source: "experiment", canEdit: true, note: `Adjusting ${x.data.name}: changes apply to this experiment only.` }
+      : { source: "experiment", canEdit: false, note: x.data.is_default
+        ? "This is the baseline's default Team experiment; start your own experiment to adjust fields."
+        : `Only ${x.data.owner_name ?? "its owner"} adjusts ${x.data.name}.` };
+  }
+  if (v?.kind === "baseline") return { source: "baseline", canEdit: false, note: "A finalized baseline: read-only." };
   if (!me || (ds.phase === "assessing" && !team.data)) return { source: "team", canEdit: false, note: "Loading…" };
   return accessOf(ds, me, team.data);
 }
 
-export const useFields = (id: number, enabled = true) =>
-  useQuery({ queryKey: ["fields", id], queryFn: () => api.fields(id), enabled });
+export const useExperiment = (id: number | null) =>
+  useQuery({ queryKey: ["experiment", id], queryFn: () => api.experiment(id!), enabled: id !== null });
+
+export const useFields = (id: number, enabled = true, view: View = null) =>
+  useQuery({ queryKey: ["fields", id, viewKey(view)], queryFn: () => api.fields(id, view), enabled });
 
 export function useDebounced<T>(value: T, ms: number): T {
   const [v, setV] = useState(value);

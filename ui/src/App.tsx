@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, Route, Routes, useMatch, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useAccess, useDataset, useFields, useMe, useOptions } from "./hooks";
+import { useAccess, useDataset, useExperiment, useFields, useMe } from "./hooks";
 import { ApiError, api, setUnauthorizedHandler } from "./api";
 import { Logo } from "./components/Logo";
 import { DatasetsPage } from "./pages/DatasetsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ForbiddenPage } from "./pages/ForbiddenPage";
 import { TeamPage } from "./pages/TeamPage";
-import { VersionsPage } from "./pages/VersionsPage";
+import { BaselinesPage } from "./pages/BaselinesPage";
 import { ReviewPage } from "./pages/ReviewPage";
 import { BulkEditPage } from "./pages/BulkEditPage";
 import { ExperimentPage, ExperimentsPage } from "./pages/ExperimentsPage";
@@ -16,46 +16,29 @@ import { ExplorePage } from "./pages/ExplorePage";
 import { DatasetTeamPage, PhaseBadge } from "./pages/DatasetTeamPage";
 import { DatasetLayout } from "./components/DatasetLayout";
 import { ErrorAlert, ReviewMeter } from "./components/ui";
-import { familyShort, roleLabel } from "./format";
-import { ToastRegion, showError, toast } from "./toast";
+import { baselineLabel, familyShort, roleLabel } from "./format";
+import { ToastRegion, showError } from "./toast";
+import { parseView, useView, withView } from "./view";
 import type { Dataset, ExportJob, ModelRun } from "./types";
 
-function ModelSwitch({ ds }: { ds: Dataset }) {
-  const qc = useQueryClient();
-  const { data: options } = useOptions();
-  const m = useMutation({
-    mutationFn: (f: string) => api.patchDataset(ds.id, { model_family: f }),
-    onSuccess: (saved, f, ctx) => {
-      qc.setQueryData(["dataset", ds.id], saved);
-      for (const k of ["fieldQuery", "exportPreview"]) qc.invalidateQueries({ queryKey: [k, ds.id] });
-      const from = (ctx as { from?: string } | undefined)?.from;
-      toast({
-        message: `Now preparing for ${familyShort(f).toLowerCase()} models`,
-        detail: "Keep / drop, types and notes are kept; settings switch to this model's.",
-        duration: 6000,
-        action: from ? { label: "Undo", run: () => m.mutate(from) } : undefined,
-      });
-    },
-    onMutate: () => ({ from: ds.model_family }),
-    onError: (err, f) => showError(`Couldn't switch to ${familyShort(f)}`, err),
-  });
-  if (!options) return null;
+/** The baseline the dataset is working on (or last worked), linking to all of them. Replaces choosing a model type:
+ * that is fixed per baseline. */
+function BaselineChip({ ds }: { ds: Dataset }) {
+  const v = parseView(useView());
+  const x = useExperiment(v?.kind === "experiment" ? v.id : null);
+  const b = ds.baseline;
+  if (v?.kind === "experiment" && x.data) {
+    return (
+      <Link to={`/d/${ds.id}/experiments/${x.data.id}`} className="baseline-chip" title={`Adjusting ${x.data.name}, built from ${baselineLabel(x.data.recipe_family, x.data.recipe_version)}`}>
+        <span className="muted">Experiment</span> <b>{x.data.name} · {baselineLabel(x.data.recipe_family, x.data.recipe_version, true)}</b>
+      </Link>
+    );
+  }
+  if (!b) return null;
   return (
-    <div className="model-switch">
-      <span id="model-label">Model</span>
-      <div className="segmented soft" role="radiogroup" aria-labelledby="model-label">
-        {options.families.map((f) => {
-          const on = (m.isPending ? m.variables : ds.model_family) === f.value;
-          return (
-            <button key={f.value} type="button" role="radio" aria-checked={on} className={on ? "on" : ""}
-              title={`${f.label}: ${f.examples}`} disabled={m.isPending}
-              onClick={() => !on && m.mutate(f.value)}>
-              {familyShort(f.value)}{m.isPending && on ? " …" : ""}
-            </button>
-          );
-        })}
-      </div>
-    </div>
+    <Link to={`/d/${ds.id}/baselines`} className="baseline-chip" title={`${b.label}${b.setup ? " · not set up yet" : ""}. All baselines →`}>
+      <span className="muted">Baseline</span> <b>{b.setup ? `${familyShort(b.family)} · set up` : baselineLabel(b.family, b.version, true)}</b>
+    </Link>
   );
 }
 
@@ -64,8 +47,9 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
   const onReview = useMatch("/d/:datasetId/review/*");
   const onExperiments = useMatch("/d/:datasetId/experiments/*");
   const onTeam = useMatch("/d/:datasetId/team");
-  const access = useAccess(ds);
-  const fields = useFields(ds.id);
+  const view = useView();
+  const access = useAccess(ds, view);
+  const fields = useFields(ds.id, true, view);
   const exports = useQuery({ queryKey: ["exports", ds.id], queryFn: () => api.exports(ds.id) });
   const runs = useQuery({ queryKey: ["runs", ds.id], queryFn: () => api.runs(ds.id) });
   const all = fields.data ?? [];
@@ -75,7 +59,7 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
   const targets = reviewed.filter((f) => f.action === "target").length;
   const running = [...(exports.data ?? []), ...(runs.data ?? [])]
     .filter((j: ExportJob | ModelRun) => j.status === "pending" || j.status === "running").length;
-  const nextTodo = access.canEdit ? all.find((f) => !f.reviewed) : undefined;
+  const nextTodo = access.canEdit && !view ? all.find((f) => !f.reviewed) : undefined;
   const step = ({ isActive }: { isActive: boolean }) => `step${isActive ? " active" : ""}`;
 
   // U jumps back into review from Bulk edit, Explore and Experiments, matching its meaning on the Review page.
@@ -93,11 +77,11 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
   return (
     <>
       <nav className="steps" aria-label="Workflow">
-        <NavLink to={`/d/${ds.id}/review`} className={step} title={`${kept} kept · ${dropped} dropped · ${targets} targets · ${all.length - reviewed.length} to do`}>
+        <NavLink to={withView(`/d/${ds.id}/review`, view)} className={step} title={`${kept} kept · ${dropped} dropped · ${targets} targets · ${all.length - reviewed.length} to do`}>
           <span><span className="n">1</span>Review<span className="count num">{reviewed.length}/{all.length}</span></span>
           <ReviewMeter kept={kept} dropped={dropped} targets={targets} total={all.length} />
         </NavLink>
-        <NavLink to={`/d/${ds.id}/bulk`} className={step}><span>Bulk edit</span></NavLink>
+        <NavLink to={withView(`/d/${ds.id}/bulk`, view)} className={step}><span>Bulk edit</span></NavLink>
         <NavLink to={`/d/${ds.id}/explore`} className={step}><span>Explore</span></NavLink>
         <NavLink to={`/d/${ds.id}/team`} className={step} title="Assessors, team review and finalizing">
           <span>Team <PhaseBadge phase={ds.phase} /></span>
@@ -107,8 +91,8 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
         </NavLink>
       </nav>
       <div className="spacer" />
-      <ModelSwitch ds={ds} />
-      {!onReview && all.length > 0 && (nextTodo ? (
+      <BaselineChip ds={ds} />
+      {!onReview && !view && all.length > 0 && (nextTodo ? (
         <Link className="btn" to={`/d/${ds.id}/review/${nextTodo.id}`}>Next unreviewed › <kbd>U</kbd></Link>
       ) : ds.phase === "finalized" ? !onExperiments && (
         <Link className="btn" to={`/d/${ds.id}/experiments`} style={{ background: "var(--good)", borderColor: "var(--good)", color: "#fff" }}>All reviewed → Experiments</Link>
@@ -247,7 +231,8 @@ export default function App() {
             <Route path="experiments" element={<ExperimentsPage />} />
             <Route path="experiments/:experimentId" element={<ExperimentPage />} />
             <Route path="team" element={<DatasetTeamPage />} />
-            <Route path="versions" element={<VersionsPage />} />
+            <Route path="baselines" element={<BaselinesPage />} />
+            <Route path="versions" element={<Navigate to="../baselines" replace />} />
           </Route>
           <Route path="*" element={<div className="empty">Page not found. <NavLink to="/">Go home</NavLink></div>} />
         </Route>

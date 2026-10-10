@@ -6,6 +6,7 @@ import { useAccess, useMe, useOptions, useTeam } from "../hooks";
 import { useDatasetContext } from "../components/DatasetLayout";
 import { DecisionPanel } from "../components/DecisionPanel";
 import { ReuseCard } from "../components/ReuseCard";
+import { StartBaseline } from "../components/StartBaseline";
 import { Empty, ErrorAlert, StatusGlyph } from "../components/ui";
 import { familyShort, fmtAgo, fmtDate, fmtInt } from "../format";
 import { differing, finalizeQuestion, nextOpen, PHASE_LABEL, spread } from "../team";
@@ -17,22 +18,23 @@ export function useInvalidateTeam(datasetId: number) {
   const qc = useQueryClient();
   return () => {
     for (const k of ["team", "reviewQueue", "dataset", "fields", "fieldQuery", "exportPreview", "corrMatrix", "analysis",
-      "versions", "recipeDiff", "experiments", "exports", "runs"]) {
+      "versions", "baselines", "recipeDiff", "experiments", "exports", "runs"]) {
       qc.invalidateQueries({ queryKey: [k, datasetId] });
     }
     qc.invalidateQueries({ queryKey: ["datasets"] });
+    qc.invalidateQueries({ queryKey: ["finalizedRecipes"] });
     qc.invalidateQueries({ queryKey: ["field"] });
     qc.invalidateQueries({ queryKey: ["fieldReview"] });
     qc.invalidateQueries({ queryKey: ["experiment"] });
   };
 }
 
-/** The phase of a recipe version; without a version (the top bar) it is the short form. */
-export function PhaseBadge({ phase, version }: { phase: Dataset["phase"]; version?: number | null }) {
+/** The phase of a baseline version, with its short label ("Trees v2") when given. */
+export function PhaseBadge({ phase, label }: { phase: Dataset["phase"]; label?: string | null }) {
   if (!phase) return null;
   const cls = phase === "finalized" ? "good" : phase === "review" ? "warn" : "accent";
-  const text = version ? `${PHASE_LABEL[phase]} · v${version}` : phase === "review" ? "Review" : PHASE_LABEL[phase];
-  return <span className={`badge ${cls}`} title={`Recipe ${PHASE_LABEL[phase].toLowerCase()}`}>{text}</span>;
+  const text = label ? `${PHASE_LABEL[phase]} · ${label}` : phase === "review" ? "Review" : PHASE_LABEL[phase];
+  return <span className={`badge ${cls}`} title={`Baseline ${PHASE_LABEL[phase].toLowerCase()}`}>{text}</span>;
 }
 
 export function DatasetTeamPage() {
@@ -46,23 +48,28 @@ export function DatasetTeamPage() {
 function Assessing({ ds, team }: { ds: Dataset; team: TeamState }) {
   const me = useMe().data;
   const r = team.recipe;
-  const canReuse = me?.role === "lead" && r.version === 1 && !r.reuse && team.assessors.length === 0;
+  if (r.setup) {
+    return (
+      <div className="page">
+        <h1>Team</h1>
+        {me?.role === "lead" ? <StartBaseline ds={ds} /> : (
+          <div className="alert info">A lead sets up this dataset's first baseline: its model type, targets and who assesses it. Until then you can browse the fields and Explore.</div>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="page">
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <h1>Team <PhaseBadge phase="assessing" version={r.version} /></h1>
-        <span className="muted small-text">Review opens by itself once every assessor has submitted. <Link to={`/d/${ds.id}/versions`}>Versions →</Link></span>
+        <h1>Team <PhaseBadge phase="assessing" label={r.label} /></h1>
+        <span className="muted small-text">Review opens by itself once every assessor has submitted. <Link to={`/d/${ds.id}/baselines`}>Baselines →</Link></span>
       </div>
       {r.reopened != null && !r.reuse && (
         <div className="alert info"><span className="grow">
-          Recipe v{r.version} reopens {r.reopened} field{r.reopened === 1 ? "" : "s"}; only those are assessed. The rest are carried over from v{r.version - 1} and locked.
+          {r.label} reopens {r.reopened} field{r.reopened === 1 ? "" : "s"}; only those are assessed. The rest are carried over from the version before and locked.
         </span></div>
       )}
-      {canReuse && (
-        <div className="alert info"><span className="grow">Reusing the decisions of another dataset? Start from its finalized recipe before assigning anyone.</span>
-          <Link to={`/d/${ds.id}/versions`}>Start from a recipe →</Link></div>
-      )}
-      {r.reuse && <ReuseCard reuse={r.reuse} version={r.version} />}
+      {r.reuse && <ReuseCard reuse={r.reuse} label={r.label ?? ""} />}
       {team.me && <MyAssessment ds={ds} me={team.me} />}
       <Assessors ds={ds} team={team} />
     </div>
@@ -189,7 +196,7 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
   const select = (id: number | null) => id !== null && setParams({ field: String(id) }, { replace: true });
   const finalize = useMutation({
     mutationFn: (acceptOpen: boolean) => api.finalize(ds.id, acceptOpen),
-    onSuccess: (t) => { invalidate(); toast({ message: `Recipe v${t.recipe.version} finalized` }); },
+    onSuccess: (t) => { invalidate(); toast({ message: `${t.recipe.label} finalized` }); },
     onError: (e) => showError("Couldn't finalize", e),
   });
   const summary = queue.data?.summary ?? team.review;
@@ -197,8 +204,8 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
   // A version nobody assesses: nothing reopened (the lead edits directly), or a reused recipe that carried everything.
   const direct = team.assessors.length === 0;
   const askFinalize = () => {
-    const question = finalizeQuestion(summary?.open ?? 0, team.recipe.version);
-    if (question ? window.confirm(question) : window.confirm(`Finalize recipe v${team.recipe.version}? Its decisions will be frozen.`)) {
+    const question = finalizeQuestion(summary?.open ?? 0, team.recipe.label ?? "this baseline");
+    if (question ? window.confirm(question) : window.confirm(`Finalize ${team.recipe.label}? Its decisions will be frozen.`)) {
       finalize.mutate(Boolean(question));
     }
   };
@@ -209,7 +216,7 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
         <div className="sidebar-head">
           <div className="row" style={{ justifyContent: "space-between" }}>
             <b>Team review</b>
-            <PhaseBadge phase={team.recipe.phase} version={team.recipe.version} />
+            <PhaseBadge phase={team.recipe.phase} label={team.recipe.label} />
           </div>
           {summary && (
             <span className="small-text secondary num">
@@ -218,7 +225,7 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
           )}
           {!finalized && direct && (
             <span className="small-text secondary">
-              {team.recipe.reuse ? "Every field was carried over from the reused recipe; finalize to confirm it."
+              {team.recipe.reuse ? "Every field was carried over from the reused baseline; finalize to confirm it."
                 : "Nothing was reopened: change the team decision in Review or Bulk edit, then finalize."}
             </span>
           )}
@@ -226,11 +233,11 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
             <span className="small-text secondary">
               Finalized {fmtAgo(team.recipe.finalized_at)}{team.recipe.finalized_by_name ? ` by ${team.recipe.finalized_by_name}` : ""}.{" "}
               <Link to={`/d/${ds.id}/experiments`}>Experiments →</Link>{" "}
-              <Link to={`/d/${ds.id}/versions`}>{me?.role === "lead" ? "Start a new version →" : "Versions →"}</Link>
+              <Link to={`/d/${ds.id}/baselines`}>{me?.role === "lead" ? "Start a baseline or version →" : "Baselines →"}</Link>
             </span>
           ) : me?.role === "lead" ? (
             <button type="button" className={summary?.open ? "" : "primary"} disabled={finalize.isPending} onClick={askFinalize}>
-              Finalize recipe v{team.recipe.version}
+              Finalize {team.recipe.label}
             </button>
           ) : (
             <span className="small-text secondary">A lead settles each disagreement and finalizes. You can comment.</span>
@@ -257,10 +264,10 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
         {item && catalog ? (
           <Comparison item={item} family={ds.model_family} catalog={catalog} canComment={!finalized} />
         ) : queue.data && items.length > 0 ? null : team.recipe.reuse ? (
-          <ReuseCard reuse={team.recipe.reuse} version={team.recipe.version} />
+          <ReuseCard reuse={team.recipe.reuse} label={team.recipe.label ?? ""} />
         ) : (
           queue.data && <Empty title={finalized ? "Finalized" : "Nothing to settle"}>
-            {finalized ? "This recipe version is frozen. A change is a new version, started on the Versions page."
+            {finalized ? "This baseline version is frozen. A change is a new version, started on the Baselines page."
               : direct ? "Nobody assessed this version. Change the team decision in Review or Bulk edit, then finalize."
               : "Finalize when you're ready; every field took the assessors' shared choice."}
           </Empty>
@@ -348,7 +355,7 @@ function Comparison({ item, family, catalog, canComment }: { item: QueueItem; fa
 function TeamDecision({ item, ds, catalog, readOnly, onSettled }: {
   item: QueueItem; ds: Dataset; catalog: OptionCatalog; readOnly: string | null; onSettled: () => void;
 }) {
-  const field = useQuery({ queryKey: ["field", item.field_id, ds.model_family], queryFn: () => api.field(item.field_id, ds.model_family) });
+  const field = useQuery({ queryKey: ["field", item.field_id, "current"], queryFn: () => api.field(item.field_id) });
   if (!field.data) return <aside className="decision"><ErrorAlert error={field.error} /></aside>;
   return (
     <DecisionPanel data={field.data} catalog={catalog} familyLabel={familyShort(ds.model_family)} typing={false}

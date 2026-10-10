@@ -17,8 +17,8 @@ router = APIRouter(prefix="/api", tags=["recipes"])
 def finalized_recipes(_: CurrentUser) -> list[dict]:
     """Every finalized recipe version of every dataset, newest first: what "Start from recipe" offers."""
     with connection() as conn:
-        return conn.execute(
-            """SELECT r.id, r.dataset_id, d.name AS dataset_name, r.version,
+        rows = conn.execute(
+            """SELECT r.id, r.dataset_id, d.name AS dataset_name, r.family, r.version,
                       (SELECT count(*) FROM jsonb_object_keys(r.snapshot -> 'fields')) AS field_count,
                       r.finalized_by, u.name AS finalized_by_name, r.finalized_at
                  FROM meta.recipes r JOIN meta.datasets d ON d.id = r.dataset_id
@@ -26,49 +26,55 @@ def finalized_recipes(_: CurrentUser) -> list[dict]:
                 WHERE r.phase = 'finalized' AND r.snapshot IS NOT NULL
                 ORDER BY r.finalized_at DESC, r.id DESC"""
         ).fetchall()
+    return [{**r, "label": recipes.label(r)} for r in rows]
 
 
 @router.get("/datasets/{dataset_id}/recipes")
 def versions(dataset_id: int, _: CurrentUser) -> list[dict]:
-    """The dataset's recipe versions, newest first, with who started and finalized each, how many fields it reopened
-    (null when every field was open), what it was built from, and how a reused recipe matched."""
+    """The dataset's baseline versions, by family then newest first, with who started and finalized each, how many
+    fields it reopened (null when every field was open), what it was built from, and how a reused one matched."""
     with connection() as conn:
         recipes.current(conn, dataset_id)
-        return conn.execute(
-            """SELECT r.id, r.dataset_id, r.version, r.phase, r.scope, r.parent_id, r.created_by,
+        rows = conn.execute(
+            """SELECT r.id, r.dataset_id, r.family, r.version, r.phase, r.scope, r.parent_id, r.created_by,
                       cu.name AS created_by_name, r.created_at, r.finalized_by, fu.name AS finalized_by_name,
                       r.finalized_at, r.reuse,
                       CASE WHEN r.scope = 'reopened'
                            THEN (SELECT count(*) FROM meta.recipe_reopened o WHERE o.recipe_id = r.id) END AS reopened,
-                      p.dataset_id AS parent_dataset_id, p.version AS parent_version, pd.name AS parent_dataset_name
+                      p.dataset_id AS parent_dataset_id, p.family AS parent_family, p.version AS parent_version,
+                      pd.name AS parent_dataset_name
                  FROM meta.recipes r
                  LEFT JOIN meta.users cu ON cu.id = r.created_by
                  LEFT JOIN meta.users fu ON fu.id = r.finalized_by
                  LEFT JOIN meta.recipes p ON p.id = r.parent_id
                  LEFT JOIN meta.datasets pd ON pd.id = p.dataset_id
-                WHERE r.dataset_id = %s ORDER BY r.version DESC""",
+                WHERE r.dataset_id = %s
+                ORDER BY array_position(ARRAY['tree', 'linear', 'neural'], r.family), r.version DESC""",
             (dataset_id,),
         ).fetchall()
+    return [{**r, "label": recipes.label(r)} for r in rows]
 
 
-def _version(conn, dataset_id: int, version: int) -> dict:
-    row = conn.execute(f"SELECT {recipes.RECIPE_COLS} FROM meta.recipes WHERE dataset_id = %s AND version = %s",
-                       (dataset_id, version)).fetchone()
-    if row is None:
-        raise HTTPException(404, f"Recipe v{version} not found")
+def _recipe_of(conn, dataset_id: int, recipe_id: int) -> dict:
+    row = recipes.get(conn, recipe_id)
+    if row is None or row["dataset_id"] != dataset_id:
+        raise HTTPException(404, "Baseline version not found")
     return row
 
 
 @router.get("/datasets/{dataset_id}/recipes/diff")
-def diff(dataset_id: int, _: CurrentUser, a: int = Query(..., ge=1), b: int = Query(..., ge=1),
-         family: str | None = None) -> dict:
-    """Fields whose team decision or settings differ between versions `a` and `b`. A version still being worked is
-    compared as its team decision stands; assessments are never part of it."""
+def diff(dataset_id: int, _: CurrentUser, a: int = Query(..., ge=1), b: int = Query(..., ge=1)) -> dict:
+    """Fields whose team decision or settings differ between baseline versions `a` and `b` (recipe ids). Versions of
+    different families compare their decisions only. A version still being worked is compared as its team decision
+    stands; assessments are never part of it."""
     with connection() as conn:
-        ra, rb = _version(conn, dataset_id, a), _version(conn, dataset_id, b)
-        out = recipes.diff(recipes.snapshot_of(conn, ra), recipes.snapshot_of(conn, rb), family)
-    return {"a": {k: ra[k] for k in ("id", "version", "phase")}, "b": {k: rb[k] for k in ("id", "version", "phase")},
-            **out}
+        ra, rb = _recipe_of(conn, dataset_id, a), _recipe_of(conn, dataset_id, b)
+        out = recipes.diff(recipes.snapshot_of(conn, ra), recipes.snapshot_of(conn, rb),
+                           ra["family"] if ra["family"] == rb["family"] else None,
+                           decisions_only=ra["family"] != rb["family"])
+    keys = ("id", "family", "version", "phase")
+    return {"a": {**{k: ra[k] for k in keys}, "label": recipes.label(ra)},
+            "b": {**{k: rb[k] for k in keys}, "label": recipes.label(rb)}, **out}
 
 
 @router.post("/datasets/{dataset_id}/recipes")
@@ -87,8 +93,12 @@ def new_version(dataset_id: int, body: NewVersionIn, user: LeadUser) -> dict:
                                                 (dataset_id, reopen)).fetchall()}
         if unknown := [i for i in reopen if i not in known]:
             raise HTTPException(422, {"message": "Unknown field(s)", "errors": [str(i) for i in unknown]})
-        recipe = recipes.start_version(conn, dataset_id, user["id"], "assessing" if reopen else "review",
+        family = body.family or recipes.current(conn, dataset_id)["family"]
+        if family not in recipes.FAMILY_LABEL:
+            raise HTTPException(422, f"Unknown model family {family!r}")
+        recipe = recipes.start_version(conn, dataset_id, user["id"], family, "assessing" if reopen else "review",
                                        "reopened" if reopen else "all")
+        uncorrelated, added = recipe.pop("_target_work")
         if reopen:
             conn.execute("INSERT INTO meta.recipe_reopened (recipe_id, field_id) SELECT %s, unnest(%s::bigint[])",
                          (recipe["id"], reopen))
@@ -98,7 +108,10 @@ def new_version(dataset_id: int, body: NewVersionIn, user: LeadUser) -> dict:
                     WHERE dataset_id = %s AND reviewed IS DISTINCT FROM (field_id <> ALL(%s))""",
                 (reopen, dataset_id, reopen),
             )
-        return _team_state(conn, dataset_id, user)
+        start = queue_target_work(conn, dataset_id, uncorrelated, added)
+        state = _team_state(conn, dataset_id, user)
+    start()
+    return state
 
 
 @router.post("/datasets/{dataset_id}/recipes/apply")

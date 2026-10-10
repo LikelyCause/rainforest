@@ -22,7 +22,7 @@ from ..processing import _Status, delete_dataset_files, process_dataset, upsert_
 from ..profiling import corr_vector, sample_indices
 from ..sample_data import generate
 from ..schemas import DatasetPatch, SampleRequest
-from ..semantics import FAMILIES, NUMERIC
+from ..semantics import NUMERIC
 from .fields import _sync_targets, has_screen_fields, screen_pairs, screen_targets, set_targets
 
 log = logging.getLogger(__name__)
@@ -104,7 +104,7 @@ def list_datasets(user: CurrentUser) -> list[dict]:
              ORDER BY d.created_at DESC""",
         {"user": user["id"]},
     )
-    return [_with_latest(row) for row in rows]
+    return with_baselines([_with_latest(row) for row in rows])
 
 
 def _with_latest(row: dict) -> dict:
@@ -223,15 +223,58 @@ def get_dataset(dataset_id: int) -> dict:
                    (dataset_id,))
     if ds is None:
         raise HTTPException(404, "Dataset not found")
-    return ds
+    return with_baselines([ds])[0]
+
+
+def with_baselines(rows: list[dict]) -> list[dict]:
+    """Each dataset with `baseline` (its current version: id, family, version, phase, label, and `setup` while it is a
+    new dataset's first baseline nobody has started on) and `baselines` (per family that has one: the latest version
+    and the latest finalized version's id), Trees first."""
+    ids = [r["id"] for r in rows]
+    if not ids:
+        return rows
+    with connection() as conn:
+        latest = conn.execute(
+            """SELECT DISTINCT ON (r.dataset_id, r.family) r.dataset_id, r.family, r.id, r.version, r.phase,
+                      (SELECT f.id FROM meta.recipes f WHERE f.dataset_id = r.dataset_id AND f.family = r.family
+                          AND f.phase = 'finalized' ORDER BY f.finalized_at DESC, f.id DESC LIMIT 1)
+                          AS latest_finalized_id
+                 FROM meta.recipes r WHERE r.dataset_id = ANY(%s)
+                ORDER BY r.dataset_id, r.family, r.id DESC""",
+            (ids,),
+        ).fetchall()
+        current = {r["dataset_id"]: r for r in conn.execute(
+            """SELECT DISTINCT ON (r.dataset_id) r.dataset_id, r.id, r.family, r.version, r.phase,
+                      (r.version = 1 AND r.phase = 'assessing' AND r.parent_id IS NULL AND r.reuse IS NULL
+                       AND NOT EXISTS (SELECT 1 FROM meta.dataset_assessors a WHERE a.recipe_id = r.id)
+                       AND NOT EXISTS (SELECT 1 FROM meta.assessments a WHERE a.recipe_id = r.id)
+                       AND NOT EXISTS (SELECT 1 FROM meta.recipes o WHERE o.dataset_id = r.dataset_id
+                                         AND o.id <> r.id)) AS setup
+                 FROM meta.recipes r WHERE r.dataset_id = ANY(%s) ORDER BY r.dataset_id, r.id DESC""",
+            (ids,),
+        ).fetchall()}
+    order = list(recipes.FAMILY_LABEL)
+    by_ds: dict[int, list[dict]] = {}
+    for r in sorted(latest, key=lambda r: order.index(r["family"])):
+        by_ds.setdefault(r["dataset_id"], []).append(
+            {k: r[k] for k in ("family", "id", "version", "phase", "latest_finalized_id")} | {"label": recipes.label(r)})
+    out = []
+    for row in rows:
+        cur = current.get(row["id"])
+        out.append({**row, "baselines": by_ds.get(row["id"], []),
+                    "baseline": None if cur is None else {**{k: cur[k] for k in ("id", "family", "version", "phase",
+                                                                                 "setup")},
+                                                          "label": recipes.label(cur)}})
+    return out
 
 
 @router.patch("/{dataset_id}")
 def update_dataset(dataset_id: int, body: DatasetPatch, user: CurrentUser) -> dict:
-    """Rename a dataset, switch the model family its review settings are shown for, or choose its targets."""
+    """Rename a dataset or choose its targets. Its model family is its current baseline's."""
     ds = get_dataset(dataset_id)
-    if body.model_family is not None and body.model_family not in FAMILIES:
-        raise HTTPException(422, f"Unknown model family {body.model_family!r}")
+    if body.model_family is not None and body.model_family != ds["model_family"]:
+        raise HTTPException(422, "The model type comes from the baseline. Start a baseline for another type on the "
+                                 "Baselines page.")
     if body.target_columns is not None and ds["status"] != "ready":
         raise HTTPException(409, "Targets can be changed once the dataset is ready")
     start = _nothing
@@ -239,9 +282,8 @@ def update_dataset(dataset_id: int, body: DatasetPatch, user: CurrentUser) -> di
         if body.target_columns is not None:
             _check_targets_editable(conn, dataset_id, user, list(dict.fromkeys(body.target_columns)))
         conn.execute(
-            """UPDATE meta.datasets SET model_family = coalesce(%s, model_family), name = coalesce(%s, name),
-                      updated_at = now() WHERE id = %s""",
-            (body.model_family, body.name, dataset_id),
+            "UPDATE meta.datasets SET name = coalesce(%s, name), updated_at = now() WHERE id = %s",
+            (body.name, dataset_id),
         )
         if body.target_columns is not None:
             uncorrelated, added = set_targets(conn, dataset_id, list(dict.fromkeys(body.target_columns)), user["id"])
@@ -410,13 +452,17 @@ def _run_dirs(models_dir: Path, runs: list[dict]) -> set[Path]:
 
 
 @router.get("/{dataset_id}/fields")
-def list_fields(dataset_id: int, user: CurrentUser) -> list[dict]:
-    """Lightweight rows for the review sidebar, with the decisions the viewer works on (their own while assessing)."""
+def list_fields(dataset_id: int, user: CurrentUser, view: str | None = None) -> list[dict]:
+    """Lightweight rows for the review sidebar, with the decisions the viewer works on (their own while assessing,
+    or the source `view` names). Outside the team decision, targets and leak flags follow that source's targets."""
+    from ..leakage import leak_names
+    from .fields import view_targets
+
     with connection() as conn:
-        src = source_for(conn, dataset_id, user)
+        src = source_for(conn, dataset_id, user, view=view)
         # Carried-over fields of a later version are locked; a finalized version is frozen whole anyway.
         open_ = None if src.recipe["phase"] == "finalized" else recipes.open_field_ids(conn, src.recipe)
-        return conn.execute(
+        rows = conn.execute(
             sql.SQL("""SELECT f.id, f.ordinal, f.name, f.inferred_type, f.inference_confidence, f.is_target,
                               f.null_pct, f.n_unique, f.max_target_assoc, f.leakage_flag AS leakage,
                               d.action, d.semantic_type, d.reviewed, d.source,
@@ -425,3 +471,7 @@ def list_fields(dataset_id: int, user: CurrentUser) -> list[dict]:
                         WHERE f.dataset_id = %s ORDER BY f.ordinal""").format(src.decisions()),
             (open_ is None, open_ or [], dataset_id),
         ).fetchall()
+        if src.kind in ("experiment", "baseline"):
+            leaks = leak_names(conn, dataset_id, view_targets(conn, src))
+            rows = [{**r, "is_target": r["action"] == "target", "leakage": r["name"] in leaks} for r in rows]
+        return rows

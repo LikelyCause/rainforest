@@ -279,11 +279,12 @@ def test_review_adopts_agreement_queues_disagreement_and_finalize_freezes(people
     try:
         _assign(lead, ds, a, b)
         f = _fields(a, ds)
-        # Agreement on z with different settings: tree settings tie (suggestion wins), linear picks the common one.
+        # Agreement on z with different settings: they tie, so the suggestion wins (a baseline has one model type).
         assert _save(a, f["z"]["id"], imputation="mean", notes="z looks fine").status_code == 200
         assert _save(b, f["z"]["id"], imputation="constant", impute_value="0").status_code == 200
-        for who in (a, b):
-            assert _save(who, f["z"]["id"], family="linear", imputation="mean").status_code == 200
+        cur = a.get(f"/api/fields/{f['z']['id']}").json()["decision"]
+        r = a.put(f"/api/fields/{f['z']['id']}/decision", json={**{k: cur[k] for k in KEYS}, "family": "linear"})
+        assert r.status_code == 422, "a baseline has one model type"
         # Disagreement on x (keep vs drop) and on w's type.
         assert _save(b, f["x"]["id"], action="drop", notes="x is noise").status_code == 200
         assert _save(a, f["w"]["id"], semantic_type="numeric_discrete").status_code == 200
@@ -298,9 +299,7 @@ def test_review_adopts_agreement_queues_disagreement_and_finalize_freezes(people
         assert team["z"]["reviewed"] and team["c"]["reviewed"] and not team["x"]["reviewed"]
         z_tree = lead.get(f"/api/fields/{f['z']['id']}?family=tree").json()["decision"]
         assert z_tree["imputation"] == "none" and z_tree["settings_source"] == "suggested"
-        z_lin = lead.get(f"/api/fields/{f['z']['id']}?family=linear").json()["decision"]
-        assert z_lin["imputation"] == "mean" and z_lin["settings_source"] == "user"
-        assert z_lin["notes"] == f"{a.user['name']}: z looks fine"
+        assert z_tree["notes"] == f"{a.user['name']}: z looks fine"
         hist = lead.get(f"/api/fields/{f['z']['id']}/history").json()
         assert hist and hist[0]["user_id"] == b.user["id"], "adoption is recorded, by whoever opened review"
 
@@ -332,8 +331,7 @@ def test_review_adopts_agreement_queues_disagreement_and_finalize_freezes(people
         assert snap["target_order"] == ["y"] and set(snap["fields"]) == {"x", "z", "w", "c", "y"}
         assert snap["fields"]["x"]["decision"] == {"action": "drop", "semantic_type": "numeric_continuous",
                                                    "notes": None}
-        assert set(snap["fields"]["z"]["settings"]) == {"tree", "linear", "neural"}
-        assert snap["fields"]["z"]["settings"]["linear"]["imputation"] == "mean"
+        assert set(snap["fields"]["z"]["settings"]) == {"tree"}  # a baseline keeps its own model type's settings
         assert snap["fields"]["x"]["inferred_type"] == "numeric_continuous"
         assert snap["fields"]["x"]["null_pct"] > 0.1 and snap["fields"]["c"]["n_unique"] == 3
         assert rec["schema_fingerprint"] and rec["finalized_by"] == lead.user["id"]
@@ -353,7 +351,7 @@ def test_team_exports_wait_for_a_finalized_recipe(people):
     ds = _upload(lead)
     try:
         r = lead.post(f"/api/datasets/{ds['id']}/exports", json={})
-        assert r.status_code == 409 and "Recipe v1 is being assessed" in r.json()["detail"]
+        assert r.status_code == 409 and "Trees baseline v1 is being assessed" in r.json()["detail"]
         pv = lead.get(f"/api/datasets/{ds['id']}/export-preview").json()
         assert pv["recipe"]["phase"] == "assessing" and "finalizes" in pv["blocking"][0]
         assert lead.post(f"/api/datasets/{ds['id']}/exports", json={"source": "assessment"}).status_code == 422
@@ -451,7 +449,8 @@ READS = {
     "review queue": lambda c, d, f, x: c.get(f"/api/datasets/{d}/review"),
     "field review": lambda c, d, f, x: c.get(f"/api/fields/{f['x']['id']}/review"),
     "recipe versions": lambda c, d, f, x: c.get(f"/api/datasets/{d}/recipes"),
-    "recipe diff": lambda c, d, f, x: c.get(f"/api/datasets/{d}/recipes/diff?a=1&b=1"),
+    "recipe diff": lambda c, d, f, x: c.get(
+        f"/api/datasets/{d}/recipes/diff?a={x['ds']['recipe_id']}&b={x['ds']['recipe_id']}"),
     "finalized recipes": lambda c, d, f, x: c.get("/api/recipes"),
     "explore correlations kept": lambda c, d, f, x: c.get(f"/api/datasets/{d}/explore/correlations?kept=true"),
     "explore correlations": lambda c, d, f, x: c.get(f"/api/datasets/{d}/explore/correlations"),
@@ -499,7 +498,7 @@ READS = {
 
 
 # Reads that must be refused outright, whatever they would contain.
-REFUSED = {"undo another's batch": 404, "another's analysis": 404, "review queue": 409, "field review": 409,
+REFUSED = {"undo another's batch": 404, "field detail linear": 422, "another's analysis": 404, "review queue": 409, "field review": 409,
            **{name: 404 for name in ("experiment", "rename experiment", "export", "export data", "export pipeline",
                                      "export manifest", "export models", "export preview of experiment",
                                      "export into experiment", "train on export", "run", "run model", "run report",

@@ -10,9 +10,11 @@ import {
   addBlocked, canEdit, filterExperiments, metricLabel, mlflowExperimentUrl, privacyNote, sourceLabel, sourceOptions,
   type ExperimentFilter,
 } from "../experiments";
-import { fmtAgo, fmtDate, fmtNum } from "../format";
+import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtNum } from "../format";
+import { fmtChange } from "../recipes";
+import { withView } from "../view";
 import { toast } from "../toast";
-import type { Dataset, Experiment, Me } from "../types";
+import type { Dataset, Experiment, ExperimentDetail, Me } from "../types";
 
 const FILTERS: { value: ExperimentFilter; label: string }[] = [
   { value: "all", label: "All" }, { value: "mine", label: "Mine" }, { value: "team", label: "Team" },
@@ -22,6 +24,16 @@ const FILTERS: { value: ExperimentFilter; label: string }[] = [
 export function PrivateBadge({ x }: { x: Experiment }) {
   if (!x.private) return null;
   return <span className="badge accent" title={privacyNote(x) ?? undefined}>🔒 Private</span>;
+}
+
+/** How a team experiment differs from its baseline, in a badge or two. */
+export function AdjustedBadges({ x }: { x: Experiment }) {
+  return (
+    <>
+      {(x.adjusted_count ?? 0) > 0 && <span className="badge" title="Fields that differ from the baseline">{x.adjusted_count} adjusted</span>}
+      {x.targets_changed && <span className="badge warn" title="Its targets differ from the baseline's, so its results aren't comparable with experiments on the baseline's targets">targets changed</span>}
+    </>
+  );
 }
 
 function CreateDialog({ ds, me, onClose }: { ds: Dataset; me: Me; onClose: () => void }) {
@@ -60,11 +72,11 @@ function CreateDialog({ ds, me, onClose }: { ds: Dataset; me: Me; onClose: () =>
           </select>
         </label>
         {!loading && !options.length && (
-          <div className="alert warn">Nothing to experiment on yet: no recipe version is finalized, and you aren't assessing the current one.</div>
+          <div className="alert warn">Nothing to experiment on yet: no baseline is finalized, and you aren't assessing the current one.</div>
         )}
         {personal && (
           <span className="secondary small-text">
-            Exports use your own choices as they stand when you export. Only you see this experiment until recipe v{team.data?.recipe.version} reaches team review; its runs are logged to MLflow then.
+            Exports use your own choices as they stand when you export. Only you see this experiment until {team.data?.recipe.label} reaches team review; its runs are logged to MLflow then.
           </span>
         )}
         <ErrorAlert error={create.error} />
@@ -92,7 +104,7 @@ export function ExperimentsPage() {
         <button type="button" className="primary" onClick={() => setCreating(true)}>New experiment</button>
       </div>
       <p className="secondary" style={{ margin: 0 }}>
-        Each experiment holds exports and the models trained on them. Build one from a finalized recipe version, or from your own assessment while you assess; that one stays private to you until team review opens.
+        Each experiment holds exports and the models trained on them. Build one from a finalized baseline, or from your own assessment while you assess; that one stays private to you until team review opens.
       </p>
       <section className="card stack" style={{ gap: 10 }}>
         <div className="segmented soft" role="radiogroup" aria-label="Show" style={{ alignSelf: "flex-start" }}>
@@ -113,7 +125,7 @@ export function ExperimentsPage() {
                   <tr key={x.id}>
                     <td>
                       <Link to={`/d/${ds.id}/experiments/${x.id}`}><b>{x.name}</b></Link>{" "}
-                      <PrivateBadge x={x} />{x.archived_at && <span className="badge">archived</span>}
+                      <PrivateBadge x={x} /><AdjustedBadges x={x} />{x.archived_at && <span className="badge">archived</span>}
                     </td>
                     <td className="secondary">{sourceLabel(x, me)}</td>
                     <td className="secondary">{x.owner_name ?? <span className="muted">team</span>}</td>
@@ -172,9 +184,11 @@ function Header({ ds, x, me }: { ds: Dataset; x: Experiment; me: Me }) {
             <h1 style={{ margin: 0 }}>{x.name}</h1>
           )}
           <PrivateBadge x={x} />
+          <AdjustedBadges x={x} />
           {x.archived_at && <span className="badge">archived</span>}
         </div>
         <div className="row">
+          {x.can_adjust && <Link className="btn small primary" to={withView(`/d/${ds.id}/review`, `experiment:${x.id}`)}>Adjust fields</Link>}
           {mlflow ? <a className="btn small" href={mlflow} target="_blank" rel="noopener">MLflow ↗</a>
             : x.private && <span className="muted small-text">MLflow: logged when review opens</span>}
           {editable && !renaming && <button type="button" className="small" onClick={() => setRenaming(true)}>Rename</button>}
@@ -222,7 +236,63 @@ export function ExperimentPage() {
     <div className="page">
       <Header ds={ds} x={x.data} me={me} />
       {blocked && <div className="alert info">{blocked}</div>}
+      {x.data.assessor_id === null && !x.data.is_default && <AdjustmentsCard ds={ds} x={x.data} />}
       <ExperimentWorkspace ds={ds} x={x.data} canAdd={!blocked} />
     </div>
+  );
+}
+
+/** A team experiment's changes to its baseline: each field with what changed, and a way back. */
+function AdjustmentsCard({ ds, x }: { ds: Dataset; x: ExperimentDetail }) {
+  const qc = useQueryClient();
+  const a = x.adjustments;
+  const revert = useMutation({
+    mutationFn: (fieldIds: number[] | null) => api.revertAdjustments(x.id, fieldIds),
+    onSuccess: () => {
+      for (const k of ["experiment", "experiments", "exportPreview", "fields", "field", "fieldQuery"]) qc.invalidateQueries({ queryKey: [k] });
+      toast({ message: "Reverted to the baseline" });
+    },
+  });
+  const ids = useQuery({ queryKey: ["fields", ds.id, "current"], queryFn: () => api.fields(ds.id) });
+  const idOf = (name: string) => ids.data?.find((f) => f.name === name)?.id;
+  const base = baselineLabel(x.recipe_family, x.recipe_version);
+  return (
+    <section className="card stack" aria-label="Adjustments">
+      <div className="card-head">
+        <h2>Adjustments</h2>
+        <span className="muted small-text">{a.count === 0 && !a.targets_changed ? `Same as ${base}` : `Changes to ${base}, this experiment only`}</span>
+      </div>
+      {a.count === 0 && !a.targets_changed ? (
+        <span className="secondary">
+          Every field is prepared as {base} decided.{x.can_adjust ? " Adjust fields to try other choices: a field's role, type or prep settings, or the targets." : ""}
+        </span>
+      ) : (
+        <table className="data diff">
+          <thead><tr><th>Field</th><th>Changed</th>{x.can_adjust && <th aria-label="Revert" />}</tr></thead>
+          <tbody>
+            {a.targets && (
+              <tr><td><b>Targets</b></td><td>{a.targets.before.join(", ") || "none"} → {a.targets.after.join(", ") || "none"}</td>{x.can_adjust && <td />}</tr>
+            )}
+            {a.fields.map((f) => (
+              <tr key={f.name}>
+                <td className="mono">{x.can_adjust ? <Link to={withView(`/d/${ds.id}/review/${idOf(f.name) ?? ""}`, `experiment:${x.id}`)}>{f.name}</Link> : f.name}</td>
+                <td><ul className="plain">{f.changes.map((c) => <li key={`${c.family}:${c.key}`}>{fmtChange({ ...c, family: null }, familyShort)}</li>)}</ul></td>
+                {x.can_adjust && (
+                  <td><button type="button" className="ghost small" disabled={revert.isPending || idOf(f.name) === undefined}
+                    onClick={() => revert.mutate([idOf(f.name)!])}>Revert</button></td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {x.can_adjust && (a.count > 0 || a.targets_changed) && (
+        <div className="row" style={{ justifyContent: "flex-end" }}>
+          <button type="button" className="small" disabled={revert.isPending}
+            onClick={() => window.confirm(`Put every field back to ${base}?`) && revert.mutate(null)}>Revert everything</button>
+        </div>
+      )}
+      <ErrorAlert error={revert.error} />
+    </section>
   );
 }

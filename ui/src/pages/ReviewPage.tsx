@@ -4,6 +4,8 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { api } from "../api";
 import { useAccess, useFields, useOptions } from "../hooks";
 import { JoinAssessment } from "../components/JoinAssessment";
+import { ExperimentModeBar } from "../components/ExperimentModeBar";
+import { useView, viewKey, withView } from "../view";
 import { useDatasetContext } from "../components/DatasetLayout";
 import { FieldList, type StatusFilter, type WorkingSet } from "../components/FieldList";
 import { FieldDetailView } from "../components/FieldDetailView";
@@ -65,21 +67,22 @@ export function ReviewPage() {
   const searchRef = useRef<HTMLInputElement>(null);
   const panel = useRef<DecisionPanelHandle>(null);
   const undoStack = useRef<Confirmed[]>([]);
-  const failed = useFailedSaves();
-
-  const family = ds.model_family;
-  const access = useAccess(ds);
+  // An undo replays a save into the current view, so it never crosses from one view to another.
+  const undoView = useRef<string | null>(null);
+  const view = useView();
+  const failed = useFailedSaves(view);
+  const access = useAccess(ds, view);
   // Where finishing leads: an assessor submits on the Team page; everyone else goes on to Experiments.
   const finishTo = access.source === "mine" ? `/d/${datasetId}/team` : `/d/${datasetId}/experiments`;
-  const fields = useFields(datasetId);
+  const fields = useFields(datasetId, true, view);
   const options = useOptions();
-  const familyLabel = familyShort(family);
 
   const setKey = query.get("set");
   const workingSet = useMemo(() => readWorkingSet(setKey), [setKey]);
   const [search, setSearch] = useSessionState(`search:${datasetId}`, "");
   const [typeList, setTypeList] = useSessionState<string[]>(`types:${datasetId}`, []);
-  const [status, setStatus] = useSessionState<StatusFilter>(`status:${datasetId}`, "todo");
+  // In an experiment or a finalized baseline every field counts as reviewed, so the list starts with all of them.
+  const [status, setStatus] = useSessionState<StatusFilter>(`status:${datasetId}:${viewKey(view)}`, view ? "all" : "todo");
   const [attention, setAttention] = useSessionState(`attention:${datasetId}`, false);
   const types = useMemo(() => new Set(typeList), [typeList]);
   // Confirmed while "To do" is showing: stays in place (faded) until the filter changes, so K still reaches it.
@@ -147,8 +150,8 @@ export function ReviewPage() {
   }, [go, visible, idx]);
 
   const detail = useQuery({
-    queryKey: ["field", fieldId, family],
-    queryFn: () => api.field(fieldId!, family),
+    queryKey: ["field", fieldId, viewKey(view)],
+    queryFn: () => api.field(fieldId!, view),
     enabled: fieldId !== null,
     placeholderData: keepPreviousData,
     staleTime: 60_000,
@@ -165,12 +168,14 @@ export function ReviewPage() {
     if (idx < 0) return;
     for (const f of [visible[idx + 1], visible[idx - 1], visible[idx + 2]]) {
       if (!f) continue;
-      qc.prefetchQuery({ queryKey: ["field", f.id, family], queryFn: () => api.field(f.id, family), staleTime: 60_000 });
+      qc.prefetchQuery({ queryKey: ["field", f.id, viewKey(view)], queryFn: () => api.field(f.id, view), staleTime: 60_000 });
       qc.prefetchQuery({ queryKey: ["corr", f.id], queryFn: () => api.correlations(f.id, 40), staleTime: Infinity });
     }
-  }, [idx, visible, qc, family]);
+  }, [idx, visible, qc, view]);
 
   const onConfirmed = useCallback((c: Confirmed) => {
+    if (undoView.current !== view) undoStack.current = [];
+    undoView.current = view;
     undoStack.current = [...undoStack.current.slice(-(UNDO_DEPTH - 1)), c];
     const verb = c.after.action === "drop" ? "dropped" : c.after.action === "target" ? "target" : "kept";
     toast({
@@ -184,16 +189,16 @@ export function ReviewPage() {
       return;
     }
     next();
-  }, [next, scope, status, workingSet]);
+  }, [next, scope, status, workingSet, view]);
 
   const undo = useCallback(() => {
-    const last = undoStack.current.pop();
+    const last = undoView.current === view ? undoStack.current.pop() : undefined;
     if (!last) return toast({ message: "Nothing to undo" });
-    void queueSave(last.fieldId, datasetId, last.name, last.before, 0);
+    void queueSave(last.fieldId, datasetId, last.name, last.before, 0, view);
     setPanelVersion((v) => v + 1);
     go(last.fieldId);
     toast({ message: `Undid ${last.name}` });
-  }, [datasetId, go]);
+  }, [datasetId, go, view]);
   const undoRef = useRef(undo);
   undoRef.current = undo;
 
@@ -263,7 +268,7 @@ export function ReviewPage() {
 
   return (
     <div className={`review${!typing && !overlay && !finish && current ? " mode" : ""}${drawer ? " drawer-open" : ""}`}>
-      <FieldList
+      <FieldList view={view}
         fields={scope} visible={visible} settled={settled} activeId={fieldId}
         search={search} onSearch={setSearch}
         types={types} onTypes={setTypeList}
@@ -282,7 +287,7 @@ export function ReviewPage() {
           <button type="button" className="small" onClick={prev} aria-label="Previous field">‹ <kbd>K</kbd></button>
           <button type="button" className="small" onClick={next} aria-label="Next field"><kbd>J</kbd> ›</button>
         </div>
-        <JoinAssessment ds={ds} />
+        {view ? <ExperimentModeBar ds={ds} view={view} /> : <JoinAssessment ds={ds} />}
         {detail.isFetching && detail.isPlaceholderData && <div className="loading-bar" aria-hidden="true" />}
         {finish ? (
           <FinishCard finish={finish} scope={scope} datasetId={datasetId} workingSet={workingSet} finishTo={finishTo}
@@ -306,11 +311,11 @@ export function ReviewPage() {
         )}
       </section>
       {current && options.data && !detail.isPlaceholderData && !finish ? (
-        <DecisionPanel key={`${current.field.id}:${current.family}:${panelVersion}`} ref={panel} data={current}
-          catalog={options.data} familyLabel={familyLabel} typing={typing}
+        <DecisionPanel key={`${current.field.id}:${current.family}:${viewKey(view)}:${panelVersion}`} ref={panel} data={current}
+          catalog={options.data} familyLabel={familyShort(current.family)} typing={typing} view={view}
           onConfirmed={onConfirmed} onShowShortcuts={() => setOverlay(true)}
           readOnly={access.canEdit ? (current.locked ?? null) : access.note}
-          owner={access.source === "mine" ? "Your assessment" : undefined} />
+          owner={access.source === "mine" ? "Your assessment" : access.source === "experiment" ? "This experiment" : undefined} />
       ) : (
         <aside className="decision" />
       )}
@@ -324,6 +329,7 @@ function FinishCard({ finish, scope, datasetId, workingSet, finishTo, onFirstUnr
   onFirstUnreviewed: () => void; onStay: () => void; onClearSet: () => void; onOpen: (id: number) => void;
 }) {
   const firstTodo = scope.find((f) => !f.reviewed);
+  const finishView = useView();
   if (finish.kind === "end") {
     return (
       <div className="finish card">
@@ -342,7 +348,7 @@ function FinishCard({ finish, scope, datasetId, workingSet, finishTo, onFirstUnr
       <div className="finish card">
         <h2>{scope.length} of {scope.length} reviewed in {workingSet.label}.</h2>
         <div className="row">
-          <Link className="btn" to={`/d/${datasetId}/bulk`}>Back to Bulk edit</Link>
+          <Link className="btn" to={withView(`/d/${datasetId}/bulk`, finishView)}>Back to Bulk edit</Link>
           <button type="button" onClick={onClearSet}>Clear set</button>
         </div>
       </div>

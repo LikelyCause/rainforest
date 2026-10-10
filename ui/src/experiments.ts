@@ -1,4 +1,7 @@
-import type { Experiment, Phase, Role } from "./types";
+import { toInput } from "./decision";
+import { baselineLabel } from "./format";
+import { SETTING_LABEL } from "./recipes";
+import type { Decision, DecisionInput, Experiment, FieldResponse, Phase, Role } from "./types";
 
 export type ExperimentFilter = "all" | "mine" | "team" | "archived";
 
@@ -13,15 +16,16 @@ export function filterExperiments(list: Experiment[], filter: ExperimentFilter, 
   return live;
 }
 
-export function sourceLabel(x: Pick<Experiment, "assessor_id" | "recipe_version" | "owner_name">, me?: Viewer): string {
-  if (x.assessor_id === null) return `Recipe v${x.recipe_version}`;
+export function sourceLabel(x: Pick<Experiment, "assessor_id" | "recipe_family" | "recipe_version" | "owner_name">, me?: Viewer): string {
+  if (x.assessor_id === null) return baselineLabel(x.recipe_family, x.recipe_version);
   const whose = me && x.assessor_id === me.id ? "My" : `${x.owner_name ?? "An assessor"}'s`;
-  return `${whose} assessment (v${x.recipe_version})`;
+  return `${whose} assessment (${baselineLabel(x.recipe_family, x.recipe_version, true)})`;
 }
 
-export function privacyNote(x: Pick<Experiment, "private" | "assessor_id" | "recipe_version">): string | null {
-  if (x.private) return `Only you can see this until recipe v${x.recipe_version} reaches team review.`;
-  if (x.assessor_id !== null) return `Visible to the team since recipe v${x.recipe_version} reached review.`;
+export function privacyNote(x: Pick<Experiment, "private" | "assessor_id" | "recipe_family" | "recipe_version">): string | null {
+  const v = baselineLabel(x.recipe_family, x.recipe_version);
+  if (x.private) return `Only you can see this until ${v} reaches team review.`;
+  if (x.assessor_id !== null) return `Visible to the team since ${v} reached review.`;
   return null;
 }
 
@@ -40,19 +44,24 @@ export function addBlocked(x: Pick<Experiment, "archived_at" | "assessor_id" | "
 
 export interface SourceOption { value: string; label: string }
 
-/** What the viewer can build a new experiment from: their own assessment of the version being worked (when they
- * assess it), then every finalized version, newest first. */
+const FAMILY_ORDER = ["tree", "linear", "neural"];
+
+/** What the viewer can build a new experiment from: their own assessment of the baseline being worked (when they
+ * assess it), then every finalized baseline version, by model type and newest first. */
 export function sourceOptions(
-  versions: { id: number; version: number; phase: Phase }[],
-  team: { recipe: { id: number; version: number; phase: Phase }; me: unknown } | undefined,
+  versions: { id: number; family: string; version: number; phase: Phase }[],
+  team: { recipe: { id: number; family: string; version: number; phase: Phase }; me: unknown } | undefined,
   me: Viewer,
 ): SourceOption[] {
   const out: SourceOption[] = [];
   if (team?.me && team.recipe.phase !== "finalized") {
-    out.push({ value: `assessment:${team.recipe.id}:${me.id}`, label: `My assessment (v${team.recipe.version})` });
+    out.push({ value: `assessment:${team.recipe.id}:${me.id}`,
+      label: `My assessment (${baselineLabel(team.recipe.family, team.recipe.version, true)})` });
   }
-  for (const v of [...versions].filter((v) => v.phase === "finalized").sort((a, b) => b.version - a.version)) {
-    out.push({ value: `recipe:${v.id}`, label: `Recipe v${v.version} (finalized)` });
+  const finalized = versions.filter((v) => v.phase === "finalized")
+    .sort((a, b) => FAMILY_ORDER.indexOf(a.family) - FAMILY_ORDER.indexOf(b.family) || b.version - a.version);
+  for (const v of finalized) {
+    out.push({ value: `recipe:${v.id}`, label: `${baselineLabel(v.family, v.version)} (finalized)` });
   }
   return out;
 }
@@ -66,4 +75,24 @@ export function mlflowExperimentUrl(mlflowExperimentId: string | null | undefine
 
 export function metricLabel(metric: string): string {
   return metric.startsWith("roc_auc") ? "AUC" : metric;
+}
+
+type BaselineField = NonNullable<FieldResponse["baseline"]>;
+const COMPARED = ["action", "semantic_type", "imputation", "impute_value", "add_missing_indicator", "transform", "scaling",
+  "encoding", "params"] as const;
+
+const baselineInput = (base: BaselineField, family: string): DecisionInput =>
+  toInput({ ...base, ...(base.settings ?? {}) } as unknown as Decision, family);
+
+/** What a draft in an experiment changes from its baseline, as setting labels (notes don't count). */
+export function baselineDiff(draft: DecisionInput, base: FieldResponse["baseline"]): string[] {
+  if (!base) return [];
+  const b = baselineInput(base, draft.family ?? "");
+  return COMPARED.filter((k) => JSON.stringify(draft[k] ?? null) !== JSON.stringify(b[k] ?? null))
+    .map((k) => SETTING_LABEL[k] ?? k);
+}
+
+/** The draft put back to its baseline's decision and settings; the experiment's own note stays. */
+export function revertedInput(draft: DecisionInput, base: BaselineField): DecisionInput {
+  return { ...baselineInput(base, draft.family ?? ""), notes: draft.notes, reviewed: true };
 }

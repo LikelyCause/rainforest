@@ -17,12 +17,14 @@ import logging
 from fastapi import HTTPException
 
 from . import recipes
-from .db import fetch_all
+from .db import fetch_all, jsonb
+from .semantics import SETTING_KEYS
 
 log = logging.getLogger(__name__)
 
 COLS = """x.id, x.dataset_id, x.name, x.owner, x.recipe_id, x.assessor_id, x.source, x.notes, x.created_at,
-          x.archived_at, xr.version AS recipe_version, xr.phase AS recipe_phase,
+          x.archived_at, x.is_default, x.target_order, xr.family AS recipe_family, xr.version AS recipe_version,
+          xr.phase AS recipe_phase,
           (x.assessor_id IS NOT NULL AND xr.phase = 'assessing') AS private,
           (SELECT name FROM meta.users u WHERE u.id = coalesce(x.owner, x.assessor_id)) AS owner_name"""
 FROM = "meta.experiments x JOIN meta.recipes xr ON xr.id = x.recipe_id"
@@ -74,6 +76,23 @@ def require_writable(x: dict, user: dict) -> None:
         raise HTTPException(403, "Only the assessor whose assessment it is can add to a personal experiment.")
 
 
+def adjust_denied(x: dict, user: dict) -> tuple[int, str] | None:
+    """Why `user` can't adjust this experiment's copy of its baseline, or None: only its owner can, on a team
+    experiment they made (not the default one for a baseline's exports), while it isn't archived."""
+    if x["assessor_id"] is not None:
+        return 409, "A personal experiment follows your assessment; change your assessment instead."
+    if x["is_default"] or x["owner"] != user["id"]:
+        return 403, ("Only the experiment's owner adjusts it. Start your own experiment from this baseline to try "
+                     "changes.")
+    if x["archived_at"] is not None:
+        return 409, f"Experiment {x['name']!r} is archived; unarchive it to adjust it."
+    return None
+
+
+def can_adjust(x: dict, user: dict) -> bool:
+    return adjust_denied(x, user) is None
+
+
 def require_editable(x: dict, user: dict) -> None:
     """Renaming, notes, archiving: the owner (the assessor, for a personal one) or a lead."""
     if user["role"] != "lead" and user["id"] not in (x["owner"], x["assessor_id"]):
@@ -100,6 +119,8 @@ def create(conn, dataset_id: int, name: str, source: str, user: dict, notes: str
            VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
         (dataset_id, name.strip(), user["id"], recipe_id, assessor_id, source_key(recipe_id, assessor_id), notes),
     ).fetchone()
+    x = get(conn, row["id"])
+    seed_copy(conn, x)
     return get(conn, row["id"])
 
 
@@ -107,21 +128,129 @@ def team_for(conn, recipe: dict) -> dict:
     """The default team experiment of a finalized version, created on first use."""
     conn.execute("SELECT pg_advisory_xact_lock(7311207, %s)", (recipe["id"],))
     row = conn.execute(
-        f"""SELECT {COLS} FROM {FROM} WHERE x.recipe_id = %s AND x.assessor_id IS NULL AND x.owner IS NULL
-              AND x.name = %s ORDER BY x.id LIMIT 1""",
-        (recipe["id"], team_name(recipe)),
+        f"SELECT {COLS} FROM {FROM} WHERE x.recipe_id = %s AND x.is_default ORDER BY x.id LIMIT 1",
+        (recipe["id"],),
     ).fetchone()
     if row is not None:
         return row
     made = conn.execute(
-        """INSERT INTO meta.experiments (dataset_id, name, recipe_id, source) VALUES (%s, %s, %s, %s) RETURNING id""",
+        """INSERT INTO meta.experiments (dataset_id, name, recipe_id, source, is_default)
+           VALUES (%s, %s, %s, %s, true) RETURNING id""",
         (recipe["dataset_id"], team_name(recipe), recipe["id"], source_key(recipe["id"], None)),
     ).fetchone()
+    seed_copy(conn, get(conn, made["id"]))
     return get(conn, made["id"])
 
 
+def seed_copy(conn, x: dict) -> None:
+    """Give a team experiment its own copy of its (finalized) baseline: every field's decision and the settings for
+    the baseline's family, and the baseline's target order. Rows it already has stay."""
+    recipe = recipes.get(conn, x["recipe_id"])
+    if x["assessor_id"] is not None or recipe is None or recipe["phase"] != "finalized":
+        return
+    snap = recipes.snapshot_of(conn, recipe)
+    fam = recipe["family"]
+    fields = conn.execute("SELECT id, name, suggestion FROM meta.fields WHERE dataset_id = %s",
+                          (x["dataset_id"],)).fetchall()
+    decisions, settings = [], []
+    for f in fields:
+        entry = snap["fields"].get(f["name"])
+        if entry is None:
+            continue
+        d = entry["decision"]
+        decisions.append((x["id"], f["id"], d["action"], d["semantic_type"], d.get("notes")))
+        s = entry["settings"].get(fam) or (f["suggestion"] or {}).get(fam) or {}
+        settings.append((x["id"], f["id"], fam, s.get("imputation") or "none", s.get("impute_value"),
+                         bool(s.get("add_missing_indicator")), s.get("transform") or "none",
+                         s.get("scaling") or "none", s.get("encoding") or "none", jsonb(s.get("params") or {})))
+    with conn.cursor() as cur:
+        cur.executemany(
+            """INSERT INTO meta.experiment_decisions (experiment_id, field_id, action, semantic_type, notes)
+               VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""", decisions)
+        cur.executemany(
+            """INSERT INTO meta.experiment_settings (experiment_id, field_id, family, imputation, impute_value,
+                          add_missing_indicator, transform, scaling, encoding, params)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""", settings)
+    conn.execute("UPDATE meta.experiments SET target_order = %s WHERE id = %s AND target_order IS NULL",
+                 (recipes.snapshot_targets(snap), x["id"]))
+
+
+def snapshot_for(conn, x: dict) -> dict:
+    """What an export of this experiment is built from, shaped like a baseline snapshot: a team experiment's copy
+    of its baseline (with its adjustments), a default one's baseline itself, a personal one's assessment."""
+    from .assessment import Source, personal_snapshot
+
+    recipe = recipes.get(conn, x["recipe_id"])
+    if x["assessor_id"] is not None:
+        return personal_snapshot(conn, recipe, x["assessor_id"])
+    if x["is_default"] or recipe["phase"] != "finalized":
+        return recipes.snapshot_of(conn, recipe)
+    return recipes.snapshot(conn, x["dataset_id"], Source(recipe, experiment=x), family=recipe["family"],
+                            targets=x["target_order"] or [])
+
+
+NO_ADJUSTMENTS = {"fields": [], "targets": None, "count": 0, "targets_changed": False}
+
+
+def adjustments(conn, x: dict, snapshots: dict[int, dict] | None = None) -> dict:
+    """How a team experiment differs from its baseline: per field, what changed (notes aside); the targets when
+    they differ. `snapshots` caches baseline snapshots by recipe id across calls."""
+    if x["assessor_id"] is not None or x["is_default"]:
+        return dict(NO_ADJUSTMENTS)
+    snapshots = {} if snapshots is None else snapshots
+    if x["recipe_id"] not in snapshots:
+        recipe = recipes.get(conn, x["recipe_id"])
+        snapshots[x["recipe_id"]] = (recipe, recipes.snapshot_of(conn, recipe) if recipe["phase"] == "finalized" else None)
+    recipe, base = snapshots[x["recipe_id"]]
+    if base is None:
+        return dict(NO_ADJUSTMENTS)
+    d = recipes.diff(base, snapshot_for(conn, x), recipe["family"])
+    changed = []
+    for f in d["fields"]:
+        kept = [c for c in f["changes"] if c["key"] != "notes"]
+        if kept or f["change"] != "changed":
+            changed.append({**f, "changes": kept})
+    return {"fields": changed, "targets": d["targets"], "count": len(changed),
+            "targets_changed": d["targets"] is not None}
+
+
+def revert(conn, x: dict, field_ids: list[int] | None) -> None:
+    """Put fields of a team experiment's copy (every field when None) back to its baseline."""
+    if field_ids is None:
+        conn.execute("DELETE FROM meta.experiment_decisions WHERE experiment_id = %s", (x["id"],))
+        conn.execute("DELETE FROM meta.experiment_settings WHERE experiment_id = %s", (x["id"],))
+        conn.execute("UPDATE meta.experiments SET target_order = NULL WHERE id = %s", (x["id"],))
+        seed_copy(conn, {**x, "target_order": None})
+        return
+    conn.execute("DELETE FROM meta.experiment_decisions WHERE experiment_id = %s AND field_id = ANY(%s)",
+                 (x["id"], field_ids))
+    conn.execute("DELETE FROM meta.experiment_settings WHERE experiment_id = %s AND field_id = ANY(%s)",
+                 (x["id"], field_ids))
+    seed_copy(conn, x)
+    # The order keeps the experiment's own targets as they were, then any the revert brought back.
+    targets = [r["name"] for r in conn.execute(
+        """SELECT f.name FROM meta.experiment_decisions e JOIN meta.fields f ON f.id = e.field_id
+            WHERE e.experiment_id = %s AND e.action = 'target' ORDER BY f.ordinal""", (x["id"],)).fetchall()]
+    base = recipes.snapshot_targets(recipes.snapshot_of(conn, recipes.get(conn, x["recipe_id"])))
+    order = [t for t in (x["target_order"] or []) if t in targets]
+    order += [t for t in base if t in targets and t not in order] + [t for t in targets if t not in order]
+    conn.execute("UPDATE meta.experiments SET target_order = %s WHERE id = %s", (order, x["id"]))
+
+
+def backfill_copies(conn) -> int:
+    """Copies for team experiments on finalized baselines that have none (made before experiments had them)."""
+    rows = conn.execute(
+        f"""SELECT {COLS} FROM {FROM}
+             WHERE x.assessor_id IS NULL AND xr.phase = 'finalized'
+               AND NOT EXISTS (SELECT 1 FROM meta.experiment_decisions e WHERE e.experiment_id = x.id)"""
+    ).fetchall()
+    for x in rows:
+        seed_copy(conn, x)
+    return len(rows)
+
+
 def team_name(recipe: dict) -> str:
-    return f"Team · v{recipe['version']}"
+    return f"Team · {recipes.FAMILY_LABEL[recipe['family']]} v{recipe['version']}"
 
 
 def list_for(conn, dataset_id: int, user: dict) -> list[dict]:
@@ -137,7 +266,12 @@ def list_for(conn, dataset_id: int, user: dict) -> list[dict]:
         (dataset_id,),
     ).fetchall()
     best = best_by_experiment(conn, [r["id"] for r in rows])
-    return [{**r, "best": best.get(r["id"])} for r in rows]
+    out, snapshots = [], {}
+    for r in rows:
+        adj = adjustments(conn, r, snapshots)
+        out.append({**r, "best": best.get(r["id"]), "adjusted_count": adj["count"],
+                    "targets_changed": adj["targets_changed"], "can_adjust": can_adjust(r, user)})
+    return out
 
 
 def best_by_experiment(conn, ids: list[int]) -> dict[int, dict]:

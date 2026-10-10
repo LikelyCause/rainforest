@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { addBlocked, canEdit, filterExperiments, mlflowExperimentUrl, privacyNote, sourceLabel, sourceOptions } from "./experiments";
+import { addBlocked, baselineDiff, canEdit, filterExperiments, mlflowExperimentUrl, privacyNote, revertedInput, sourceLabel, sourceOptions } from "./experiments";
 import type { Experiment } from "./types";
 
 const me = { id: 2, role: "member" as const };
 const lead = { id: 1, role: "lead" as const };
 const x = (id: number, over: Partial<Experiment> = {}): Experiment => ({
-  id, dataset_id: 1, name: `X${id}`, owner: null, owner_name: null, recipe_id: 10, recipe_version: 1,
-  recipe_phase: "finalized", assessor_id: null, source: "recipe:10", notes: null, created_at: "", archived_at: null,
+  id, dataset_id: 1, name: `X${id}`, owner: null, owner_name: null, recipe_id: 10, recipe_version: 1, recipe_family: "tree" as const,
+  is_default: false, recipe_phase: "finalized", assessor_id: null, source: "recipe:10", notes: null, created_at: "", archived_at: null,
   private: false, ...over,
 });
 
@@ -33,14 +33,14 @@ describe("filterExperiments", () => {
 
 describe("labels", () => {
   it("names the source from the viewer's side", () => {
-    expect(sourceLabel(x(1, { recipe_version: 3 }))).toBe("Recipe v3");
-    expect(sourceLabel(x(2, { assessor_id: 2, owner_name: "Ana" }), me)).toBe("My assessment (v1)");
-    expect(sourceLabel(x(2, { assessor_id: 2, owner_name: "Ana" }), lead)).toBe("Ana's assessment (v1)");
+    expect(sourceLabel(x(1, { recipe_version: 3 }))).toBe("Trees baseline v3");
+    expect(sourceLabel(x(2, { assessor_id: 2, owner_name: "Ana" }), me)).toBe("My assessment (Trees v1)");
+    expect(sourceLabel(x(2, { assessor_id: 2, owner_name: "Ana" }), lead)).toBe("Ana's assessment (Trees v1)");
   });
 
   it("explains privacy only for personal experiments", () => {
     expect(privacyNote(x(1))).toBeNull();
-    expect(privacyNote(x(2, { assessor_id: 2, private: true, recipe_version: 2 }))).toMatch(/until recipe v2 reaches team review/);
+    expect(privacyNote(x(2, { assessor_id: 2, private: true, recipe_version: 2 }))).toMatch(/until Trees baseline v2 reaches team review/);
     expect(privacyNote(x(2, { assessor_id: 2 }))).toMatch(/Visible to the team/);
   });
 });
@@ -63,23 +63,25 @@ describe("who may do what", () => {
 
 describe("sourceOptions", () => {
   const versions = [
-    { id: 10, version: 1, phase: "finalized" as const },
-    { id: 12, version: 3, phase: "assessing" as const },
-    { id: 11, version: 2, phase: "finalized" as const },
+    { id: 10, family: "tree", version: 1, phase: "finalized" as const },
+    { id: 12, family: "tree", version: 3, phase: "assessing" as const },
+    { id: 11, family: "tree", version: 2, phase: "finalized" as const },
+    { id: 13, family: "linear", version: 1, phase: "finalized" as const },
   ];
   const team = (phase: "assessing" | "review" | "finalized", assessor: boolean) =>
-    ({ recipe: { id: 12, version: 3, phase }, me: assessor ? { submitted: false } : null });
+    ({ recipe: { id: 12, family: "tree", version: 3, phase }, me: assessor ? { submitted: false } : null });
 
   it("offers my assessment first while I assess, then finalized versions newest first", () => {
     expect(sourceOptions(versions, team("assessing", true), me)).toEqual([
-      { value: "assessment:12:2", label: "My assessment (v3)" },
-      { value: "recipe:11", label: "Recipe v2 (finalized)" },
-      { value: "recipe:10", label: "Recipe v1 (finalized)" },
+      { value: "assessment:12:2", label: "My assessment (Trees v3)" },
+      { value: "recipe:11", label: "Trees baseline v2 (finalized)" },
+      { value: "recipe:10", label: "Trees baseline v1 (finalized)" },
+      { value: "recipe:13", label: "Linear baseline v1 (finalized)" },
     ]);
   });
 
   it("offers only finalized versions to someone who doesn't assess", () => {
-    expect(sourceOptions(versions, team("assessing", false), me).map((o) => o.value)).toEqual(["recipe:11", "recipe:10"]);
+    expect(sourceOptions(versions, team("assessing", false), me).map((o) => o.value)).toEqual(["recipe:11", "recipe:10", "recipe:13"]);
     expect(sourceOptions([], undefined, me)).toEqual([]);
   });
 });
@@ -90,5 +92,21 @@ describe("mlflowExperimentUrl", () => {
     const url = mlflowExperimentUrl("7", 4)!;
     expect(url.startsWith("/mlflow/#/experiments/7?searchFilter=")).toBe(true);
     expect(decodeURIComponent(url.split("=").slice(1).join("="))).toBe("tags.`rainforest.experiment_id` = '4'");
+  });
+});
+
+describe("baseline comparison", () => {
+  const base = { action: "keep" as const, semantic_type: "numeric_continuous", notes: null,
+    settings: { imputation: "none", impute_value: null, add_missing_indicator: false, transform: "none", scaling: "none", encoding: "none", params: {} } };
+  const draft = { family: "tree", action: "drop" as const, semantic_type: "numeric_continuous", imputation: "median", impute_value: null,
+    add_missing_indicator: false, transform: "none", scaling: "none", encoding: "none", params: {}, notes: "mine", reviewed: true };
+  it("lists what an experiment changed, by label", () => {
+    expect(baselineDiff(draft, base)).toEqual(["Decision", "Missing values"]);
+    expect(baselineDiff(draft, null)).toEqual([]);
+  });
+  it("reverts a draft to the baseline's decision and settings, keeping the note", () => {
+    const r = revertedInput(draft, base);
+    expect(r).toMatchObject({ action: "keep", imputation: "none", notes: "mine" });
+    expect(baselineDiff(r, base)).toEqual([]);
   });
 });

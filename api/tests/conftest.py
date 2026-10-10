@@ -23,7 +23,7 @@ def set_phase(dataset_id: int, phase: str) -> dict:
         if r["phase"] == phase:
             return r
         if r["phase"] == "finalized":
-            return recipes.start_version(conn, dataset_id, None, phase)
+            return recipes.start_version(conn, dataset_id, None, r["family"], phase)
         if phase == "finalized":
             return recipes.finalize(conn, r, r["created_by"])
         return conn.execute("UPDATE meta.recipes SET phase = %s WHERE id = %s RETURNING *", (phase, r["id"])).fetchone()

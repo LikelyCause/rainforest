@@ -19,7 +19,10 @@ export interface Dataset {
   updated_at: string;
   profiled_at: string | null;
   raw_table: string | null;
-  /** The current recipe version and the phase it is in. */
+  /** The current baseline version (the one being worked, else the latest started) and the phase it is in. */
+  baseline: BaselineRef | null;
+  /** Per model type with a baseline (Trees first): its latest version and latest finalized version. */
+  baselines: BaselineSummary[];
   recipe_id: number | null;
   recipe_version: number | null;
   phase: Phase | null;
@@ -164,6 +167,8 @@ export interface FieldResponse {
   target_associations: TargetAssoc[];
   /** Why the field can't change in this version (carried over), or null. */
   locked?: string | null;
+  /** In an experiment: the baseline's own decision and settings for this field. */
+  baseline?: { action: Action; semantic_type: string; notes: string | null; settings: Omit<SettingsRow, "source"> | null } | null;
 }
 
 export type CorrMethod = "spearman" | "cramers_v" | "correlation_ratio";
@@ -243,8 +248,11 @@ export interface Experiment {
   owner: number | null;
   owner_name: string | null;
   recipe_id: number;
+  recipe_family: FamilyKey;
   recipe_version: number;
   recipe_phase: Phase;
+  /** The Team experiment the app makes for a finalized baseline's exports. */
+  is_default: boolean;
   /** Set on a personal experiment: whose assessment it is built from. */
   assessor_id: number | null;
   /** `recipe:<recipe_id>` or `assessment:<recipe_id>:<user_id>`. */
@@ -259,11 +267,26 @@ export interface Experiment {
   mlflow_experiment_id?: string | null;
   /** Its best finished run on the validation split. */
   best?: { metric: string; value: number; run_id: number; target: string } | null;
+  /** The experiment's targets in chain order (team experiments). */
+  target_order?: string[] | null;
+  /** List rows and detail: fields that differ from the baseline, and whether the targets do. */
+  adjusted_count?: number;
+  targets_changed?: boolean;
+  /** Whether the viewer may adjust its fields (its owner, on an experiment they made). */
+  can_adjust?: boolean;
+}
+
+export interface Adjustments {
+  fields: { name: string; change: "changed" | "added" | "removed"; changes: DiffChange[] }[];
+  targets: { before: string[]; after: string[] } | null;
+  count: number;
+  targets_changed: boolean;
 }
 
 export interface ExperimentDetail extends Experiment {
   exports: ExportJob[];
   runs: ModelRun[];
+  adjustments: Adjustments;
 }
 
 export interface ExportJob {
@@ -276,6 +299,7 @@ export interface ExportJob {
   model_family: string;
   config: Record<string, any>;
   recipe_id: number | null;
+  recipe_family?: FamilyKey | null;
   recipe_version: number | null;
   experiment_id: number;
   experiment_name: string | null;
@@ -309,6 +333,8 @@ export interface ModelOption {
   available: boolean;
   description: string;
   devices?: Device[];
+  /** On the roadmap: listed, never trainable. */
+  planned: boolean;
   compatible?: boolean;
   reason?: string | null;
 }
@@ -510,9 +536,43 @@ export interface TeamUser {
   last_seen_at: string | null;
 }
 
+export type FamilyKey = "tree" | "linear" | "neural";
+
+export interface BaselineRef {
+  id: number;
+  family: FamilyKey;
+  version: number;
+  phase: Phase;
+  label: string;
+  /** A new dataset's first baseline nobody has started on: its model type, start and targets can still change. */
+  setup: boolean;
+}
+
+export interface BaselineSummary {
+  family: FamilyKey;
+  id: number;
+  version: number;
+  phase: Phase;
+  label: string;
+  latest_finalized_id: number | null;
+}
+
+/** One model type's baseline and its versions (GET /datasets/{id}/baselines). */
+export interface BaselineLine {
+  family: FamilyKey;
+  label: string;
+  versions: RecipeVersion[];
+  latest_finalized_id: number | null;
+}
+
 export interface Recipe {
   id: number;
   dataset_id: number;
+  family: FamilyKey;
+  /** "Trees baseline v2". */
+  label?: string;
+  /** Team state only: a new dataset's first baseline nobody has started on. */
+  setup?: boolean;
   version: number;
   phase: Phase;
   /** "all": every field is open; "reopened": only the reopened ones, the rest are carried over and locked. */
@@ -543,7 +603,7 @@ export interface ReopenedField {
 
 /** How a finalized recipe was matched onto a new dataset. */
 export interface ReuseSummary {
-  source: { recipe_id: number; dataset_id: number; dataset_name: string | null; version: number };
+  source: { recipe_id: number; dataset_id: number; dataset_name: string | null; family?: FamilyKey; version: number };
   carried: string[];
   reopened: ReopenedField[];
   missing: string[];
@@ -557,6 +617,7 @@ export interface RecipeVersion extends Recipe {
   reopened: number | null;
   reuse: ReuseSummary | null;
   parent_dataset_id: number | null;
+  parent_family: FamilyKey | null;
   parent_version: number | null;
   parent_dataset_name: string | null;
 }
@@ -565,6 +626,8 @@ export interface FinalizedRecipe {
   id: number;
   dataset_id: number;
   dataset_name: string;
+  family: FamilyKey;
+  label: string;
   version: number;
   field_count: number;
   finalized_by: number | null;

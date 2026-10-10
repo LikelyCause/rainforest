@@ -6,9 +6,10 @@ with correlations, embeddings and per-field tests, export a **model-ready** data
 of LightGBM (or another tree ensemble) over your targets.
 
 Trees are the default and the main path. Rainforest knows that tree ensembles split on value *order*, so it never
-suggests scaling or log transforms for them, and it leaves missing values for the model to route. Linear and neural
-model families are also available. When you switch to one, it gets its own preprocessing settings (scaling,
-imputation, one-hot encoding) without touching the tree settings.
+suggests scaling or log transforms for them, and it leaves missing values for the model to route. The team's agreed
+preparation of a dataset for one model type is a **baseline**: *Trees*, *Linear* or *Neural*, each with its own
+preprocessing settings (scaling, imputation, one-hot encoding), and a dataset can have one of each. Experiments start
+from a finalized baseline and may adjust it without changing it.
 
 ```
 ┌────────────┐  /api/*   ┌──────────────────────────┐        ┌────────────────────────────────┐
@@ -53,9 +54,10 @@ sign-in: see [Deploying for a team](#deploying-for-a-team) (`make up-keycloak` r
    distinct values; other fields are disabled in the picker with the reason, and the API refuses them. Saving
    refreshes the target associations and leakage flags. Generated samples already have their two targets set. The row
    menu also renames or deletes a dataset (deleting removes its fields, exports, model runs and their files).
-   A new dataset starts as recipe v1 in **Assessing**: a lead assigns assessors (row menu → *Assessors…*, or the
-   **Team** step), each of them reviews every field blind, and the team settles the disagreements before a lead
-   finalizes. See [Team workflow](#team-workflow).
+   A new dataset's first baseline (*Trees v1*) waits to be set up: a lead chooses its model type, what it starts
+   from, its targets and its assessors on the dataset's **Team** step (row menu → *Assessors…*). Each assessor
+   reviews every field blind, and the team settles the disagreements before a lead finalizes. See
+   [Team workflow](#team-workflow).
 2. **Review** → walk the fields. Each field shows its signals (missing, skew, outliers, levels, target association
    with a leakage flag), its distribution and quantile strip, top tokens or weekdays, and its strongest
    **associations** (click a bar to jump to that field). The decision panel lists *Why these suggestions*: one line
@@ -76,14 +78,16 @@ sign-in: see [Deploying for a team](#deploying-for-a-team) (`make up-keycloak` r
    at the suggestion and not yet reviewed follow target changes (a new leak flag drops them).
 4. **Explore** → correlations heatmap, a 2-D map of rows, per-field statistical tests against a target, and feature
    importance. See [Explore](#explore).
-5. **Experiments** → in an experiment, fit the preprocessing on the training split, write the model-ready
-   Parquet, and train chains with any compatible model. Runs on an export are compared side by side, and the best on
-   the validation split is starred. See [Experiments](#experiments).
+5. **Experiments** → start from a finalized baseline, adjust fields if you want to try other choices, fit the
+   preprocessing on the training split, write the model-ready Parquet, and train chains with any compatible model.
+   Runs on an export are compared side by side, and the best on the validation split is starred. See
+   [Experiments](#experiments).
 
 The top bar shows the dataset switcher, the workflow steps **Review · Bulk edit · Explore · Team · Experiments**
-(Review carries the reviewed count, the Team step the dataset's phase: *Assessing*, *Review* or *Finalized*), the
-**Model** switch (*Trees* · *Linear* · *Neural*), *Next unreviewed* (`U`) while fields are left, and on the right
-**Team** (the user list), who you're signed in as with your role, and *Sign out*.
+(Review carries the reviewed count, the Team step the current baseline's phase: *Assessing*, *Review* or
+*Finalized*), the **Baseline** chip (the current baseline, e.g. *Trees v2*, linking to the dataset's **Baselines**
+page; while you adjust an experiment, that experiment), *Next unreviewed* (`U`) while fields are left, and on the
+right **Team** (the user list), who you're signed in as with your role, and *Sign out*.
 
 ### Keyboard shortcuts (Review)
 
@@ -107,9 +111,10 @@ uploads, exports, model runs, Explore analyses). A user is a **lead** or a **mem
 
 | | Member | Lead |
 |---|---|---|
-| Upload, Explore, experiment (export a finalized recipe or your own assessment, train) | ✓ | ✓ |
+| Upload, Explore, experiment (export a finalized baseline or your own assessment, train) | ✓ | ✓ |
+| Adjust the experiments they own | ✓ | ✓ |
 | Review and bulk edit their own assessment when assigned; comment in team review | ✓ | ✓ |
-| Assign assessors, set the team decision in review, finalize | | ✓ |
+| Start baselines and versions, assign assessors, set the team decision in review, finalize | | ✓ |
 | Delete datasets | | ✓ |
 | Manage users on the **Team** page | | ✓ (pick mode: add, rename, edit email, set role, deactivate / reactivate; OIDC: deactivate / reactivate) |
 
@@ -195,56 +200,74 @@ in `.env`, or `make up-keycloak`).
 
 ## Team workflow
 
-Every dataset has **recipes**: numbered versions of its field decisions. A version moves through three phases, shown
-on the Datasets list and in the top bar.
+Every dataset has **baselines**: the team's field decisions for one model type (*Trees*, *Linear* or *Neural*), at
+most one per type. Each baseline has numbered versions, labelled like *Trees baseline v2*, and a version moves through
+three phases, shown on the Datasets list (one chip per baseline) and in the top bar. One baseline version is in
+progress (assessing or in review) per dataset at a time; another baseline or version starts once it is finalized.
 
-1. **Assessing.** A lead assigns assessors on the dataset's **Team** page (also *Assessors…* in the Datasets row
-   menu). Each assessor starts from the suggestions and uses Review and Bulk edit as usual, but on their own
-   assessment: nobody else sees their choices, the lead included, and the API never returns them to anyone else
-   (field lists, field details, history, Bulk edit, the SQL console, Explore). Leads see each assessor's progress
-   (fields reviewed, submitted or not), never their choices. Everyone else can browse the fields with their
-   suggestions and use Explore, read-only. *Submit assessment* needs every field reviewed; an assessor can unsubmit
-   until review opens, and a lead can unassign someone (their choices are kept but don't count). Targets are set
-   before anyone is assigned, since every assessor starts from them. A lead who opens Review or Bulk edit on a
-   dataset they aren't assessing gets *Assess it myself*, which assigns them like anyone else.
+**Starting a baseline.** A lead starts one with *Start a baseline…* on the dataset's **Baselines** page (linked from
+the top bar's Baseline chip and the Team page). A new dataset's first baseline is set up in place, from the same form
+on its Team page. The form asks for:
+
+* **Model type**, fixed once the baseline starts. A type that already has a baseline gets its next version.
+* **Start from:** *the suggestions* for that model type; *another baseline of this dataset* (a finalized one of any
+  type: its keep / drop / target, types and notes are copied, and each field's settings where they are valid for the
+  new type, the rest take the new type's suggestion; every field is still assessed); or, for a new dataset's first
+  baseline only, *another dataset's baseline* (see below).
+* **Targets**, fixed for the baseline (experiments can change them).
+* **Assessors**: any active users, the lead included if they tick themselves.
+
+1. **Assessing.** Assessors are chosen when the baseline starts, and a lead adds or removes them on the dataset's
+   **Team** page. Each assessor starts from the baseline's starting point (the suggestions, or the baseline it was
+   populated from) and uses Review and Bulk edit as usual, but on their own assessment: nobody else sees their
+   choices, the lead included, and the API never returns them to anyone else (field lists, field details, history,
+   Bulk edit, the SQL console, Explore). Leads see each assessor's progress (fields reviewed, submitted or not), never
+   their choices. Everyone else can browse the fields with the starting point and use Explore, read-only. *Submit
+   assessment* needs every field reviewed; an assessor can unsubmit until review opens, and a lead can unassign
+   someone (their choices are kept but don't count). The targets stay as the baseline started, since every assessor
+   starts from them. A lead who opens Review or Bulk edit on a dataset they aren't assessing gets *Assess it myself*,
+   which assigns them like anyone else.
 2. **Team review** opens by itself when the last assigned assessor submits (or a lead unassigns the last one who
    hadn't). Fields where every assessor chose the same keep / drop / target and type are **adopted** as the team
-   decision; each model family's settings take the most common choice, and a tie takes the suggestion. The rest
+   decision; the settings take the most common choice, and a tie takes the suggestion. The rest
    form the **review queue** on the Team page: each assessor's choice, settings and notes side by side, with the
    differences marked, and a comment thread. Everyone can comment; a lead sets the team decision (the same decision
    panel as Review). Bulk edit is for leads only in this phase and changes team decisions.
 3. **Finalized.** A lead finalizes once the queue is settled, or confirms finalizing with fields left as they stand.
-   Finalizing freezes the version: its snapshot records every field's decision, its settings for every model family,
-   its inferred type and key stats, and the target order. A finalized version's decisions can't change; the way to
-   change them is a new version.
+   Finalizing freezes the version: its snapshot records every field's decision, its settings for the baseline's
+   model type, its inferred type and key stats, and the target order. A finalized version's decisions can't change;
+   the way to change them is a new version.
 
-**New versions.** On a dataset's **Versions** page (linked from the Team page) a lead starts the next version from
-the latest finalized one and picks the fields to reopen, with search and the same filters as the Review list (type,
-*Needs attention*, name); none are picked by default. Reopened fields go through blind assessment and team review
-again with the assessors the lead assigns: assessors only assess those, *Submit assessment* needs just those reviewed,
-and the review queue holds only disagreements among them. Every other field is **carried over and locked** (🔒 in
-the Review list; the decision panel says why): nobody changes it in that version, the lead included. With nothing
-reopened the version opens straight in team review and the lead edits the team decision directly (recorded in each
-field's history) and finalizes. The Versions page lists every version (who started and finalized it and when, its
-phase, how many fields it reopened, what it was built from) and compares any two: the fields whose decision or
-settings differ. Only team decisions are compared; a version still being worked is compared as its team decision
-stands, never with anyone's assessment.
+**New versions.** On a dataset's **Baselines** page each baseline lists its versions; a lead starts the next version
+of a baseline from its latest finalized one (*New version…*) and picks the fields to reopen, with search and the same
+filters as the Review list (type, *Needs attention*, name); none are picked by default. Reopened fields go through
+blind assessment and team review again with the assessors the lead assigns: assessors only assess those, *Submit
+assessment* needs just those reviewed, and the review queue holds only disagreements among them. Every other field is
+**carried over and locked** (🔒 in the Review list; the decision panel says why): nobody changes it in that version,
+the lead included. With nothing reopened the version opens straight in team review and the lead edits the team
+decision directly (recorded in each field's history) and finalizes. The Baselines page lists every version of every
+baseline (who started and finalized it and when, its phase, how many fields it reopened, what it was built from) and
+compares any two: the fields whose decision or settings differ (decisions only between baselines of different model
+types). Only team decisions are compared; a version still being worked is compared as its team decision stands, never
+with anyone's assessment.
 
-**Starting from a recipe.** A new dataset (before anyone is assigned to it) can start from any finalized recipe of
-any dataset: *Start from a recipe* on its Versions page (the upload toast links there for leads), or `recipe_id`
-on the upload API. Fields match by name. A matched field whose inferred type is unchanged and whose stats haven't
-drifted (missing share within 10 points, distinct values within half to double) is carried over and locked, with
-the recipe's decision, settings and notes. Everything else is reopened for assessment: new fields, changed types,
-drift (with the numbers), a recipe target that isn't a valid target here, settings that aren't valid for this data.
-Recipe fields missing from the new data are listed. The recipe's targets carry over when they're still valid targets
-here. The summary stays on the dataset's Team and Versions pages, and the version records the recipe it came from.
-If nothing needs assessing, the version opens in team review and a lead confirms it by finalizing.
+**Starting from another dataset's baseline.** A new dataset's first baseline (before anyone is assigned to it) can
+start from any finalized baseline of another dataset, and takes its model type: *Another dataset's baseline* in the
+set-up form (the upload toast links there for leads), or `recipe_id` on the upload API. Fields match by name. A
+matched field whose inferred type is unchanged and whose stats haven't drifted (missing share within 10 points,
+distinct values within half to double) is carried over and locked, with the source's decision, settings and notes.
+Everything else is reopened for assessment: new fields, changed types, drift (with the numbers), a source target that
+isn't a valid target here, settings that aren't valid for this data. Source fields missing from the new data are
+listed. The source's targets carry over when they're still valid targets here. The summary stays on the dataset's
+Team and Baselines pages, and the version records the baseline it came from. If nothing needs assessing, the version
+opens in team review and a lead confirms it by finalizing.
 
-**Exports** live in [experiments](#experiments). A team export is built from a finalized version's snapshot, never
-from the decisions being worked on, so an old version always exports the same way while a newer one is in progress;
-an assessor can also export their own assessment, privately, while they assess. Explore is shared: raw-data analyses
-use the team decision, except that while assessing, *Kept only* uses your own choices, and results are cached per
-decision source so they never mix people's choices.
+**Exports** live in [experiments](#experiments). A team export is built from a finalized version's snapshot (or an
+experiment's adjusted copy of it), never from the decisions being worked on, so a finalized version always exports
+the same way while another is in progress; an assessor can also export their own assessment, privately, while they
+assess. Explore is shared: raw-data analyses use the team decision of the baseline in progress, except that while
+assessing, *Kept only* uses your own choices; its *Decisions* picker switches to a finalized baseline or a team
+experiment's copy. Results are cached per decision source so they never mix people's choices.
 
 ## Experiments
 
@@ -252,15 +275,15 @@ Exports and the model runs trained on them belong to an **experiment**: the data
 them (*All*, *Mine*, *Team*, *Archived*) with their export and run counts and their best run on the validation split.
 *New experiment* asks for a name and what it is built from:
 
-* **A finalized recipe version** (a team experiment). Everyone sees it and anyone can add exports and runs to it.
-  Exporting a finalized version from the API without naming an experiment puts the export in that version's
-  **Team · vN** experiment, made on first use.
-* **My assessment (vN)** (a personal experiment), offered while you are an assessor of the version being worked.
-  Its exports use your own choices as they stand when you export; fields a later version carried over (locked) take
-  the team's values. The export freezes that snapshot, so it rebuilds the same way after you change your assessment.
-  Only you add exports and runs to it.
+* **A finalized baseline** (a team experiment), e.g. *Trees baseline v2 (finalized)*. Everyone sees it and anyone
+  can add exports and runs to it. Exporting a finalized baseline from the API without naming an experiment puts the
+  export in that baseline version's default **Team · Trees v2** experiment, made on first use.
+* **My assessment (Trees v2)** (a personal experiment), offered while you are an assessor of the baseline being
+  worked. Its exports use your own choices as they stand when you export; fields a later version carried over
+  (locked) take the version's values. The export freezes that snapshot, so it rebuilds the same way after you change
+  your assessment. Only you add exports and runs to it.
 
-**Privacy.** A personal experiment is **private** (🔒) while its recipe version is assessing: nobody else sees it,
+**Privacy.** A personal experiment is **private** (🔒) while its baseline version is assessing: nobody else sees it,
 the lead included, nor its exports, runs, files, Explore results on its exports or anything about it in the Datasets
 list, and opening one by URL answers as if it didn't exist. From team review onwards it is visible to the whole team, like
 the assessment it was built from. The SQL console never shows a private experiment, its exports, runs or metrics
@@ -271,15 +294,30 @@ scoped to it: build an export from its source, train on it, compare the runs, an
 owner (for a personal one, its assessor) or a lead renames it, edits its notes and archives or unarchives it; an
 archived experiment takes no new exports or runs.
 
+**Adjusting an experiment.** A team experiment holds its own copy of its baseline, which its owner may change without
+touching the baseline: per field the role (keep / drop / target), the type and the prep settings (missing values,
+missing indicator, transform, scaling, encoding and encoder parameters), within the baseline's model type. A type
+change brings the new type's suggested settings where the old ones don't fit. *Adjust fields* on the experiment's page
+opens Review and Bulk edit on that copy (`?view=experiment:<id>`, with a bar naming the experiment); the decision
+panel says what differs from the baseline, with *Revert to baseline*. The experiment's **Adjustments** card lists
+every changed field (and the targets, when they differ) with a per-field *Revert* and *Revert everything*, and the
+list and page badge it *N adjusted* and *targets changed*. Only the owner adjusts, and only while it isn't archived;
+the default **Team ·** experiments and other people's experiments are read-only there (start your own experiment to
+try changes), and a personal experiment follows its assessment instead. Changed targets are allowed: the export uses
+the experiment's targets, its preview warns that the results aren't comparable with experiments on the baseline's
+targets, and a field newly made a target gets the leak screen. Each export freezes the baseline and the adjustments as
+they stand, and records them (see [Export](#export--classifierchain) and [MLflow](#mlflow)).
+
 ## Decisions: shared vs per model family
 
 | Shared by every family | Per family (`meta.field_settings`) |
 |---|---|
 | keep / drop / target, semantic type, notes, reviewed | imputation, missing-indicator, transform, scaling, encoding, encoder params |
 
-The top-bar **Model** switch selects which family's settings you're reviewing. It defaults to *Trees*. Each family has
-its own suggestions, so switching never overwrites another family's choices. If you change a field's type, the other
-families' settings are re-derived for the new type.
+A baseline's model type decides which family's settings are reviewed, exported and logged: Review, Bulk edit and the
+decision panel show that family's settings only, and a baseline's snapshot stores only those. Each family has its own
+suggestions. A baseline populated from one of another type copies the shared decisions and keeps the settings that are
+valid for its own type. If you change a field's type, its settings are re-derived for the new type.
 
 | | **Tree ensembles** (default) | Linear models | Neural / distance |
 |---|---|---|---|
@@ -336,7 +374,10 @@ Fields with a ≥ 0.95 association to a target are flagged as **possible leakage
 Four views over one dataset, sharing a toolbar whose state lives in the URL:
 
 * **Data:** *Raw fields* (with a *Kept only* toggle) or a finished export (its train split, features as encoded).
-* **Target:** one of the dataset's targets. Without one, the views that need it say so and link to the target picker.
+* **Decisions** (raw fields): whose keep / drop and types the views use: the current baseline as it stands (your own
+  choices for *Kept only* while you assess it), any finalized baseline, or a team experiment's copy, adjusted or not
+  (`?decisions=` in the URL).
+* **Target:** one of the targets of the decisions in use (an experiment may have its own). Without one, the views that need it say so and link to the target picker.
 * **Sample:** 1k / 5k (default) / 10k / 20k rows, seeded, stratified on a categorical target. Rows with no target
   value are left out.
 
@@ -361,10 +402,13 @@ of failing.
 
 ## Export → ClassifierChain
 
-Exports are built from an experiment's source: a finalized recipe version's snapshot, or for a personal
-experiment its assessor's assessment frozen at export time (see [Experiments](#experiments)). Each export records
-the recipe (`recipe_id`, shown as *recipe vN* in the list) and its experiment, and its manifest's `config` the
-`source` (`recipe` or `assessment`), recipe id and version, `experiment_id` and, for a personal export, `assessor_id`.
+Exports are built from an experiment's source, frozen at export time: a finalized baseline's snapshot (a team
+experiment's adjusted copy of it), or for a personal experiment its assessor's assessment (see
+[Experiments](#experiments)). The model family is always the baseline's. Each export records the baseline
+(`recipe_id`, shown as *Trees v2* in the list, with *N fields adjusted* and *targets changed* when they apply) and its
+experiment, and its manifest's `config` the `source` (`recipe` or `assessment`), `recipe_id` and `recipe_version`,
+`experiment_id`, `baseline` (`recipe_id`, `family`, `version`, `label`), `adjustments` (`count`, `fields`,
+`targets_changed`, `targets`, and `detail`: each adjusted field's changes) and, for a personal export, `assessor_id`.
 
 * **Leakage-safe split:** the train / valid / test split is assigned first, stratified on the target combination
   (single-row combinations are pooled; if the combinations still can't be stratified, on one target, else not at
@@ -385,12 +429,15 @@ the recipe (`recipe_id`, shown as *recipe vN* in the list) and its experiment, a
   they're in the field's own units. A field retyped to date / time has its date format detected once over the whole
   column when you save, so every chunk of the export reads it the same way.
 * **Before you export**, the page summarises what will go in (kept / dropped / targets / customised fields, kept
-  fields by type) and warns about unreviewed fields and kept leakage flags. No
+  fields by type) and warns about unreviewed fields, kept fields that look like a leak of the export's own targets,
+  targets no leak check has run for, and targets that differ from the baseline's. No
   target, no kept features or a single-row target class blocks the export. Once an export exists, it shows how many
   decisions changed since, with *Re-export with same split*. Validation and test share, seed and the fit-row cap are adjustable.
 * **Compatibility:** tree models train on any export. Linear and neural models need an export prepared for their
   family, and they're refused if the export contains NaN. The UI disables incompatible models and shows the reason.
-* **Chain:** `ClassifierChain(model, order=<targets>, cv=5)`, in the dataset's target order unless you choose another
+  Planned models (linear SVM, k-nearest neighbours, convolutional and recurrent networks) are listed as *planned* and
+  can't be trained yet.
+* **Chain:** `ClassifierChain(model, order=<targets>, cv=5)`, in the export's target order unless you choose another
   (the UI offers both orders when there are two targets).
   * The chained feature is **out-of-fold** during training, so a later target's model learns from realistic
     predictions of the earlier ones rather than the ground truth.
@@ -487,19 +534,27 @@ the sign-in page (and back) if it isn't. The server has no published port of its
   `rainforest.dataset_id` tag, so renaming a dataset keeps its experiment), and one MLflow run per model run, named
   `run <id> · <model label>` (e.g. `run 12 · LightGBM`).
 * **Params:** `model`, `order`, `cv`, `seed`, `device`, `chain_method`, `export_family`, `n_train`, `n_features`, and
-  every effective estimator parameter as `estimator.<name>` (defaults, your overrides and the device settings).
+  every effective estimator parameter as `estimator.<name>` (defaults, your overrides and the device settings),
+  `prep.adjusted_fields` (how many fields the experiment adjusted from its baseline), and the export's split:
+  `prep.valid_size`, `prep.test_size`, `prep.split_seed`.
 * **Metrics:** each scalar metric per split and target as `<split>.<target>.<metric>` (e.g. `test.column_a.roc_auc`),
   plus `fit_seconds`. Characters MLflow doesn't allow in a key become `_`.
-* **Artifacts:** `report.json` and `model/classifier_chain.joblib`, the same files the API serves for the run. The
-  server stores them on the `mlartifacts` volume and proxies uploads and downloads, so clients only talk HTTP to it.
+* **Artifacts:** `report.json` and `model/classifier_chain.joblib`, the same files the API serves for the run, and
+  `adjustments.json` (the baseline and the experiment's adjustments, field by field), and
+  `preparation/manifest.json` (the export's manifest: every field's type and settings, the targets and the split), so
+  the run records the full preparation behind it. The server stores them on the
+  `mlartifacts` volume and proxies uploads and downloads, so clients only talk HTTP to it.
 * **Tags:** `rainforest.dataset_id`, `rainforest.dataset_name`, `rainforest.export_id`, `rainforest.recipe_id`
-  and `rainforest.recipe_version` (the recipe version the export was built from), `rainforest.experiment_id` and
+  and `rainforest.recipe_version` (the baseline version the export was built from), `rainforest.baseline` (its label,
+  e.g. `Trees baseline v2`) and `rainforest.baseline_family`, `rainforest.adjusted` (the number of adjusted fields)
+  and `rainforest.targets_changed` (`true` when the experiment's targets differ from the baseline's),
+  `rainforest.experiment_id` and
   `rainforest.experiment_name` (the Rainforest experiment), `rainforest.run_id`, `rainforest.model`,
   `rainforest.model_family` (the family the export was prepared for), `rainforest.user` (who started the run), and
   `rainforest.git_sha` with `mlflow.source.git.commit` when the image was built with `GIT_SHA` (`make up` passes the
   checkout's commit).
 * **Private experiments wait.** MLflow has no access control of its own: anyone who can sign in to Rainforest can
-  browse everything in it. So a run in a [private experiment](#experiments) is not logged while its recipe version
+  browse everything in it. So a run in a [private experiment](#experiments) is not logged while its baseline version
   is assessing (the runs table shows *after review*); when review opens, those runs are logged, and runs that finish
   after that are logged at once. The API also flushes any still waiting when it starts.
 * **Links:** the runs table has an *MLflow ↗* link per logged run, and the run's detail links to it too; an
@@ -530,33 +585,36 @@ second statement is refused however it's written, and only the rows shown (up to
 -- all text fields
 SELECT name, null_pct, avg_length FROM meta.v_fields WHERE dataset_id = 1 AND inferred_type = 'text';
 
--- fields with more than 20% missing that the team keeps
+-- fields with more than 20% missing that the team keeps in the baseline in progress
 SELECT name, null_pct, imputation FROM meta.v_fields WHERE dataset_id = 1 AND null_pct > 0.2 AND action = 'keep';
 
--- how one field is prepared for each model family
-SELECT family, imputation, transform, scaling, encoding, source FROM meta.v_field_settings WHERE field_id = 42;
+-- how the baseline in progress prepares one field
+SELECT s.family, imputation, transform, scaling, encoding, source
+FROM meta.v_field_settings s JOIN meta.datasets d ON d.id = s.dataset_id
+WHERE s.field_id = 42 AND s.family = d.model_family;
 
--- compare trained models on the test split
-SELECT model, target, metric, value FROM meta.v_model_metrics
+-- compare trained models on the test split, by baseline
+SELECT baseline_family, baseline_version, experiment_id, model, target, metric, value FROM meta.v_model_metrics
 WHERE dataset_id = 1 AND split = 'test' AND metric IN ('roc_auc', 'roc_auc_ovr_macro') ORDER BY target, value DESC;
 ```
 
 | Table / view | Contents |
 |---|---|
-| `meta.datasets` | uploads: status, progress, counts, targets, active `model_family` |
+| `meta.datasets` | uploads: status, progress, counts, targets, `model_family` (the current baseline's) |
 | `meta.fields` | inferred type, confidence and reasons, typed statistics, `leakage_flag`, `stats` / `charts` / per-family `suggestion` JSONB |
-| `meta.field_decisions` | shared decision per field (keep / drop / target, type, notes, reviewed) |
+| `meta.field_decisions` | the team decision per field of the baseline in progress (keep / drop / target, type, notes, reviewed) |
 | `meta.field_settings` | preprocessing per field **per model family** |
 | `meta.decision_history` | append-only audit log of every change (with family, `user_id` and, for bulk edits, `batch_id`) |
 | `meta.bulk_batches` | each applied bulk edit: summary and a pre-change snapshot used by undo |
 | `meta.field_correlations` | pairwise associations (one row per unordered pair) |
 | `meta.users` | users: name, email, role (`lead` / `member`), active, OIDC subject, last seen |
-| `meta.recipes` | recipe versions per dataset: phase (`assessing` / `review` / `finalized`), `scope` (`all` / `reopened`), who finalized it, the frozen `snapshot`, and `reuse` (the summary when it started from a recipe) |
+| `meta.recipes` | baseline versions per dataset: `family` (`tree` / `linear` / `neural`), `version` (counted per family), phase (`assessing` / `review` / `finalized`), `scope` (`all` / `reopened`), who finalized it, the frozen `snapshot`, and `reuse` (the summary when it started from another dataset's baseline) |
 | `meta.recipe_reopened` | the fields a `reopened` version works on |
-| `meta.experiments` | experiments per dataset: name, owner, `source` (`recipe:<id>` or `assessment:<recipe id>:<user id>`), notes, archived |
+| `meta.experiments` | experiments per dataset: name, owner, `source` (`recipe:<id>` or `assessment:<recipe id>:<user id>`), `is_default` (a baseline version's **Team ·** experiment), `target_order`, notes, archived |
+| `meta.experiment_decisions`, `meta.experiment_settings`, `meta.experiment_batches` | each team experiment's own copy of its baseline (decisions, its model family's settings) and its bulk edits; fields that differ from the baseline's snapshot are its adjustments |
 | `meta.exports`, `meta.model_runs` | export jobs; training runs with metrics and report; each with its `experiment_id` |
 | `meta.analyses` | Explore jobs (map, tests, importance): params, data version, status, result JSONB |
-| `meta.v_field_profiles`, `meta.v_fields`, `meta.v_field_settings`, `meta.v_correlations`, `meta.v_model_metrics` | query-friendly views (`v_fields` and `v_field_settings` show the team decision) |
+| `meta.v_field_profiles`, `meta.v_fields`, `meta.v_field_settings`, `meta.v_correlations`, `meta.v_model_metrics` | query-friendly views (`v_fields` and `v_field_settings` show the team decision of the baseline in progress; `v_field_profiles` and `v_fields` carry its `baseline_family` and `baseline_version`, and `v_model_metrics` each run's `experiment_id` and the `baseline_family` and `baseline_version` its export was built from) |
 | `raw.ds_<id>` | the uploaded data (sanitized column names; see `meta.fields.db_column`) |
 
 Assessments are private while a dataset is assessed, so the console's role can't read `meta.assessments`,
@@ -637,7 +695,8 @@ make sample-csv
 **Tests** live in `api/tests`. Most need no database, including the pick-mode sign-in and request-check tests in
 `test_auth.py` and the OIDC redirect and ID-token checks in `test_oidc.py` (against an in-process provider,
 `tests/oidc_provider.py`). The API tests in `test_explore.py`, `test_sql_console.py`, `test_data_correctness.py`,
-`test_api_cleanup.py`, `test_users.py`, `test_team.py`, `test_recipes.py`, `test_experiments.py` and the OIDC
+`test_api_cleanup.py`, `test_users.py`, `test_team.py`, `test_recipes.py`, `test_baselines.py`,
+`test_experiments.py`, `test_adjustments.py` and the OIDC
 sign-in flows in `test_oidc.py`, and the job tests in `test_jobs.py`, run against an empty Postgres and skip unless `RAINFOREST_TEST_DATABASE_URL` is set; the API tests
 sign in with the `login_as(client, role)` fixture in `conftest.py`.
 `test_mlflow.py` logs to a temporary file store, so it needs no server; its database-backed tests follow the same

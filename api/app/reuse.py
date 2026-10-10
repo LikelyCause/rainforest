@@ -10,7 +10,7 @@ from fastapi import HTTPException
 
 from . import recipes
 from .db import jsonb
-from .semantics import FAMILIES, target_problem, validate_decision
+from .semantics import target_problem, validate_decision
 
 # A matched field has drifted when its share of missing values moves by more than this (absolute, 0-1) ...
 NULL_PCT_DRIFT = 0.10
@@ -51,15 +51,12 @@ def match(snap: dict, fields: list[dict]) -> dict:
     return {"carried": carried, "reopened": reopened, "missing": [n for n in recipe_fields if n not in names]}
 
 
-def _settings_problem(entry: dict, n_unique: int | None) -> list[str]:
-    errors = []
-    for fam in FAMILIES:
-        s = entry["settings"].get(fam)
-        if s is None:
-            errors.append(f"no {fam} settings")
-            continue
-        errors += validate_decision({**entry["decision"], **s}, fam, n_unique=n_unique)
-    return errors
+def _settings_problem(entry: dict, family: str, n_unique: int | None) -> list[str]:
+    """Why a field's settings for the baseline's family can't be carried as they are."""
+    s = entry["settings"].get(family)
+    if s is None:
+        return [f"no {family} settings"]
+    return validate_decision({**entry["decision"], **s}, family, n_unique=n_unique)
 
 
 def apply(conn, recipe: dict, source: dict, user_id: int) -> tuple[dict, list[int], list[dict]]:
@@ -69,7 +66,7 @@ def apply(conn, recipe: dict, source: dict, user_id: int) -> tuple[dict, list[in
 
     Returns the summary, plus what `fields.set_targets` reports (new targets, targets lacking associations) for the
     caller to start the matching jobs. Call holding the recipe row lock."""
-    from .routers.fields import _active_family, _merged_many, _write_history, set_targets
+    from .routers.fields import _merged_many, _write_history, set_targets
 
     dataset_id = recipe["dataset_id"]
     snap = conn.execute("SELECT snapshot FROM meta.recipes WHERE id = %s", (source["id"],)).fetchone()["snapshot"]
@@ -85,12 +82,15 @@ def apply(conn, recipe: dict, source: dict, user_id: int) -> tuple[dict, list[in
         if entry["decision"]["action"] == "target" and (p := target_problem(entry["decision"]["semantic_type"],
                                                                             by_name[name]["n_unique"])):
             m["reopened"].append({"name": name, "reason": "target", "problem": p})
-        elif errors := _settings_problem(entry, by_name[name]["n_unique"]):
+        elif errors := _settings_problem(entry, source["family"], by_name[name]["n_unique"]):
             m["reopened"].append({"name": name, "reason": "settings", "problem": "; ".join(errors[:3])})
         else:
             carried.append(name)
 
-    fam = _active_family(dataset_id)
+    # The new dataset's baseline is for the source's model family.
+    fam = source["family"]
+    conn.execute("UPDATE meta.recipes SET family = %s WHERE id = %s", (fam, recipe["id"]))
+    conn.execute("UPDATE meta.datasets SET model_family = %s, updated_at = now() WHERE id = %s", (fam, dataset_id))
     ids = [f["id"] for f in fields]
     before = _merged_many(conn, ids, fam)
     for name in carried:
@@ -107,6 +107,8 @@ def apply(conn, recipe: dict, source: dict, user_id: int) -> tuple[dict, list[in
             {"action": dec["action"], "type": dec["semantic_type"], "notes": dec.get("notes"), "fid": fid},
         )
         for family, s in entry["settings"].items():
+            if family != fam:
+                continue
             conn.execute(
                 """UPDATE meta.field_settings
                       SET imputation = %s, impute_value = %s, add_missing_indicator = %s, transform = %s, scaling = %s,
@@ -145,7 +147,7 @@ def apply(conn, recipe: dict, source: dict, user_id: int) -> tuple[dict, list[in
     ds = conn.execute("SELECT name FROM meta.datasets WHERE id = %s", (source["dataset_id"],)).fetchone()
     order = {f["name"]: i for i, f in enumerate(fields)}
     summary = {
-        "source": {"recipe_id": source["id"], "dataset_id": source["dataset_id"],
+        "source": {"recipe_id": source["id"], "dataset_id": source["dataset_id"], "family": source["family"],
                    "dataset_name": ds["name"] if ds else None, "version": source["version"]},
         "carried": carried,
         "reopened": sorted(m["reopened"], key=lambda r: order[r["name"]]),

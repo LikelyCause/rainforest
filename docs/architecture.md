@@ -25,10 +25,11 @@ for one run.
 | `main.py` | App, middleware (gzip for API responses, not file downloads; CORS for the Vite dev server), router registration, `/health`, `/api/options`. Startup loads the session secret, runs `db.bootstrap()` and `jobs.start()`, removes orphaned uploads, queues `experiments.startup_flush` (MLflow logging of runs that waited for review) and starts GPU detection. |
 | `auth.py` | Sign-in routes (`/api/auth/*`: config, me, check, logout, pick mode's users and pick, and the OIDC login / callback), the signed session cookie, the session secret, `SecurityMiddleware`, and the `current_user` / `require_lead` dependencies. |
 | `oidc.py` | The OIDC relying party: discovery and JWKS (cached; an unknown key id refetches), the authorization URL with PKCE, the code exchange, ID token verification, role from the groups claim. Uses httpx and PyJWT. |
-| `recipes.py` | Recipe versions of a dataset: the current one (with the row lock phase changes and decision writes take), the latest finalized one, creating v1 and the next version, which fields a version works on (`open_field_ids`) and the lock on the rest (`locked_problem`), the snapshot and schema fingerprint, finalizing, snapshotting versions migrated without one, the export spec rows read from a snapshot (`spec_rows`, `snapshot_targets`) and the diff between two snapshots. |
-| `reuse.py` | Reusing a finalized recipe on new data: the drift rule, matching by name (`match`), and `apply`, which carries fields into the team decision, sets the targets and records the reopened fields and the summary. |
-| `experiments.py` | Experiments and who sees them: `visible_ids(user_id)` (the SQL every list and lookup of experiments, exports and runs filters on), `get_visible` (`404` for a private one), the add / edit rules, creating one, the per-version Team experiment (`team_for`), the list with counts and the best run, and MLflow deferral (`run_is_private`, `flush_deferred`). |
-| `assessment.py` | Blind assessment: `Source` (whose decisions a request sees: the team's or one assessor's, as SQL relations shaped like `field_decisions`, `field_settings` and `v_fields`, plus whether it may write), `source_for`, the write helpers both kinds share, seeding assessors, progress, the adoption rule (`adopt`, `disagreements`), and `personal_snapshot` (one assessor's assessment shaped like a recipe snapshot, carried fields from the team decision). |
+| `recipes.py` | Baselines (rows of `meta.recipes`, one per version of one model family): `FAMILY_LABEL` and `label` (`Trees baseline v2`), the current version (the latest started, with the row lock phase changes and decision writes take), the latest finalized one (of a family), creating the first and the next version (`create_first`, `start_version`, `next_version`), the one-in-progress rule (`require_none_in_progress`, serialised by `lock_dataset`), `is_setup`, `load_working` (makes the working tables a baseline's starting point), which fields a version works on (`open_field_ids`) and the lock on the rest (`locked_problem`), the snapshot and schema fingerprint, finalizing, snapshotting versions migrated without one, the export spec rows read from a snapshot (`spec_rows`, `snapshot_targets`) and the diff between two snapshots. |
+| `reuse.py` | Reusing a finalized baseline on new data: the drift rule, matching by name (`match`), and `apply`, which gives the new baseline the source's family, carries fields into the team decision, sets the targets and records the reopened fields and the summary. |
+| `experiments.py` | Experiments and who sees them: `visible_ids(user_id)` (the SQL every list and lookup of experiments, exports and runs filters on), `get_visible` (`404` for a private one), the add / edit / adjust rules (`adjust_denied`, `can_adjust`), creating one, the per-version default Team experiment (`team_for`), a team experiment's copy of its baseline (`seed_copy`, `backfill_copies`), what an export of it is built from (`snapshot_for`), its `adjustments` and `revert`, the list with counts, adjustments and the best run, and MLflow deferral (`run_is_private`, `flush_deferred`). |
+| `assessment.py` | Decision sources and blind assessment: `Source` (whose decisions a request sees, as SQL relations shaped like `field_decisions`, `field_settings` and `v_fields`, plus whether it may write; see [Team process](#team-process)), `source_for` (with `view` for an experiment or a finalized baseline), `from_key` / `key_owner` for stored source keys, the write helpers every writable kind shares, seeding assessors, progress, the adoption rule (`adopt`, `disagreements`), and `personal_snapshot` (one assessor's assessment shaped like a snapshot, carried fields from the version's own values). |
+| `leakage.py` | `leak_names`: the fields whose stored association with any of a given set of targets reaches the leakage threshold, for sources whose targets aren't the working copy's (export previews, experiment and baseline views). |
 | `users.py` | User queries: the per-request session lookup, OIDC provisioning, Team edits (with the last-lead guard and session-version bumps). |
 | `config.py` | `Settings` (pydantic-settings, read from the environment). |
 | `db.py` | Connection pools (the app's, and a small one for the console's read-only role), query helpers, migrations, read-only role setup. |
@@ -44,7 +45,7 @@ for one run.
 | `modeling/mlflow_log.py`, `modeling/mlflow_backfill.py` | Logging a finished model run to MLflow (experiment per dataset, params, metrics, tags, artifacts), and the CLI that logs runs that have no MLflow run yet. |
 | `gpu.py` | NVIDIA GPU detection (`nvidia-smi` plus an XGBoost CUDA test fit in a subprocess), started in a background thread at startup and cached per process. |
 | `analysis/prep.py`, `analysis/compute.py`, `analysis/runner.py` | Explore jobs: sampling and typing, the numeric work, caching and job lifecycle. |
-| `routers/*.py` | HTTP endpoints, one module per area (datasets, fields, query, exports, runs, experiments, explore, users, team, recipes). `routers/team.py` holds the phase transitions: assigning, submitting, opening review (adoption), the queue, comments and finalizing; `routers/recipes.py` the finalized recipes across datasets, the version history, diffs, starting a new version and applying a recipe. |
+| `routers/*.py` | HTTP endpoints, one module per area (datasets, fields, query, exports, runs, experiments, explore, users, team, recipes, baselines). `routers/team.py` holds the phase transitions: assigning, submitting, opening review (adoption), the queue, comments and finalizing; `routers/baselines.py` listing a dataset's baselines and starting one (scratch, another baseline, another dataset's); `routers/recipes.py` the finalized baselines across datasets, the version history, diffs, starting a new version and applying another dataset's baseline. |
 | `sample_data.py` | Synthetic dataset generator (also a CLI: `python -m app.sample_data`). |
 | `schemas.py` | Request bodies and query models. |
 
@@ -52,27 +53,30 @@ for one run.
 
 | Path | Responsibility |
 |---|---|
-| `App.tsx` | Routes, the sign-in gate (`RequireAuth`), and the top bar (dataset switcher, workflow steps, Model switch, Team, the user and role, Sign out). |
+| `App.tsx` | Routes, the sign-in gate (`RequireAuth`), and the top bar (dataset switcher, workflow steps, the baseline chip, which names the experiment instead in experiment mode, Team, the user and role, Sign out). |
 | `api.ts`, `types.ts` | Typed fetch client for every endpoint; response types. Any `401` (fetch or the upload XHR) sends the user to `/login?next=<current path>`. |
-| `hooks.ts` | Shared queries (`useMe`, `useDataset`, `useFields`, `useOptions`, `useTeam`), `useAccess` (wraps `accessOf`), `PROCESSING` (the dataset statuses still processing) and `useDebounced`. |
-| `saveQueue.ts` | Review decision saves: one serial lane per field, latest draft wins, failures surface with Retry, flushes on page hide. |
-| `pages/` | `LoginPage` (user picker or *Sign in with …*), `ForbiddenPage` (OIDC user in neither group, or deactivated), `TeamPage` (users), `DatasetsPage`, `ReviewPage`, `BulkEditPage`, `ExplorePage`, `ExperimentsPage` (the list with its filters and the *New experiment* dialog; `ExperimentPage`, one experiment's header, notes and archive, around `ExperimentWorkspace`), `ExperimentWorkspace` (the export build panel, exports and runs of one experiment), `DatasetTeamPage` (a dataset's assessors and your assessment while assessing; the review queue, side-by-side comparison, comments, team decision and Finalize from review on), `VersionsPage` (version history, comparing two versions, starting the next version with its field picker, starting from a recipe). |
-| `components/` | `DatasetLayout` (gates dataset pages on status), `FieldList`, `FieldDetailView`, `DecisionPanel`, `RunDetail`, `Chart`, `ReuseCard` (the reuse summary), `ui.tsx` (error alert, empty state, status glyphs, review meter), `Logo`; `components/explore/` holds the four Explore views, their shared state (`state.tsx`) and chart options (`options.ts`). |
+| `hooks.ts` | Shared queries (`useMe`, `useDataset`, `useFields` (per view), `useOptions`, `useTeam`, `useExperiment`), `useAccess(ds, view)` (wraps `accessOf`; in an experiment or a finalized baseline it answers from the view), `PROCESSING` (the dataset statuses still processing) and `useDebounced`. |
+| `saveQueue.ts` | Review decision saves: one serial lane per field and view, latest draft wins, failures surface with Retry, flushes on page hide. |
+| `view.ts` | The decision source Review, Bulk edit and the finder work on, carried as `?view=` (`experiment:<id>`, `baseline:<id>`; none for the baseline in progress): `useView`, `parseView`, `withView`, and the query-key part `viewKey`. |
+| `pages/` | `LoginPage` (user picker or *Sign in with …*), `ForbiddenPage` (OIDC user in neither group, or deactivated), `TeamPage` (users), `DatasetsPage`, `ReviewPage`, `BulkEditPage`, `ExplorePage`, `ExperimentsPage` (the list with its filters and the *New experiment* dialog; `ExperimentPage`, one experiment's header, notes and archive, around `ExperimentWorkspace`), `ExperimentWorkspace` (the export build panel, exports and runs of one experiment), `DatasetTeamPage` (setting up a new dataset's first baseline; a dataset's assessors and your assessment while assessing; the review queue, side-by-side comparison, comments, team decision and Finalize from review on), `BaselinesPage` (one card per baseline with its version history, starting a baseline, starting the next version with its field picker, comparing two versions). `ExperimentPage` also holds the Adjustments card (per-field revert). |
+| `components/` | `DatasetLayout` (gates dataset pages on status), `FieldList`, `FieldDetailView`, `DecisionPanel` (in an experiment, what differs from the baseline and *Revert to baseline*), `StartBaseline` (the start / set-up form: model type, start from, targets, assessors), `ExperimentModeBar` (the bar Review and Bulk edit show under a `view`), `JoinAssessment` (*Assess it myself*), `RunDetail`, `Chart`, `ReuseCard` (the reuse summary), `ui.tsx` (error alert, empty state, status glyphs, review meter), `Logo`; `components/explore/` holds the four Explore views, their shared state (`state.tsx`) and chart options (`options.ts`). |
 | `signals.ts`, `format.ts`, `theme.ts`, `charts.ts`, `toast.tsx` | Field signal thresholds, formatting and labels, chart theme, shared chart options, toasts. |
 | `main.tsx`, `styles.css` | Entry point (query client, providers) and global styles. |
-| `decision.ts`, `finder.ts`, `runs.ts`, `team.ts`, `recipes.ts`, `experiments.ts`, `components/explore/params.ts` | Pure logic behind the pages: retyping a draft and encoder-param checks, Bulk edit's presets and URL state, run ranking, the experiment list filters, source options and labels, privacy notes and who may edit or add, what the viewer may edit in each phase (`accessOf`, used through `useAccess`) and the review queue's helpers, the reuse summary's grouping and reasons, diff formatting and the reopen picker's filter, Explore's URL state. |
+| `decision.ts`, `finder.ts`, `runs.ts`, `team.ts`, `recipes.ts`, `baselines.ts`, `experiments.ts`, `components/explore/params.ts` | Pure logic behind the pages: retyping a draft and encoder-param checks, Bulk edit's presets and URL state, run ranking, what the viewer may edit in each phase (`accessOf`, used through `useAccess`) and the review queue's helpers, the reuse summary's grouping and reasons, diff formatting and the reopen picker's filter, the start form's defaults and target rule, the experiment list filters, source options and labels, privacy notes, who may edit or add, and a field's differences from its baseline (`baselineDiff`, `revertedInput`), Explore's URL state. |
 
 Routes: `/login`, `/forbidden`, `/` (datasets), `/team`, `/d/:id/review/:fieldId?`, `/d/:id/bulk`,
-`/d/:id/explore/:view?`, `/d/:id/team` (`?field=` selects a queue item), `/d/:id/versions`, `/d/:id/experiments`,
-`/d/:id/experiments/:experimentId`. `/d/:id` redirects to Review, `/d/:id/query` to Bulk edit and `/d/:id/export` to
-the experiments list; anything else shows *Page not found*. The top bar's step is *Experiments* rather than a default experiment's
-*Export & train*: while a version is assessing there is no finalized recipe and so no team experiment to land in, and
-the experiments an assessor can use then are personal ones that only the list shows.
+`/d/:id/explore/:view?` (`?decisions=` picks the decision source), `/d/:id/team` (`?field=` selects a queue item),
+`/d/:id/baselines`, `/d/:id/experiments`, `/d/:id/experiments/:experimentId`. Review and Bulk edit take `?view=`.
+`/d/:id` redirects to Review, `/d/:id/query` to Bulk edit, `/d/:id/versions` to Baselines and `/d/:id/export` to the
+experiments list; anything else shows *Page not found*. The top bar's step is *Experiments* rather than a default
+experiment's *Export & train*: while a dataset's first baseline is assessing there is no finalized baseline and so no
+team experiment to land in, and the experiments an assessor can use then are personal ones that only the list shows.
 
-Review, Bulk edit and the decision panel don't know about phases beyond `useAccess(ds)`: it says whether the viewer
-works on their own assessment or the team decision and whether they can edit, and the panel turns read-only with
-the reason when they can't. A carried-over field arrives with `locked` (the reason) on its field detail, which the
-Review page passes to the panel as its read-only note.
+Review, Bulk edit and the decision panel don't know about phases beyond `useAccess(ds, view)`: it says whether the
+viewer works on their own assessment, the team decision, an experiment's copy or a finalized baseline, and whether
+they can edit, and the panel turns read-only with the reason when they can't. Every query and save they make passes
+the view on. A carried-over field arrives with `locked` (the reason) on its field detail, which the Review page passes
+to the panel as its read-only note.
 
 ## Request and data flow
 
@@ -138,24 +142,26 @@ the UI polls (`pending → running → done | failed`, with `progress` and `stat
    job computes theirs. Added targets also get the leak screen against text and high-cardinality fields: inside
    `correlate_targets` when that job runs, otherwise as a `fields.screen_targets` job that leaves the dataset
    `ready`. A target chosen in Review (`PUT …/decision`) gets the same job.
-4. **Review.** `GET /api/fields/{id}` returns the field, the viewer's decision merged with the active family's
-   settings, and target associations. `PUT /api/fields/{id}/decision` validates against the family, writes the
-   decision and settings, re-derives other families' settings on a type change and, for the team decision only,
-   appends `meta.decision_history` and keeps the target state in step. See [Team process](#team-process) for whose
-   decision that is.
+4. **Review.** `GET /api/fields/{id}` returns the field, the viewer's decision merged with the baseline family's
+   settings, and target associations. `PUT /api/fields/{id}/decision` validates against the family (a type change
+   whose settings don't fit takes the new type's suggestion), writes the decision and settings and, for the team
+   decision only, appends `meta.decision_history` and keeps the target state in step. See
+   [Team process](#team-process) for whose decision that is.
 5. **Bulk edit.** The field filter compiles to a `WHERE` over the viewer's `fields_view()` (`meta.v_fields` for the
    team decision; `query.fields_where`, a whitelist of columns and operators). `POST …/decisions/bulk` resolves and locks the set in one statement, plans per-field
    changes, and either returns the plan (`dry_run`) or applies it, storing a pre-change snapshot in
-   `meta.bulk_batches` (an assessor's in `meta.assessment_batches`) for undo.
+   `meta.bulk_batches` (an assessor's in `meta.assessment_batches`, an experiment's in `meta.experiment_batches`) for
+   undo.
 6. **SQL console.** `POST /api/sql` takes a connection from the `rainforest_ro` pool (`SQL_POOL_MAX`; `503` when
    busy), opens a `READ ONLY` transaction with `SET LOCAL statement_timeout`, and runs the text as a named
    server-side cursor. psycopg sends the `DECLARE` over the extended protocol, so Postgres rejects a second statement
    and `DECLARE` accepts only a query; a single `FETCH` pulls `SQL_MAX_ROWS + 1` rows to detect truncation. The
    transaction is always rolled back, and the pool runs `DISCARD ALL` before reusing the connection, so settings or
    advisory locks taken by a query don't carry over.
-7. **Export.** `POST …/exports` resolves the experiment (given, or the version's Team experiment) and the snapshot it
-   builds from (`exports._plan`: a finalized version's stored snapshot, or `assessment.personal_snapshot` for a
-   personal experiment, which the export row stores in `exports.snapshot`), checks the preview's blocking issues and
+7. **Export.** `POST …/exports` resolves the experiment (given, or the version's default Team experiment) and the
+   snapshot it builds from (`experiments.snapshot_for`: a finalized version's stored snapshot, a team experiment's copy
+   with its adjustments, or `assessment.personal_snapshot` for a personal experiment), stores it in
+   `exports.snapshot` with the baseline and adjustments in `exports.config`, checks the preview's blocking issues and
    submits `exports._run`, which reads that snapshot, calls
    `transform.run_export` and writes `exports/<id>/{model_ready.parquet, preprocessor.joblib, manifest.json}`.
 8. **Training.** `POST /api/exports/{id}/runs` checks model compatibility and the requested device (see `gpu.py`) and submits `runs._run`, which calls
@@ -177,16 +183,41 @@ the UI polls (`pending → running → done | failed`, with `progress` and `stat
 
 ## Team process
 
-A dataset's decisions are versioned as **recipes** (`meta.recipes`, `recipes.py`); the latest version is the current
-one and moves `assessing → review → finalized`. `meta.field_decisions` / `meta.field_settings` hold the team's working
-decision for it. Every route that touches decisions starts from `assessment.source_for(conn, dataset_id, user)`:
+A dataset's decisions are **baselines** (`meta.recipes`, `recipes.py`): one line per model family (`family`: `tree`,
+`linear`, `neural`), each versioned (`version` counts per family, unique per dataset and family). Each version moves
+`assessing → review → finalized`, and at most one version per dataset is in progress (`assessing` or `review`):
+starting a baseline or a version checks the current one is finalized (`recipes.require_none_in_progress`, under a lock
+on the dataset row). The current version is the latest started (highest id).
 
-* **assessing**, viewer assigned: a personal `Source` whose relations read `meta.assessments` /
-  `meta.assessment_settings` for that recipe and user. Reads and writes go there; no history, no target sync, no
+**The working copy.** `meta.field_decisions` / `meta.field_settings` hold the team decision of the current version
+only. Starting any baseline or version first loads them from its starting point with `recipes.load_working`: the
+source snapshot's decisions and its settings for the new family where they are valid (else the family's suggestion),
+or the suggestions from scratch, plus the targets; it also sets `meta.datasets.model_family`, which the server keeps
+as the current baseline's family (a `PATCH` naming another is refused). So the working tables never carry another
+baseline's choices, and everything finalized is read from snapshots. A snapshot stores the settings of its own
+family only. A new dataset's first baseline (Trees v1, created by the upload) is *set up* while nobody has worked on
+it (`recipes.is_setup`: v1, assessing, no parent, no reuse, no assessors or assessments, no other version):
+`POST …/baselines` then changes its family, starting point and targets on that row instead of starting a new one.
+
+**Sources.** Every route that touches decisions starts from `assessment.source_for(conn, dataset_id, user, view=…)`,
+which returns a `Source` of one of four kinds, each a set of SQL relations shaped like `field_decisions`,
+`field_settings` and `v_fields`, a stored key, and the reason writes are refused (or none):
+
+* **team** (`team`): the working tables. While **assessing** it is read-only for everyone but is still the starting
+  point plus the targets, so reading it reveals nobody's choices; in **review** leads write it; **finalized**:
+  read-only.
+* **assessment** (`assessment:<recipe_id>:<user_id>`): while assessing, for an assigned viewer, `meta.assessments` /
+  `meta.assessment_settings` for that version and user. Reads and writes go there; no history, no target sync, no
   stored date format (those would show the choice to others). A submitted assessor's source refuses writes.
-* **assessing**, anyone else: the team source, read-only. The team decision is still the suggestions plus the
-  targets, so reading it reveals nobody's choices.
-* **review**: the team source; writable by leads. **finalized**: read-only.
+* **experiment** (`experiment:<id>`, from `view`): a team experiment's own copy (`meta.experiment_decisions` /
+  `meta.experiment_settings`), writable by its owner only (`experiments.adjust_denied`). No history, no target sync on
+  the dataset; a target change updates the experiment's `target_order`.
+* **baseline** (`baseline:<recipe_id>`, from `view`): a finalized version's snapshot, read through `jsonb_each`;
+  never writable.
+
+Without a `view`, the team or assessment source follows from the phase and the viewer, as above. Experiment and
+baseline sources take their targets from their own decisions, and their leak flags from `leakage.leak_names` against
+those targets, rather than the dataset's stored flags.
 
 Writers lock the recipe row `FOR SHARE` and phase changes take it `FOR UPDATE`, so a save can't land in a phase it
 wasn't checked against. Assigning seeds the assessor from the team decision (`assessment.seed`). The submit that
@@ -194,45 +225,74 @@ completes the set (or the unassign that does) calls `team.open_review`: `assessm
 action and type from everyone → adopted, settings by most common choice per family with ties going to the
 suggestion), adopted fields are written to the team decision as reviewed with history attributed to the actor, the
 rest are marked unreviewed and are the queue, and target changes go through `_sync_targets` and the leak screen.
-Finalizing writes `recipes.snapshot` and the schema fingerprint; a trigger refuses any later update of a finalized
-row that has a snapshot.
+Finalizing writes `recipes.snapshot` (the baseline's family's settings only) and the schema fingerprint; a trigger
+refuses any later update of a finalized row that has a snapshot.
 
 Blindness outside the routes: the console role is denied every table in `db.PRIVATE_TABLES` (bootstrap grants
 `SELECT` on all of `meta` and then revokes these, every start), and `meta.analyses` has row-level security so that
 role sees only team results. Explore keys raw-data results by decision source (`params.decisions`), so the cache never
-returns one person's result to another, and `GET /api/analyses/{id}` hides others' personal results.
+returns one person's result to another, and `GET /api/analyses/{id}` hides others' personal results and results on
+an experiment the viewer can't see.
 
-**Versions.** `POST …/recipes` calls `recipes.start_version` for vN+1 from a finalized vN. A version's `scope` says
-which fields it works on: `all`, or `reopened` with the fields in `meta.recipe_reopened`
-(`recipes.open_field_ids`). Everything else is carried over: the team decision already holds vN's values (it is what
-vN's snapshot was taken from), and every write path refuses carried fields through `recipes.locked_problem` (single
-saves, bulk edits, which filter them out, bulk undo and target changes), whoever writes. Assessments are keyed by
-recipe id, so a new version starts clean; `assessment.seed` copies the team decision with carried fields already
-reviewed, and progress, the submit rule, adoption, the queue and the review summary all count only the open fields.
-A version with nothing reopened starts in `review` with scope `all`: the lead edits the team decision (history
-records it) and finalizes. Diffs (`recipes.diff`) compare snapshots; a version still being worked is compared through
-`recipes.snapshot_of`, which builds the snapshot from the team decision, never from assessments.
+**Starting.** `POST …/baselines` (`routers/baselines.py`) starts or sets up a baseline from scratch, from a finalized
+baseline of the same dataset (recorded as `parent_id`; scope `all`, every field assessed), or for a set-up first
+baseline from another dataset's (`reuse.apply`, below), then assigns and seeds the chosen assessors.
+
+**Versions.** `POST …/recipes` calls `recipes.start_version` for vN+1 of a family from its latest finalized version,
+whose snapshot `load_working` puts into the working tables with every field reviewed. A version's `scope` says which
+fields it works on: `all`, or `reopened` with the fields in `meta.recipe_reopened` (`recipes.open_field_ids`).
+Everything else is carried over: the team decision holds vN's values, and every write path refuses carried fields
+through `recipes.locked_problem` (single saves, bulk edits, which filter them out, bulk undo and target changes),
+whoever writes. Assessments are keyed by recipe id, so a new version starts clean; `assessment.seed` copies the team
+decision with carried fields already reviewed, and progress, the submit rule, adoption, the queue and the review
+summary all count only the open fields. A version with nothing reopened starts in `review` with scope `all`: the lead
+edits the team decision (history records it) and finalizes. Diffs (`recipes.diff`) compare snapshots (decisions only
+between families); a version still being worked is compared through `recipes.snapshot_of`, which builds the snapshot
+from the team decision, never from assessments.
 
 **Reuse.** `reuse.apply` matches a finalized snapshot onto a new dataset's fields by name (`reuse.match`, drift in
-`reuse.drift`), writes carried fields' decisions, settings and notes into the team decision (with history), sets the
-still-valid targets through `fields.set_targets`, records the reopened fields and the summary (`recipes.reuse`) and
-sets `parent_id` to the source recipe. With nothing reopened the version moves to `review`. It runs from
-`POST …/recipes/apply`, or inside `processing.process_dataset` before the dataset turns ready when the upload named a
-recipe (stored as the new v1's `parent_id` until then). `parent_id` is `ON DELETE SET NULL` so a source dataset can be
-deleted; the frozen-row trigger lets exactly that change through, and the summary keeps the provenance.
+`reuse.drift`), gives the dataset's first baseline the source's family, writes carried fields' decisions, settings
+(that family's) and notes into the team decision (with history), sets the still-valid targets through
+`fields.set_targets`, records the reopened fields and the summary (`recipes.reuse`) and sets `parent_id` to the source
+baseline. With nothing reopened the version moves to `review`. It runs from `POST …/recipes/apply`, `POST …/baselines`
+with `start: recipe`, or inside `processing.process_dataset` before the dataset turns ready when the upload named a
+baseline (`recipe_id`, stored as the new v1's `parent_id` until then). `parent_id` is `ON DELETE SET NULL` so a source
+dataset can be deleted; the frozen-row trigger lets exactly that change through, and the summary keeps the provenance.
 
-**Exports** read a snapshot through `recipes.spec_rows` (decision and the family's settings per field, with the
-dataset's stored date formats) in both the preview and `exports._run`: a team export its finalized version's
-snapshot (`exports.export_source`: the requested one, else the latest finalized), so nothing on that path reads
-`field_decisions` / `field_settings`; a personal export the snapshot frozen into the export row when it was
-requested. MLflow runs are tagged with the export's recipe id and version and its experiment.
+**Exports** read a snapshot through `recipes.spec_rows` (decision and the baseline family's settings per field, with
+the dataset's stored date formats) in both the preview and `exports._run`, always for the baseline's own family:
+the preview from `experiments.snapshot_for` (or a version's snapshot: the requested one, else the latest finalized of
+the current family, else of any), the export from the snapshot frozen into its row when it was requested. Nothing on
+that path reads `field_decisions` / `field_settings`. The preview checks leakage against the snapshot's own targets
+(`leakage.leak_names`), names targets with no stored associations, and for a team experiment warns when its targets
+differ from its baseline's. MLflow runs are tagged with the export's baseline (id, version, label, family), its
+experiment and its adjustments (`rainforest.adjusted`, `rainforest.targets_changed`; the param
+`prep.adjusted_fields` and the artifact `adjustments.json`), read from `exports.config`, and carry the export's
+`manifest.json` (artifact `preparation/manifest.json`) and split settings (`prep.valid_size`, `prep.test_size`,
+`prep.split_seed`), so each run records the full preparation behind it.
 
 ## Experiments
 
 `meta.experiments` (`experiments.py`) holds a dataset's experiments; `exports.experiment_id` and
 `model_runs.experiment_id` place every export and run in one (a run in its export's). The source is stored as
 `recipe_id` plus `assessor_id` (null for a team experiment), and as the `source` text `recipe:<id>` or
-`assessment:<recipe_id>:<user_id>`, which a check constraint keeps in step.
+`assessment:<recipe_id>:<user_id>`, which a check constraint keeps in step. A finalized version gets one default Team
+experiment (`is_default`, named like *Team · Trees v2*) from `team_for` on first use, found by the flag so it can be
+renamed.
+
+**Copies and adjustments.** A team experiment gets its own copy of its baseline when it is created (`seed_copy`;
+bootstrap's `backfill_copies` seeds any that lack one): every field's decision in `meta.experiment_decisions`, the
+baseline family's settings in `meta.experiment_settings`, and the baseline's target order in
+`experiments.target_order`. Review, Bulk edit and the finder read and write it through the experiment source
+(`view=experiment:<id>`), with bulk batches in `meta.experiment_batches`. The adjustments are not stored separately:
+`experiments.adjustments` diffs the baseline's snapshot against `snapshot_for` (the copy shaped as a snapshot, with
+the experiment's targets), and `revert` deletes the copy's rows for some or all fields and reseeds them. Only the
+owner of a non-default, unarchived team experiment writes the copy (`adjust_denied`); a default Team experiment and a
+personal one export from the baseline's snapshot and the assessment respectively. A field an experiment makes a target
+gets the leak screen against text and high-cardinality fields (`fields.target_associations_job`), which adds shared
+associations without touching the baseline's target state. Writes to the copy take the experiment's row
+`FOR NO KEY UPDATE` (so saves to one experiment run one at a time) and an export takes it `FOR UPDATE`, so an export
+is exactly the copy that was checked.
 
 **Visibility** is one rule: an experiment is visible to a user unless it is personal, its version is `assessing`, and
 the user isn't its assessor. Phases only move forward, so once visible it stays so. The API applies it in SQL
@@ -290,7 +350,8 @@ state in Postgres, so any worker can serve the polling.
 1. `AnalysisParams.normalised(kind)` keeps only the keys that affect that kind; for raw data the route adds the
    decision source (`decisions`). The canonical JSON of the result is `params_key`.
 2. `runner.data_version`: for raw data, an md5 over every field's `(field_id, action, semantic_type)` in the params'
-   decision source (`decisions`: `team`, or `assessment:<recipe>:<user>` for an assessor's *kept only*), so any write
+   decision source (`decisions`: `team`, `assessment:<recipe>:<user>` for an assessor's *kept only*, or from the
+   request's `view` `experiment:<id>` or `baseline:<recipe>`), so any write
    path (single save, bulk, undo, target change) invalidates without hooking into it; for export data,
    `export:<id>`.
 3. `runner.find_or_create` (under a lock on the dataset row) returns, in order: a done row for the same key and
@@ -311,8 +372,9 @@ every second while the row is active. The Correlations view is not a job: it rea
 
 `api/app/migrations/NNN_name.sql` files run once each, in name order, on API startup under a Postgres advisory lock,
 and are recorded in `meta.schema_migrations`. `api/app/views.sql` is re-run on every start, so views are always
-recreated from that file. Bootstrap also (re)creates the `rainforest_ro` role and grants it `SELECT` on `meta` and
-`raw`, except the tables in `db.PRIVATE_TABLES`.
+recreated from that file. Bootstrap also snapshots finalized versions that have none, moves orphaned exports and runs
+into *Imported* experiments, seeds team experiments' missing copies, and (re)creates the `rainforest_ro` role and
+grants it `SELECT` on `meta` and `raw`, except the tables in `db.PRIVATE_TABLES`.
 
 | Migration | Adds |
 |---|---|
@@ -323,10 +385,12 @@ recreated from that file. Bootstrap also (re)creates the `rainforest_ro` role an
 | `005_upload_path.sql` | `upload_path` on `meta.datasets` |
 | `006_mlflow_run_id.sql` | `mlflow_experiment_id`, `mlflow_run_id` on `meta.model_runs` |
 | `007_users.sql` | `meta.users` (with the first lead, *Admin*); `user_id` on `decision_history` and `bulk_batches`, `created_by` on `datasets`, `exports`, `model_runs` and `analyses`, backfilled to the first lead |
-| `008_team_assessment.sql` | `meta.recipes` (with the finalized-snapshot trigger), `dataset_assessors`, `assessments`, `assessment_settings`, `assessment_batches`, `review_comments`, `exports.recipe_id`, row-level security on `analyses`; every existing dataset becomes recipe v1 finalized by the first lead (bootstrap writes the snapshots) and its exports point at it |
+| `008_team_assessment.sql` | `meta.recipes` (with the finalized-snapshot trigger), `dataset_assessors`, `assessments`, `assessment_settings`, `assessment_batches`, `review_comments`, `exports.recipe_id`, row-level security on `analyses`; every existing dataset gets version 1, finalized by the first lead (bootstrap writes the snapshots) and its exports point at it |
 | `009_recipe_versions.sql` | `scope` and `reuse` on `meta.recipes`, `meta.recipe_reopened`; `recipes.parent_id` becomes `ON DELETE SET NULL` and the frozen-row trigger allows only that change on a finalized row |
 | `010_experiments.sql` | `meta.experiments`; `experiment_id` on `exports` and `model_runs`, `exports.snapshot`; `meta.import_orphan_experiments()`, which moves existing exports and runs into one *Imported* experiment per dataset; row-level security on `experiments`, `exports` and `model_runs`, and the `analyses` policy extended to results on exports |
 | `011_job_ticket.sql` | `meta.job_ticket`, the sequence that orders queued background jobs |
+| `012_baselines.sql` | `family` on `meta.recipes` (`tree`, `linear`, `neural`; existing versions take their dataset's `model_family`), versions unique per dataset and family; `experiments.is_default`, set on the existing default Team experiments, which are renamed *Team · Trees vN* style |
+| `013_experiment_adjustments.sql` | `meta.experiment_decisions`, `experiment_settings` and `experiment_batches` (a team experiment's copy of its baseline and its bulk edits); `experiments.target_order` |
 
 Child tables reference `meta.datasets` with `ON DELETE CASCADE`; `DELETE /api/datasets/{id}` removes the rows and then
 the dataset's Parquet copy, raw table, export and model directories.
@@ -357,9 +421,11 @@ dataset from `useDatasetContext()`, and `DatasetLayout` handles loading, process
 `DatasetSteps` if it's a workflow step, and its endpoints in `api.ts` / `types.ts`. Invalidate its query keys from
 mutations that change what it shows (see the `invalidate` helper in `BulkEditPage.tsx`).
 
-**Anything that reads field decisions.** Take the user and read through `source_for(...).decisions()` /
-`.settings()` / `.fields_view()` rather than naming `meta.field_decisions` directly, so an assessor sees their own
-choices and nobody else's; write through `write_decision` / `write_settings` after `require_write()`. Add the
+**Anything that reads field decisions.** Take the user (and a `view` query parameter where a page can work on an
+experiment or a finalized baseline) and read through `source_for(..., view=view).decisions()` / `.settings()` /
+`.fields_view()` rather than naming `meta.field_decisions` directly, so an assessor sees their own choices and nobody
+else's and an experiment its own copy; write through `write_decision` / `write_settings` after `require_write()`.
+Settings are the source's family's (`src.family`). Add the
 endpoint to `READS` in `api/tests/test_team.py`, which checks every read path for leaks. A new table holding someone's
 assessment goes in `db.PRIVATE_TABLES`.
 
@@ -376,7 +442,8 @@ its startup hook and with an in-memory user store, so it needs no database. `tes
 in-process provider (`tests/oidc_provider.py`, served through `httpx.MockTransport` by setting `oidc.transport`): the
 redirect and token checks need no database, the provisioning flows do. The API tests in `test_explore.py`,
 `test_sql_console.py`, `test_data_correctness.py`, `test_api_cleanup.py`, `test_users.py`, `test_team.py`,
-`test_experiments.py` and `test_recipes.py` start the app against `RAINFOREST_TEST_DATABASE_URL` and skip without it;
+`test_experiments.py`, `test_recipes.py`, `test_baselines.py` and `test_adjustments.py` (helpers in
+`team_helpers.py`) start the app against `RAINFOREST_TEST_DATABASE_URL` and skip without it;
 `test_jobs.py` (job ownership, the restart sweep and the slots) needs that database too. `test_mlflow.py` logs to a temporary MLflow file store
 (always runs), drives `runs._run` and the backfill against the database (skips without it), and has one test against a
 real tracking server that runs when `MLFLOW_TEST_URI` is set. `make test` runs the suite locally, `make test-db` runs it
@@ -392,11 +459,19 @@ private personal experiment of another assessor: its listing, detail, edits, exp
 run files, Explore on its export, and the console's experiments, exports, runs and metrics. `test_experiments.py`
 covers the visibility matrix (owner, member, lead × assessing, review, finalized, through the API and the console),
 what a personal export contains (carried fields included) and that it rebuilds the same way after edits, the Team
-experiment, role checks, the Imported migration and MLflow logging deferred until review opens. Tests that need team decisions to be editable or exportable move the recipe
-straight to a phase with `conftest.set_phase`.
+experiment, role checks, the Imported migration and MLflow logging deferred until review opens.
+`test_baselines.py` covers families and per-family versions, labels, snapshots holding only their family, setting up
+and starting baselines (scratch, populated, from another dataset), the one-in-progress rule, new versions loading
+their own parent, diffs across families, the dataset's family being refused, exports taking the baseline's family,
+leak checks per target set, planned models, browsing a finalized baseline, Explore's decision source and the SQL
+views. `test_adjustments.py` covers experiment copies, owner-only adjusting through the view, refused views, type and
+target changes, leak warnings for an experiment's targets, that adjustments never reach the baseline, and that
+exports freeze them. Tests that need team decisions to be editable or exportable move the recipe straight to a phase
+with `conftest.set_phase`.
 
 `ui` uses Vitest (`npm test`) for the pure logic: field signals, formatting, the save queue (with the API mocked),
 retype rules, the Bulk edit and Explore URL state, error parsing, run ranking, phase access, the experiment
-helpers, and the reuse summary, diff formatting and reopen picker. Tests sit next to the code as
+helpers (including a field's differences from its baseline), the start form's defaults and target rule, the view
+URL helpers, and the reuse summary, diff formatting and reopen picker. Tests sit next to the code as
 `*.test.ts`. CI (`.github/workflows/ci.yml`, on pushes to `main` and pull requests) runs the API tests with a
 Postgres service and an MLflow server container, the UI typecheck, tests and build, and `docker compose build`.

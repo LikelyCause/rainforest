@@ -144,7 +144,7 @@ def apply_migrations(conn: psycopg.Connection) -> list[str]:
 
 def bootstrap() -> None:
     """Migrate the schema and (re)configure the read-only role. Safe to run from several workers."""
-    from . import recipes
+    from . import experiments, recipes
 
     s = get_settings()
     with connection() as conn:
@@ -153,6 +153,7 @@ def bootstrap() -> None:
             applied = apply_migrations(conn)
             recipes.backfill_snapshots(conn)
             conn.execute("SELECT meta.import_orphan_experiments()")
+            experiments.backfill_copies(conn)
             # Someone has to be able to sign in (pick mode) and manage users on a fresh or emptied install.
             conn.execute("INSERT INTO meta.users (name, role) SELECT 'Admin', 'lead' "
                          "WHERE NOT EXISTS (SELECT 1 FROM meta.users)")

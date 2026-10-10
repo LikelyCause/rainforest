@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException
 from .. import experiments
 from ..auth import CurrentUser
 from ..db import connection
-from ..schemas import ExperimentIn, ExperimentPatch
+from ..schemas import ExperimentIn, ExperimentPatch, RevertIn
 from .exports import list_exports
 from .runs import list_runs
 
@@ -36,8 +36,23 @@ def get_experiment(experiment_id: int, user: CurrentUser) -> dict:
     with connection() as conn:
         x = experiments.get_visible(conn, experiment_id, user)
         best = experiments.best_by_experiment(conn, [x["id"]]).get(x["id"])
-    return {**x, "best": best, "exports": list_exports(x["dataset_id"], user, x["id"]),
-            "runs": list_runs(x["dataset_id"], user, x["id"])}
+        adjustments = experiments.adjustments(conn, x)
+    return {**x, "best": best, "adjustments": adjustments, "can_adjust": experiments.can_adjust(x, user),
+            "exports": list_exports(x["dataset_id"], user, x["id"]), "runs": list_runs(x["dataset_id"], user, x["id"])}
+
+
+@router.post("/experiments/{experiment_id}/adjustments/revert")
+def revert_adjustments(experiment_id: int, body: RevertIn, user: CurrentUser) -> dict:
+    """Put fields of a team experiment (all of them when `field_ids` is null) back to its baseline: its owner."""
+    with connection() as conn:
+        x = experiments.get_visible(conn, experiment_id, user)
+        x = conn.execute(f"SELECT {experiments.COLS} FROM {experiments.FROM} WHERE x.id = %s FOR UPDATE OF x",
+                         (x["id"],)).fetchone()
+        if (denied := experiments.adjust_denied(x, user)) is not None:
+            raise HTTPException(*denied)
+        experiments.revert(conn, x, body.field_ids)
+        x = experiments.get(conn, x["id"])
+        return {**x, "adjustments": experiments.adjustments(conn, x), "can_adjust": True}
 
 
 @router.patch("/experiments/{experiment_id}")
