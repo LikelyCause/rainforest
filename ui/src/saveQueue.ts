@@ -115,7 +115,7 @@ function applySaved(fieldId: number, datasetId: number, saved: Decision) {
       ? { ...f, action: saved.action, semantic_type: saved.semantic_type, reviewed: saved.reviewed, source: saved.source }
       : f)),
   );
-  for (const k of ["summary", "exportPreview", "fieldQuery", "corrMatrix", "analysis"]) qc.invalidateQueries({ queryKey: [k, datasetId] });
+  for (const k of ["exportPreview", "fieldQuery", "corrMatrix", "analysis"]) qc.invalidateQueries({ queryKey: [k, datasetId] });
   const wasTarget = prev?.decision.action === "target";
   if (wasTarget !== (saved.action === "target")) {
     // Target set changed: associations, leakage and the dataset's target list all move (#30).

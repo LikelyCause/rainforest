@@ -1,6 +1,6 @@
 import type {
   Analysis, AnalysisKind, AnalysisParams, CorrMatrix, BulkRequest, BulkResult, Correlation, Dataset, DecisionInput, Decision, ExportJob, ExportPreview, FieldFilter,
-  FieldListItem, FieldResponse, ModelOption, ModelRun, OptionCatalog, SqlResult, Summary, SystemInfo, Device,
+  FieldListItem, FieldResponse, ModelOption, ModelRun, OptionCatalog, SqlResult, SystemInfo, Device,
 } from "./types";
 
 export class ApiError extends Error {
@@ -60,7 +60,6 @@ export const api = {
   createSample: (data: { rows: number; fields: number; seed: number; target_kind: string }) =>
     request<Dataset>("/api/datasets/sample", json("POST", data)),
   sampleLimits: () => request<{ max_cells: number }>("/api/datasets/sample/limits"),
-  summary: (id: number) => request<Summary>(`/api/datasets/${id}/summary`),
   fields: (id: number) => request<FieldListItem[]>(`/api/datasets/${id}/fields`),
   field: (fieldId: number, family: string) => request<FieldResponse>(`/api/fields/${fieldId}?family=${family}`),
   correlations: (fieldId: number, limit = 20) =>

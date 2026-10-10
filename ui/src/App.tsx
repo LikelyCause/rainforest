@@ -23,7 +23,7 @@ function ModelSwitch({ ds }: { ds: Dataset }) {
     mutationFn: (f: string) => api.patchDataset(ds.id, { model_family: f }),
     onSuccess: (saved, f, ctx) => {
       qc.setQueryData(["dataset", ds.id], saved);
-      for (const k of ["summary", "fieldQuery", "exportPreview"]) qc.invalidateQueries({ queryKey: [k, ds.id] });
+      for (const k of ["fieldQuery", "exportPreview"]) qc.invalidateQueries({ queryKey: [k, ds.id] });
       const from = (ctx as { from?: string } | undefined)?.from;
       toast({
         message: `Now preparing for ${familyShort(f).toLowerCase()} models`,

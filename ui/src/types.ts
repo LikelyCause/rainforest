@@ -190,14 +190,6 @@ export interface OptionCatalog {
   target_rule: { types: string[]; max_levels: number };
 }
 
-export interface Summary {
-  by_type: { type: string; n: number }[];
-  by_action: { action: Action; n: number; reviewed: number }[];
-  total_fields: number;
-  reviewed: number;
-  top_target_associations: { field_id: number; field_name: string; target: string; method: CorrMethod; value: number; strength: number }[];
-}
-
 export interface FieldFilter { column: string; op: string; value?: unknown }
 
 export interface SqlResult {

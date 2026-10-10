@@ -95,10 +95,11 @@ families' settings are re-derived for the new type.
 | | **Tree ensembles** (default) | Linear models | Neural / distance |
 |---|---|---|---|
 | Models | LightGBM, XGBoost\*, histogram GBM, random forest | logistic regression | MLP |
-| Missing numerics | left as NaN; the model learns where to send them | median + "was missing" flag | median + flag |
-| Skew / outliers | nothing: splits only depend on order | signed log1p / winsorize | log1p |
-| Scaling | **not offered**: it can't change a split | standard | standard / quantile-normal |
-| Categoricals | ≤ 8 levels one-hot, ≤ 1,000 ordinal codes, else frequency | one-hot (top 30 kept), else frequency | same as linear |
+| Missing numerics | left as NaN; the model learns where to send them | median, plus a "was missing" flag from 1% missing | same as linear |
+| Skew / outliers | nothing: splits only depend on order | signed log1p when \|skew\| > 1, else winsorize above 3% outliers | same as linear |
+| Scaling | **not offered**: it can't change a split | standard | quantile-normal when \|skew\| > 1, else standard |
+| Categoricals | ≤ 8 levels one-hot, ≤ 1,000 ordinal codes, else frequency | ≤ 200 levels one-hot (top 30 kept), else frequency | same as linear |
+| Binary | 0/1; missing takes the most frequent level under 5% missing, else a "was missing" column | same | same |
 | Text | TF-IDF → 32 SVD components | same | same |
 | Dates | year, month, day, weekday, hour, day-of-year, epoch days | + median impute + scaling | same |
 
@@ -220,6 +221,10 @@ make train EXPORT=1 MODEL=xgboost DEVICE=cuda  # GPU image only
 make models                                  # what's registered / installed, and on which devices
 ```
 
+`--order` takes the export's own target names (the sample's are `column_a` and `column_b`). Runs from the CLI write
+`classifier_chain.joblib` and `report.json` under `/data/models/export<id>_<model>_<time>/` but aren't recorded in
+`meta.model_runs`, so they don't appear in the UI's runs table or `meta.v_model_metrics`.
+
 **Adding a model** means adding one `ModelSpec` to `api/app/modeling/registry.py`: key, family, NaN support,
 builder, default parameters and how to read importances. It then appears in the CLI, the API and the UI.
 
@@ -326,8 +331,7 @@ Compose settings, read from `.env` (see `.env.example`):
 | `API_EXTRA_PIP` | – | extra packages baked into the API image (e.g. `catboost`) |
 | `XGBOOST_GPU_PKG` | `xgboost==3.4.1` | the CUDA XGBoost package for the GPU image (`xgboost-cu12==3.4.1` for 570–579 drivers) |
 
-The API reads further settings from its environment (`api/app/config.py`). Compose doesn't pass these through from
-`.env`, so set them under the `api` service's `environment:`:
+Tuning settings for the API (`api/app/config.py`), also read from `.env`:
 
 | Variable | Default | Purpose |
 |---|---|---|

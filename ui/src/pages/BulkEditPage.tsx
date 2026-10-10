@@ -137,7 +137,7 @@ function FieldFinder({ datasetId, presetLabel }: { datasetId: number; presetLabe
 
   const [pending, setPending] = useState<{ action: BulkAction; preview: BulkResult } | null>(null);
   const invalidate = () => {
-    for (const k of ["fields", "summary", "fieldQuery", "exportPreview", "corrMatrix", "analysis"]) qc.invalidateQueries({ queryKey: [k, datasetId] });
+    for (const k of ["fields", "fieldQuery", "exportPreview", "corrMatrix", "analysis"]) qc.invalidateQueries({ queryKey: [k, datasetId] });
     qc.invalidateQueries({ queryKey: ["field"] });
   };
   const request = (a: BulkAction, dry_run: boolean) =>

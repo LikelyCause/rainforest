@@ -331,39 +331,6 @@ def _run_dirs(models_dir: Path, runs: list[dict]) -> set[Path]:
     return out
 
 
-@router.get("/{dataset_id}/summary")
-def summary(dataset_id: int) -> dict:
-    get_dataset(dataset_id)
-    with connection() as conn:
-        by_type = conn.execute(
-            """SELECT inferred_type AS type, count(*) AS n FROM meta.fields WHERE dataset_id = %s
-               GROUP BY 1 ORDER BY 2 DESC""",
-            (dataset_id,),
-        ).fetchall()
-        by_action = conn.execute(
-            """SELECT action, count(*) AS n, count(*) FILTER (WHERE reviewed) AS reviewed
-                 FROM meta.field_decisions WHERE dataset_id = %s GROUP BY 1""",
-            (dataset_id,),
-        ).fetchall()
-        top_target = conn.execute(
-            """SELECT field_id, field_name, other_field_name AS target, method, value, strength
-                 FROM meta.v_correlations
-                WHERE dataset_id = %s AND other_is_target AND field_id NOT IN
-                      (SELECT id FROM meta.fields WHERE dataset_id = %s AND is_target)
-                ORDER BY strength DESC LIMIT 15""",
-            (dataset_id, dataset_id),
-        ).fetchall()
-    total = sum(r["n"] for r in by_action)
-    reviewed = sum(r["reviewed"] for r in by_action)
-    return {
-        "by_type": by_type,
-        "by_action": by_action,
-        "total_fields": total,
-        "reviewed": reviewed,
-        "top_target_associations": top_target,
-    }
-
-
 @router.get("/{dataset_id}/fields")
 def list_fields(dataset_id: int) -> list[dict]:
     """Lightweight rows for the review sidebar."""

@@ -40,7 +40,6 @@ Long-running work returns `202` with a row to poll; its `status` is `pending`, `
 | GET | `/api/datasets/{dataset_id}` | One dataset. | |
 | PATCH | `/api/datasets/{dataset_id}` | Rename, switch the active model family, or set the targets. Setting targets needs a `ready` dataset (`409` otherwise) and may start a job for targets with no associations yet. A target must be typed binary, categorical or discrete numeric with at most 100 distinct values (`422` naming each field otherwise). | `name`, `model_family` (`tree`, `linear`, `neural`), `target_columns` (exact list in chain order; `[]` for none) |
 | DELETE | `/api/datasets/{dataset_id}` | Delete the dataset, its fields, exports, runs, analyses and files. `409` while it, or one of its exports or runs, is still running. Returns counts removed. | |
-| GET | `/api/datasets/{dataset_id}/summary` | Field counts by type and by action, reviewed count, top 15 target associations. | |
 | GET | `/api/datasets/{dataset_id}/fields` | Lightweight field rows for the Review sidebar (type, confidence, missing, uniques, target association, leakage, decision, reviewed). | |
 
 ## Fields and decisions (`routers/fields.py`)
