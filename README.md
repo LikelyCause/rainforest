@@ -124,9 +124,16 @@ text compared with short categorical strings.
 Fields with a ≥ 0.95 association to a target are flagged as **possible leakage** and suggested for dropping.
 
 **Associations** use a seeded 100k-row sample:
-- Spearman ρ for numeric pairs (pairwise-complete, vectorised).
-- Bias-corrected Cramér's V for categorical pairs, with missing as its own level.
+- Spearman ρ for numeric pairs, over the rows where both are present. One vectorised pass ranks each column over
+  its own values; pairs whose missing rows differ and whose first estimate is at least 0.3 are re-ranked within
+  their shared rows, so a monotone relation isn't understated when values are missing.
+- Bias-corrected Cramér's V for categorical pairs, with missing as its own level. Each categorical keeps its 50
+  most common levels (`CORR_MAX_LEVELS`) and groups the rest.
 - Correlation ratio η for numeric × categorical pairs.
+- **Leak screen:** categoricals with more levels than that, and text fields (compared by exact value), are also
+  measured against each target with every level kept. That value replaces the capped one, so a 500-level code that
+  determines the target is flagged. It runs during processing, and again in the background whenever a target is
+  added.
 
 ## Explore
 

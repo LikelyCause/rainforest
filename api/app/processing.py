@@ -13,7 +13,7 @@ from psycopg import sql
 
 from . import ingest, profiling
 from .config import get_settings
-from .correlations import compute_associations
+from .correlations import Assoc, compute_associations, screen_associations
 from .db import connection, execute, fetch_one, jsonb
 from .semantics import suggest_all
 
@@ -115,7 +115,12 @@ def process_dataset(dataset_id: int, upload_path: str | None, fmt: str) -> None:
             progress=lambda f: st.set("correlating", 0.75 + 0.2 * f, f"Computing associations ({f:.0%})"),
         )
         _persist_correlations(dataset_id, field_ids, assocs)
+        screened = screen_associations(
+            [(i, p.screen_codes) for i, p in enumerate(profiles) if p.is_target],
+            [(i, p.screen_codes) for i, p in enumerate(profiles) if p.screen_codes is not None and not p.is_target],
+        )
         with connection() as conn:
+            upsert_correlations(conn, dataset_id, [(field_ids[a.i], field_ids[a.j], a) for a in screened])
             refresh_target_state(conn, dataset_id)
 
         st.set("ready", 1.0, "Ready", force=True)
@@ -198,6 +203,18 @@ def _persist_correlations(dataset_id: int, field_ids: list[int], assocs) -> None
                 if fa > fb:
                     fa, fb = fb, fa
                 copy.write_row((dataset_id, fa, fb, a.method, a.value, abs(a.value), a.n_obs))
+
+
+def upsert_correlations(conn, dataset_id: int, pairs: list[tuple[int, int, Assoc]]) -> None:
+    """Write (field id, field id, association) rows, replacing an existing value for the same pair."""
+    with conn.cursor() as cur:
+        cur.executemany(
+            """INSERT INTO meta.field_correlations (dataset_id, field_a, field_b, method, value, strength, n_obs)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (field_a, field_b) DO UPDATE SET method = EXCLUDED.method, value = EXCLUDED.value,
+                  strength = EXCLUDED.strength, n_obs = EXCLUDED.n_obs""",
+            [(dataset_id, *sorted((fa, fb)), a.method, a.value, abs(a.value), a.n_obs) for fa, fb, a in pairs],
+        )
 
 
 def target_suggestion(t: str, stats: dict, is_target: bool, max_target_assoc: float | None) -> tuple[dict, bool]:

@@ -14,12 +14,12 @@ from ..config import get_settings
 from ..correlations import target_associations
 from ..db import connection, execute, fetch_all, fetch_one
 from ..modeling.registry import MODELS
-from ..processing import _Status, delete_dataset_files, process_dataset
+from ..processing import _Status, delete_dataset_files, process_dataset, upsert_correlations
 from ..profiling import corr_vector, sample_indices
 from ..sample_data import generate
 from ..schemas import DatasetPatch, SampleRequest
 from ..semantics import FAMILIES, NUMERIC
-from .fields import _sync_targets, set_targets
+from .fields import _sync_targets, has_screen_fields, screen_pairs, screen_targets, set_targets
 
 log = logging.getLogger(__name__)
 CORRELATED_TYPES = NUMERIC | {"datetime", "categorical", "binary"}
@@ -187,6 +187,7 @@ def update_dataset(dataset_id: int, body: DatasetPatch) -> dict:
     if body.target_columns is not None and ds["status"] != "ready":
         raise HTTPException(409, "Targets can be changed once the dataset is ready")
     uncorrelated: list[dict] = []
+    screen: list[int] = []
     with connection() as conn:
         conn.execute(
             """UPDATE meta.datasets SET model_family = coalesce(%s, model_family), name = coalesce(%s, name),
@@ -194,7 +195,8 @@ def update_dataset(dataset_id: int, body: DatasetPatch) -> dict:
             (body.model_family, body.name, dataset_id),
         )
         if body.target_columns is not None:
-            uncorrelated = set_targets(conn, dataset_id, list(dict.fromkeys(body.target_columns)))
+            uncorrelated, added = set_targets(conn, dataset_id, list(dict.fromkeys(body.target_columns)))
+            screen = added if added and has_screen_fields(conn, dataset_id) else []
             conn.execute(
                 """UPDATE meta.datasets SET warnings = array(
                        SELECT w FROM unnest(warnings) w WHERE w NOT LIKE 'Target column(s) not found%%')
@@ -208,13 +210,16 @@ def update_dataset(dataset_id: int, body: DatasetPatch) -> dict:
                     (jobs.owner_id(), dataset_id),
                 )
     if uncorrelated:
-        jobs.submit(correlate_targets, dataset_id, [r["id"] for r in uncorrelated])
+        jobs.submit(correlate_targets, dataset_id, [r["id"] for r in uncorrelated], screen)
+    elif screen:
+        jobs.submit(screen_targets, dataset_id, screen)
     return get_dataset(dataset_id)
 
 
-def correlate_targets(dataset_id: int, target_ids: list[int]) -> None:
+def correlate_targets(dataset_id: int, target_ids: list[int], screen_ids: list[int] | None = None) -> None:
     """Associations between new targets and every other field, for targets profiled as types that never got
-    an association sample (text, identifier). Treated as class labels, as profiling treats targets."""
+    an association sample (text, identifier). Treated as class labels, as profiling treats targets.
+    `screen_ids` (new targets) also get the uncapped leak screen."""
     s = get_settings()
     st = _Status(dataset_id)
     try:
@@ -243,6 +248,7 @@ def correlate_targets(dataset_id: int, target_ids: list[int]) -> None:
                 categorical.append((k, codes))
             st.set("correlating", 0.8 * (k + 1) / len(fields), f"Reading {f['name']} ({k + 1}/{len(fields)})")
         assocs = list(target_associations(targets, numeric, categorical))
+        screened = screen_pairs(dataset_id, screen_ids) if screen_ids else []
         with connection() as conn:
             with conn.cursor() as cur:
                 cur.executemany(
@@ -252,6 +258,7 @@ def correlate_targets(dataset_id: int, target_ids: list[int]) -> None:
                     [(dataset_id, *sorted((fields[a.i]["id"], fields[a.j]["id"])), a.method, a.value, abs(a.value),
                       a.n_obs) for a in assocs],
                 )
+            upsert_correlations(conn, dataset_id, screened)
             _sync_targets(conn, dataset_id)
             conn.execute(
                 """UPDATE meta.datasets SET warnings = array(

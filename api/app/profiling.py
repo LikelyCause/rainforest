@@ -65,6 +65,8 @@ class FieldProfile:
     # Correlation inputs on the shared row sample (not persisted)
     corr_numeric: np.ndarray | None = field(default=None, repr=False)
     corr_codes: np.ndarray | None = field(default=None, repr=False)
+    # Uncapped codes for the leak screen: targets, text, and categoricals with more than corr_max_levels levels.
+    screen_codes: np.ndarray | None = field(default=None, repr=False)
 
 
 # --------------------------------------------------------------------------- helpers
@@ -513,8 +515,19 @@ def _codes(s: pl.Series, max_levels: int) -> np.ndarray:
     top = as_str.drop_nulls().value_counts(sort=True).head(max_levels)[as_str.name].to_list()
     mapping = {v: i for i, v in enumerate(top)}
     other, missing = len(top), len(top) + 1
-    mapped = as_str.replace_strict(mapping, default=other, return_dtype=pl.Int32)
-    return mapped.fill_null(missing).to_numpy().astype(np.int32)
+    # replace_strict sends nulls to `default` too, so missing has to be set before it.
+    mapped = pl.select(pl.when(as_str.is_null()).then(missing)
+                       .otherwise(as_str.replace_strict(mapping, default=other, return_dtype=pl.Int32)))
+    return mapped.to_series().to_numpy().astype(np.int32)
+
+
+def screen_codes(s: pl.Series, corr_idx: np.ndarray | None) -> np.ndarray:
+    """A code per distinct value on the association sample, with no level cap (null is a value too)."""
+    if s.dtype.is_float():
+        s = s.fill_nan(None)
+    if corr_idx is not None:
+        s = s.gather(corr_idx)
+    return s.cast(pl.String).fill_null("\0null").rank("dense").to_numpy().astype(np.int64)
 
 
 def _failed_examples(raw: pl.Series, parsed: pl.Series, k: int = 5) -> list[str]:
@@ -651,7 +664,13 @@ def profile_column(
         charts=charts,
         corr_numeric=corr_numeric,
         corr_codes=corr_codes,
+        screen_codes=screen_codes(s, corr_idx) if needs_screen(t, n_unique, is_target, corr_max_levels) else None,
     )
+
+
+def needs_screen(t: str, n_unique: int, is_target: bool, corr_max_levels: int) -> bool:
+    """Fields the capped associations can't vouch for: free text, and categoricals past the level cap."""
+    return is_target or t == "text" or (t in ("categorical", "binary") and n_unique > corr_max_levels)
 
 
 def profile_parquet(

@@ -1,17 +1,25 @@
 from __future__ import annotations
 
+import logging
 import uuid
+from pathlib import Path
 
+import polars as pl
 from fastapi import APIRouter, HTTPException, Query
 from psycopg import sql
 
-from ..db import connection, fetch_all, fetch_one, jsonb
-from ..processing import SUMMARY_COLS, refresh_target_state, upsert_settings
+from .. import jobs
+from ..config import get_settings
+from ..correlations import Assoc, screen_associations
+from ..db import connection, execute, fetch_all, fetch_one, jsonb
+from ..processing import SUMMARY_COLS, refresh_target_state, upsert_correlations, upsert_settings
+from ..profiling import needs_screen, sample_indices, screen_codes
 from ..schemas import BulkDecisionIn, DecisionIn
 from ..semantics import (FAMILIES, NON_FEATURE_TYPES, SETTING_KEYS, settings_of, suggest, target_problem,
                          validate_decision)
 from .query import fields_where
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["fields"])
 
 SHARED_COLS = ["action", "semantic_type", "notes", "reviewed"]
@@ -124,8 +132,12 @@ def save_decision(field_id: int, body: DecisionIn) -> dict:
                VALUES (%s, %s, %s, %s, %s)""",
             (field_id, f["dataset_id"], fam, jsonb(_jsonable(prev)), jsonb(_jsonable(row))),
         )
+        screen = False
         if (prev["action"] == "target") != (d["action"] == "target"):
             _sync_targets(conn, f["dataset_id"])
+            screen = d["action"] == "target" and has_screen_fields(conn, f["dataset_id"])
+    if screen:
+        jobs.submit(screen_targets, f["dataset_id"], [field_id])
     return row
 
 
@@ -365,9 +377,54 @@ def _decision_key(row: dict | None) -> dict | None:
     return None if row is None else {k: v for k, v in row.items() if k != "updated_at"}
 
 
-def set_targets(conn, dataset_id: int, names: list[str]) -> list[dict]:
+def has_screen_fields(conn, dataset_id: int) -> bool:
+    """Whether any non-target field needs the uncapped leak screen against a newly chosen target."""
+    return conn.execute(
+        """SELECT EXISTS (SELECT 1 FROM meta.fields WHERE dataset_id = %s AND NOT is_target
+                            AND (inferred_type = 'text'
+                                 OR (inferred_type IN ('categorical', 'binary') AND n_unique > %s))) AS e""",
+        (dataset_id, get_settings().corr_max_levels),
+    ).fetchone()["e"]
+
+
+def screen_pairs(dataset_id: int, target_ids: list[int]) -> list[tuple[int, int, Assoc]]:
+    """Uncapped leak-screen associations between `target_ids` and every field needing the screen."""
+    s = get_settings()
+    ds = fetch_one("SELECT parquet_path, row_count FROM meta.datasets WHERE id = %s", (dataset_id,))
+    fields = fetch_all(
+        "SELECT id, name, inferred_type, n_unique, is_target FROM meta.fields WHERE dataset_id = %s ORDER BY ordinal",
+        (dataset_id,),
+    )
+    path = Path(ds["parquet_path"])
+    corr_idx = sample_indices(ds["row_count"], s.corr_sample_rows, seed=29)
+
+    def codes(f: dict):
+        return f["id"], screen_codes(pl.read_parquet(path, columns=[f["name"]]).to_series(), corr_idx)
+
+    targets = [codes(f) for f in fields if f["id"] in target_ids]
+    others = [codes(f) for f in fields if not f["is_target"]
+              and needs_screen(f["inferred_type"], f["n_unique"] or 0, False, s.corr_max_levels)]
+    return [(a.i, a.j, a) for a in screen_associations(targets, others)]
+
+
+def screen_targets(dataset_id: int, target_ids: list[int]) -> None:
+    """Background job: screen newly chosen targets against text and high-cardinality fields, then re-derive
+    leakage flags. The dataset stays usable meanwhile; a failure only leaves a warning."""
+    try:
+        pairs = screen_pairs(dataset_id, target_ids)
+        with connection() as conn:
+            upsert_correlations(conn, dataset_id, pairs)
+            _sync_targets(conn, dataset_id)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("leak screen for dataset %s failed", dataset_id)
+        execute("UPDATE meta.datasets SET warnings = array_append(warnings, %s) WHERE id = %s",
+                (f"The leak screen for the new target(s) could not run: {exc}", dataset_id))
+
+
+def set_targets(conn, dataset_id: int, names: list[str]) -> tuple[list[dict], list[int]]:
     """Make exactly `names` the targets (in that order). Returns the target fields whose associations were
-    never computed because their profiled type has no association sample (text, identifier)."""
+    never computed because their profiled type has no association sample (text, identifier), and the ids of
+    fields that just became targets."""
     fam = conn.execute("SELECT model_family FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()["model_family"]
     fields = conn.execute(
         f"""SELECT f.id, f.name, f.inferred_type, d.action, d.semantic_type, s.family, s.source AS settings_source,
@@ -413,14 +470,14 @@ def set_targets(conn, dataset_id: int, names: list[str]) -> list[dict]:
     _sync_targets(conn, dataset_id, before=before, order=names)
     candidates = [by_name[n] for n in names if by_name[n]["inferred_type"] in UNCORRELATED_TYPES]
     if not candidates:
-        return []
+        return [], added
     ids = [r["id"] for r in candidates]
     has_corr = {r["fid"] for r in conn.execute(
         """SELECT field_a AS fid FROM meta.field_correlations WHERE field_a = ANY(%(ids)s)
            UNION SELECT field_b FROM meta.field_correlations WHERE field_b = ANY(%(ids)s)""",
         {"ids": ids},
     ).fetchall()}
-    return [r for r in candidates if r["id"] not in has_corr]
+    return [r for r in candidates if r["id"] not in has_corr], added
 
 
 def _jsonable(row: dict | None) -> dict | None:
