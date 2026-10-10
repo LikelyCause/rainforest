@@ -84,14 +84,26 @@ class NaNTolerantClassifierChain(ClassifierChain):
 class TargetChain:
     """A chain whose targets may be classes or numbers: one classifier or regressor per target, in `order`. Each
     later model sees the features plus the earlier targets' outputs, out-of-fold with `cv` folds (the ground truth
-    when cv is None)."""
+    when cv is None). A number is passed down standardized (training mean and spread), so it sits on the scale of
+    the features a linear or neural model sees."""
 
     chain_method_ = "per_target"
 
     def __init__(self, classifier, regressor, kinds: list[str], order: list[int], cv: int | None = 5,
-                 handles_nan: bool = False):
+                 handles_nan: bool = False, seed: int = 42):
         self.classifier, self.regressor, self.kinds = classifier, regressor, kinds
-        self.order, self.cv, self.handles_nan = order, cv, handles_nan
+        self.order, self.cv, self.handles_nan, self.seed = order, cv, handles_nan, seed
+
+    def _folds(self, kind: str):
+        """Class links fold as ClassifierChain does (stratified); number links on shuffled folds, so a file sorted by
+        its target doesn't leave each fold predicting values it never saw."""
+        from sklearn.model_selection import KFold
+
+        return KFold(self.cv, shuffle=True, random_state=self.seed) if kind == "regression" else self.cv
+
+    def _scaled(self, t: int, values: np.ndarray) -> np.ndarray:
+        mean, std = self.scales_.get(t, (0.0, 1.0))
+        return (values - mean) / std
 
     @staticmethod
     def _output(est, X: np.ndarray, kind: str) -> np.ndarray:
@@ -103,6 +115,8 @@ class TargetChain:
 
         feats = np.zeros((X.shape[0], len(self.order)))
         self.estimators_ = []
+        self.scales_ = {t: (float(Y[:, t].mean()), float(Y[:, t].std()) or 1.0)
+                        for t, kind in enumerate(self.kinds) if kind == "regression"}
         with config_context(assume_finite=self.handles_nan):
             for pos, t in enumerate(self.order):
                 kind = self.kinds[t]
@@ -113,11 +127,12 @@ class TargetChain:
                 if pos == len(self.order) - 1:
                     break
                 if self.cv is None:
-                    feats[:, pos] = y
+                    out = y
                 else:
-                    out = cross_val_predict(clone(base), X_aug, y, cv=self.cv,
+                    out = cross_val_predict(clone(base), X_aug, y, cv=self._folds(kind),
                                             method="predict_proba" if kind == "binary" else "predict")
-                    feats[:, pos] = out[:, 1] if kind == "binary" else out
+                    out = out[:, 1] if kind == "binary" else out
+                feats[:, pos] = self._scaled(t, out) if kind == "regression" else out
         self.order_ = list(self.order)
         return self
 
@@ -136,7 +151,8 @@ class TargetChain:
                     full = np.zeros((p.shape[0], n_classes[t]))
                     full[:, np.asarray(est.classes_, dtype=int)] = p
                     out[t] = full
-                feats[:, pos] = self._output(est, X_aug, self.kinds[t])
+                out_t = self._output(est, X_aug, self.kinds[t])
+                feats[:, pos] = self._scaled(t, out_t) if self.kinds[t] == "regression" else out_t
         return out  # type: ignore[return-value]
 
 
@@ -336,9 +352,15 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
         + (" on the GPU" if device == "cuda" else ""))
     if any(numeric):
         merged = {**spec.default_params, **(params or {})}
-        chain = TargetChain(spec.build(merged, seed),
-                            spec.build_regressor({**spec.regressor_defaults, **regressor_params(spec, merged)}, seed),
-                            kinds, order, cv, spec.handles_nan)
+        regressor = spec.build_regressor({**spec.regressor_defaults, **regressor_params(spec, merged)}, seed)
+        if spec.family != "tree":
+            # Gradient-trained and penalized models fit a target on its own scale badly (an MLP stops long before a
+            # price in the hundreds of thousands); trees split on order and don't care.
+            from sklearn.compose import TransformedTargetRegressor
+            from sklearn.preprocessing import StandardScaler
+
+            regressor = TransformedTargetRegressor(regressor=regressor, transformer=StandardScaler())
+        chain = TargetChain(spec.build(merged, seed), regressor, kinds, order, cv, spec.handles_nan, seed)
     else:
         chain = build_chain(spec, kinds, order, seed, params, cv)
     t0 = time.time()
@@ -378,7 +400,7 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
     top_features = {}
     for pos, est in enumerate(chain.estimators_):
         names = feats + [f"chain::{order_names[k]}" for k in range(pos)]
-        imp = importances(spec, est, names)
+        imp = importances(spec, getattr(est, "regressor_", est), names)
         if imp is None or len(imp) != len(names):
             continue
         top = np.argsort(imp)[::-1][:25]

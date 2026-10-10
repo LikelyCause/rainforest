@@ -92,8 +92,10 @@ def _texts(rng, sentiment: np.ndarray, min_words: int, max_words: int) -> list[s
     return out
 
 
-def generate(n_rows: int = 50_000, n_fields: int = 150, seed: int = 42, target_kind: str = "mixed") -> pl.DataFrame:
-    """Build the synthetic frame. `target_kind`: mixed | binary | multiclass."""
+def generate(n_rows: int = 50_000, n_fields: int = 150, seed: int = 42, target_kind: str = "mixed",
+             numeric_target: bool = False) -> pl.DataFrame:
+    """Build the synthetic frame. `target_kind`: mixed | binary | multiclass. `numeric_target` adds `column_c`, a
+    continuous target from the same latent factors, last."""
     rng = np.random.default_rng(seed)
     n = n_rows
     Z = rng.standard_normal((n, N_LATENT))
@@ -239,8 +241,13 @@ def generate(n_rows: int = 50_000, n_fields: int = 150, seed: int = 42, target_k
     ordered = {names[i]: cols[names[i]] for i in order}
     ordered["column_a"] = cols["column_a"]
     ordered["column_b"] = cols["column_b"]
-    return pl.DataFrame({k: (v if isinstance(v, list) else np.asarray(v)) for k, v in ordered.items()},
-                        strict=False)
+    df = pl.DataFrame({k: (v if isinstance(v, list) else np.asarray(v)) for k, v in ordered.items()}, strict=False)
+    if numeric_target:
+        # Its own generator, so the rest of the frame is the same as without it for the same seed.
+        noise = np.random.default_rng(seed + 1).standard_normal(n)
+        c = 50 + 12 * Z[:, 0] + 8 * Z[:, 2] - 5 * Z[:, 5] + 6 * (leak_base > 0) + 4 * noise
+        df = df.with_columns(pl.Series("column_c", np.round(c, 2)))
+    return df
 
 
 def main() -> None:
@@ -249,9 +256,10 @@ def main() -> None:
     ap.add_argument("--fields", type=int, default=150)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--target-kind", choices=["mixed", "binary", "multiclass"], default="mixed")
+    ap.add_argument("--numeric-target", action="store_true", help="add column_c, a continuous target")
     ap.add_argument("--out", type=Path, default=Path("sample.csv"))
     args = ap.parse_args()
-    df = generate(args.rows, args.fields, args.seed, args.target_kind)
+    df = generate(args.rows, args.fields, args.seed, args.target_kind, args.numeric_target)
     if args.out.suffix == ".parquet":
         df.write_parquet(args.out)
     else:

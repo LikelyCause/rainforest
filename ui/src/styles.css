@@ -385,6 +385,15 @@ fieldset.bare { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; f
 .suggested { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; padding-left: 112px; }
 .suggested button { height: 20px; padding: 0 6px; font-size: 12px; }
 .inline-warn { font-size: 12px; color: var(--warn); padding-left: 112px; }
+.segmented.full { display: flex; width: 100%; }
+.segmented.full button { flex: 1; min-width: 0; padding: 0 6px; }
+.predict-as { gap: 6px; }
+.predict-as .setting-label { font-size: 13px; color: var(--text-secondary); }
+.predict-as .suggested, .band-settings .inline-warn { padding-left: 0; }
+.band-settings { padding-top: 2px; }
+.band-preview { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: 12px; }
+.band-preview li { display: grid; grid-template-columns: minmax(80px, auto) 1fr auto; align-items: center; gap: 8px; }
+.band-preview .band-bar { height: 8px; border-radius: 2px; background: var(--series-1); min-width: 2px; }
 .locked-line { font-size: 12px; color: var(--text-muted); padding: 6px 0; border-top: 1px dashed var(--border); border-bottom: 1px dashed var(--border); }
 .why { font-size: 12.5px; color: var(--text-secondary); }
 .why ul { margin: 4px 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 2px; }

@@ -8,6 +8,7 @@ import { DecisionPanel } from "../components/DecisionPanel";
 import { ReuseCard } from "../components/ReuseCard";
 import { StartBaseline } from "../components/StartBaseline";
 import { Empty, ErrorAlert, StatusGlyph } from "../components/ui";
+import { bandsText } from "../decision";
 import { familyShort, fmtAgo, fmtDate, fmtInt } from "../format";
 import { differing, finalizeQuestion, nextOpen, PHASE_LABEL, spread } from "../team";
 import { showError, toast } from "../toast";
@@ -298,10 +299,10 @@ function Comparison({ item, family, catalog, canComment }: { item: QueueItem; fa
   const typeLabel = (t: string) => catalog.types.find((x) => x.value === t)?.label ?? t;
   const rows = (review.data?.assessments ?? []).map((a) => ({ ...a, s: a.settings[family] as SettingsRow | undefined }));
   const flat: Record<string, unknown>[] = rows.map((r) => ({
-    action: r.action, semantic_type: r.semantic_type, impute_value: r.s?.impute_value,
+    action: r.action, semantic_type: r.semantic_type, target: bandsText(r.target_task, r.target_bins), impute_value: r.s?.impute_value,
     add_missing_indicator: r.s?.add_missing_indicator, ...Object.fromEntries(DIMS.map((d) => [d, r.s?.[d]])),
   }));
-  const diff = differing(flat, ["action", "semantic_type", ...DIMS, "impute_value", "add_missing_indicator"]);
+  const diff = differing(flat, ["action", "semantic_type", "target", ...DIMS, "impute_value", "add_missing_indicator"]);
   const line = (key: string, label: string, render: (r: (typeof rows)[number]) => string | null | undefined) => (
     <tr className={diff.has(key) ? "differs" : ""}>
       <th scope="row">{label}</th>
@@ -322,6 +323,7 @@ function Comparison({ item, family, catalog, canComment }: { item: QueueItem; fa
             <tbody>
               {line("action", "Decision", (r) => r.action)}
               {line("semantic_type", "Type", (r) => typeLabel(r.semantic_type))}
+              {rows.some((r) => r.action === "target") && line("target", "Predict as", (r) => bandsText(r.target_task, r.target_bins))}
               {DIMS.map((d) => line(d, { imputation: "Missing values", transform: "Transform", scaling: "Scaling", encoding: "Encoding" }[d],
                 (r) => (r.action === "keep" && r.s ? (catalog.labels[d][r.s[d]] ?? r.s[d]).split(" (")[0] : null)))}
               {line("impute_value", "Fill value", (r) => (r.s?.imputation === "constant" ? r.s.impute_value : null))}

@@ -1,3 +1,4 @@
+import { bandsText } from "./decision";
 import type { Dataset, Me, Phase, QueueItem, TeamState } from "./types";
 
 export const PHASE_LABEL: Record<Phase, string> = { assessing: "Assessing", review: "Team review", finalized: "Finalized" };
@@ -36,8 +37,11 @@ export function accessOf(ds: Pick<Dataset, "phase"> & { baseline: Pick<NonNullab
 export function spread(item: Pick<QueueItem, "assessments">, typeLabel: (t: string) => string = (t) => t): string {
   const counts = new Map<string, number>();
   const types = new Set(item.assessments.map((a) => a.semantic_type));
+  const tasks = new Set(item.assessments.map((a) => bandsText(a.target_task, a.target_bins)));
   for (const a of item.assessments) {
-    const k = types.size > 1 ? `${a.action} as ${typeLabel(a.semantic_type)}` : a.action;
+    const task = bandsText(a.target_task, a.target_bins);
+    const k = types.size > 1 ? `${a.action} as ${typeLabel(a.semantic_type)}`
+      : tasks.size > 1 && task ? `${a.action} as ${task}` : a.action;
     counts.set(k, (counts.get(k) ?? 0) + 1);
   }
   return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([k, n]) => `${n} ${k}`).join(" · ");

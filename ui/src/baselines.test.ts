@@ -28,7 +28,9 @@ describe("startBaselineDefaults", () => {
 describe("eligibleTarget", () => {
   it("allows class-like fields with at most 100 values", () => {
     expect(eligibleTarget(f("c"))).toBeNull();
-    expect(eligibleTarget(f("x", { semantic_type: "numeric_continuous" }))).toMatch(/continuous/);
+    expect(eligibleTarget(f("x", { semantic_type: "numeric_continuous", n_unique: 5000 }))).toBeNull();
+    expect(eligibleTarget(f("g", { semantic_type: "numeric_discrete", n_unique: 5000 }))).toBeNull();
+    expect(eligibleTarget(f("t", { semantic_type: "text" }))).toMatch(/text/i);
     expect(eligibleTarget(f("id", { semantic_type: "categorical", n_unique: 5000 }))).toMatch(/100/);
   });
 });

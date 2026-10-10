@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
-import { rocOption } from "../charts";
+import { histogramOption, rocOption, scatterOption } from "../charts";
 import { fmtInt, fmtMetric, fmtPct } from "../format";
 import { useChartTheme } from "../theme";
-import type { ModelRun, RocCurve, TargetEvaluation } from "../types";
+import type { HistogramChart, ModelRun, RegressionEvaluation, RocCurve, TargetEvaluation } from "../types";
 import { Chart } from "./Chart";
 
 type Split = "test" | "valid";
@@ -93,6 +93,53 @@ export function headlineTiles(m: Record<string, number>, binary: boolean): [stri
   ];
 }
 
+/** A number target's tiles: R² first (the headline), then the errors in the target's own units. */
+export function regressionTiles(m: Record<string, number>): [string, number | undefined, string?][] {
+  return [
+    ["R²", m.r2, "Share of the variance explained; 1 is perfect, 0 is no better than predicting the mean"],
+    ["RMSE", m.rmse, "Root mean squared error, in the target's units"],
+    ["MAE", m.mae, "Mean absolute error, in the target's units"],
+    ["MAPE", m.mape, m.mape === undefined ? "Not defined: some actual values are 0" : "Mean absolute percentage error (0.1 = 10%)"],
+  ];
+}
+
+function RegressionCard({ target, m, ev }: { target: string; m: Record<string, number>; ev?: RegressionEvaluation }) {
+  const t = useChartTheme();
+  const scatter = useMemo(() => (ev ? scatterOption(t, ev.scatter.actual, ev.scatter.predicted) : null), [t, ev]);
+  const residuals = useMemo(() => (ev ? histogramOption(t, { kind: "histogram", edges: ev.residuals.edges, counts: ev.residuals.counts } as HistogramChart,
+    { xLabel: "Error (predicted − actual)" }) : null), [t, ev]);
+  return (
+    <section className="card stack target-card">
+      <div className="card-head" style={{ marginBottom: 0 }}>
+        <h3>◎ {target}</h3>
+        <span className="muted small-text">predicted as a number</span>
+      </div>
+      <div className="stats metric-tiles">
+        {regressionTiles(m).map(([label, v, hint]) => (
+          <div key={label} className="stat" title={hint}>
+            <div className="label">{label}</div>
+            <div className={`value${v === undefined ? " muted" : ""}`}>{fmtMetric(v)}</div>
+          </div>
+        ))}
+      </div>
+      {ev && scatter && residuals ? (
+        <>
+          <div className="stack" style={{ gap: 4 }}>
+            <span className="muted small-text">
+              Predicted vs actual · {fmtInt(ev.n)} rows{ev.n > ev.scatter.actual.length ? `, showing ${fmtInt(ev.scatter.actual.length)}` : ""}
+            </span>
+            <Chart option={scatter} height={260} ariaLabel="Predicted against actual values" />
+          </div>
+          <div className="stack" style={{ gap: 4 }}>
+            <span className="muted small-text">Errors</span>
+            <Chart option={residuals} height={200} ariaLabel="Histogram of prediction errors" />
+          </div>
+        </>
+      ) : <div className="muted small-text">No evaluation details for this split.</div>}
+    </section>
+  );
+}
+
 function TargetCard({ target, m, ev }: { target: string; m: Record<string, number>; ev?: TargetEvaluation }) {
   const binary = ev ? ev.labels.length === 2 : "precision" in m;
   const total = ev?.per_class.reduce((a, c) => a + c.support, 0);
@@ -161,7 +208,10 @@ export function RunDetail({ run, targets }: { run: ModelRun; targets: string[] }
   return (
     <div className="stack" style={{ gap: 12, padding: "8px 4px" }}>
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <span className="secondary small-text">Predictions use the most likely class (0.5 threshold for binary targets)</span>
+        <span className="secondary small-text">
+          {targets.some((t) => metrics?.[t] && !("r2" in metrics[t] || "rmse" in metrics[t]))
+            ? "Class targets use the most likely class (0.5 threshold for binary targets)" : ""}
+        </span>
         <div className="row" style={{ gap: 12 }}>
           <a className="small-text" href={`/api/runs/${run.id}/files/model`}>Download model ↓</a>
           <div className="segmented" role="group" aria-label="Split">
@@ -176,9 +226,12 @@ export function RunDetail({ run, targets }: { run: ModelRun; targets: string[] }
       )}
       {metrics ? (
         <div className="grid-2">
-          {targets.filter((t) => metrics[t]).map((t) => (
-            <TargetCard key={t} target={t} m={metrics[t]} ev={run.report?.evaluation?.[split]?.[t]} />
-          ))}
+          {targets.filter((t) => metrics[t]).map((t) => {
+            const ev = run.report?.evaluation?.[split]?.[t];
+            return ev?.kind === "regression" || "r2" in metrics[t] || "rmse" in metrics[t]
+              ? <RegressionCard key={t} target={t} m={metrics[t]} ev={ev?.kind === "regression" ? ev : undefined} />
+              : <TargetCard key={t} target={t} m={metrics[t]} ev={ev as TargetEvaluation | undefined} />;
+          })}
         </div>
       ) : (
         <div className="muted">No {split} split in this export.</div>

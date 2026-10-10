@@ -74,12 +74,12 @@ export function mlflowExperimentUrl(mlflowExperimentId: string | null | undefine
 }
 
 export function metricLabel(metric: string): string {
-  return metric.startsWith("roc_auc") ? "AUC" : metric;
+  return metric === "r2" ? "R²" : metric.startsWith("roc_auc") ? "AUC" : metric;
 }
 
 type BaselineField = NonNullable<FieldResponse["baseline"]>;
-const COMPARED = ["action", "semantic_type", "imputation", "impute_value", "add_missing_indicator", "transform", "scaling",
-  "encoding", "params"] as const;
+const COMPARED = ["action", "semantic_type", "target_task", "target_bins", "imputation", "impute_value",
+  "add_missing_indicator", "transform", "scaling", "encoding", "params"] as const;
 
 const baselineInput = (base: BaselineField, family: string): DecisionInput =>
   toInput({ ...base, ...(base.settings ?? {}) } as unknown as Decision, family);

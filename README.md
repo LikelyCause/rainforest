@@ -2,8 +2,8 @@
 
 Rainforest prepares wide, mixed-type data for **tree-based models**. Ingest a dataset, pick its targets, review it
 **one field at a time** in a fast UI, store keep / drop / imputation / encoding decisions in Postgres, explore the data
-with correlations, embeddings and per-field tests, export a **model-ready** dataset, and train a **`ClassifierChain`**
-of LightGBM (or another tree ensemble) over your targets.
+with correlations, embeddings and per-field tests, export a **model-ready** dataset, and train a **chain** of
+LightGBM (or another tree ensemble) models over your targets, each predicted as classes, a number or bands.
 
 Trees are the default and the main path. Rainforest knows that tree ensembles split on value *order*, so it never
 suggests scaling or log transforms for them, and it leaves missing values for the model to route. The team's agreed
@@ -53,7 +53,7 @@ and the only assessor.
 1. Sign in as **Admin** (a lead) and upload a file or generate a sample on **Datasets**.
 2. On the dataset's **Team** step, set up its first baseline: pick the model type (*Trees* for LightGBM, XGBoost and
    random forests), keep *the suggestions* as the starting point, tick the targets, and leave yourself as the only
-   assessor. *Start* opens **Review**.
+   assessor. *Start* opens **Review**, where a target's *Predict as* says whether it is classes, a number or bands.
 3. Walk the fields in **Review** (or mark them in bulk in **Bulk edit**: *Accept suggestions*, *Mark reviewed*) until
    every field is reviewed.
 4. On the **Team** step, *Submit assessment*. With one assessor there is nothing to settle, so team review opens with
@@ -83,15 +83,17 @@ covers each screen.
 
 1. **Datasets** → upload a CSV / Parquet file, or use **Samples ▾**: *Real datasets* (the
    [sample library](#sample-library)) or *Generate* (1k–2M rows, 30–400 fields, at most 60M cells, with `column_a` /
-   `column_b` targets that are binary + 3-class, both binary or both multiclass). On an empty install, *Open the
+   `column_b` targets that are binary + 3-class, both binary or both multiclass, and with *Add a numeric target
+   (column_c)* a third, continuous one predicted as a number). On an empty install, *Open the
    50k × 150 demo* generates one in one click. The upload is converted to Parquet, loaded into `raw.ds_<id>`, profiled
    and correlated, with live progress. Text files may separate columns with commas, semicolons, tabs or pipes (the
    separator is detected; anything but a comma is noted on the dataset), and a cell holding only `?`, `NA`, `N/A`,
    `NaN`, `null`, `None` or `#N/A` is missing.
    Then **Choose target ▾** on the dataset's row (once set, click the target chips to change them): pick one or more
-   columns, or *No target (unsupervised)*. A target must be binary, categorical or discrete numeric with at most 100
-   distinct values; other fields are disabled in the picker with the reason, and the API refuses them. Saving
-   refreshes the target associations and leakage flags. Generated samples already have their two targets set. The row
+   columns, or *No target (unsupervised)*. A target must be binary, categorical or numeric, and the picker shows how
+   each will be predicted (see [Predicting numbers and bands](#predicting-numbers-and-bands)); text, identifier, date
+   and constant fields are disabled in the picker with the reason, and the API refuses them. Saving refreshes the
+   target associations and leakage flags. Generated samples already have their targets set. The row
    menu also renames or deletes a dataset (deleting removes its fields, exports, model runs and their files).
    A new dataset's first baseline (*Trees v1*) waits to be set up: a lead chooses its model type, what it starts
    from, its targets and its assessors on the dataset's **Team** step (row menu → *Assessors…*). Until then Review is
@@ -128,6 +130,23 @@ The top bar shows the dataset switcher, the workflow steps **Review · Bulk edit
 page; while you adjust an experiment, that experiment), *Next unreviewed* (`U`) while fields are left, and on the
 right **Team** (the user list), who you're signed in as with your role, and *Sign out*.
 
+### Predicting numbers and bands
+
+Each target has a *Predict as* setting in Review's decision panel, part of its decision like keep / drop and type:
+
+* **Classes:** one of the field's values, for a target with at most 100 distinct values. The default for binary and
+  categorical targets, and for discrete numbers with at most 100 values.
+* **Number:** the value itself (regression). The default for continuous numbers and for discrete numbers with more
+  than 100 values.
+* **Bands:** the number cut into classes, either *Equal-sized* (2–20 bands with about the same number of rows) or at
+  *Cut points* you type (`10, 25, 80` gives `< 10`, `[10, 25)`, `[25, 80)`, `≥ 80`). The panel previews how many
+  rows fall in each band on the whole column; an export cuts equal-sized bands on its training rows only.
+
+Number and bands are for numeric targets only, and a continuous target can't be predicted as classes. Assessors who
+choose a different *Predict as* (or different bands) for a target disagree on its core decision, so the field goes to
+the review queue. The choice is part of a baseline's snapshot, and an experiment can change it like any other
+adjustment (*Predict as* in its diff).
+
 ### Keyboard shortcuts (Review)
 
 | Key | Action |
@@ -146,7 +165,7 @@ right **Team** (the user list), who you're signed in as with your role, and *Sig
 ## Sample library
 
 *Samples ▾ → Real datasets* on the Datasets page adds a real dataset that ships with the app, with its targets set,
-to try Rainforest on real data. Each one goes through the same processing as an upload. All four come from the
+to try Rainforest on real data. Each one goes through the same processing as an upload. All five come from the
 [UCI Machine Learning Repository](https://archive.ics.uci.edu/) under
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/):
 
@@ -156,9 +175,11 @@ to try Rainforest on real data. Each one goes through the same processing as an 
 | Student grades | 649 × 33 | `G1`, `G2`, `G3` (grades 0–20) | a chain where each grade helps predict the next | Cortez (2008), [doi:10.24432/C5TG7T](https://doi.org/10.24432/C5TG7T) |
 | Student dropout | 4,424 × 37 | `Target` (dropout, enrolled, graduate) | an imbalanced target; categoricals stored as numeric codes | Realinho, Vieira Martins, Machado & Baptista (2021), [doi:10.24432/C5MC89](https://doi.org/10.24432/C5MC89) |
 | Steel plate faults | 1,941 × 34 | seven yes/no fault types | long chains | Buscema, Terzi & Tastle (2010), [doi:10.24432/C5J88N](https://doi.org/10.24432/C5J88N) |
+| Concrete strength | 1,030 × 9 | `strength_mpa` (a number) | a regression target, or the same cut into bands | Yeh (1998), [doi:10.24432/C5PK67](https://doi.org/10.24432/C5PK67) |
 
 The files are under `api/app/sample_library/data/`, rebuilt from their sources with
-`docker compose exec api python -m app.sample_library.build` (or the same module from `api/` locally).
+`docker compose exec api python -m app.sample_library.build` (or the same module from `api/` locally). Concrete
+strength ships as an `.xls` file, so rebuilding it needs `pip install fastexcel` (the app itself doesn't).
 
 ## Sign-in
 
@@ -284,8 +305,8 @@ on its Team page. The form asks for:
    starts from them. A lead who opens Review or Bulk edit on a dataset they aren't assessing gets *Assess it myself*,
    which assigns them like anyone else.
 2. **Team review** opens by itself when the last assigned assessor submits (or a lead unassigns the last one who
-   hadn't). Fields where every assessor chose the same keep / drop / target and type are **adopted** as the team
-   decision; the settings take the most common choice, and a tie takes the suggestion. The rest
+   hadn't). Fields where every assessor chose the same keep / drop / target, type and *Predict as* are **adopted**
+   as the team decision; the settings take the most common choice, and a tie takes the suggestion. The rest
    form the **review queue** on the Team page: each assessor's choice, settings and notes side by side, with the
    differences marked, and a comment thread. Everyone can comment; a lead sets the team decision (the same decision
    panel as Review). Bulk edit is for leads only in this phase and changes team decisions. With a single assessor
@@ -352,8 +373,9 @@ owner (for a personal one, its assessor) or a lead renames it, edits its notes a
 archived experiment takes no new exports or runs.
 
 **Adjusting an experiment.** A team experiment holds its own copy of its baseline, which its owner may change without
-touching the baseline: per field the role (keep / drop / target), the type and the prep settings (missing values,
-missing indicator, transform, scaling, encoding and encoder parameters), within the baseline's model type. A type
+touching the baseline: per field the role (keep / drop / target), a target's *Predict as*, the type and the prep
+settings (missing values, missing indicator, transform, scaling, encoding and encoder parameters), within the
+baseline's model type. A type
 change brings the new type's suggested settings where the old ones don't fit. *Adjust fields* on the experiment's page
 opens Review and Bulk edit on that copy (`?view=experiment:<id>`, with a bar naming the experiment); the decision
 panel says what differs from the baseline, with *Revert to baseline*. The experiment's **Adjustments** card lists
@@ -363,13 +385,13 @@ the default **Team ·** experiments and other people's experiments are read-only
 try changes), and a personal experiment follows its assessment instead. Changed targets are allowed: the export uses
 the experiment's targets, its preview warns that the results aren't comparable with experiments on the baseline's
 targets, and a field newly made a target gets the leak screen. Each export freezes the baseline and the adjustments as
-they stand, and records them (see [Export](#export--classifierchain) and [MLflow](#mlflow)).
+they stand, and records them (see [Export and training](#export-and-training) and [MLflow](#mlflow)).
 
 ## Decisions: shared vs per model family
 
 | Shared by every family | Per family (`meta.field_settings`) |
 |---|---|
-| keep / drop / target, semantic type, notes, reviewed | imputation, missing-indicator, transform, scaling, encoding, encoder params |
+| keep / drop / target, *Predict as*, semantic type, notes, reviewed | imputation, missing-indicator, transform, scaling, encoding, encoder params |
 
 A baseline's model type decides which family's settings are reviewed, exported and logged: Review, Bulk edit and the
 decision panel show that family's settings only, and a baseline's snapshot stores only those. Each family has its own
@@ -378,7 +400,7 @@ valid for its own type. If you change a field's type, its settings are re-derive
 
 | | **Tree ensembles** (default) | Linear models | Neural / distance |
 |---|---|---|---|
-| Models | LightGBM, XGBoost\*, histogram GBM, random forest | logistic regression | MLP |
+| Models | LightGBM, XGBoost\*, histogram GBM, random forest | logistic regression (ridge for a number) | MLP |
 | Missing numerics | left as NaN; the model learns where to send them | median, plus a "was missing" flag from 1% missing | same as linear |
 | Skew / outliers | nothing: splits only depend on order | signed log1p when \|skew\| > 1, else winsorize above 3% outliers | same as linear |
 | Scaling | **not offered**: it can't change a split | standard | quantile-normal when \|skew\| > 1, else standard |
@@ -410,7 +432,9 @@ text compared with short categorical strings.
   timestamps whose unit (s, ms, µs, ns) follows from their magnitude. Whole numbers that all fall within one
   unit's 2000–2100 epoch range are inferred as dates in the first place, unless the name looks like a key
   (`…_id`, `key`, `code`).
-* An upload target with more than 100 distinct values isn't made a target; the dataset gets a warning.
+* A target named at upload stays numeric when its values are numbers, and whole numbers that look like keys or
+  dates are read as numbers too. A non-numeric target with more than 100 distinct values isn't made a target; the
+  dataset gets a warning.
 
 Fields with a ≥ 0.95 association to a target are flagged as **possible leakage** and suggested for dropping.
 
@@ -441,7 +465,8 @@ Four views over one dataset, sharing a toolbar whose state lives in the URL:
 In raw mode the fields used are the kept fields (*Kept only*) or every non-target field, typed by their review
 decision. Text, identifier and constant fields, and fields constant in the sample, are skipped and listed.
 Categoricals keep their top 20 levels plus *Other* and *(missing)*; dates become epoch seconds. A numeric target with
-more than 20 distinct values is treated as numeric, otherwise as classes.
+more than 20 distinct values is treated as numeric unless it is predicted as classes; otherwise it is treated as
+classes. On export data, a target predicted as a number is numeric and every other target is classes.
 
 | View | What it computes |
 |---|---|
@@ -457,7 +482,7 @@ button rather than recomputed automatically. A new request for the same view sup
 sample can't support an analysis (no target, too few rows or fields, a single class), the view explains why instead
 of failing.
 
-## Export → ClassifierChain
+## Export and training
 
 Exports are built from an experiment's source, frozen at export time: a finalized baseline's snapshot (a team
 experiment's adjusted copy of it), or for a personal experiment its assessor's assessment (see
@@ -469,17 +494,24 @@ experiment, and its manifest's `config` the `source` (`recipe` or `assessment`),
 
 * **Leakage-safe split:** the train / valid / test split is assigned first, stratified on the target combination
   (single-row combinations are pooled; if the combinations still can't be stratified, on one target, else not at
-  all). A target with a class that has a single row blocks the export, naming the class.
+  all). A numeric target stratifies on bands (its cut points, else 5 equal-count bands), so each split covers its
+  range. A target with a class that has a single row blocks the export, naming the class.
   Every statistic is then fitted on training rows only (up to 500k of them by default), and the full file is
   transformed in chunks.
 * **Memory:** both steps are sized by output width. A transform chunk holds at most `EXPORT_CHUNK_MB` of dense
   output (rows × features × 8 bytes, 256 MB by default), and the fit sample at most `EXPORT_FIT_MB` (512 MB), so a
   wide export fits on fewer rows (the manifest records `fit_sample_rows` and `chunk_rows`). Peak memory runs at a
   few times these budgets: a 300k-row export peaks at about 1.3–2 GB.
-* **Output:** float32 features, `__split`, `__row_id` (joins back to `raw.ds_<id>`), label-encoded targets, the fitted
+* **Output:** float32 features, `__split`, `__row_id` (joins back to `raw.ds_<id>`), the targets, the fitted
   `preprocessor.joblib`, and `manifest.json` (feature → source field, class mappings, model family, NaN report, and
   `inf_values`: ±inf per field, written as missing). Feature names never take a target's name or `__row_id` /
   `__split`; a clashing feature gets a numbered suffix.
+* **Targets** follow their *Predict as*: classes are label-encoded; a number is written as float64; bands become
+  class codes labelled like `< 10`, `[10, 25)`, `≥ 80`, with equal-sized bands cut on the training split only.
+  Numeric targets are read as profiling reads them (thousands separators, decimal commas). The manifest records
+  `target_tasks`, `target_bins` (`edges`, `labels`, `k`) and `target_stats` (training `mean`, `std`, `min`, `max`
+  of each number); `target_kinds` is `binary`, `multiclass` or `regression`, and `target_classes` has no entry for a
+  number.
 * **Encodings worth knowing:** a binary field becomes one 0/1 column named after its second level (`smoker_yes`).
   Missing values take the most frequent level, or the level you name as the fill value; any other fill label adds a
   `<field>__isna` column instead of a third code. Numeric fill values are applied before log1p or winsorizing, so
@@ -488,17 +520,24 @@ experiment, and its manifest's `config` the `source` (`recipe` or `assessment`),
 * **Before you export**, the page summarises what will go in (kept / dropped / targets / customised fields, kept
   fields by type) and warns about unreviewed fields, kept fields that look like a leak of the export's own targets,
   targets no leak check has run for, and targets that differ from the baseline's. No
-  target, no kept features or a single-row target class blocks the export. Once an export exists, it shows how many
+  target, no kept features, a single-row target class, a numeric target with values that don't read as numbers or
+  a single value, or a band with fewer than 2 rows blocks the export. Once an export exists, it shows how many
   decisions changed since, with *Re-export with same split*. Validation and test share, seed and the fit-row cap are adjustable.
 * **Compatibility:** tree models train on any export. Linear and neural models need an export prepared for their
   family, and they're refused if the export contains NaN. The UI disables incompatible models and shows the reason.
   Planned models (linear SVM, k-nearest neighbours, convolutional and recurrent networks) are listed as *planned* and
   can't be trained yet.
-* **Chain:** `ClassifierChain(model, order=<targets>, cv=5)`, in the export's target order unless you choose another
-  (the UI offers both orders when there are two targets).
+* **Chain:** one model per target, in the export's target order unless you choose another (the UI offers both
+  orders when there are two targets), with `cv=5`.
   * The chained feature is **out-of-fold** during training, so a later target's model learns from realistic
     predictions of the earlier ones rather than the ground truth.
-  * All targets binary → P(class 1) is passed down the chain; any multiclass target → the predicted class code.
+  * Only class targets (bands included) → scikit-learn's `ClassifierChain(model, order=<targets>, cv=5)`. All
+    binary → P(class 1) is passed down the chain; any multiclass target → the predicted class code.
+  * Any number → Rainforest's `TargetChain`: a classifier or a regressor per target, passing down P(class 1) for a
+    binary target, the predicted class for a multiclass one and the predicted value for a number. Every model has a
+    regressor (LightGBM, XGBoost on CPU or GPU, histogram GBM, random forest, ridge for the linear family, MLP);
+    classifier-only parameters (`class_weight`, `objective`, `scale_pos_weight`, `C`, …) are left out for it.
+  * The report records `chain_kind` (`classifier_chain` or `target_chain`) and `target_tasks`.
   * NaN-capable models are wrapped so sklearn's finiteness check doesn't reject the NaN they handle natively.
 * **Classes missing from training** (a rare class that only landed in valid or test) keep their own probability
   column (zero), so metrics stay aligned with the class names; the report lists them under `missing_from_train`. A
@@ -506,15 +545,18 @@ experiment, and its manifest's `config` the `source` (`recipe` or `assessment`),
 * **Metrics** per target on the valid and test splits: accuracy, balanced accuracy, log-loss, ROC-AUC (one-vs-rest
   macro for multiclass), precision / recall / F1 (macro and weighted, plus positive-class and specificity for binary
   targets), confusion matrices, a per-class table and ROC curves (one-vs-rest per class for multiclass targets, up to
-  200 points each), plus the top importances per chain link.
+  200 points each), plus the top importances per chain link. A number gets `rmse`, `mae`, `r2` and `mape` (only when
+  no actual value is 0), up to 1,000 sampled (actual, predicted) pairs and a 30-bin histogram of the errors.
 * **On the page:** each export has *Train ▾* (the model, and which of the export's targets to train in which chain
   order: tick one target for a single model, or several and order them), *Files ▾* (Parquet, preprocessor, manifest) and
   *Use from code* (the CLI command and class mappings). Runs are listed per export, with that export's targets as
-  columns, showing test-split AUC and macro-F1. In each of these columns ★ marks the run that scored best on the
-  validation split for that target and metric, so choosing it doesn't use the test split. A run expands into, per
-  target, its headline metrics (precision, recall and F1 are the positive class's for a binary target and macro averages
-  otherwise), a confusion matrix (correct predictions shaded in blue, errors in red), its ROC curves and one per-class
-  table ending in the macro and weighted averages, with *Download model* and a test / validation switch.
+  columns, showing test-split AUC and macro-F1 (R² and RMSE for a number). In each of these columns ★ marks the run
+  that scored best on the validation split for that target and metric (lowest for RMSE), so choosing it doesn't use
+  the test split. A run expands into, per target, its headline metrics (precision, recall and F1 are the positive
+  class's for a binary target and macro averages otherwise), a confusion matrix (correct predictions shaded in blue,
+  errors in red), its ROC curves and one per-class table ending in the macro and weighted averages; for a number, R²,
+  RMSE, MAE and MAPE tiles, a predicted-vs-actual scatter and the error histogram. *Download model* and a test /
+  validation switch apply to every target.
 
 ```bash
 make train EXPORT=1                          # LightGBM
@@ -525,8 +567,9 @@ make train EXPORT=1 MODEL=xgboost DEVICE=cuda  # GPU image only
 make models                                  # what's registered / installed, and on which devices
 ```
 
-`--order` takes the export's own target names (the sample's are `column_a` and `column_b`). Runs from the CLI write
-`classifier_chain.joblib` and `report.json` under `/data/models/export<id>_<model>_<time>/` but aren't recorded in
+`--order` takes the export's own target names (the sample's are `column_a` and `column_b`, plus `column_c` when
+generated with a numeric target). Runs from the CLI write `classifier_chain.joblib` (either kind of chain) and
+`report.json` under `/data/models/export<id>_<model>_<time>/` but aren't recorded in
 `meta.model_runs`, so they don't appear in the UI's runs table or `meta.v_model_metrics`.
 
 **Adding a model** means adding one `ModelSpec` to `api/app/modeling/registry.py`: key, label, family, NaN support,
@@ -592,9 +635,11 @@ the sign-in page (and back) if it isn't. The server has no published port of its
   `run <id> · <model label>` (e.g. `run 12 · LightGBM`).
 * **Params:** `model`, `order`, `cv`, `seed`, `device`, `chain_method`, `export_family`, `n_train`, `n_features`, and
   every effective estimator parameter as `estimator.<name>` (defaults, your overrides and the device settings),
-  `prep.adjusted_fields` (how many fields the experiment adjusted from its baseline), and the export's split:
-  `prep.valid_size`, `prep.test_size`, `prep.split_seed`.
-* **Metrics:** each scalar metric per split and target as `<split>.<target>.<metric>` (e.g. `test.column_a.roc_auc`),
+  `prep.adjusted_fields` (how many fields the experiment adjusted from its baseline), each target's *Predict as* as
+  `target.<name>.task` (`classes`, `regression`, `bins`), and the export's split: `prep.valid_size`,
+  `prep.test_size`, `prep.split_seed`.
+* **Metrics:** each scalar metric per split and target as `<split>.<target>.<metric>` (e.g. `test.column_a.roc_auc`,
+  `valid.column_c.r2`),
   plus `fit_seconds`. Characters MLflow doesn't allow in a key become `_`.
 * **Artifacts:** `report.json` and `model/classifier_chain.joblib`, the same files the API serves for the run, and
   `adjustments.json` (the baseline and the experiment's adjustments, field by field), and
@@ -652,14 +697,15 @@ WHERE s.field_id = 42 AND s.family = d.model_family;
 
 -- compare trained models on the test split, by baseline
 SELECT baseline_family, baseline_version, experiment_id, model, target, metric, value FROM meta.v_model_metrics
-WHERE dataset_id = 1 AND split = 'test' AND metric IN ('roc_auc', 'roc_auc_ovr_macro') ORDER BY target, value DESC;
+WHERE dataset_id = 1 AND split = 'test' AND metric IN ('roc_auc', 'roc_auc_ovr_macro', 'r2', 'rmse')
+ORDER BY target, metric, value DESC;
 ```
 
 | Table / view | Contents |
 |---|---|
 | `meta.datasets` | uploads: status, progress, counts, targets, `model_family` (the current baseline's) |
 | `meta.fields` | inferred type, confidence and reasons, typed statistics, `leakage_flag`, `stats` / `charts` / per-family `suggestion` JSONB |
-| `meta.field_decisions` | the team decision per field of the baseline in progress (keep / drop / target, type, notes, reviewed) |
+| `meta.field_decisions` | the team decision per field of the baseline in progress (keep / drop / target, `target_task` and `target_bins`, type, notes, reviewed) |
 | `meta.field_settings` | preprocessing per field **per model family** |
 | `meta.decision_history` | append-only audit log of every change (with family, `user_id` and, for bulk edits, `batch_id`) |
 | `meta.bulk_batches` | each applied bulk edit: summary and a pre-change snapshot used by undo |
@@ -671,7 +717,7 @@ WHERE dataset_id = 1 AND split = 'test' AND metric IN ('roc_auc', 'roc_auc_ovr_m
 | `meta.experiment_decisions`, `meta.experiment_settings`, `meta.experiment_batches` | each team experiment's own copy of its baseline (decisions, its model family's settings) and its bulk edits; fields that differ from the baseline's snapshot are its adjustments |
 | `meta.exports`, `meta.model_runs` | export jobs; training runs with metrics and report; each with its `experiment_id` |
 | `meta.analyses` | Explore jobs (map, tests, importance): params, data version, status, result JSONB |
-| `meta.v_field_profiles`, `meta.v_fields`, `meta.v_field_settings`, `meta.v_correlations`, `meta.v_model_metrics` | query-friendly views (`v_fields` and `v_field_settings` show the team decision of the baseline in progress; `v_field_profiles` and `v_fields` carry its `baseline_family` and `baseline_version`, and `v_model_metrics` each run's `experiment_id` and the `baseline_family` and `baseline_version` its export was built from) |
+| `meta.v_field_profiles`, `meta.v_fields`, `meta.v_field_settings`, `meta.v_correlations`, `meta.v_model_metrics` | query-friendly views (`v_fields` and `v_field_settings` show the team decision of the baseline in progress, `v_fields` with `target_task` and `target_bins`; `v_field_profiles` and `v_fields` carry its `baseline_family` and `baseline_version`, and `v_model_metrics` each run's `experiment_id` and the `baseline_family` and `baseline_version` its export was built from) |
 | `raw.ds_<id>` | the uploaded data (sanitized column names; see `meta.fields.db_column`) |
 
 Assessments are private while a dataset is assessed, so the console's role can't read `meta.assessments`,

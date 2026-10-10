@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import { eligibleTarget, FAMILIES, startBaselineDefaults, type StartBaselineForm } from "../baselines";
+import { defaultTask, taskLabel } from "../decision";
 import { baselineLabel, familyShort, fmtAgo } from "../format";
 import { useFields, useMe, useOptions } from "../hooks";
 import { useInvalidateTeam } from "../pages/DatasetTeamPage";
@@ -104,15 +105,17 @@ export function StartBaseline({ ds, onCancel }: { ds: Dataset; onCancel?: () => 
 
       {form.start !== "recipe" && (
         <fieldset className="bare stack" style={{ gap: 4 }}>
-          <legend className="field-label">Targets <span className="muted small-text">· fixed for this baseline; experiments can change them</span></legend>
+          <legend className="field-label">Targets <span className="muted small-text">· fixed for this baseline; experiments can change them. Each is predicted as shown; change it to a number or bands per field in Review</span></legend>
           <div className="check-grid">
             {(fields.data ?? []).map((f) => {
               const why = eligibleTarget(f);
+              const task = defaultTask(f.semantic_type, f.n_unique);
               return (
                 <label key={f.id} className={`check${why ? " muted" : ""}`} title={why ?? undefined}>
                   <input type="checkbox" disabled={Boolean(why) && !form.targets.includes(f.name)} checked={form.targets.includes(f.name)}
                     onChange={() => set({ targets: toggle(form.targets, f.name) })} />
                   <span className="mono">{f.name}</span>
+                  {!why && task && <span className="muted small-text"> · {taskLabel(task).toLowerCase()}</span>}
                 </label>
               );
             })}

@@ -10,6 +10,7 @@ class SampleRequest(BaseModel):
     fields: int = Field(150, ge=30, le=400)
     seed: int = 42
     target_kind: Literal["mixed", "binary", "multiclass"] = "mixed"
+    numeric_target: bool = Field(False, description="Add column_c, a continuous target, after column_a and column_b")
     name: str | None = None
 
 

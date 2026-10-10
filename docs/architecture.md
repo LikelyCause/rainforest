@@ -25,7 +25,7 @@ for one run.
 | `main.py` | App, middleware (gzip for API responses, not file downloads; CORS for the Vite dev server), router registration, `/health`, `/api/options`. Startup loads the session secret, runs `db.bootstrap()` and `jobs.start()`, removes orphaned uploads, queues `experiments.startup_flush` (MLflow logging of runs that waited for review) and starts GPU detection. |
 | `auth.py` | Sign-in routes (`/api/auth/*`: config, me, check, logout, pick mode's users and pick, and the OIDC login / callback), the signed session cookie, the session secret, `SecurityMiddleware`, and the `current_user` / `require_lead` dependencies. |
 | `oidc.py` | The OIDC relying party: discovery and JWKS (cached; an unknown key id refetches), the authorization URL with PKCE, the code exchange, ID token verification, role from the groups claim. Uses httpx and PyJWT. |
-| `recipes.py` | Baselines (rows of `meta.recipes`, one per version of one model family): `FAMILY_LABEL` and `label` (`Trees baseline v2`), the current version (the latest started, with the row lock phase changes and decision writes take), the latest finalized one (of a family), creating the first and the next version (`create_first`, `start_version`, `next_version`), the one-in-progress rule (`require_none_in_progress`, serialised by `lock_dataset`), `is_setup`, `load_working` (makes the working tables a baseline's starting point), which fields a version works on (`open_field_ids`) and the lock on the rest (`locked_problem`), the snapshot and schema fingerprint, finalizing, snapshotting versions migrated without one, the export spec rows read from a snapshot (`spec_rows`, `snapshot_targets`) and the diff between two snapshots. |
+| `recipes.py` | Baselines (rows of `meta.recipes`, one per version of one model family): `FAMILY_LABEL` and `label` (`Trees baseline v2`), the current version (the latest started, with the row lock phase changes and decision writes take), the latest finalized one (of a family), creating the first and the next version (`create_first`, `start_version`, `next_version`), the one-in-progress rule (`require_none_in_progress`, serialised by `lock_dataset`), `is_setup`, `load_working` (makes the working tables a baseline's starting point), which fields a version works on (`open_field_ids`) and the lock on the rest (`locked_problem`), the snapshot and schema fingerprint, finalizing, snapshotting versions migrated without one, the export spec rows read from a snapshot (`spec_rows`, `snapshot_targets`, `snapshot_target_tasks`) and the diff between two snapshots. |
 | `reuse.py` | Reusing a finalized baseline on new data: the drift rule, matching by name (`match`), and `apply`, which gives the new baseline the source's family, carries fields into the team decision, sets the targets and records the reopened fields and the summary. |
 | `experiments.py` | Experiments and who sees them: `visible_ids(user_id)` (the SQL every list and lookup of experiments, exports and runs filters on), `get_visible` (`404` for a private one), the add / edit / adjust rules (`adjust_denied`, `can_adjust`), creating one, the per-version default Team experiment (`team_for`), a team experiment's copy of its baseline (`seed_copy`, `backfill_copies`), what an export of it is built from (`snapshot_for`), its `adjustments` and `revert`, the list with counts, adjustments and the best run, and MLflow deferral (`run_is_private`, `flush_deferred`). |
 | `assessment.py` | Decision sources and blind assessment: `Source` (whose decisions a request sees, as SQL relations shaped like `field_decisions`, `field_settings` and `v_fields`, plus whether it may write; see [Team process](#team-process)), `source_for` (with `view` for an experiment or a finalized baseline), `from_key` / `key_owner` for stored source keys, the write helpers every writable kind shares, seeding assessors, progress, the adoption rule (`adopt`, `disagreements`), and `personal_snapshot` (one assessor's assessment shaped like a snapshot, carried fields from the version's own values). |
@@ -36,13 +36,14 @@ for one run.
 | `jobs.py` | `submit(fn, *args)` onto a `ThreadPoolExecutor` of `JOB_WORKERS` threads; job ownership, the restart sweep and the global job slots. |
 | `ingest.py` | CSV / Parquet → Parquet (the separator of a text file is detected), identifier sanitising, `COPY` into `raw.ds_<id>`. |
 | `sample_library/` | The real datasets that ship with the app: the catalog (`LIBRARY`), their Parquet files under `data/`, and `build.py`, which rebuilds the files from their UCI sources. |
-| `profiling.py` | Type inference, statistics, charts, association sample vectors. |
+| `profiling.py` | Type inference (a numeric target column stays numeric, including whole numbers that look like keys or dates), statistics, charts, association sample vectors, `coerce_numeric`. |
 | `correlations.py` | Pairwise associations (Spearman, Cramér's V, correlation ratio). |
-| `semantics.py` | Model families, semantic types, allowed settings per family and type, suggestions, validation, the option catalog. |
+| `semantics.py` | Model families, semantic types, allowed settings per family and type, suggestions, validation, target tasks (`default_task`, `target_problem`, `bins_problem`), the option catalog. |
 | `processing.py` | The dataset pipeline (`process_dataset`), suggestion seeding, target-derived state (`refresh_target_state`), file cleanup. |
-| `transform.py` | Export: split, fit preprocessing on train rows, chunked transform, manifest. |
+| `transform.py` | Export: targets and split (`prepare_targets`: class codes, float64 numbers, bands cut on the training rows; numbers stratified on bands), fit preprocessing on train rows, chunked transform, manifest. |
+| `bands.py` | Cutting a numeric target into bands: equal-count edges, chosen cut points, labels (`< 10`, `[10, 25)`, `≥ 80`), assignment and the fewer-than-2-rows check. |
 | `parquet_rows.py` | `read_rows`: selected rows of a Parquet file, read a few column chunks at a time (export fit sample, Explore samples). |
-| `modeling/registry.py`, `modeling/train.py` | Model catalog, compatibility and device params; `ClassifierChain` training, evaluation, CLI. |
+| `modeling/registry.py`, `modeling/train.py` | Model catalog (a classifier and a regressor per model, with the classifier-only parameters left out of regressors), compatibility and device params; training (`ClassifierChain` when every target is classes, `TargetChain` when any is a number), classification and regression evaluation, CLI. |
 | `modeling/mlflow_log.py`, `modeling/mlflow_backfill.py` | Logging a finished model run to MLflow (experiment per dataset, params, metrics, tags, artifacts), and the CLI that logs runs that have no MLflow run yet. |
 | `gpu.py` | NVIDIA GPU detection (`nvidia-smi` plus an XGBoost CUDA test fit in a subprocess), started in a background thread at startup and cached per process. |
 | `analysis/prep.py`, `analysis/compute.py`, `analysis/runner.py` | Explore jobs: sampling and typing, the numeric work, caching and job lifecycle. |
@@ -142,10 +143,14 @@ the UI polls (`pending → running → done | failed`, with `progress` and `stat
    for knock-on changes). Targets profiled as text or identifier have no association sample, so a `correlate_targets`
    job computes theirs. Added targets also get the leak screen against text and high-cardinality fields: inside
    `correlate_targets` when that job runs, otherwise as a `fields.screen_targets` job that leaves the dataset
-   `ready`. A target chosen in Review (`PUT …/decision`) gets the same job.
+   `ready`. A target chosen in Review (`PUT …/decision`) gets the same job. How each target is predicted is
+   `target_task` (`classes`, `regression`, `bins`) and `target_bins` on every decision table; the trigger from
+   migration 014 clears both on a non-target and, when the task is missing or doesn't fit the type, sets the type's
+   default (`meta.default_target_task`, mirrored by `semantics.default_task`), so every writer gets the same rule.
 4. **Review.** `GET /api/fields/{id}` returns the field, the viewer's decision merged with the baseline family's
    settings, and target associations. `PUT /api/fields/{id}/decision` validates against the family (a type change
-   whose settings don't fit takes the new type's suggestion), writes the decision and settings and, for the team
+   whose settings don't fit takes the new type's suggestion; a target saved without `target_task` keeps the stored
+   one, `fields._with_stored_task`), writes the decision and settings and, for the team
    decision only, appends `meta.decision_history` and keeps the target state in step. See
    [Team process](#team-process) for whose decision that is.
 5. **Bulk edit.** The field filter compiles to a `WHERE` over the viewer's `fields_view()` (`meta.v_fields` for the
@@ -164,9 +169,12 @@ the UI polls (`pending → running → done | failed`, with `progress` and `stat
    with its adjustments, or `assessment.personal_snapshot` for a personal experiment), stores it in
    `exports.snapshot` with the baseline and adjustments in `exports.config`, checks the preview's blocking issues and
    submits `exports._run`, which reads that snapshot, calls
-   `transform.run_export` and writes `exports/<id>/{model_ready.parquet, preprocessor.joblib, manifest.json}`.
+   `transform.run_export` with each target's task (`exports.target_tasks`) and writes
+   `exports/<id>/{model_ready.parquet, preprocessor.joblib, manifest.json}`. The preview runs the numeric target
+   checks first (`exports._numeric_target_problems`), so values that don't read as numbers block before queueing.
 8. **Training.** `POST /api/exports/{id}/runs` checks model compatibility and the requested device (see `gpu.py`) and submits `runs._run`, which calls
-   `modeling.train.train` and writes `models/run<id>_…/{classifier_chain.joblib, report.json}`; metrics and the
+   `modeling.train.train` and writes `models/run<id>_…/{classifier_chain.joblib, report.json}` (the joblib holds a
+   `ClassifierChain` or a `TargetChain`, named by `report.chain_kind`); metrics and the
    report go to `meta.model_runs`. With `MLFLOW_TRACKING_URI` set, `mlflow_log.log_model_run` then logs the run
    before it is marked done (status message *Logging to MLflow*), unless its experiment is private: then the run is
    marked done with `report.mlflow_pending` instead, in the same transaction that checked (see
@@ -223,7 +231,7 @@ those targets, rather than the dataset's stored flags.
 Writers lock the recipe row `FOR SHARE` and phase changes take it `FOR UPDATE`, so a save can't land in a phase it
 wasn't checked against. Assigning seeds the assessor from the team decision (`assessment.seed`). The submit that
 completes the set (or the unassign that does) calls `team.open_review`: `assessment.adopt` decides each field (same
-action and type from everyone → adopted, settings by most common choice per family with ties going to the
+action, type and target task and bands from everyone, `assessment.core_key` → adopted, settings by most common choice per family with ties going to the
 suggestion), adopted fields are written to the team decision as reviewed with history attributed to the actor, the
 rest are marked unreviewed and are the queue, and target changes go through `_sync_targets` and the leak screen.
 Finalizing writes `recipes.snapshot` (the baseline's family's settings only) and the schema fingerprint; a trigger
@@ -392,6 +400,7 @@ grants it `SELECT` on `meta` and `raw`, except the tables in `db.PRIVATE_TABLES`
 | `011_job_ticket.sql` | `meta.job_ticket`, the sequence that orders queued background jobs |
 | `012_baselines.sql` | `family` on `meta.recipes` (`tree`, `linear`, `neural`; existing versions take their dataset's `model_family`), versions unique per dataset and family; `experiments.is_default`, set on the existing default Team experiments, which are renamed *Team · Trees vN* style |
 | `013_experiment_adjustments.sql` | `meta.experiment_decisions`, `experiment_settings` and `experiment_batches` (a team experiment's copy of its baseline and its bulk edits); `experiments.target_order` |
+| `014_target_tasks.sql` | `target_task` and `target_bins` on `field_decisions`, `assessments` and `experiment_decisions`; `meta.default_target_task` and the trigger that keeps a decision's task coherent with its role and type |
 
 Child tables reference `meta.datasets` with `ON DELETE CASCADE`; `DELETE /api/datasets/{id}` removes the rows and then
 the dataset's Parquet copy, raw table, export and model directories.
@@ -399,7 +408,8 @@ the dataset's Parquet copy, raw table, export and model directories.
 ## Where to add things
 
 **A model.** Add a `ModelSpec` to `MODELS` in `api/app/modeling/registry.py` (key, label, family, NaN support,
-builder, default params, importance source, optional `requires` package, `cuda_params` if it can train on a GPU). The CLI, `/api/models`,
+builder, default params, importance source, optional `requires` package, `cuda_params` if it can train on a GPU,
+and `build_regressor` with `regressor_defaults` for number targets). The CLI, `/api/models`,
 `/api/exports/{id}/models` and the Train form pick it up. Compatibility rules are in `registry.compatibility`.
 
 **A migration.** Add `api/app/migrations/NNN_description.sql` with the next number, written to be safe to run once
@@ -443,7 +453,7 @@ its startup hook and with an in-memory user store, so it needs no database. `tes
 in-process provider (`tests/oidc_provider.py`, served through `httpx.MockTransport` by setting `oidc.transport`): the
 redirect and token checks need no database, the provisioning flows do. The API tests in `test_explore.py`,
 `test_sql_console.py`, `test_data_correctness.py`, `test_api_cleanup.py`, `test_users.py`, `test_team.py`,
-`test_experiments.py`, `test_recipes.py`, `test_baselines.py` and `test_adjustments.py` (helpers in
+`test_experiments.py`, `test_recipes.py`, `test_baselines.py`, `test_adjustments.py` and `test_target_tasks.py` (helpers in
 `team_helpers.py`) start the app against `RAINFOREST_TEST_DATABASE_URL` and skip without it;
 `test_jobs.py` (job ownership, the restart sweep and the slots) needs that database too. `test_mlflow.py` logs to a temporary MLflow file store
 (always runs), drives `runs._run` and the backfill against the database (skips without it), and has one test against a

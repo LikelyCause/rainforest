@@ -2,12 +2,15 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, uploadDataset } from "../api";
-import { PROCESSING, useMe, useOptions } from "../hooks";
+import { PROCESSING, useMe } from "../hooks";
+import { eligibleTarget } from "../baselines";
+import { metricLabel } from "../experiments";
+import { defaultTask, taskLabel } from "../decision";
 import { baselineLabel, fmtAgo, fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
 import { ErrorAlert } from "../components/ui";
 import { PhaseBadge } from "./DatasetTeamPage";
 import { showError, toast } from "../toast";
-import type { Dataset, FieldListItem, OptionCatalog } from "../types";
+import type { Dataset } from "../types";
 
 const ACCEPT = /\.(csv|parquet|pq|txt)$/i;
 
@@ -49,19 +52,9 @@ function useUpload() {
   return { progress, start };
 }
 
-/** Why a field can't be a target (the API enforces the same rule), or null. */
-function targetBlocker(f: FieldListItem, rule: OptionCatalog["target_rule"] | undefined): string | null {
-  if (!rule) return null;
-  if (!rule.types.includes(f.semantic_type))
-    return `${f.semantic_type.replace("_", " ")}: a target must be binary, categorical or discrete numeric (change its type in Review first)`;
-  if ((f.n_unique ?? 0) > rule.max_levels) return `${fmtInt(f.n_unique)} distinct values: a target can have at most ${rule.max_levels} classes`;
-  return null;
-}
-
 function TargetPicker({ ds, onClose }: { ds: Dataset; onClose: () => void }) {
   const qc = useQueryClient();
   const fields = useQuery({ queryKey: ["fields", ds.id], queryFn: () => api.fields(ds.id) });
-  const rule = useOptions().data?.target_rule;
   const [q, setQ] = useState("");
   const [chosen, setChosen] = useState<Set<string>>(new Set(ds.target_columns));
   const save = useMutation({
@@ -96,7 +89,8 @@ function TargetPicker({ ds, onClose }: { ds: Dataset; onClose: () => void }) {
       <div className="combo-list">
         {fields.isLoading && <span className="muted small-text" style={{ padding: 6 }}>Loading columns…</span>}
         {shown.map((f) => {
-          const blocker = targetBlocker(f, rule);
+          const blocker = eligibleTarget(f);
+          const task = defaultTask(f.semantic_type, f.n_unique);
           // A current target that no longer qualifies stays enabled so it can be unticked.
           const disabled = blocker !== null && !chosen.has(f.name);
           return (
@@ -106,7 +100,9 @@ function TargetPicker({ ds, onClose }: { ds: Dataset; onClose: () => void }) {
                   aria-describedby={blocker ? `tb-${f.id}` : undefined} />
                 <span className="mono" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</span>
               </span>
-              <span className="type-tag">{f.semantic_type.replace("_", " ")}</span>
+              <span className="type-tag" title={task ? `Predicted as ${taskLabel(task).toLowerCase()} unless changed in Review` : undefined}>
+                {f.semantic_type.replace("_", " ")}{!blocker && task ? ` · ${taskLabel(task).toLowerCase()}` : ""}
+              </span>
               {blocker && <span id={`tb-${f.id}`} className="muted small-text" style={{ flexBasis: "100%" }}>{blocker}</span>}
             </label>
           );
@@ -187,14 +183,16 @@ function SampleMenu({ onCreated }: { onCreated: (ds: Dataset) => void }) {
   const [rows, setRows] = useState("50000");
   const [fields, setFields] = useState("150");
   const [kind, setKind] = useState("mixed");
+  const [numeric, setNumeric] = useState(false);
   const [tab, setTab] = useState<"library" | "generate">("library");
   const ref = useRef<HTMLDivElement>(null);
   const limits = useQuery({ queryKey: ["sample-limits"], queryFn: api.sampleLimits, enabled: open, staleTime: Infinity });
   // rows × fields is capped server-side to bound generation memory.
-  const maxRows = Math.min(2000000, Math.floor((limits.data?.max_cells ?? Infinity) / Math.max(Number(fields) || 30, 30)));
+  const width = Math.max(Number(fields) || 30, 30) + (numeric ? 1 : 0);
+  const maxRows = Math.min(2000000, Math.floor((limits.data?.max_cells ?? Infinity) / width));
   const overBudget = Number(rows) > maxRows;
   const m = useMutation({
-    mutationFn: () => api.createSample({ rows: Number(rows), fields: Number(fields), seed: 42, target_kind: kind }),
+    mutationFn: () => api.createSample({ rows: Number(rows), fields: Number(fields), seed: 42, target_kind: kind, numeric_target: numeric }),
     onSuccess: (ds) => { qc.invalidateQueries({ queryKey: ["datasets"] }); setOpen(false); onCreated(ds); },
   });
   useEffect(() => {
@@ -235,6 +233,10 @@ function SampleMenu({ onCreated }: { onCreated: (ds: Dataset) => void }) {
               <option value="binary">both binary</option>
               <option value="multiclass">both multiclass</option>
             </select>
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={numeric} onChange={(e) => setNumeric(e.target.checked)} />
+            Add a numeric target (column_c), predicted as a number
           </label>
           {overBudget && (
             <span className="small-text" role="alert">
@@ -508,7 +510,7 @@ export function DatasetsPage() {
                         {ds.last_export ? (
                           <span title={`Export #${ds.last_export.id} · ${ds.last_export.status}`}>
                             v{ds.last_export.id}
-                            {ds.last_run?.status === "done" && ds.last_run.value !== null && ` · ${ds.last_run.model_label ?? ds.last_run.model} ${fmtNum(ds.last_run.value, 2)} ${ds.last_run.metric?.startsWith("roc_auc") ? "AUC" : ds.last_run.metric}`}
+                            {ds.last_run?.status === "done" && ds.last_run.value !== null && ` · ${ds.last_run.model_label ?? ds.last_run.model} ${fmtNum(ds.last_run.value, 2)} ${metricLabel(ds.last_run.metric ?? "")}`}
                           </span>
                         ) : <span className="muted">—</span>}
                       </td>

@@ -1,6 +1,7 @@
 import { fmtInt, fmtPct } from "./format";
 import { attentionOf } from "./signals";
-import type { DiffChange, FieldListItem, ReopenReason, ReopenedField, ReuseSummary } from "./types";
+import { bandsText, taskLabel } from "./decision";
+import type { DiffChange, FieldListItem, ReopenReason, ReopenedField, ReuseSummary, TargetBins, TargetTask } from "./types";
 
 const typeName = (t: string | undefined) => (t ?? "?").replace("_", " ");
 
@@ -58,7 +59,7 @@ export function reuseGroups(s: ReuseSummary): {
 export const SETTING_LABEL: Record<string, string> = {
   action: "Decision", semantic_type: "Type", notes: "Notes", imputation: "Missing values", impute_value: "Fill value",
   add_missing_indicator: "Missing flag", transform: "Transform", scaling: "Scaling", encoding: "Encoding",
-  params: "Encoder parameters",
+  params: "Encoder parameters", target_task: "Predict as", target_bins: "Bands",
 };
 
 export function fmtValue(v: unknown): string {
@@ -74,7 +75,10 @@ export function fmtValue(v: unknown): string {
 /** "Trees · Missing values: none → mean", or "Decision: keep → drop" for the shared decision. */
 export function fmtChange(c: DiffChange, familyLabel: (f: string) => string = (f) => f): string {
   const label = SETTING_LABEL[c.key] ?? c.key;
-  return `${c.family ? `${familyLabel(c.family)} · ` : ""}${label}: ${fmtValue(c.before)} → ${fmtValue(c.after)}`;
+  const show = c.key === "target_task" ? (v: unknown) => (v ? taskLabel(v as TargetTask) : "—")
+    : c.key === "target_bins" ? (v: unknown) => (v ? bandsText("bins", v as TargetBins)!.replace("Bands · ", "") : "—")
+    : fmtValue;
+  return `${c.family ? `${familyLabel(c.family)} · ` : ""}${label}: ${show(c.before)} → ${show(c.after)}`;
 }
 
 export interface PickFilter {

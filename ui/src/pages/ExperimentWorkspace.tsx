@@ -7,7 +7,7 @@ import { ErrorAlert } from "../components/ui";
 import { RunDetail } from "../components/RunDetail";
 import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtInt, fmtMetric, fmtNum, fmtPct } from "../format";
 import { toast } from "../toast";
-import { bestRuns, metricFor, type RunMetric } from "../runs";
+import { bestRuns, columnLabels, metricFor, type RunMetric } from "../runs";
 import { sourceLabel } from "../experiments";
 import type { Dataset, Experiment, ExportJob, ModelRun } from "../types";
 
@@ -350,7 +350,8 @@ function ExportRow({ e, onStarted, canAdd }: { e: ExportJob; onStarted: (r: Mode
               <CopyCommand command={s.train_command ?? `docker compose exec api python -m app.modeling.train --export-id ${e.id}`} />
               {s.targets && (
                 <span className="muted small-text">
-                  {s.targets.map((t: string) => `${t}: ${s.target_classes?.[t]?.map((c: string, i: number) => `${i}=${c}`).join(", ")}`).join(" · ")}
+                  {s.targets.map((t: string) => (s.target_kinds?.[t] === "regression" ? `${t}: number`
+                    : `${t}: ${s.target_classes?.[t]?.map((c: string, i: number) => `${i}=${c}`).join(", ")}`)).join(" · ")}
                 </span>
               )}
             </>
@@ -378,6 +379,7 @@ function MlflowCell({ r }: { r: ModelRun }) {
 function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: number | null }) {
   const [open, setOpen] = useState<number | null>(null);
   const targets: string[] = e.summary?.targets ?? [];
+  const kinds: Record<string, string> = e.summary?.target_kinds ?? {};
   const best = useMemo(() => bestRuns(runs, targets), [runs, targets]);
   // Open a run's detail as soon as the run you just started finishes.
   const prevStatus = useRef(new Map<number, string>());
@@ -410,8 +412,8 @@ function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: 
         </tr>
         <tr>
           <th>Model</th><th>Chain order</th><th>Status</th>
-          {targets.map((t) => <th key={"a" + t} className="num">{t} AUC</th>)}
-          {targets.map((t) => <th key={"f" + t} className="num">{t} F1 (macro)</th>)}
+          {targets.map((t) => <th key={"a" + t} className="num">{t} {columnLabels(kinds[t])[0]}</th>)}
+          {targets.map((t) => <th key={"f" + t} className="num">{t} {columnLabels(kinds[t])[1]}</th>)}
           <th className="num">Fit</th><th>Device</th><th>MLflow</th>
         </tr>
       </thead>
@@ -429,8 +431,8 @@ function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: 
                   : r.status === "failed" ? <span className="badge bad" title={r.error ?? ""}>✕ failed</span>
                   : <span className="row" style={{ flexWrap: "nowrap" }}><span className="badge accent"><span className="spinner" aria-hidden="true" /> {r.status_message ?? r.status}</span></span>}
               </td>
-              {targets.map((t) => <Fragment key={t + "a"}>{cell(r, t, "auc")}</Fragment>)}
-              {targets.map((t) => <Fragment key={t + "f"}>{cell(r, t, "f1")}</Fragment>)}
+              {targets.map((t) => <Fragment key={t + "a"}>{cell(r, t, "primary")}</Fragment>)}
+              {targets.map((t) => <Fragment key={t + "f"}>{cell(r, t, "secondary")}</Fragment>)}
               <td className="num">{r.report?.fit_seconds !== undefined ? `${fmtNum(r.report.fit_seconds, 2)}s` : "—"}</td>
               <td>{(r.report?.device ?? r.config?.device) === "cuda" ? <span className="badge accent">GPU</span> : <span className="muted small-text">CPU</span>}</td>
               <td><MlflowCell r={r} /></td>
@@ -483,7 +485,7 @@ export function ExperimentWorkspace({ ds, x, canAdd }: { ds: Dataset; x: Experim
       <section className="card stack">
         <div className="card-head">
           <h2>Model runs</h2>
-          <span className="muted small-text">test split · ★ best on the validation split within an export · click a run for precision, recall, F1 and confusion matrices</span>
+          <span className="muted small-text">test split · ★ best on the validation split within an export · click a run for its full results</span>
         </div>
         <ErrorAlert error={runs.error} />
         {groups.length ? (
