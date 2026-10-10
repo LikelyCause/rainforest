@@ -211,6 +211,17 @@ def test_numbers_retyped_to_datetime_are_parsed_by_range():
 
 
 # ------------------------------------------------------------------------------------------- #11 names
+def test_a_stored_epoch_unit_reads_every_chunk_the_same_way():
+    from app.profiling import column_datetime_format
+
+    whole = pl.Series("t", [5_000_000_000, 1_600_000_000_000])  # ms; the first alone looks like seconds
+    fmt = column_datetime_format(whole)
+    assert fmt == "epoch_ms"
+    first_chunk = parse_datetime(whole.head(1), fmt)
+    assert first_chunk.dt.year().to_list() == [1970]  # 5e9 ms, not 5e9 s (year 2128)
+    assert column_datetime_format(pl.Series("d", ["01/02/2023", "25/12/2023"])) == "%d/%m/%Y"
+
+
 @pytest.mark.parametrize("scale,unit", [(1, "seconds"), (1000, "milliseconds")])
 def test_unique_epoch_integers_are_dates_not_identifiers(scale, unit):
     start = int(dt.datetime(2021, 3, 1, tzinfo=dt.timezone.utc).timestamp())

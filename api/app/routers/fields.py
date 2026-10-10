@@ -13,7 +13,7 @@ from ..config import get_settings
 from ..correlations import Assoc, screen_associations
 from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..processing import SUMMARY_COLS, refresh_target_state, upsert_correlations, upsert_settings
-from ..profiling import needs_screen, sample_indices, screen_codes
+from ..profiling import column_datetime_format, needs_screen, sample_indices, screen_codes
 from ..schemas import BulkDecisionIn, DecisionIn
 from ..semantics import (FAMILIES, NON_FEATURE_TYPES, SETTING_KEYS, settings_of, suggest, target_problem,
                          validate_decision)
@@ -124,6 +124,8 @@ def save_decision(field_id: int, body: DecisionIn) -> dict:
         settings = settings_of(d)
         upsert_settings(conn, f["dataset_id"], field_id, fam, settings,
                         prev["settings_source"] if _same_settings(prev, settings) else "user")
+        if d["semantic_type"] == "datetime" and not (f["stats"] or {}).get("datetime_format"):
+            _remember_datetime_format(conn, f)
         if prev["semantic_type"] != d["semantic_type"]:
             # Other families' settings were chosen for the old type; re-derive them for the new one.
             stats = {k: f[k] for k in STAT_KEYS}
@@ -144,6 +146,22 @@ def save_decision(field_id: int, body: DecisionIn) -> dict:
     if screen:
         jobs.submit(screen_targets, f["dataset_id"], [field_id])
     return row
+
+
+def _remember_datetime_format(conn, f: dict) -> None:
+    """Detect a retyped field's date format on the whole column once, so export chunks, Explore and
+    associations all read it the same way instead of each guessing from their own slice."""
+    ds = conn.execute("SELECT parquet_path FROM meta.datasets WHERE id = %s", (f["dataset_id"],)).fetchone()
+    if not ds or not ds["parquet_path"]:
+        return
+    fmt = column_datetime_format(pl.read_parquet(ds["parquet_path"], columns=[f["name"]]).to_series())
+    if fmt:
+        conn.execute(
+            """UPDATE meta.fields
+                  SET stats = coalesce(stats, '{}'::jsonb) || jsonb_build_object('datetime_format', %s::text)
+                WHERE id = %s""",
+            (fmt, f["id"]),
+        )
 
 
 @router.post("/datasets/{dataset_id}/decisions/bulk")

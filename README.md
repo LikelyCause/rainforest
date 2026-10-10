@@ -173,7 +173,7 @@ of failing.
 
 * **Leakage-safe split:** the train / valid / test split is assigned first, stratified on the target combination
   (single-row combinations are pooled; if the combinations still can't be stratified, on one target, else not at
-  all). An export fails, naming the class, when a target has a class with a single row.
+  all). A target with a class that has a single row blocks the export, naming the class.
   Every statistic is then fitted on training rows only (up to 500k of them by default), and the full file is
   transformed in chunks.
 * **Memory:** both steps are sized by output width. A transform chunk holds at most `EXPORT_CHUNK_MB` of dense
@@ -184,10 +184,15 @@ of failing.
   `preprocessor.joblib`, and `manifest.json` (feature → source field, class mappings, model family, NaN report, and
   `inf_values`: ±inf per field, written as missing). Feature names never take a target's name or `__row_id` /
   `__split`; a clashing feature gets a numbered suffix.
+* **Encodings worth knowing:** a binary field becomes one 0/1 column named after its second level (`smoker_yes`).
+  Missing values take the most frequent level, or the level you name as the fill value; any other fill label adds a
+  `<field>__isna` column instead of a third code. Numeric fill values are applied before log1p or winsorizing, so
+  they're in the field's own units. A field retyped to date / time has its date format detected once over the whole
+  column when you save, so every chunk of the export reads it the same way.
 * **Before you export**, the page summarises what will go in (kept / dropped / targets / customised fields, kept
-  fields by type) and warns about unreviewed fields, kept leakage flags and a target count other than two. No target
-  or no kept features blocks the export. Once an export exists, it shows how many decisions changed since, with
-  *Re-export with same split*. Validation and test share, seed and the fit-row cap are adjustable.
+  fields by type) and warns about unreviewed fields, kept leakage flags and a lone target (nothing to chain). No
+  target, no kept features or a single-row target class blocks the export. Once an export exists, it shows how many
+  decisions changed since, with *Re-export with same split*. Validation and test share, seed and the fit-row cap are adjustable.
 * **Compatibility:** tree models train on any export. Linear and neural models need an export prepared for their
   family, and they're refused if the export contains NaN. The UI disables incompatible models and shows the reason.
 * **Chain:** `ClassifierChain(model, order=<targets>, cv=5)`, in the dataset's target order unless you choose another

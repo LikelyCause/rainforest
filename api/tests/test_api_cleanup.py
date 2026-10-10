@@ -45,7 +45,8 @@ def wait_until(fn, timeout=120.0, every=0.3):
 def upload(client, csv: str, targets: str | None = None, name="t.csv") -> dict:
     data = {"targets": targets} if targets else {}
     ds = client.post("/api/datasets/upload", files={"file": (name, csv, "text/csv")}, data=data).json()
-    ds = wait_until(lambda: (d := client.get(f"/api/datasets/{ds['id']}").json())["status"] in ("ready", "failed") and d)
+    ds = wait_until(lambda: (d := client.get(f"/api/datasets/{ds['id']}").json())["status"] in ("ready", "failed")
+                    and d)
     assert ds["status"] == "ready", ds
     return ds
 
@@ -136,6 +137,42 @@ def test_source_is_user_only_for_real_changes(client):
         assert (d["source"], d["settings_source"]) == ("user", "user")
         preview = client.get(f"/api/datasets/{ds['id']}/export-preview?family=linear").json()
         assert preview["customized"] == 0  # dropped fields aren't counted
+    finally:
+        client.delete(f"/api/datasets/{ds['id']}")
+
+
+def test_preview_blocks_a_single_row_class_and_explains_one_target(client):
+    ds = upload(client, _numbers_csv() + "0.5,0.5,typo\n", targets="y")
+    try:
+        p = client.get(f"/api/datasets/{ds['id']}/export-preview").json()
+        assert any("'typo'" in b and "single row" in b for b in p["blocking"])
+        assert any("single classifier" in w for w in p["warnings"])
+        assert not any("expects two" in w for w in p["warnings"])
+        r = client.post(f"/api/datasets/{ds['id']}/exports", json={})
+        assert r.status_code == 422 and "typo" in r.text
+    finally:
+        client.delete(f"/api/datasets/{ds['id']}")
+
+
+def test_retyping_to_datetime_stores_the_columns_format(client):
+    rng = np.random.default_rng(0)
+    n = 1000
+    days = [f"{d:02d}/{m:02d}/2023" for d, m in zip(rng.integers(1, 29, n), rng.integers(1, 13, n))]
+    days = [v if i % 7 else f"unknown {i}" for i, v in enumerate(days)]  # too much junk to be inferred as dates
+    codes = 1_650_000_000 + np.arange(n) * 3600
+    csv = "seen,event_code,y\n" + "".join(f"{a},{b},{'ab'[i % 2]}\n" for i, (a, b) in enumerate(zip(days, codes)))
+    ds = upload(client, csv, targets="y")
+    try:
+        f = fields_of(client, ds)
+        assert f["seen"]["inferred_type"] != "datetime" and f["event_code"]["inferred_type"] == "identifier"
+        for name, fmt in (("seen", "%d/%m/%Y"), ("event_code", "epoch_s")):
+            fid = f[name]["id"]
+            r = client.put(f"/api/fields/{fid}/decision", json={
+                "family": "tree", "action": "keep", "semantic_type": "datetime", "imputation": "none",
+                "impute_value": None, "add_missing_indicator": False, "transform": "none", "scaling": "none",
+                "encoding": "datetime_parts", "params": {}, "notes": None, "reviewed": True})
+            assert r.status_code == 200, r.text
+            assert client.get(f"/api/fields/{fid}").json()["field"]["stats"]["datetime_format"] == fmt
     finally:
         client.delete(f"/api/datasets/{ds['id']}")
 
