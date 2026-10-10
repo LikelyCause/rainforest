@@ -25,7 +25,8 @@ LEFT JOIN LATERAL (SELECT family, version FROM meta.recipes WHERE dataset_id = d
 CREATE VIEW meta.v_fields AS
 SELECT
     p.*,
-    dc.action, dc.semantic_type, dc.reviewed, dc.source AS decision_source, dc.notes, dc.updated_at AS decided_at,
+    dc.action, dc.semantic_type, dc.target_task, dc.target_bins, dc.reviewed, dc.source AS decision_source, dc.notes,
+    dc.updated_at AS decided_at,
     s.imputation, s.transform, s.scaling, s.encoding, s.add_missing_indicator, s.params,
     s.source AS settings_source
 FROM meta.v_field_profiles p

@@ -64,7 +64,6 @@ def _create(name: str, filename: str | None, fmt: str, targets: list[str], user_
 
 
 # Metric shown for a run in the dataset list, in order of preference.
-HEADLINE_METRICS = ("roc_auc", "roc_auc_ovr_macro", "accuracy")
 
 
 @router.get("")
@@ -132,7 +131,7 @@ def headline_metric(status: str, order: list[str] | None, test: dict | None) -> 
     """Test-split metric for the first target in chain order, so one number can stand for a run."""
     if status == "done" and order and test:
         by_metric = test.get(order[0]) or {}
-        for m in HEADLINE_METRICS:
+        for m in experiments.HEADLINE_METRICS:
             if isinstance(by_metric.get(m), (int, float)):
                 return {"metric": m, "value": float(by_metric[m])}
     return {"metric": None, "value": None}

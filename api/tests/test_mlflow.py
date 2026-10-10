@@ -281,3 +281,9 @@ def test_real_tracking_server(tmp_path):
     assert {a.path for a in client.list_artifacts(run_id)} == {"model", "report.json"}
     local = client.download_artifacts(run_id, "model/classifier_chain.joblib", str(tmp_path / "dl"))
     assert open(local, "rb").read() == b"model bytes"
+
+
+def test_run_params_record_each_targets_task():
+    from app.modeling.mlflow_log import run_params
+    p = run_params({"model": "lightgbm", "order": ["g3"], "target_tasks": {"g3": "regression", "g1": "classes"}})
+    assert p["target.g3.task"] == "regression" and p["target.g1.task"] == "classes"
