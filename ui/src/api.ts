@@ -76,7 +76,7 @@ export const api = {
   deleteDataset: (id: number) => request<{ fields: number; exports: number; runs: number }>(`/api/datasets/${id}`, { method: "DELETE" }),
   patchDataset: (id: number, data: { name?: string; target_columns?: string[] }) =>
     request<Dataset>(`/api/datasets/${id}`, json("PATCH", data)),
-  createSample: (data: { rows: number; fields: number; seed: number; target_kind: string }) =>
+  createSample: (data: { rows: number; fields: number; seed: number; target_kind: string; numeric_target?: boolean }) =>
     request<Dataset>("/api/datasets/sample", json("POST", data)),
   library: () => request<LibraryEntry[]>("/api/datasets/library"),
   addFromLibrary: (key: string) => request<Dataset>(`/api/datasets/library/${key}`, json("POST", {})),

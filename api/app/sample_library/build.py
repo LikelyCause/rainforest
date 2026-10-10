@@ -1,6 +1,7 @@
 """Rebuild the sample library's Parquet files from their public sources:
     python -m app.sample_library.build [key ...]
-Downloads each UCI archive, reads it the way its file is laid out, and writes data/<key>.parquet."""
+Downloads each UCI archive, reads it the way its file is laid out, and writes data/<key>.parquet. Concrete strength
+ships as an .xls file, so rebuilding it needs `pip install fastexcel` (a build-time dependency only)."""
 from __future__ import annotations
 
 import io
@@ -17,7 +18,10 @@ ARCHIVES = {
     "student_grades": "https://archive.ics.uci.edu/static/public/320/student+performance.zip",
     "student_dropout": "https://archive.ics.uci.edu/static/public/697/predict+students+dropout+and+academic+success.zip",
     "steel_faults": "https://archive.ics.uci.edu/static/public/198/steel+plates+faults.zip",
+    "concrete_strength": "https://archive.ics.uci.edu/static/public/165/concrete+compressive+strength.zip",
 }
+CONCRETE_COLUMNS = ["cement", "blast_furnace_slag", "fly_ash", "water", "superplasticizer", "coarse_aggregate",
+                    "fine_aggregate", "age_days", "strength_mpa"]
 
 
 def _zip(url: str) -> zipfile.ZipFile:
@@ -43,6 +47,10 @@ def build(key: str) -> pl.DataFrame:
     if key == "steel_faults":
         names = z.read("Faults27x7_var").decode().split()
         return _read(z.read("Faults.NNA"), separator="\t", has_header=False, new_columns=names)
+    if key == "concrete_strength":
+        df = pl.read_excel(io.BytesIO(z.read("Concrete_Data.xls")))
+        df = df.rename(dict(zip(df.columns, CONCRETE_COLUMNS)))
+        return df.with_columns(pl.exclude("age_days").cast(pl.Float64), pl.col("age_days").cast(pl.Int64))
     raise KeyError(key)
 
 

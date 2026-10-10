@@ -36,3 +36,10 @@ def test_tab_separated_uploads_are_read(people):
     assert r.status_code == 202, r.text
     ds = wait(lambda: (d := lead.get(f"/api/datasets/{r.json()['id']}").json())["status"] in ("ready", "failed") and d)
     assert ds["status"] == "ready" and set(fields(lead, ds)) == {"a", "b", "y"}
+
+
+def test_concrete_entry_is_a_regression_dataset():
+    e = LIBRARY["concrete_strength"]
+    df = pl.read_parquet(path_of("concrete_strength"))
+    assert df.height == 1030 and e["targets"] == ["strength_mpa"] and df["strength_mpa"].dtype == pl.Float64
+    assert "10.24432/C5PK67" in e["citation"]

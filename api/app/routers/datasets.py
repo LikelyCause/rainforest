@@ -214,13 +214,14 @@ def add_from_library(key: str, user: CurrentUser) -> dict:
 @router.post("/sample", status_code=202)
 def create_sample(req: SampleRequest, user: CurrentUser) -> dict:
     cap = get_settings().sample_max_cells
-    if req.rows * req.fields > cap:
+    width = req.fields + int(req.numeric_target)
+    if req.rows * width > cap:
         raise HTTPException(
-            422, f"rows × fields must be at most {cap:,} (asked for {req.rows:,} × {req.fields} = "
-                 f"{req.rows * req.fields:,}). With {req.fields} fields, use up to {cap // req.fields:,} rows.")
+            422, f"rows × fields must be at most {cap:,} (asked for {req.rows:,} × {width} = "
+                 f"{req.rows * width:,}). With {width} fields, use up to {cap // width:,} rows.")
     ds = _create(
-        req.name or f"sample-{req.rows // 1000}k-{req.fields}f-{req.target_kind}",
-        None, "generated", ["column_a", "column_b"], user["id"],
+        req.name or f"sample-{req.rows // 1000}k-{req.fields}f-{req.target_kind}" + ("-num" if req.numeric_target else ""),
+        None, "generated", ["column_a", "column_b", *(["column_c"] if req.numeric_target else [])], user["id"],
     )
     jobs.submit(_generate_and_process, ds["id"], req.model_dump())
     return ds
@@ -236,8 +237,8 @@ def _generate_and_process(dataset_id: int, req: dict) -> None:
             "updated_at=now() WHERE id=%s",
             (dataset_id,),
         )
-        generate(req["rows"], req["fields"], req["seed"], req["target_kind"]).write_parquet(
-            out, row_group_size=100_000)  # as ingest writes uploads
+        df = generate(req["rows"], req["fields"], req["seed"], req["target_kind"], req.get("numeric_target", False))
+        df.write_parquet(out, row_group_size=100_000)  # as ingest writes uploads
     except Exception as exc:  # noqa: BLE001
         execute(
             "UPDATE meta.datasets SET status='failed', error=%s, updated_at=now() WHERE id=%s",

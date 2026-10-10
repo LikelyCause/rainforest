@@ -1,7 +1,7 @@
 """Real datasets that ship with Rainforest, for trying it on real data next to the generated samples.
 
 Each entry's Parquet file is built from its public source by `python -m app.sample_library.build` and committed under
-data/. All four come from the UCI Machine Learning Repository under CC BY 4.0; `citation` is what to credit.
+data/. All five come from the UCI Machine Learning Repository under CC BY 4.0; `citation` is what to credit.
 """
 from __future__ import annotations
 
@@ -10,6 +10,15 @@ from pathlib import Path
 DATA_DIR = Path(__file__).parent / "data"
 
 LIBRARY: dict[str, dict] = {
+    "concrete_strength": {
+        "name": "Concrete strength",
+        "description": "Concrete mixtures by their ingredients and age. Predict the compressive strength in MPa as a "
+                       "number, or cut it into bands. Small and clean: 1,030 rows, eight numeric features.",
+        "targets": ["strength_mpa"],
+        "source_url": "https://archive.ics.uci.edu/dataset/165/concrete+compressive+strength",
+        "citation": "Yeh, I. (1998). Concrete Compressive Strength [Dataset]. UCI Machine Learning Repository. "
+                    "https://doi.org/10.24432/C5PK67",
+    },
     "diabetes_readmission": {
         "name": "Diabetes readmission",
         "description": "Ten years of diabetic patient encounters at 130 US hospitals: demographics, diagnoses, "

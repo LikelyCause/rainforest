@@ -183,14 +183,16 @@ function SampleMenu({ onCreated }: { onCreated: (ds: Dataset) => void }) {
   const [rows, setRows] = useState("50000");
   const [fields, setFields] = useState("150");
   const [kind, setKind] = useState("mixed");
+  const [numeric, setNumeric] = useState(false);
   const [tab, setTab] = useState<"library" | "generate">("library");
   const ref = useRef<HTMLDivElement>(null);
   const limits = useQuery({ queryKey: ["sample-limits"], queryFn: api.sampleLimits, enabled: open, staleTime: Infinity });
   // rows × fields is capped server-side to bound generation memory.
-  const maxRows = Math.min(2000000, Math.floor((limits.data?.max_cells ?? Infinity) / Math.max(Number(fields) || 30, 30)));
+  const width = Math.max(Number(fields) || 30, 30) + (numeric ? 1 : 0);
+  const maxRows = Math.min(2000000, Math.floor((limits.data?.max_cells ?? Infinity) / width));
   const overBudget = Number(rows) > maxRows;
   const m = useMutation({
-    mutationFn: () => api.createSample({ rows: Number(rows), fields: Number(fields), seed: 42, target_kind: kind }),
+    mutationFn: () => api.createSample({ rows: Number(rows), fields: Number(fields), seed: 42, target_kind: kind, numeric_target: numeric }),
     onSuccess: (ds) => { qc.invalidateQueries({ queryKey: ["datasets"] }); setOpen(false); onCreated(ds); },
   });
   useEffect(() => {
@@ -231,6 +233,10 @@ function SampleMenu({ onCreated }: { onCreated: (ds: Dataset) => void }) {
               <option value="binary">both binary</option>
               <option value="multiclass">both multiclass</option>
             </select>
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={numeric} onChange={(e) => setNumeric(e.target.checked)} />
+            Add a numeric target (column_c), predicted as a number
           </label>
           {overBudget && (
             <span className="small-text" role="alert">
