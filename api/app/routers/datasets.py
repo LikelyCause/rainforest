@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 import polars as pl
+import pyarrow.parquet as pq
 from psycopg import sql
 
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
@@ -22,6 +23,8 @@ from ..processing import _Status, delete_dataset_files, process_dataset, upsert_
 from ..profiling import corr_vector, sample_indices
 from ..sample_data import generate
 from ..schemas import DatasetPatch, SampleRequest
+from ..sample_library import LIBRARY
+from ..sample_library import path_of as library_path
 from ..semantics import NUMERIC
 from .fields import _sync_targets, has_screen_fields, screen_pairs, screen_targets, set_targets
 
@@ -152,9 +155,7 @@ def upload(
     suffix = Path(filename).suffix.lower()
     fmt = {".csv": "csv", ".txt": "csv", ".tsv": "csv", ".parquet": "parquet", ".pq": "parquet"}.get(suffix)
     if fmt is None:
-        raise HTTPException(415, "Only .csv and .parquet files are supported")
-    if suffix == ".tsv":
-        raise HTTPException(415, "TSV is not supported yet; convert to CSV or Parquet")
+        raise HTTPException(415, "Only .csv, .tsv, .txt and .parquet files are supported")
     s = get_settings()
     s.uploads_dir.mkdir(parents=True, exist_ok=True)
     dest = s.uploads_dir / f"{uuid.uuid4().hex}{suffix}"
@@ -179,6 +180,36 @@ def upload(
 @router.get("/sample/limits")
 def sample_limits() -> dict:
     return {"max_cells": get_settings().sample_max_cells}
+
+
+@router.get("/library")
+def library(_: CurrentUser) -> list[dict]:
+    """The real datasets that ship with the app, with their size, suggested targets, source and citation."""
+    out = []
+    for key, entry in LIBRARY.items():
+        meta = pq.ParquetFile(library_path(key)).metadata
+        out.append({"key": key, **entry, "rows": meta.num_rows, "columns": meta.num_columns})
+    return out
+
+
+@router.post("/library/{key}", status_code=202)
+def add_from_library(key: str, user: CurrentUser) -> dict:
+    """Add a library dataset: a copy of its file goes through the same processing as an upload, with its suggested
+    targets set."""
+    entry = LIBRARY.get(key)
+    if entry is None:
+        raise HTTPException(404, f"No library dataset {key!r}")
+    s = get_settings()
+    s.uploads_dir.mkdir(parents=True, exist_ok=True)
+    dest = s.uploads_dir / f"{uuid.uuid4().hex}.parquet"
+    shutil.copyfile(library_path(key), dest)
+    try:
+        ds = _create(entry["name"], f"{key}.parquet", "parquet", list(entry["targets"]), user["id"], dest)
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise
+    jobs.submit(process_dataset, ds["id"], str(dest), "parquet")
+    return ds
 
 
 @router.post("/sample", status_code=202)

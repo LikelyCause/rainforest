@@ -574,3 +574,5 @@ table.data tr.clickable:focus-visible { outline: 2px solid var(--accent); outlin
 .baseline-line { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--radius-sm); background: var(--surface-2); }
 .baseline-line.changed { background: var(--warn-weak); }
 .mode-bar { margin-bottom: 8px; }
+.library-item { padding: 8px 0; border-top: 1px solid var(--border); }
+.library-item:first-child { border-top: 0; }

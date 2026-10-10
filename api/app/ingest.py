@@ -1,6 +1,8 @@
 """File ingest: CSV / Parquet -> normalised Parquet (analytics copy) -> Postgres raw table."""
 from __future__ import annotations
 
+import csv
+import io
 import logging
 import os
 import re
@@ -15,7 +17,9 @@ from .db import connection
 
 log = logging.getLogger(__name__)
 
-NULL_TOKENS = ["", "NA", "N/A", "n/a", "NaN", "nan", "null", "NULL", "None", "#N/A"]
+# A whole cell holding one of these is missing. "?" is how many public datasets (UCI's among them) mark blanks.
+NULL_TOKENS = ["", "NA", "N/A", "n/a", "NaN", "nan", "null", "NULL", "None", "#N/A", "?"]
+SEPARATORS = {",": "commas", ";": "semicolons", "\t": "tabs", "|": "pipes"}
 ROW_ID = "__row_id"
 
 
@@ -90,11 +94,13 @@ def _sink(src: Path, fmt: str, out: Path) -> list[str]:
         lf.sink_parquet(out, row_group_size=100_000)
         return warnings
 
+    sep = guess_separator(src)
     full, ragged = False, False
     while True:
         try:
             lf, warnings = _normalize(pl.scan_csv(
                 src,
+                separator=sep,
                 infer_schema_length=None if full else 50_000,
                 null_values=NULL_TOKENS,
                 try_parse_dates=False,
@@ -113,11 +119,32 @@ def _sink(src: Path, fmt: str, out: Path) -> list[str]:
                 full = True
             else:
                 raise
+    if sep != ",":
+        warnings.append(f"Read as a file whose columns are separated by {SEPARATORS[sep]}.")
     if ragged:
         warnings.append("Some rows have more values than the header; the extra values were dropped.")
     if full:
         warnings.append("CSV schema had to be inferred from the full file (mixed types late in the file).")
     return warnings
+
+
+def guess_separator(src: Path, sample_bytes: int = 256_000) -> str:
+    """The column separator of a delimited text file: the candidate that splits the header into the most columns and
+    every sampled line into the same number (quotes respected), else a comma."""
+    with open(src, "rb") as fh:
+        head = fh.read(sample_bytes).decode("utf-8", errors="replace")
+    lines = head.splitlines()[:50]
+    if len(head) == sample_bytes and len(lines) > 1:
+        lines = lines[:-1]  # the last line may be cut off
+    best, best_cols = ",", 1
+    for sep in SEPARATORS:
+        try:
+            counts = {len(row) for row in csv.reader(io.StringIO("\n".join(lines)), delimiter=sep) if row}
+        except csv.Error:
+            continue
+        if len(counts) == 1 and (cols := counts.pop()) > best_cols:
+            best, best_cols = sep, cols
+    return best
 
 
 def pg_type(dt: pl.DataType) -> str:

@@ -187,6 +187,7 @@ function SampleMenu({ onCreated }: { onCreated: (ds: Dataset) => void }) {
   const [rows, setRows] = useState("50000");
   const [fields, setFields] = useState("150");
   const [kind, setKind] = useState("mixed");
+  const [tab, setTab] = useState<"library" | "generate">("library");
   const ref = useRef<HTMLDivElement>(null);
   const limits = useQuery({ queryKey: ["sample-limits"], queryFn: api.sampleLimits, enabled: open, staleTime: Infinity });
   // rows × fields is capped server-side to bound generation memory.
@@ -204,10 +205,17 @@ function SampleMenu({ onCreated }: { onCreated: (ds: Dataset) => void }) {
   }, [open]);
   return (
     <div ref={ref} style={{ position: "relative" }}>
-      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}>Generate sample ▾</button>
-      {open && (
-        <form className="popover stack" style={{ width: 320, padding: 14, gap: 10 }}
+      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}>Samples ▾</button>
+      {open && tab === "library" && (
+        <div className="popover stack" style={{ width: 420, padding: 14, gap: 10 }} onKeyDown={(e) => e.key === "Escape" && setOpen(false)}>
+          <SampleTabs tab={tab} onTab={setTab} />
+          <LibraryList onCreated={(ds) => { setOpen(false); onCreated(ds); }} />
+        </div>
+      )}
+      {open && tab === "generate" && (
+        <form className="popover stack" style={{ width: 420, padding: 14, gap: 10 }}
           onSubmit={(e) => { e.preventDefault(); m.mutate(); }} onKeyDown={(e) => e.key === "Escape" && setOpen(false)}>
+          <SampleTabs tab={tab} onTab={setTab} />
           <span className="secondary small-text">
             Mixed numeric, categorical, text and date fields with missingness, skew, IDs, numbers-as-text, a constant column and one leaky feature.
           </span>
@@ -244,6 +252,43 @@ function SampleMenu({ onCreated }: { onCreated: (ds: Dataset) => void }) {
   );
 }
 
+function SampleTabs({ tab, onTab }: { tab: "library" | "generate"; onTab: (t: "library" | "generate") => void }) {
+  return (
+    <div className="segmented" role="tablist" aria-label="Sample kind">
+      <button type="button" role="tab" aria-selected={tab === "library"} className={tab === "library" ? "on" : ""} onClick={() => onTab("library")}>Real datasets</button>
+      <button type="button" role="tab" aria-selected={tab === "generate"} className={tab === "generate" ? "on" : ""} onClick={() => onTab("generate")}>Generate</button>
+    </div>
+  );
+}
+
+/** Real datasets that ship with the app; adding one processes a copy like an upload, with its targets set. */
+function LibraryList({ onCreated }: { onCreated: (ds: Dataset) => void }) {
+  const qc = useQueryClient();
+  const lib = useQuery({ queryKey: ["library"], queryFn: api.library, staleTime: Infinity });
+  const add = useMutation({
+    mutationFn: (key: string) => api.addFromLibrary(key),
+    onSuccess: (ds) => { qc.invalidateQueries({ queryKey: ["datasets"] }); onCreated(ds); },
+  });
+  return (
+    <div className="stack" style={{ gap: 8, maxHeight: 420, overflowY: "auto" }}>
+      {(lib.data ?? []).map((d) => (
+        <div key={d.key} className="library-item stack" style={{ gap: 2 }}>
+          <div className="row" style={{ justifyContent: "space-between", flexWrap: "nowrap" }}>
+            <b>{d.name}</b>
+            <button type="button" className="small primary" disabled={add.isPending} onClick={() => add.mutate(d.key)}>Add</button>
+          </div>
+          <span className="muted small-text num">
+            {fmtInt(d.rows)} rows × {d.columns} columns · target{d.targets.length === 1 ? "" : "s"} {d.targets.join(", ")}
+          </span>
+          <span className="secondary small-text">{d.description}</span>
+          <a className="small-text" href={d.source_url} target="_blank" rel="noopener" title={d.citation}>UCI ML Repository · CC BY 4.0 ↗</a>
+        </div>
+      ))}
+      <ErrorAlert error={lib.error ?? add.error} />
+    </div>
+  );
+}
+
 function FirstRun({ onBrowse, onDemo, busy }: { onBrowse: () => void; onDemo: () => void; busy: boolean }) {
   return (
     <section className="first-run card">
@@ -255,7 +300,7 @@ function FirstRun({ onBrowse, onDemo, busy }: { onBrowse: () => void; onDemo: ()
       <div className="stack" style={{ justifyContent: "center", gap: 12 }}>
         <h2>No data handy?</h2>
         <div><button type="button" className="primary" disabled={busy} onClick={onDemo}>Open the 50k × 150 demo</button></div>
-        <span className="muted small-text">Or pick its size and targets with <b>Generate sample ▾</b> above.</span>
+        <span className="muted small-text">Or choose a real dataset, or a generated one's size and targets, under <b>Samples ▾</b> above.</span>
         <div className="chips">
           {["leaky feature", "ID columns", "numbers-as-text", "missingness"].map((c) => <span key={c} className="badge">{c}</span>)}
         </div>

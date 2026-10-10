@@ -74,6 +74,36 @@ def test_well_formed_csv_gets_no_ragged_warning(tmp_path):
     assert ingest.to_parquet(src, "csv", tmp_path / "ds" / "raw.parquet") == []
 
 
+@pytest.mark.parametrize("sep,name", [(";", "semicolons"), ("\t", "tabs"), ("|", "pipes")])
+def test_csv_separated_by_other_characters_reads_into_columns(tmp_path, sep, name):
+    src = tmp_path / "data.csv"
+    src.write_text(sep.join(["school", "age", "note"]) + "\n"
+                   + "".join(sep.join(['"GP"', str(15 + i % 5), '"a, b"']) + "\n" for i in range(50)))
+    dest = tmp_path / "ds" / "raw.parquet"
+    warnings = ingest.to_parquet(src, "csv", dest)
+    df = pl.read_parquet(dest)
+    assert df.columns == ["school", "age", "note"] and df["age"][0] == 15 and df["note"][0] == "a, b"
+    assert any(name in w for w in warnings)
+
+
+def test_quoted_commas_dont_fool_the_separator_guess(tmp_path):
+    src = tmp_path / "data.csv"
+    src.write_text('name,city\n' + "".join(f'"Smith; J{i}","Paris; FR"\n' for i in range(20)))
+    dest = tmp_path / "ds" / "raw.parquet"
+    assert ingest.to_parquet(src, "csv", dest) == []
+    assert pl.read_parquet(dest).columns == ["name", "city"]
+
+
+def test_a_lone_question_mark_is_missing(tmp_path):
+    src = tmp_path / "data.csv"
+    src.write_text("race,weight,note\n" + "Caucasian,?,ok?\n?,[75-100),?\n" * 10)
+    dest = tmp_path / "ds" / "raw.parquet"
+    ingest.to_parquet(src, "csv", dest)
+    df = pl.read_parquet(dest)
+    assert df["race"].null_count() == 10 and df["weight"].null_count() == 10 and df["note"].null_count() == 10
+    assert df["note"][0] == "ok?"
+
+
 def test_failed_conversion_leaves_no_partial_file(tmp_path):
     src = tmp_path / "bad.parquet"
     src.write_bytes(b"not a parquet file")

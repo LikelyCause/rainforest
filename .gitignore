@@ -7,3 +7,5 @@ api/.venv/
 ui/node_modules/
 ui/dist/
 *.tsbuildinfo
+# The sample library ships its datasets.
+!api/app/sample_library/data/
