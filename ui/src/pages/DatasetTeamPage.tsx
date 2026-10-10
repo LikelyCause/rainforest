@@ -130,7 +130,8 @@ function Assessors({ ds, team }: { ds: Dataset; team: TeamState }) {
         <span className="muted small-text">Progress only: nobody's choices show before review.</span>
       </div>
       {team.assessors.length === 0 ? (
-        <span className="secondary">{lead ? "Nobody is assigned yet. Assign the people who should assess every field." : "A lead hasn't assigned anyone yet."}</span>
+        <span className="secondary">{lead ? `Nobody is assigned yet. Assign the people who should assess ${team.recipe.reopened != null ? "the reopened fields" : "every field"}.`
+          : "A lead hasn't assigned anyone yet."}</span>
       ) : (
         <table className="data team">
           <thead><tr><th>Assessor</th><th>Progress</th><th>Status</th>{lead && <th aria-label="Actions" />}</tr></thead>
