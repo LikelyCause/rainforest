@@ -103,7 +103,7 @@ export const api = {
     request<ExportJob>(`/api/datasets/${id}/exports`, json("POST", cfg)),
   modelsForExport: (exportId: number) => request<ModelOption[]>(`/api/exports/${exportId}/models`),
   system: () => request<SystemInfo>("/api/system"),
-  startRun: (exportId: number, data: { model: string; order?: string[]; cv?: number; params?: Record<string, unknown>; device?: Device }) =>
+  startRun: (exportId: number, data: { model: string; order?: string[]; cv?: number; seed?: number; params?: Record<string, unknown>; device?: Device }) =>
     request<ModelRun>(`/api/exports/${exportId}/runs`, json("POST", data)),
   runs: (datasetId: number, experimentId?: number) =>
     request<ModelRun[]>(`/api/datasets/${datasetId}/runs${experimentId ? `?experiment_id=${experimentId}` : ""}`),

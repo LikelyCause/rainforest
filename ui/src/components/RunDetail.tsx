@@ -1,8 +1,11 @@
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../api";
+import { describeSettings } from "../settings";
 import { histogramOption, rocOption, scatterOption } from "../charts";
 import { fmtInt, fmtMetric, fmtPct } from "../format";
 import { useChartTheme } from "../theme";
-import type { HistogramChart, ModelRun, RegressionEvaluation, RocCurve, TargetEvaluation } from "../types";
+import type { HistogramChart, ModelRun, RegressionEvaluation, RocCurve, SettingValue, TargetEvaluation, TrainPrefill } from "../types";
 import { Chart } from "./Chart";
 
 type Split = "test" | "valid";
@@ -199,7 +202,32 @@ function TargetCard({ target, m, ev }: { target: string; m: Record<string, numbe
   );
 }
 
-export function RunDetail({ run, targets }: { run: ModelRun; targets: string[] }) {
+/** The run's changed settings, and a way to train again with them. */
+function RunSettings({ run, onTrainAgain }: { run: ModelRun; onTrainAgain: ((p: TrainPrefill) => void) | null }) {
+  const models = useQuery({ queryKey: ["exportModels", run.export_id], queryFn: () => api.modelsForExport(run.export_id), staleTime: 60_000 });
+  const settings = models.data?.find((m) => m.key === run.model)?.settings ?? null;
+  const params = (run.config?.params ?? {}) as Record<string, SettingValue>;
+  const extra = [run.config?.seed !== undefined && run.config.seed !== 42 ? `seed ${run.config.seed}` : null,
+    run.config?.cv !== undefined && run.config.cv !== 5 ? (run.config.cv ? `chain folds ${run.config.cv}` : "chain folds off") : null]
+    .filter(Boolean);
+  const text = [describeSettings(params, settings), ...extra].filter((x) => x !== "defaults" || !extra.length).join(" · ");
+  return (
+    <div className="row run-settings" style={{ gap: 10 }}>
+      <span className="secondary small-text">Settings: <span className="mono">{text}</span></span>
+      {onTrainAgain && settings && (
+        <button type="button" className="small" onClick={() => onTrainAgain({
+          exportId: run.export_id, model: run.model, order: run.report?.order ?? run.config?.order ?? [],
+          values: { ...params, ...(run.config?.seed !== undefined ? { seed: run.config.seed } : {}),
+            ...(run.config?.cv !== undefined ? { cv: run.config.cv } : {}) },
+        })}>Train again with these settings</button>
+      )}
+    </div>
+  );
+}
+
+export function RunDetail({ run, targets, onTrainAgain = null }: {
+  run: ModelRun; targets: string[]; onTrainAgain?: ((p: TrainPrefill) => void) | null;
+}) {
   const [split, setSplit] = useState<Split>("test");
   const metrics = run.metrics?.[split];
   if (run.status !== "done") {
@@ -207,6 +235,7 @@ export function RunDetail({ run, targets }: { run: ModelRun; targets: string[] }
   }
   return (
     <div className="stack" style={{ gap: 12, padding: "8px 4px" }}>
+      <RunSettings run={run} onTrainAgain={onTrainAgain} />
       <div className="row" style={{ justifyContent: "space-between" }}>
         <span className="secondary small-text">
           {targets.some((t) => metrics?.[t] && !("r2" in metrics[t] || "rmse" in metrics[t]))

@@ -46,6 +46,30 @@ export type Action = "keep" | "drop" | "target";
 export type TargetTask = "classes" | "regression" | "bins";
 export type TargetBins = { k: number } | { edges: number[] };
 
+export type SettingValue = string | number | boolean | null;
+
+/** A run's model, chain order and settings, to fill the Train menu again. */
+export interface TrainPrefill { exportId: number; model: string; order: string[]; values: Record<string, SettingValue> }
+
+/** One model setting, as GET /api/models publishes it. */
+export interface ModelSetting {
+  name: string;
+  label: string;
+  help: string;
+  group: string;
+  kind: "choice" | "int" | "float" | "bool" | "int_or_none";
+  default: SettingValue;
+  min: number | null;
+  max: number | null;
+  step: number | null;
+  log: boolean;
+  options: { value: SettingValue; label: string; help?: string }[] | null;
+  applies: "both" | "classes" | "numbers";
+  when: Record<string, SettingValue[]> | null;
+  none_value: number | null;
+  none_label: string | null;
+}
+
 /** How a numeric field would be cut into bands, on the whole column (GET /api/fields/{id}/bands). */
 export interface BandPreview { edges: number[]; labels: string[]; counts: number[]; missing: number }
 
@@ -349,6 +373,8 @@ export interface ModelOption {
   planned: boolean;
   compatible?: boolean;
   reason?: string | null;
+  /** The settings the Train menu offers; null for a model whose settings aren't catalogued yet. */
+  settings?: ModelSetting[] | null;
 }
 
 export type Metrics = Record<string, Record<string, Record<string, number>>>; // split -> target -> metric
@@ -382,7 +408,7 @@ export interface ModelRun {
   status: "pending" | "running" | "done" | "failed";
   status_message: string | null;
   error: string | null;
-  config: { order?: string[] | null; cv?: number; params?: Record<string, unknown>; device?: Device };
+  config: { order?: string[] | null; cv?: number; seed?: number; params?: Record<string, unknown>; device?: Device };
   metrics: Metrics;
   report: {
     order?: string[];

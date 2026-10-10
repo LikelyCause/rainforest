@@ -51,7 +51,8 @@ from sklearn.multioutput import ClassifierChain
 
 from ..gpu import effective_device
 from .registry import (DEFAULT_MODEL, MODELS, ModelSpec, catalog, compatibility, device_params, get_model,
-                       importances, order_problem, param_problems, regression_problem, regressor_params)
+                       classifier_params, importances, order_problem, param_problems, regression_problem,
+                       regressor_params)
 
 log = logging.getLogger("train")
 
@@ -165,7 +166,7 @@ def load_export(export_dir: Path) -> tuple[dict, pl.DataFrame]:
 def build_chain(spec: ModelSpec, target_kinds: list[str], order: list[int], seed: int,
                 params: dict | None = None, cv: int | None = 5) -> ClassifierChain:
     all_binary = all(k == "binary" for k in target_kinds)
-    estimator = spec.build({**spec.default_params, **(params or {})}, seed)
+    estimator = spec.build(classifier_params(spec, {**spec.default_params, **(params or {})}), seed)
     chain_cls = NaNTolerantClassifierChain if spec.handles_nan else ClassifierChain
     # First positional arg is `base_estimator` in sklearn 1.6 and `estimator` from 1.7.
     return chain_cls(
@@ -360,7 +361,8 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
             from sklearn.preprocessing import StandardScaler
 
             regressor = TransformedTargetRegressor(regressor=regressor, transformer=StandardScaler())
-        chain = TargetChain(spec.build(merged, seed), regressor, kinds, order, cv, spec.handles_nan, seed)
+        chain = TargetChain(spec.build(classifier_params(spec, merged), seed), regressor, kinds, order, cv,
+                            spec.handles_nan, seed)
     else:
         chain = build_chain(spec, kinds, order, seed, params, cv)
     t0 = time.time()
