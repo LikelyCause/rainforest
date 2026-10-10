@@ -1,7 +1,8 @@
 import type { Dataset, FamilyKey, FieldListItem } from "./types";
 
 export const FAMILIES: FamilyKey[] = ["tree", "linear", "neural"];
-const TARGET_TYPES = new Set(["binary", "categorical", "numeric_discrete"]);
+const TARGET_TYPES = new Set(["binary", "categorical", "numeric_discrete", "numeric_continuous"]);
+const LABEL_TYPES = new Set(["binary", "categorical"]);
 const MAX_TARGET_LEVELS = 100;
 
 export interface StartBaselineForm {
@@ -15,7 +16,9 @@ export interface StartBaselineForm {
 /** Why a field can't be a target (the API's own rule), or null when it can. */
 export function eligibleTarget(f: Pick<FieldListItem, "semantic_type" | "n_unique">): string | null {
   if (!TARGET_TYPES.has(f.semantic_type)) return `${f.semantic_type.replace("_", " ")} fields can't be targets`;
-  if (f.n_unique !== null && f.n_unique > MAX_TARGET_LEVELS) return `more than ${MAX_TARGET_LEVELS} distinct values`;
+  if (LABEL_TYPES.has(f.semantic_type) && f.n_unique !== null && f.n_unique > MAX_TARGET_LEVELS) {
+    return `more than ${MAX_TARGET_LEVELS} distinct values`;
+  }
   return null;
 }
 

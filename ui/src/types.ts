@@ -42,6 +42,12 @@ export interface Dataset {
 }
 
 export type Action = "keep" | "drop" | "target";
+/** How a target is predicted: one of its values, a number, or a band of numbers. */
+export type TargetTask = "classes" | "regression" | "bins";
+export type TargetBins = { k: number } | { edges: number[] };
+
+/** How a numeric field would be cut into bands, on the whole column (GET /api/fields/{id}/bands). */
+export interface BandPreview { edges: number[]; labels: string[]; counts: number[]; missing: number }
 
 export interface FieldListItem {
   id: number;
@@ -142,6 +148,9 @@ export interface Decision {
   scaling: string;
   encoding: string;
   params: Record<string, any>;
+  /** For a target: how it is predicted (null for other fields; omitted on save keeps the stored task). */
+  target_task?: TargetTask | null;
+  target_bins?: TargetBins | null;
   notes: string | null;
   reviewed: boolean;
   source: "suggested" | "user";
@@ -168,7 +177,10 @@ export interface FieldResponse {
   /** Why the field can't change in this version (carried over), or null. */
   locked?: string | null;
   /** In an experiment: the baseline's own decision and settings for this field. */
-  baseline?: { action: Action; semantic_type: string; notes: string | null; settings: Omit<SettingsRow, "source"> | null } | null;
+  baseline?: {
+    action: Action; semantic_type: string; notes: string | null; target_task?: TargetTask | null;
+    target_bins?: TargetBins | null; settings: Omit<SettingsRow, "source"> | null;
+  } | null;
 }
 
 export type CorrMethod = "spearman" | "cramers_v" | "correlation_ratio";
@@ -207,7 +219,7 @@ export interface OptionCatalog {
   /** param_rules[encoding][param] */
   param_rules?: Record<string, Record<string, { integer: boolean; min: number; max: number }>>;
   non_feature_types: string[];
-  target_rule: { types: string[]; max_levels: number };
+  target_rule: { types: string[]; numeric_types: string[]; max_levels: number; tasks: TargetTask[]; default_k: number };
 }
 
 export interface FieldFilter { column: string; op: string; value?: unknown }
@@ -685,6 +697,8 @@ export interface Assessment {
   user_name: string;
   action: Action;
   semantic_type: string;
+  target_task?: TargetTask | null;
+  target_bins?: TargetBins | null;
   notes: string | null;
 }
 
@@ -692,7 +706,7 @@ export interface QueueItem {
   field_id: number;
   name: string;
   inferred_type: string;
-  team: { action: Action; semantic_type: string };
+  team: { action: Action; semantic_type: string; target_task: TargetTask | null; target_bins: TargetBins | null };
   resolved: boolean;
   comments: number;
   assessments: Assessment[];

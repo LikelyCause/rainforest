@@ -85,3 +85,10 @@ describe("startLabel", () => {
     expect(startLabel(3, 4)).toBe("Start v3, reopening 4 fields");
   });
 });
+
+describe("target task changes", () => {
+  it("reads as Predict as", () => {
+    expect(fmtChange({ key: "target_task", family: null, before: "classes", after: "regression" })).toBe("Predict as: Classes → Number");
+    expect(fmtChange({ key: "target_bins", family: null, before: null, after: { k: 4 } })).toBe("Bands: — → 4 equal-sized");
+  });
+});

@@ -1,4 +1,4 @@
-import type { Decision, DecisionInput, Dim, OptionCatalog, Suggestion } from "./types";
+import type { Decision, DecisionInput, Dim, OptionCatalog, Suggestion, TargetBins, TargetTask } from "./types";
 
 export const NUMERIC = new Set(["numeric_continuous", "numeric_discrete"]);
 const LABELLED = new Set(["categorical", "binary"]);
@@ -17,6 +17,8 @@ export function toInput(d: Decision | Suggestion, family: string): DecisionInput
     scaling: d.scaling,
     encoding: d.encoding,
     params: d.params ?? {},
+    target_task: "target_task" in d ? d.target_task ?? null : null,
+    target_bins: "target_bins" in d ? d.target_bins ?? null : null,
     notes: "notes" in d ? d.notes : null,
     reviewed: "reviewed" in d ? d.reviewed : false,
   };
@@ -48,9 +50,13 @@ export function retype(d: DecisionInput, type: string, catalog: OptionCatalog, s
     : type === "text" ? (sameKind ? d.impute_value ?? "" : "")
     : imputation === "constant" ? (fillCarries && isNumber(d.impute_value) ? d.impute_value : "0")
     : null;
+  // A task the new type can't take goes, so the API settles the type's default.
+  const keepTask = d.target_task !== null && (d.target_task === "classes" ? type !== "numeric_continuous" : NUMERIC.has(type));
   return {
     ...d,
     semantic_type: type,
+    target_task: keepTask ? d.target_task : null,
+    target_bins: keepTask ? d.target_bins : null,
     action: d.action === "target" ? "target" : nonFeature ? "drop" : d.action,
     imputation,
     transform: pick("transform"),
@@ -77,4 +83,34 @@ export function paramProblem(text: string, rule: ParamRule | undefined): string 
 /** Switching encodings starts from the new encoding's default parameters; the old ones don't apply. */
 export function withEncoding(d: DecisionInput, encoding: string, catalog: OptionCatalog): DecisionInput {
   return { ...d, encoding, params: { ...(catalog.default_params[encoding] ?? {}) } };
+}
+
+const MAX_CLASSES = 100;
+
+/** How a target of this type is predicted unless someone chooses otherwise; null when it can't be a target. Mirrors
+ * the API's semantics.default_task. */
+export function defaultTask(type: string, nUnique: number | null): TargetTask | null {
+  if (type === "binary" || type === "categorical") return "classes";
+  if (type === "numeric_continuous") return "regression";
+  if (type === "numeric_discrete") return (nUnique ?? 0) <= MAX_CLASSES ? "classes" : "regression";
+  return null;
+}
+
+export const taskLabel = (t: TargetTask) => ({ classes: "Classes", regression: "Number", bins: "Bands" })[t];
+
+/** "Bands · 4 equal-sized", "Bands · cut at 10, 25", "Number"; null for no task. */
+export function bandsText(task: TargetTask | null | undefined, bins: TargetBins | null | undefined): string | null {
+  if (!task) return null;
+  if (task !== "bins" || !bins) return taskLabel(task);
+  return `Bands · ${"k" in bins ? `${bins.k} equal-sized` : `cut at ${bins.edges.join(", ")}`}`;
+}
+
+/** Cut points typed as "10, 25, 80": the numbers, or what's wrong with them (the API's rule). */
+export function parseEdges(text: string): number[] | string {
+  const parts = text.split(",").map((s) => s.trim()).filter(Boolean);
+  const nums = parts.map(Number);
+  if (!parts.length || nums.some((n) => !Number.isFinite(n))) return "Enter numbers separated by commas";
+  if (nums.length > 19) return "At most 19 cut points";
+  if (nums.some((n, i) => i > 0 && n <= nums[i - 1])) return "Cut points must be ascending, each different";
+  return nums;
 }

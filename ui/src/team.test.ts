@@ -41,6 +41,11 @@ describe("spread", () => {
     expect(spread({ assessments: [a(1, "keep", "binary"), a(2, "keep", "categorical")] }, (t) => t.toUpperCase()))
       .toBe("1 keep as BINARY · 1 keep as CATEGORICAL");
   });
+  it("names how a target is predicted when the assessors disagree on it", () => {
+    const t = (id: number, target_task: "regression" | "bins") =>
+      ({ ...a(id, "target", "numeric_continuous"), target_task, target_bins: target_task === "bins" ? { k: 3 } : null });
+    expect(spread({ assessments: [t(1, "regression"), t(2, "bins")] })).toBe("1 target as Bands · 3 equal-sized · 1 target as Number");
+  });
 });
 
 describe("differing", () => {

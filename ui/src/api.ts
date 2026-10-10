@@ -1,11 +1,7 @@
 import type { StartBaselineForm } from "./baselines";
 import { type View, viewQuery } from "./view";
 import type {
-  BaselineLine, FamilyKey, LibraryEntry,
-  Analysis, AnalysisKind, AnalysisParams, CorrMatrix, BulkRequest, BulkResult, Correlation, Dataset, DecisionInput, Decision, ExportJob, ExportPreview, FieldFilter,
-  FieldListItem, FieldResponse, ModelOption, ModelRun, OptionCatalog, SqlResult, SystemInfo, Device,
-  AuthConfig, Me, PickUser, Role, TeamUser, TeamState, ReviewQueue, FieldReview, ReviewComment,
-  RecipeVersion, FinalizedRecipe, RecipeDiff, Experiment, ExperimentDetail,
+  Analysis, AnalysisKind, AnalysisParams, AuthConfig, BandPreview, BaselineLine, BulkRequest, BulkResult, CorrMatrix, Correlation, Dataset, Decision, DecisionInput, Device, Experiment, ExperimentDetail, ExportJob, ExportPreview, FamilyKey, FieldFilter, FieldListItem, FieldResponse, FieldReview, FinalizedRecipe, LibraryEntry, Me, ModelOption, ModelRun, OptionCatalog, PickUser, RecipeDiff, RecipeVersion, ReviewComment, ReviewQueue, Role, SqlResult, SystemInfo, TeamState, TeamUser,
 } from "./types";
 
 export class ApiError extends Error {
@@ -133,6 +129,8 @@ export const api = {
     request<TeamState>(`/api/datasets/${datasetId}/assessment/unsubmit`, { method: "POST" }),
   reviewQueue: (datasetId: number) => request<ReviewQueue>(`/api/datasets/${datasetId}/review`),
   fieldReview: (fieldId: number) => request<FieldReview>(`/api/fields/${fieldId}/review`),
+  bands: (fieldId: number, q: { k: number } | { edges: number[] }) =>
+    request<BandPreview>(`/api/fields/${fieldId}/bands?${"k" in q ? `k=${q.k}` : `edges=${q.edges.join(",")}`}`),
   addComment: (fieldId: number, body: string) =>
     request<ReviewComment[]>(`/api/fields/${fieldId}/comments`, json("POST", { body })),
   finalize: (datasetId: number, acceptOpen: boolean) =>

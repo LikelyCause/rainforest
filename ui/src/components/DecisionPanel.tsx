@@ -1,8 +1,10 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ChangeEvent } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { api } from "../api";
 import { pendingDraft, queueSave } from "../saveQueue";
-import { NUMERIC, paramProblem, retype, toInput, withEncoding, type ParamRule } from "../decision";
+import { defaultTask, NUMERIC, paramProblem, parseEdges, retype, taskLabel, toInput, withEncoding, type ParamRule } from "../decision";
 import { baselineDiff, revertedInput } from "../experiments";
-import type { DecisionInput, Dim, FieldResponse, OptionCatalog } from "../types";
+import type { DecisionInput, Dim, FieldResponse, OptionCatalog, TargetBins, TargetTask } from "../types";
 import type { View } from "../view";
 
 const DIMS: Dim[] = ["imputation", "transform", "scaling", "encoding"];
@@ -164,6 +166,39 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
             </div>
             {suggestedLine("action", sugg.action)}
           </div>
+
+          {isTarget && (() => {
+            const fallback = defaultTask(draft.semantic_type, f.n_unique);
+            const task = draft.target_task ?? fallback;
+            const allowedTask = (t: TargetTask) => (t === "classes"
+              ? draft.semantic_type !== "numeric_continuous" && (!NUMERIC.has(draft.semantic_type) || (f.n_unique ?? 0) <= catalog.target_rule.max_levels)
+              : NUMERIC.has(draft.semantic_type));
+            const hint = (t: TargetTask) => (allowedTask(t) ? undefined
+              : t === "classes" ? (draft.semantic_type === "numeric_continuous" ? "A continuous field is predicted as a number or as bands"
+                : `More than ${catalog.target_rule.max_levels} distinct values`)
+              : "Only numeric fields can be predicted as a number or as bands");
+            return (
+              <div className={`setting${task !== fallback ? " edited" : ""}`}>
+                <div className="setting-row">
+                  <span>Predict as</span>
+                  <div className="segmented" role="radiogroup" aria-label="Predict as">
+                    {(["classes", "regression", "bins"] as const).map((t) => (
+                      <button key={t} type="button" role="radio" aria-checked={task === t} className={task === t ? "on" : ""}
+                        disabled={!allowedTask(t)} title={hint(t)}
+                        onClick={() => update({ target_task: t, target_bins: t === "bins" ? draftRef.current.target_bins ?? { k: catalog.target_rule.default_k } : null }, 0)}>
+                        {taskLabel(t)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {task !== fallback && fallback && <div className="suggested">default for this type: {taskLabel(fallback).toLowerCase()}</div>}
+                {task === "bins" && (
+                  <BandSettings fieldId={f.id} bins={draft.target_bins ?? { k: catalog.target_rule.default_k }} readOnly={Boolean(readOnly)}
+                    onChange={(b) => update({ target_task: "bins", target_bins: b }, 0)} />
+                )}
+              </div>
+            );
+          })()}
 
           <div className={`setting${differs("semantic_type") ? " edited" : ""}`}>
             <div className="setting-row">
@@ -331,6 +366,64 @@ function BaselineLine({ draft, data, readOnly, onRevert }: {
           {!readOnly && <button type="button" className="link" onClick={onRevert}>Revert to baseline</button>}
         </>
       )}
+    </div>
+  );
+}
+
+/** Equal-sized bands or chosen cut points, with how the field's rows fall into them. Cut points are saved once they
+ * parse; until then the last valid setting stays. */
+function BandSettings({ fieldId, bins, readOnly, onChange }: {
+  fieldId: number; bins: TargetBins; readOnly: boolean; onChange: (b: TargetBins) => void;
+}) {
+  const [mode, setMode] = useState<"k" | "edges">("k" in bins ? "k" : "edges");
+  const [text, setText] = useState("edges" in bins ? bins.edges.join(", ") : "");
+  const parsed = parseEdges(text);
+  const preview = useQuery({
+    queryKey: ["bands", fieldId, JSON.stringify(bins)],
+    queryFn: () => api.bands(fieldId, bins),
+    placeholderData: keepPreviousData,
+  });
+  const max = Math.max(1, ...(preview.data?.counts ?? [1]));
+  const pick = (m: "k" | "edges") => {
+    setMode(m);
+    if (m === "k") onChange({ k: "k" in bins ? bins.k : 5 });
+    else if (typeof parsed !== "string") onChange({ edges: parsed });
+  };
+  return (
+    <div className="stack band-settings" style={{ gap: 6 }}>
+      <div className="segmented" role="radiogroup" aria-label="Bands">
+        {(["k", "edges"] as const).map((m) => (
+          <button key={m} type="button" role="radio" aria-checked={mode === m} className={mode === m ? "on" : ""} disabled={readOnly}
+            onClick={() => pick(m)}>{m === "k" ? "Equal-sized" : "Cut points"}</button>
+        ))}
+      </div>
+      {mode === "k" ? (
+        <div className="setting-row">
+          <label htmlFor="d-bands-k">Bands</label>
+          <input id="d-bands-k" type="number" min={2} max={20} step={1} value={"k" in bins ? bins.k : 5} disabled={readOnly}
+            onChange={(e) => { const k = Number(e.target.value); if (Number.isInteger(k) && k >= 2 && k <= 20) onChange({ k }); }} />
+        </div>
+      ) : (
+        <div className="setting-row">
+          <label htmlFor="d-bands-edges">Cut at</label>
+          <input id="d-bands-edges" value={text} placeholder="10, 25, 80" disabled={readOnly}
+            onChange={(e) => { setText(e.target.value); const p = parseEdges(e.target.value); if (typeof p !== "string") onChange({ edges: p }); }} />
+        </div>
+      )}
+      {mode === "edges" && text.trim() !== "" && typeof parsed === "string" && <div className="inline-warn">{parsed}</div>}
+      {mode === "edges" && !("edges" in bins) ? <span className="muted small-text">Type cut points to use them.</span>
+        : preview.error ? <div className="inline-warn">{(preview.error as Error).message}</div> : preview.data && (
+        <ul className="band-preview" aria-label="Rows per band">
+          {preview.data.labels.map((l, i) => (
+            <li key={l}>
+              <span className="mono">{l}</span>
+              <span className="band-bar" style={{ width: `${Math.round((preview.data!.counts[i] / max) * 100)}%` }} />
+              <span className="num">{preview.data!.counts[i].toLocaleString()}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <span className="muted small-text">Equal-sized bands are cut again on each export's training rows.</span>
     </div>
   );
 }

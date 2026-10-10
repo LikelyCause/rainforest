@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { paramProblem, retype, withEncoding } from "./decision";
+import { bandsText, defaultTask, paramProblem, parseEdges, retype, taskLabel, withEncoding } from "./decision";
 import type { DecisionInput, OptionCatalog, Suggestion } from "./types";
 
 const NUM = { imputation: ["none", "mean", "median", "constant"], transform: ["none"], scaling: ["none"], encoding: ["none"] };
@@ -86,5 +86,27 @@ describe("paramProblem", () => {
     expect(paramProblem("1", rule)).toBe("Between 2 and 1000");
     expect(paramProblem("0.05", { integer: false, min: 0, max: 0.99 })).toBeNull();
     expect(paramProblem("7", undefined)).toBeNull();
+  });
+});
+
+describe("target tasks", () => {
+  it("defaults like the API", () => {
+    expect(defaultTask("binary", 2)).toBe("classes");
+    expect(defaultTask("numeric_continuous", 30)).toBe("regression");
+    expect(defaultTask("numeric_discrete", 100)).toBe("classes");
+    expect(defaultTask("numeric_discrete", 101)).toBe("regression");
+    expect(defaultTask("text", 5)).toBeNull();
+  });
+  it("labels", () => expect(taskLabel("regression")).toBe("Number"));
+  it("describes bands", () => {
+    expect(bandsText("bins", { k: 4 })).toBe("Bands · 4 equal-sized");
+    expect(bandsText("bins", { edges: [10, 25] })).toBe("Bands · cut at 10, 25");
+    expect(bandsText("regression", null)).toBe("Number");
+    expect(bandsText(null, null)).toBeNull();
+  });
+  it("parses cut points", () => {
+    expect(parseEdges("10, 25.5,80")).toEqual([10, 25.5, 80]);
+    expect(parseEdges("5, 1")).toMatch(/ascending/);
+    expect(parseEdges("a")).toMatch(/number/);
   });
 });

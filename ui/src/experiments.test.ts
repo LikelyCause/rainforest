@@ -109,4 +109,10 @@ describe("baseline comparison", () => {
     expect(r).toMatchObject({ action: "keep", imputation: "none", notes: "mine" });
     expect(baselineDiff(r, base)).toEqual([]);
   });
+  it("compares and restores how a target is predicted", () => {
+    const tbase = { ...base, action: "target" as const, target_task: "bins" as const, target_bins: { k: 4 } };
+    const tdraft = { ...draft, action: "target" as const, target_task: "regression" as const, target_bins: null };
+    expect(baselineDiff(tdraft, tbase)).toEqual(["Predict as", "Bands", "Missing values"]);
+    expect(revertedInput(tdraft, tbase)).toMatchObject({ target_task: "bins", target_bins: { k: 4 } });
+  });
 });
