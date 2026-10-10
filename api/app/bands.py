@@ -5,17 +5,24 @@ import numpy as np
 
 
 def quantile_edges(values: np.ndarray, k: int) -> list[float]:
-    """Equal-count cut points. Repeated quantiles collapse; a cut at the minimum would leave the lowest band empty, so
-    it moves up to the next value (90 zeros and 1..10 cut into `< 1` and `≥ 1`)."""
+    """Equal-count cut points, rounded to 4 significant digits. Repeated quantiles collapse; a cut at the minimum would
+    leave the lowest band empty, so it moves up to the next value (90 zeros and 1..10 cut into `< 1` and `≥ 1`)."""
     v = np.asarray(values, dtype=float)
     v = v[~np.isnan(v)]
     if v.size == 0:
         return []
     lo = v.min()
     above = v[v > lo]
-    edges = {float(e) if e > lo else (float(above.min()) if above.size else None)
+    edges = {_readable(float(e), lo) if e > lo else (float(above.min()) if above.size else None)
              for e in np.quantile(v, np.arange(1, k) / k)}
     return sorted(e for e in edges if e is not None)
+
+
+def _readable(e: float, lo: float) -> float:
+    """A cut point rounded to 4 significant digits so its label reads well, unless that would put it on or below the
+    minimum (and empty the lowest band)."""
+    r = float(f"{e:.4g}")
+    return r if r > lo else e
 
 
 def edges_for(bins: dict, train_values: np.ndarray) -> list[float]:

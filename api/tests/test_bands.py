@@ -43,3 +43,16 @@ def test_edges_for_uses_given_edges_or_training_quantiles():
     assert edges_for({"k": 2}, np.arange(10.0)) == [4.5]
     with pytest.raises(ValueError, match="one band"):
         edges_for({"k": 4}, np.zeros(50))
+
+
+def test_equal_sized_cut_points_are_rounded_for_readable_labels():
+    v = np.random.default_rng(0).gamma(4.0, 9.0, size=1000)
+    edges = quantile_edges(v, 4)
+    assert all(len(f"{e:g}".replace(".", "").lstrip("0")) <= 4 for e in edges)
+    counts = np.bincount(assign(v, edges).astype(int))
+    assert counts.min() >= 240  # still close to equal-sized
+
+
+def test_rounding_never_moves_a_cut_onto_the_minimum():
+    v = np.array([100.0001] * 50 + [100.0002] * 50)
+    assert np.unique(assign(v, quantile_edges(v, 2))).size == 2
