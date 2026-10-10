@@ -53,7 +53,7 @@ LIGHTGBM = RUN + [
         _opt("gbdt", "Gradient boosting", "Each tree corrects the previous ones. The usual choice."),
         _opt("dart", "DART", "Drops random trees while boosting, which can reduce overfitting; slower."),
         _opt("rf", "Random forest", "Independent trees on bagged rows; needs subsample < 1 and a bagging frequency."))),
-    Setting("n_estimators", "Trees", "Boosting rounds. More fits more closely, and slower.", "trees", "int", 600, 10,
+    Setting("n_estimators", "Trees", "Boosting rounds. More fits more closely, and slower.", "trees", "int", 600, 1,
             10_000, 50),
     Setting("num_leaves", "Leaves per tree", "The main complexity control. More leaves fit finer patterns and "
             "overfit sooner.", "trees", "int", 63, 2, 4096),
@@ -174,6 +174,11 @@ def setting_problems(model: str, params: dict) -> list[str]:
     if params.get("objective") == "quantile" and not 0 < params.get("alpha", 0.9) < 1:
         out.append("alpha must be between 0 and 1 for the quantile loss")
     return out
+
+
+def applies_to(model: str, kind: str | None = None) -> set[str]:
+    """Names of `model`'s settings that apply to one kind of link only (`kind`: classes or numbers; None for both)."""
+    return {s.name for s in settings_for(model) or [] if s.applies != "both" and (kind is None or s.applies == kind)}
 
 
 def route(model: str, params: dict) -> tuple[dict, dict]:

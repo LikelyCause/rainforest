@@ -13,6 +13,7 @@ from typing import Any, Callable
 import numpy as np
 
 from ..semantics import FAMILIES
+from . import params as model_params
 
 
 @dataclass(frozen=True)
@@ -236,7 +237,53 @@ def regressor_params(spec: ModelSpec, params: dict[str, Any]) -> dict[str, Any]:
     known = set(spec.build_regressor({}, 0).get_params())
     if spec.key == "lightgbm":
         known |= _lightgbm_native_params()
+    if model_params.settings_for(spec.key):
+        # A catalogued model says which settings reach a regressor; the rest (class weights, ...) stay with classifiers.
+        catalogued = {s.name for s in model_params.settings_for(spec.key) or []}
+        routed = model_params.route(spec.key, params)[1]
+        return {k: v for k, v in routed.items()
+                if k in known and (k in catalogued or k not in _classifier_only(spec))}
     return {k: v for k, v in params.items() if k in known and k not in _classifier_only(spec)}
+
+
+def classifier_params(spec: ModelSpec, params: dict[str, Any]) -> dict[str, Any]:
+    """The run's parameters a classifier gets: a catalogued model's settings for number targets stay out."""
+    if not model_params.settings_for(spec.key):
+        return params
+    return {k: v for k, v in params.items() if k not in model_params.applies_to(spec.key, "numbers")}
+
+
+def dry_fit_problem(spec: ModelSpec, params: dict[str, Any], kinds: list[str]) -> str | None:
+    """Fit the run's settings on 64 synthetic rows, so a combination the library refuses fails when the run is asked
+    for, not minutes into it. Rounds are capped so a large tree count stays quick."""
+    merged = {**spec.default_params, **params}
+    if "n_estimators" in merged:
+        merged["n_estimators"] = min(int(merged["n_estimators"]), 5)
+    if "n_jobs" in merged:
+        merged["n_jobs"] = 1
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(64, 4))
+    classes = [k for k in kinds if k != "regression"]
+    try:
+        if classes:
+            y = (X[:, 0] > 0).astype(int) + (0 if all(k == "binary" for k in classes) else (X[:, 1] > 0))
+            spec.build(classifier_params(spec, merged), 0).fit(X, y)
+        if "regression" in kinds and spec.build_regressor is not None:
+            spec.build_regressor({**spec.regressor_defaults, **regressor_params(spec, merged)}, 0).fit(X, np.abs(X[:, 0]) + 1)
+    except Exception as exc:  # noqa: BLE001 - the library's own message is the useful part
+        text = str(exc)
+        plain = next((msg for needle, msg in LIBRARY_RULES.items() if needle in text), text)
+        return f"{spec.label} refused these settings: {plain}"
+    return None
+
+
+# LightGBM's fatal checks, in words.
+LIBRARY_RULES = {
+    "rf.hpp": "Random forest needs bagging (a row sample below 1 with a bagging frequency above 0) or a feature sample "
+              "below 1",
+    "goss.hpp": "the GOSS top and other shares must add up to at most 1",
+    "is_unbalance and scale_pos_weight": "set Unbalanced or a positive-class weight, not both",
+}
 
 
 def regression_problem(spec: ModelSpec, kinds: list[str]) -> str | None:
@@ -267,10 +314,11 @@ PLANNED = {
 def catalog() -> list[dict[str, Any]]:
     return [
         {"key": m.key, "label": m.label, "family": m.family, "handles_nan": m.handles_nan,
-         "available": m.available, "description": m.description, "devices": m.devices, "planned": False}
+         "available": m.available, "description": m.description, "devices": m.devices, "planned": False,
+         "settings": [s.to_json() for s in model_params.settings_for(m.key) or []] or None}
         for m in MODELS.values()
     ] + [
-        {"key": key, **p, "handles_nan": False, "available": False, "devices": [], "planned": True}
+        {"key": key, **p, "handles_nan": False, "available": False, "devices": [], "planned": True, "settings": None}
         for key, p in PLANNED.items()
     ]
 

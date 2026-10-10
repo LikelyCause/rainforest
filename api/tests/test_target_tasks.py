@@ -244,3 +244,34 @@ def test_regression_run_end_to_end(app_, people):
     assert "r2" in run["metrics"]["valid"]["price"]
     listed = lead.get(f"/api/datasets/{ds['id']}/experiments").json()
     assert next(i for i in listed if i["id"] == x["id"])["best"]["metric"] == "r2"
+
+
+def _run(lead, e, **body):
+    return lead.post(f"/api/exports/{e['id']}/runs", json={"model": "lightgbm", **body})
+
+
+def test_run_settings_are_checked_applied_and_stored(app_, people):
+    lead = people["lead"]
+    ds, x = _finalized_with_price(lead)
+    e = export(lead, ds, x)
+    r = _run(lead, e, params={"num_leaves": 1})
+    assert r.status_code == 422 and "num_leaves" in r.text
+    r = _run(lead, e, params={"boosting_type": "rf", "subsample": 1.0, "colsample_bytree": 1.0})
+    assert r.status_code == 422 and "Random forest needs" in r.text
+    r = _run(lead, e, params={"objective": "poisson", "num_leaves": 15, "n_estimators": 40}, seed=7, cv=0)
+    assert r.status_code == 202, r.text
+    run = wait(lambda: (g := lead.get(f"/api/runs/{r.json()['id']}").json())["status"] in ("done", "failed") and g)
+    assert run["status"] == "done", run.get("error")
+    assert run["config"]["params"] == {"objective": "poisson", "num_leaves": 15, "n_estimators": 40}
+    assert run["config"]["seed"] == 7 and run["report"]["seed"] == 7
+    assert run["report"]["params"]["num_leaves"] == 15
+
+
+def test_a_loss_that_needs_positive_targets_is_refused(app_, people):
+    lead = people["lead"]
+    ds = upload(lead, "x,z,v\n" + "".join(f"{i % 17},{i % 5},{(i % 40) - 20.5}\n" for i in range(400)), targets="")
+    start(lead, ds, "tree", [lead], targets=("v",))
+    rid = submit_and_finalize(lead, ds)["recipe"]["id"]
+    e = export(lead, ds, experiment(lead, ds, rid))
+    r = _run(lead, e, params={"objective": "gamma"})
+    assert r.status_code == 422 and "gamma" in r.text

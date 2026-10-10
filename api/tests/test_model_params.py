@@ -73,3 +73,35 @@ def test_catalog_serializes():
     import json
     json.dumps([s.to_json() for s in LGB])
     assert settings_for("mlp") is None and set(CATALOG) == {"lightgbm"}
+
+
+import time  # noqa: E402
+
+from app.modeling.registry import catalog, dry_fit_problem, regressor_params  # noqa: E402
+
+
+def test_models_list_carries_settings():
+    rows = {m["key"]: m for m in catalog()}
+    assert rows["lightgbm"]["settings"][0]["name"] == "seed" and rows["mlp"]["settings"] is None
+    assert rows["knn"]["settings"] is None
+
+
+def test_dry_fit_catches_lightgbm_rules():
+    spec = MODELS["lightgbm"]
+    rf = dry_fit_problem(spec, {"boosting_type": "rf", "subsample": 1.0, "colsample_bytree": 1.0}, ["binary"])
+    assert rf and "Random forest needs" in rf
+    assert "at most 1" in dry_fit_problem(spec, {"data_sample_strategy": "goss", "top_rate": 0.8, "other_rate": 0.5},
+                                          ["binary"])
+    assert "not both" in dry_fit_problem(spec, {"is_unbalance": True, "scale_pos_weight": 2.0}, ["binary"])
+    assert dry_fit_problem(spec, {"num_leaves": 31}, ["binary", "regression"]) is None
+    assert dry_fit_problem(spec, {"objective": "huber", "alpha": 2.0}, ["multiclass", "regression"]) is None
+
+
+def test_dry_fit_is_quick_with_many_trees():
+    t = time.monotonic()
+    assert dry_fit_problem(MODELS["lightgbm"], {"n_estimators": 10_000}, ["multiclass", "regression"]) is None
+    assert time.monotonic() - t < 3
+
+
+def test_regressor_gets_routed_settings():
+    assert regressor_params(MODELS["lightgbm"], {"class_weight": "balanced", "objective": "huber"}) == {"objective": "huber"}

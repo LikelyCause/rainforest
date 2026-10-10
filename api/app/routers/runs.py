@@ -14,8 +14,9 @@ from .. import experiments, gpu, jobs
 from ..auth import CurrentUser
 from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..modeling import mlflow_log
-from ..modeling.registry import (MODELS, PLANNED, catalog, compatibility, order_problem, param_problems,
-                                regression_problem)
+from ..modeling import params as model_params
+from ..modeling.registry import (MODELS, PLANNED, catalog, compatibility, dry_fit_problem, order_problem,
+                                param_problems, regression_problem)
 from ..schemas import RunRequest
 from .exports import visible_export
 
@@ -91,6 +92,15 @@ def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
     kinds = [(manifest.get("target_kinds") or {}).get(t) for t in (req.order or manifest["targets"])]
     if problem := regression_problem(spec, kinds):
         raise HTTPException(422, problem)
+    if model_params.settings_for(spec.key):
+        if problems := model_params.setting_problems(spec.key, req.params):
+            raise HTTPException(422, {"message": "Invalid model settings", "errors": problems})
+        stats = manifest.get("target_stats") or {}
+        for t, kind in zip(req.order or manifest["targets"], kinds):
+            if kind == "regression" and (p := model_params.objective_problem(req.params, (stats.get(t) or {}).get("min"))):
+                raise HTTPException(422, p)
+        if problem := dry_fit_problem(spec, req.params, kinds):
+            raise HTTPException(422, problem)
     with connection() as conn:
         experiments.require_writable(experiments.get_visible(conn, exp["experiment_id"], user), user)
     run = fetch_one(
