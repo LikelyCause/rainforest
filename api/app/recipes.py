@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 
 from fastapi import HTTPException
+from psycopg import sql
 
 from .db import jsonb
 from .semantics import SETTING_KEYS
@@ -119,18 +120,21 @@ def schema_fingerprint(conn, dataset_id: int) -> str:
     return fingerprint([(r["name"], r["physical_dtype"]) for r in rows])
 
 
-def snapshot(conn, dataset_id: int) -> dict:
+def snapshot(conn, dataset_id: int, src=None) -> dict:
     """The team decision as a recipe stores it: per field name, the decision, settings for every model family, the
-    inferred type and the stats a later upload is checked against for drift; plus the target order."""
+    inferred type and the stats a later upload is checked against for drift; plus the target order. With `src` (an
+    assessment.Source), the same from that source's decisions instead."""
+    dec = src.decisions() if src is not None else sql.SQL("meta.field_decisions")
+    sets = src.settings() if src is not None else sql.SQL("meta.field_settings")
     fields = conn.execute(
-        """SELECT f.id, f.name, f.inferred_type, f.null_pct, f.n_unique, d.action, d.semantic_type, d.notes
-             FROM meta.fields f JOIN meta.field_decisions d ON d.field_id = f.id
-            WHERE f.dataset_id = %s ORDER BY f.ordinal""",
+        sql.SQL("""SELECT f.id, f.name, f.inferred_type, f.null_pct, f.n_unique, d.action, d.semantic_type, d.notes
+                     FROM meta.fields f JOIN {} d ON d.field_id = f.id
+                    WHERE f.dataset_id = %s ORDER BY f.ordinal""").format(dec),
         (dataset_id,),
     ).fetchall()
     settings: dict[int, dict[str, dict]] = {}
     for s in conn.execute(
-        "SELECT * FROM meta.field_settings WHERE dataset_id = %s ORDER BY field_id, family", (dataset_id,)
+        sql.SQL("SELECT * FROM {} s WHERE s.dataset_id = %s ORDER BY field_id, family").format(sets), (dataset_id,)
     ).fetchall():
         settings.setdefault(s["field_id"], {})[s["family"]] = {k: s[k] for k in SETTING_KEYS}
     ds = conn.execute("SELECT target_columns FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()

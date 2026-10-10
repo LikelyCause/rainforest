@@ -134,18 +134,23 @@ def database(tmp_path_factory):
     get_settings.cache_clear()
 
 
-def _train_run(export_dir) -> int:
+def _train_run(export_dir, phase="review", personal=False) -> int:
+    """Train a run in a team experiment, or with `personal` in the trainer's own assessment experiment."""
     from app.routers import runs
 
     ds = db.fetch_one("INSERT INTO meta.datasets (name, file_format, status) VALUES ('Churn', 'generated', 'ready') "
                       "RETURNING id")["id"]
-    recipe = db.fetch_one("INSERT INTO meta.recipes (dataset_id, version, phase) VALUES (%s, 3, 'review') RETURNING id",
-                          (ds,))["id"]
-    exp = db.fetch_one("INSERT INTO meta.exports (dataset_id, status, output_dir, recipe_id) "
-                       "VALUES (%s, 'done', %s, %s) RETURNING id", (ds, str(export_dir), recipe))["id"]
+    recipe = db.fetch_one("INSERT INTO meta.recipes (dataset_id, version, phase) VALUES (%s, 3, %s) RETURNING id",
+                          (ds, phase))["id"]
     user = db.fetch_one("INSERT INTO meta.users (name, email) VALUES ('Ana', 'ana@example.com') RETURNING id")["id"]
-    run_id = db.fetch_one("INSERT INTO meta.model_runs (export_id, dataset_id, model, family, created_by) "
-                          "VALUES (%s, %s, 'lightgbm', 'tree', %s) RETURNING id", (exp, ds, user))["id"]
+    assessor = user if personal else None
+    source = f"assessment:{recipe}:{user}" if personal else f"recipe:{recipe}"
+    xid = db.fetch_one("INSERT INTO meta.experiments (dataset_id, name, owner, recipe_id, assessor_id, source) "
+                       "VALUES (%s, 'Trees', %s, %s, %s, %s) RETURNING id", (ds, user, recipe, assessor, source))["id"]
+    exp = db.fetch_one("INSERT INTO meta.exports (dataset_id, status, output_dir, recipe_id, experiment_id) "
+                       "VALUES (%s, 'done', %s, %s, %s) RETURNING id", (ds, str(export_dir), recipe, xid))["id"]
+    run_id = db.fetch_one("INSERT INTO meta.model_runs (export_id, dataset_id, model, family, created_by, experiment_id) "
+                          "VALUES (%s, %s, 'lightgbm', 'tree', %s, %s) RETURNING id", (exp, ds, user, xid))["id"]
     req = {"model": "lightgbm", "order": None, "seed": 0, "cv": 2, "params": {"n_estimators": 20}, "device": "cpu"}
     runs._run(run_id, str(export_dir), req)
     return run_id
@@ -155,16 +160,18 @@ def test_training_run_is_logged_and_linked(database, file_store, tree_export):  
     from app.routers import runs
 
     run_id = _train_run(tree_export)
-    run = runs.get_run(run_id)
+    run = runs.run_row(run_id)
     assert run["status"] == "done", run["error"]
     assert run["mlflow_run_id"] and "mlflow_error" not in run["report"]
     assert run["mlflow_url"] == f"/mlflow/#/experiments/{run['mlflow_experiment_id']}/runs/{run['mlflow_run_id']}"
-    listed = next(r for r in runs.list_runs(run["dataset_id"]) if r["id"] == run_id)
+    listed = next(r for r in runs.list_runs(run["dataset_id"], {"id": run["created_by"]}) if r["id"] == run_id)
     assert listed["mlflow_url"] == run["mlflow_url"]
     logged = file_store.get_run(run["mlflow_run_id"])
     assert logged.data.tags["rainforest.run_id"] == str(run_id)
     assert logged.data.tags["rainforest.user"] == "Ana <ana@example.com>"
     assert logged.data.tags["rainforest.recipe_version"] == "3"
+    assert logged.data.tags["rainforest.experiment_id"] == str(run["experiment_id"])
+    assert logged.data.tags["rainforest.experiment_name"] == "Trees"
     assert logged.data.tags["rainforest.recipe_id"] == str(db.fetch_one(
         "SELECT recipe_id FROM meta.exports WHERE id = %s", (run["export_id"],))["recipe_id"])
     assert logged.data.params["estimator.n_estimators"] == "20" and logged.data.params["cv"] == "2"
@@ -180,7 +187,7 @@ def test_unreachable_mlflow_still_completes_the_run_then_backfill_logs_it(databa
     monkeypatch.setenv("MLFLOW_TRACKING_URI", UNREACHABLE)
     get_settings.cache_clear()
     run_id = _train_run(tree_export)
-    run = runs.get_run(run_id)
+    run = runs.run_row(run_id)
     assert run["status"] == "done" and run["mlflow_run_id"] is None and run["mlflow_url"] is None
     assert "127.0.0.1:9" in run["report"]["mlflow_error"]
 
@@ -189,10 +196,40 @@ def test_unreachable_mlflow_still_completes_the_run_then_backfill_logs_it(databa
     assert run_id in {r["id"] for r in mlflow_backfill.pending()}
     logged, failed = mlflow_backfill.backfill([run_id], say=lambda _: None)
     assert (logged, failed) == (1, 0)
-    run = runs.get_run(run_id)
+    run = runs.run_row(run_id)
     assert run["mlflow_run_id"] and "mlflow_error" not in run["report"]
     assert file_store.get_run(run["mlflow_run_id"]).data.metrics["fit_seconds"] == run["report"]["fit_seconds"]
     assert mlflow_backfill.pending([run_id]) == []
+
+
+def test_a_private_experiments_run_waits_for_review_then_is_logged(database, file_store, tree_export):  # noqa: F811
+    from app import experiments
+    from app.routers import runs
+
+    run_id = _train_run(tree_export, phase="assessing", personal=True)
+    run = runs.run_row(run_id)
+    assert run["status"] == "done" and run["report"]["mlflow_pending"] is True
+    assert run["mlflow_run_id"] is None and run["mlflow_url"] is None and "mlflow_error" not in run["report"]
+    assert file_store.search_experiments(filter_string=f"tags.`rainforest.dataset_id` = '{run['dataset_id']}'") == []
+    assert mlflow_backfill.pending([run_id]) == [], "the backfill never logs a private run"
+    recipe = db.fetch_one("SELECT x.recipe_id FROM meta.experiments x WHERE x.id = %s",
+                          (run["experiment_id"],))["recipe_id"]
+    assert experiments.flush_deferred(recipe) == 0, "still assessing: nothing to flush"
+
+    db.execute("UPDATE meta.recipes SET phase = 'review' WHERE id = %s", (recipe,))
+    assert experiments.flush_deferred(recipe) == 1
+    run = runs.run_row(run_id)
+    assert run["mlflow_run_id"] and "mlflow_pending" not in run["report"]
+    tags = file_store.get_run(run["mlflow_run_id"]).data.tags
+    assert tags["rainforest.experiment_id"] == str(run["experiment_id"]) and tags["rainforest.run_id"] == str(run_id)
+    assert experiments.flush_deferred(recipe) == 0
+
+
+def test_a_private_run_finishing_after_review_opened_logs_at_once(database, file_store, tree_export):  # noqa: F811
+    from app.routers import runs
+
+    run = runs.run_row(_train_run(tree_export, phase="review", personal=True))
+    assert run["mlflow_run_id"] and "mlflow_pending" not in run["report"]
 
 
 def test_logging_off_without_a_tracking_uri(database, tree_export, monkeypatch):  # noqa: F811
@@ -200,7 +237,7 @@ def test_logging_off_without_a_tracking_uri(database, tree_export, monkeypatch):
 
     monkeypatch.setenv("MLFLOW_TRACKING_URI", "")
     get_settings.cache_clear()
-    run = runs.get_run(_train_run(tree_export))
+    run = runs.run_row(_train_run(tree_export))
     assert run["status"] == "done" and run["mlflow_run_id"] is None and "mlflow_error" not in run["report"]
     get_settings.cache_clear()
 

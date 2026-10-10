@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 from scipy.cluster.hierarchy import leaves_list, linkage, optimal_leaf_ordering
 from scipy.spatial.distance import squareform
 
-from .. import jobs
+from .. import experiments, jobs
 from psycopg import sql
 
 from ..analysis.runner import ROW_COLS, data_version, find_or_create, public, run_analysis
@@ -30,7 +30,13 @@ def _ready_dataset(conn, dataset_id: int, lock: bool = False) -> dict:
     return ds
 
 
-def _validate_source(conn, dataset_id: int, params: dict) -> None:
+def _export_visible(conn, data: str, user: dict) -> bool:
+    """An "export:<id>" data source is usable only by someone who may see that export's experiment."""
+    return conn.execute(f"SELECT 1 FROM meta.exports WHERE id = %s AND experiment_id IN "
+                        f"({experiments.visible_ids(user['id'])})", (int(data.split(":", 1)[1]),)).fetchone() is not None
+
+
+def _validate_source(conn, dataset_id: int, params: dict, user: dict) -> None:
     target = params["target"]
     if params["data"] == "raw":
         if target is not None and conn.execute(
@@ -44,7 +50,7 @@ def _validate_source(conn, dataset_id: int, params: dict) -> None:
         "SELECT status, summary FROM meta.exports WHERE id = %s AND dataset_id = %s",
         (int(params["data"].split(":", 1)[1]), dataset_id),
     ).fetchone()
-    if exp is None:
+    if exp is None or not _export_visible(conn, params["data"], user):
         raise HTTPException(404, "Export not found")
     if exp["status"] != "done":
         raise HTTPException(409, "Export is not finished")
@@ -67,7 +73,7 @@ def request_analysis(dataset_id: int, req: AnalysisRequest, user: CurrentUser) -
         if params["data"] == "raw":
             # Part of the cache key, so results computed from different people's choices never mix.
             params["decisions"] = decision_source(conn, dataset_id, user, params["kept"]).key
-        _validate_source(conn, dataset_id, params)
+        _validate_source(conn, dataset_id, params, user)
         row, created = find_or_create(conn, dataset_id, req.kind, params, req.recompute, user["id"])
     if created:
         jobs.submit(run_analysis, row["id"])
@@ -79,7 +85,9 @@ def get_analysis(analysis_id: int, user: CurrentUser) -> dict:
     with connection() as conn:
         row = conn.execute(f"SELECT {ROW_COLS} FROM meta.analyses WHERE id = %s", (analysis_id,)).fetchone()
         owner = key_owner(row["params"].get("decisions")) if row else None
-        if row is None or (owner is not None and owner != user["id"]):
+        if row is None or (owner is not None and owner != user["id"]) or (
+                row["params"].get("data", "raw").startswith("export:")
+                and not _export_visible(conn, row["params"]["data"], user)):
             raise HTTPException(404, "Analysis not found")
         current = data_version(conn, row["dataset_id"], row["params"]) if row["status"] == "done" else None
     return public(row, current)

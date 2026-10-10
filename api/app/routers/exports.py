@@ -10,7 +10,8 @@ import polars as pl
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from .. import jobs, recipes
+from .. import experiments, jobs, recipes
+from ..assessment import personal_snapshot
 from ..auth import CurrentUser
 from ..config import get_settings
 from ..db import connection, execute, fetch_all, fetch_one, jsonb
@@ -29,8 +30,12 @@ FILES = {
 }
 
 
-EXPORT_SELECT = ("SELECT e.*, r.version AS recipe_version "
-                 "FROM meta.exports e LEFT JOIN meta.recipes r ON r.id = e.recipe_id")
+EXPORT_COLS = """e.id, e.dataset_id, e.status, e.progress, e.status_message, e.error, e.model_family, e.config,
+                 e.output_dir, e.n_rows, e.n_features, e.summary, e.created_at, e.updated_at, e.finished_at, e.owner,
+                 e.created_by, e.recipe_id, e.experiment_id, r.version AS recipe_version,
+                 x.name AS experiment_name"""
+EXPORT_SELECT = (f"SELECT {EXPORT_COLS} FROM meta.exports e LEFT JOIN meta.recipes r ON r.id = e.recipe_id "
+                 "LEFT JOIN meta.experiments x ON x.id = e.experiment_id")
 PHASE_WAIT = {"assessing": "is being assessed", "review": "is in team review"}
 
 
@@ -41,10 +46,10 @@ def source_problem(recipe: dict) -> str | None:
     return (f"{recipes.label(recipe)} {PHASE_WAIT[recipe['phase']]}. Team exports open once a lead finalizes it.")
 
 
-def export_source(conn, dataset_id: int, source: str, recipe_id: int | None = None) -> dict:
-    """The recipe version an export is built from: `recipe_id`, else the dataset's latest finalized version (with
-    none yet, the current one, which says why it can't export). Only finalized versions export, from their snapshot.
-    `source` is "recipe" (team exports); personal exports from one's own assessment will be another source."""
+def export_source(conn, dataset_id: int, recipe_id: int | None = None) -> dict:
+    """The recipe version a team export is built from: `recipe_id`, else the dataset's latest finalized version
+    (with none yet, the current one, which says why it can't export). Only finalized versions export, from their
+    snapshot. Personal exports come from an experiment instead (`_plan`)."""
     recipe = _pick_recipe(conn, dataset_id, recipe_id)
     if (problem := source_problem(recipe)) is not None:
         raise HTTPException(409, problem)
@@ -60,10 +65,48 @@ def _pick_recipe(conn, dataset_id: int, recipe_id: int | None) -> dict:
     return recipes.latest_finalized(conn, dataset_id) or recipes.current(conn, dataset_id)
 
 
+def _experiment(conn, dataset_id: int, experiment_id: int, user: dict, recipe_id: int | None) -> dict:
+    x = experiments.get_visible(conn, experiment_id, user)
+    if x["dataset_id"] != dataset_id:
+        raise HTTPException(404, "Experiment not found")
+    if recipe_id is not None and recipe_id != x["recipe_id"]:
+        raise HTTPException(422, f"Experiment {x['name']!r} is built from recipe v{x['recipe_version']}")
+    return x
+
+
+def _plan(conn, dataset_id: int, user: dict, recipe_id: int | None,
+          experiment_id: int | None) -> tuple[dict, dict, dict | None]:
+    """(recipe, snapshot, experiment) an export would be built from: the experiment's source when given (a
+    personal one reads its assessor's assessment as it stands now), else a recipe version."""
+    if experiment_id is None:
+        recipe = _pick_recipe(conn, dataset_id, recipe_id)
+        return recipe, recipes.snapshot_of(conn, recipe), None
+    x = _experiment(conn, dataset_id, experiment_id, user, recipe_id)
+    recipe = recipes.get(conn, x["recipe_id"])
+    if x["assessor_id"] is None:
+        return recipe, recipes.snapshot_of(conn, recipe), x
+    return recipe, personal_snapshot(conn, recipe, x["assessor_id"]), x
+
+
+def _unreviewed(conn, recipe: dict, x: dict | None) -> int:
+    if x is not None and x["assessor_id"] is not None:
+        open_ = recipes.open_field_ids(conn, recipe)
+        return conn.execute(
+            """SELECT count(*) AS n FROM meta.assessments WHERE recipe_id = %s AND user_id = %s AND NOT reviewed
+                  AND (%s OR field_id = ANY(%s))""",
+            (recipe["id"], x["assessor_id"], open_ is None, open_ or []),
+        ).fetchone()["n"]
+    if recipe["phase"] == "finalized":
+        return 0
+    return conn.execute("SELECT count(*) AS n FROM meta.field_decisions WHERE dataset_id = %s AND NOT reviewed",
+                        (recipe["dataset_id"],)).fetchone()["n"]
+
+
 @router.get("/datasets/{dataset_id}/export-preview")
-def preview(dataset_id: int, family: str | None = None, recipe_id: int | None = None) -> dict:
-    """What an export of a recipe version (default: the latest finalized) for a model family would contain, plus
-    anything worth fixing first. With no finalized version yet it shows the team decision as it stands, blocked."""
+def preview(dataset_id: int, user: CurrentUser, family: str | None = None, recipe_id: int | None = None,
+            experiment_id: int | None = None) -> dict:
+    """What an export would contain, plus anything worth fixing first: of an experiment's source when given, else
+    of a recipe version (default: the latest finalized; with none yet, the team decision as it stands, blocked)."""
     ds = fetch_one("SELECT model_family, parquet_path FROM meta.datasets WHERE id = %s", (dataset_id,))
     if ds is None:
         raise HTTPException(404, "Dataset not found")
@@ -71,23 +114,22 @@ def preview(dataset_id: int, family: str | None = None, recipe_id: int | None = 
     if fam not in FAMILIES:
         raise HTTPException(422, f"Unknown model family {fam!r}")
     with connection() as conn:
-        recipe = _pick_recipe(conn, dataset_id, recipe_id)
-        snap = recipes.snapshot_of(conn, recipe)
+        recipe, snap, x = _plan(conn, dataset_id, user, recipe_id, experiment_id)
         rows = recipes.spec_rows(conn, dataset_id, snap, fam)
-        unreviewed = 0 if recipe["phase"] == "finalized" else conn.execute(
-            "SELECT count(*) AS n FROM meta.field_decisions WHERE dataset_id = %s AND NOT reviewed", (dataset_id,)
-        ).fetchone()["n"]
+        unreviewed = _unreviewed(conn, recipe, x)
         last = conn.execute(
-            """SELECT e.id, e.created_at, e.status, e.recipe_id FROM meta.exports e
-                WHERE e.dataset_id = %s AND e.model_family = %s AND e.status = 'done'
-                ORDER BY e.created_at DESC, e.id DESC LIMIT 1""",
-            (dataset_id, fam),
+            f"""SELECT e.id, e.created_at, e.status, e.recipe_id, e.snapshot FROM meta.exports e
+                 WHERE e.dataset_id = %s AND e.model_family = %s AND e.status = 'done'
+                   AND e.experiment_id IN ({experiments.visible_ids(user['id'])})
+                   AND (%s::bigint IS NULL OR e.experiment_id = %s)
+                 ORDER BY e.created_at DESC, e.id DESC LIMIT 1""",
+            (dataset_id, fam, experiment_id, experiment_id),
         ).fetchone()
         changed = None
         if last is not None and last["recipe_id"] is not None:
             # Fields whose decision or settings for this family differ from what the last export was built from.
-            changed = 0 if last["recipe_id"] == recipe["id"] else len(recipes.diff(
-                recipes.snapshot_of(conn, recipes.get(conn, last["recipe_id"])), snap, fam)["fields"])
+            before = last["snapshot"] or recipes.snapshot_of(conn, recipes.get(conn, last["recipe_id"]))
+            changed = len(recipes.diff(before, snap, fam)["fields"])
     if not rows:
         raise HTTPException(404, "Dataset has no profiled fields")
     keep = [r for r in rows if r["action"] == "keep" and r["semantic_type"] not in NON_FEATURE_TYPES]
@@ -106,7 +148,8 @@ def preview(dataset_id: int, family: str | None = None, recipe_id: int | None = 
     for r in keep:
         by_type[r["semantic_type"]] = by_type.get(r["semantic_type"], 0) + 1
     blocking = [m for m, bad in [("No target selected", not targets), ("No features kept", not keep)] if bad]
-    if (problem := source_problem(recipe)) is not None:
+    personal = x is not None and x["assessor_id"] is not None
+    if not personal and (problem := source_problem(recipe)) is not None:
         blocking.insert(0, problem)
     if targets and (lone := _lone_class_problem(ds["parquet_path"], targets)):
         blocking.append(lone)
@@ -116,6 +159,8 @@ def preview(dataset_id: int, family: str | None = None, recipe_id: int | None = 
     return {
         "family": fam,
         "recipe": {k: recipe[k] for k in ("id", "version", "phase")},
+        "source": "assessment" if personal else "recipe",
+        "experiment_id": None if x is None else x["id"],
         "kept": len(keep),
         "dropped": sum(1 for r in rows if r["action"] == "drop"),
         "targets": targets,
@@ -142,43 +187,79 @@ def _lone_class_problem(parquet_path: str | None, targets: list[str]) -> str | N
 
 @router.post("/datasets/{dataset_id}/exports", status_code=202)
 def start_export(dataset_id: int, req: ExportRequest, user: CurrentUser) -> dict:
+    """A team export of a finalized version (into the experiment given, else the version's Team experiment), or a
+    personal export of the viewer's own assessment (into their personal experiment, which is required)."""
     ds = fetch_one("SELECT status FROM meta.datasets WHERE id = %s", (dataset_id,))
     if ds is None:
         raise HTTPException(404, "Dataset not found")
     if ds["status"] != "ready":
         raise HTTPException(409, "Dataset is not ready")
     with connection() as conn:
-        recipe = export_source(conn, dataset_id, req.source, req.recipe_id)
-    pv = preview(dataset_id, req.model_family, recipe["id"])
+        if req.experiment_id is None:
+            if req.source == "assessment":
+                raise HTTPException(422, "An export of your own assessment belongs to a personal experiment: "
+                                         "give its experiment_id.")
+            recipe, x = export_source(conn, dataset_id, req.recipe_id), None
+        else:
+            x = _experiment(conn, dataset_id, req.experiment_id, user, req.recipe_id)
+            experiments.require_writable(x, user)
+            personal = x["assessor_id"] is not None
+            if req.source is not None and (req.source == "assessment") != personal:
+                raise HTTPException(422, f"Experiment {x['name']!r} is built from "
+                                         f"{'an assessment' if personal else 'a recipe version'}, not {req.source!r}")
+            recipe = recipes.get(conn, x["recipe_id"])
+            if not personal and (problem := source_problem(recipe)) is not None:
+                raise HTTPException(409, problem)
+    pv = preview(dataset_id, user, req.model_family, recipe["id"], None if x is None else x["id"])
     if pv["blocking"]:
         raise HTTPException(422, {"message": "Cannot export", "errors": pv["blocking"]})
     if req.valid_size + req.test_size >= 0.9:
         raise HTTPException(422, "valid_size + test_size must be < 0.9")
     with connection() as conn:
-        config = {**req.model_dump(exclude={"model_family"}), "recipe_id": recipe["id"],
-                  "recipe_version": recipe["version"]}
+        if x is None:
+            x = experiments.team_for(conn, recipe)
+        personal = x["assessor_id"] is not None
+        # A personal export is frozen as the assessment stands now, so it rebuilds the same way after later edits.
+        snap = personal_snapshot(conn, recipe, x["assessor_id"]) if personal else None
+        config = {**req.model_dump(exclude={"model_family", "experiment_id"}),
+                  "source": "assessment" if personal else "recipe", "recipe_id": recipe["id"],
+                  "recipe_version": recipe["version"], "experiment_id": x["id"]}
+        if personal:
+            config["assessor_id"] = x["assessor_id"]
         exp = conn.execute(
             """INSERT INTO meta.exports (dataset_id, status, status_message, model_family, config, owner, created_by,
-                                         recipe_id)
-               VALUES (%s, 'pending', 'Queued', %s, %s, %s, %s, %s) RETURNING *""",
-            (dataset_id, pv["family"], jsonb(config), jobs.owner_id(), user["id"], recipe["id"]),
+                                         recipe_id, experiment_id, snapshot)
+               VALUES (%s, 'pending', 'Queued', %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+            (dataset_id, pv["family"], jsonb(config), jobs.owner_id(), user["id"], recipe["id"], x["id"],
+             None if snap is None else jsonb(snap)),
         ).fetchone()
+        out = conn.execute(f"{EXPORT_SELECT} WHERE e.id = %s", (exp["id"],)).fetchone()
     jobs.submit(_run, exp["id"])
-    return exp
+    return out
 
 
 @router.get("/datasets/{dataset_id}/exports")
-def list_exports(dataset_id: int) -> list[dict]:
-    rows = fetch_all(f"{EXPORT_SELECT} WHERE e.dataset_id = %s ORDER BY e.created_at DESC", (dataset_id,))
+def list_exports(dataset_id: int, user: CurrentUser, experiment_id: int | None = None) -> list[dict]:
+    rows = fetch_all(
+        f"""{EXPORT_SELECT} WHERE e.dataset_id = %s AND e.experiment_id IN ({experiments.visible_ids(user['id'])})
+              AND (%s::bigint IS NULL OR e.experiment_id = %s) ORDER BY e.created_at DESC""",
+        (dataset_id, experiment_id, experiment_id),
+    )
     return [_backfill_features_by_type(e) for e in rows]
 
 
-@router.get("/exports/{export_id}")
-def get_export(export_id: int) -> dict:
-    exp = fetch_one(f"{EXPORT_SELECT} WHERE e.id = %s", (export_id,))
+def visible_export(export_id: int, user: dict) -> dict:
+    """The export, or 404 when it doesn't exist or belongs to an experiment `user` may not see."""
+    exp = fetch_one(f"{EXPORT_SELECT} WHERE e.id = %s AND e.experiment_id IN ({experiments.visible_ids(user['id'])})",
+                    (export_id,))
     if exp is None:
         raise HTTPException(404, "Export not found")
-    return _backfill_features_by_type(exp)
+    return exp
+
+
+@router.get("/exports/{export_id}")
+def get_export(export_id: int, user: CurrentUser) -> dict:
+    return _backfill_features_by_type(visible_export(export_id, user))
 
 
 def features_by_type(manifest: dict) -> dict[str, dict[str, int]]:
@@ -212,8 +293,8 @@ def _backfill_features_by_type(exp: dict) -> dict:
 
 
 @router.get("/exports/{export_id}/files/{kind}")
-def download(export_id: int, kind: str) -> FileResponse:
-    exp = get_export(export_id)
+def download(export_id: int, kind: str, user: CurrentUser) -> FileResponse:
+    exp = visible_export(export_id, user)
     if kind not in FILES:
         raise HTTPException(404, f"Unknown file {kind!r}")
     if exp["status"] != "done":
@@ -225,9 +306,8 @@ def download(export_id: int, kind: str) -> FileResponse:
     return FileResponse(path, media_type=media, filename=f"export{export_id}_{fname}")
 
 
-def export_spec(conn, dataset_id: int, recipe: dict, family: str) -> tuple[list[FieldSpec], list[str]]:
-    """The kept fields' specs and the targets (in chain order) of a recipe version, from its snapshot."""
-    snap = recipes.snapshot_of(conn, recipe)
+def export_spec(conn, dataset_id: int, snap: dict, family: str) -> tuple[list[FieldSpec], list[str]]:
+    """The kept fields' specs and the targets (in chain order) of a snapshot."""
     specs = [
         FieldSpec(
             name=r["name"], semantic_type=r["semantic_type"], imputation=r["imputation"],
@@ -242,7 +322,7 @@ def export_spec(conn, dataset_id: int, recipe: dict, family: str) -> tuple[list[
 
 
 def _run(export_id: int) -> None:
-    exp = get_export(export_id)
+    exp = fetch_one("SELECT * FROM meta.exports WHERE id = %s", (export_id,))
     ds = fetch_one("SELECT * FROM meta.datasets WHERE id = %s", (exp["dataset_id"],))
     out_dir = get_settings().exports_dir / str(export_id)
     last = [0.0]
@@ -262,7 +342,8 @@ def _run(export_id: int) -> None:
         progress(0.0, "Starting")
         fam = exp["model_family"]
         with connection() as conn:
-            specs, targets = export_spec(conn, ds["id"], recipes.get(conn, exp["recipe_id"]), fam)
+            snap = exp["snapshot"] or recipes.snapshot_of(conn, recipes.get(conn, exp["recipe_id"]))
+            specs, targets = export_spec(conn, ds["id"], snap, fam)
         manifest = run_export(Path(ds["parquet_path"]), specs, targets, out_dir, exp["config"], progress, family=fam)
         summary = {
             "split_counts": manifest["split_counts"],

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from .. import jobs, recipes
+from .. import experiments, jobs, recipes
 from ..assessment import (Source, adopt, assessments_by_field, assessor_row, disagreements, progress, seed,
                           settings_key, write_decision, write_settings)
 from ..auth import CurrentUser, LeadUser
@@ -120,9 +120,17 @@ def unassign(dataset_id: int, user_id: int, user: LeadUser) -> dict:
             raise HTTPException(404, "That user isn't assigned")
         screen = maybe_open_review(conn, recipe, user["id"])
         state = _team_state(conn, dataset_id, user)
+    _after_phase_change(dataset_id, recipe, state, screen)
+    return state
+
+
+def _after_phase_change(dataset_id: int, recipe: dict, state: dict, screen: list[int]) -> None:
+    """Once committed: leak-screen new targets, and when review has opened, log the personal experiments' runs that
+    waited for it (MLflow can't keep them private)."""
     if screen:
         jobs.submit(screen_targets, dataset_id, screen)
-    return state
+    if state["recipe"]["id"] == recipe["id"] and state["recipe"]["phase"] != "assessing":
+        jobs.submit(experiments.flush_deferred, recipe["id"])
 
 
 @router.post("/datasets/{dataset_id}/assessment/submit")
@@ -149,8 +157,7 @@ def submit(dataset_id: int, user: CurrentUser) -> dict:
                          (recipe["id"], user["id"]))
             screen = maybe_open_review(conn, recipe, user["id"])
         state = _team_state(conn, dataset_id, user)
-    if screen:
-        jobs.submit(screen_targets, dataset_id, screen)
+    _after_phase_change(dataset_id, recipe, state, screen)
     return state
 
 

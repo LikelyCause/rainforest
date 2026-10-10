@@ -9,9 +9,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-from . import auth, db, gpu, jobs, processing
+from . import auth, db, experiments, gpu, jobs, processing
 from .config import get_settings
-from .routers import datasets, explore, exports, fields, query, recipes, runs, team, users
+from .routers import datasets, experiments as experiments_router, explore, exports, fields, query, recipes, runs, team, users
 from .semantics import option_catalog
 
 logging.basicConfig(
@@ -37,6 +37,7 @@ async def lifespan(app: FastAPI):
     db.bootstrap()
     jobs.start()
     processing.sweep_uploads()
+    jobs.submit(experiments.startup_flush)
     gpu.warm_up()
     yield
     jobs.shutdown()
@@ -77,6 +78,7 @@ app.include_router(explore.router)
 app.include_router(users.router)
 app.include_router(team.router)
 app.include_router(recipes.router)
+app.include_router(experiments_router.router)
 
 
 @app.get("/health", tags=["meta"])

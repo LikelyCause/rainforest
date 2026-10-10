@@ -76,8 +76,12 @@ class SqlRequest(BaseModel):
 
 class ExportRequest(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
-    source: Literal["recipe"] = Field("recipe", description="Build from a finalized recipe version of the dataset")
+    source: Literal["recipe", "assessment"] | None = Field(
+        None, description="recipe: a finalized recipe version; assessment: your own assessment (needs experiment_id). "
+                          "Default: the experiment's source, else recipe")
     recipe_id: int | None = Field(None, description="The finalized version to build from (default: the latest)")
+    experiment_id: int | None = Field(None, description="The experiment the export belongs to (default for a team "
+                                                        "export: the version's Team experiment)")
     model_family: str | None = Field(None, description="Prepare features for this family (default: dataset's)")
     valid_size: float = Field(0.15, ge=0, lt=0.5)
     test_size: float = Field(0.15, ge=0, lt=0.5)
@@ -93,6 +97,7 @@ class RunRequest(BaseModel):
     seed: int = 42
     params: dict[str, Any] = Field(default_factory=dict)
     device: Literal["cpu", "cuda"] = "cpu"
+    experiment_id: int | None = Field(None, description="Must be the export's experiment, which the run joins")
 
     @model_validator(mode="after")
     def _check(self) -> RunRequest:
@@ -160,6 +165,18 @@ class ApplyRecipeIn(BaseModel):
 
 class FinalizeIn(BaseModel):
     accept_open: bool = Field(False, description="Finalize with disagreements left open, as their team decision stands")
+
+
+class ExperimentIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200, pattern=r"\S")
+    source: str = Field(max_length=100, description="recipe:<recipe_id> or assessment:<recipe_id>:<your user id>")
+    notes: str | None = Field(None, max_length=10_000)
+
+
+class ExperimentPatch(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=200, pattern=r"\S")
+    notes: str | None = Field(None, max_length=10_000)
+    archived: bool | None = None
 
 
 class UserIn(BaseModel):

@@ -15,9 +15,13 @@ from . import mlflow_log
 
 
 def pending(run_ids: list[int] | None = None) -> list[dict]:
+    """Finished runs with no MLflow run, except those of a private experiment (logged once it stops being private,
+    see experiments.flush_deferred)."""
     return fetch_all(
-        """SELECT id, dataset_id, model, metrics, report, model_dir FROM meta.model_runs
+        """SELECT id, dataset_id, model, metrics, report, model_dir FROM meta.model_runs r
            WHERE status = 'done' AND mlflow_run_id IS NULL AND (%(ids)s::bigint[] IS NULL OR id = ANY(%(ids)s))
+             AND NOT EXISTS (SELECT 1 FROM meta.experiments x JOIN meta.recipes xr ON xr.id = x.recipe_id
+                              WHERE x.id = r.experiment_id AND x.assessor_id IS NOT NULL AND xr.phase = 'assessing')
            ORDER BY id""",
         {"ids": run_ids},
     )
@@ -31,14 +35,14 @@ def backfill(run_ids: list[int] | None = None, say=print) -> tuple[int, int]:
         out = mlflow_log.log_model_run(run["id"], report)
         if out["mlflow_error"]:
             failed += 1
-            execute("UPDATE meta.model_runs SET report = report || %s WHERE id = %s",
+            execute("UPDATE meta.model_runs SET report = (report - 'mlflow_pending') || %s WHERE id = %s",
                     (jsonb({"mlflow_error": out["mlflow_error"]}), run["id"]))
             say(f"run {run['id']}: {out['mlflow_error']}")
         else:
             logged += 1
             execute(
                 """UPDATE meta.model_runs SET mlflow_experiment_id = %s, mlflow_run_id = %s,
-                          report = report - 'mlflow_error' WHERE id = %s""",
+                          report = report - 'mlflow_error' - 'mlflow_pending' WHERE id = %s""",
                 (out["mlflow_experiment_id"], out["mlflow_run_id"], run["id"]),
             )
             say(f"run {run['id']}: {mlflow_log.mlflow_url(out['mlflow_experiment_id'], out['mlflow_run_id'])}")

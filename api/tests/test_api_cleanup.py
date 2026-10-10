@@ -192,6 +192,7 @@ def test_a_job_that_runs_again_drops_its_old_error(client):
         row = fetch_one("""INSERT INTO meta.exports (dataset_id, status, error, model_family, config, recipe_id)
                            VALUES (%s, 'failed', 'Interrupted by an API restart.', 'tree', '{"seed": 1}', %s)
                            RETURNING id""", (ds["id"], recipe["id"]))
+        fetch_one("SELECT meta.import_orphan_experiments()")
         exports._run(row["id"])
         done = client.get(f"/api/exports/{row['id']}").json()
         assert done["status"] == "done" and done["error"] is None
