@@ -1,7 +1,7 @@
 import type { EChartsCoreOption } from "echarts/core";
 import type { BarsChart, Correlation, HistogramChart } from "./types";
 import type { ChartTheme } from "./theme";
-import { fmtCompact, fmtInt, fmtNum, fmtPct, METHOD_LABEL } from "./format";
+import { fmtCompact, fmtInt, fmtPct, METHOD_LABEL } from "./format";
 
 // Tooltips render HTML; dataset values and column names are untrusted (#9).
 export const esc = (v: unknown) =>
@@ -32,18 +32,31 @@ export const axisCommon = (t: ChartTheme) => ({
   splitLine: { lineStyle: { color: t.grid, type: "solid" as const, width: 1 } },
 });
 
+/**
+ * Bin-edge labels precise enough that neighbouring edges differ: decimals follow the bin width (37–48, not
+ * 37.00–48.53), large values keep enough significant digits (1.001M–1.002M, not 1M–1M), and time bins narrower
+ * than a day show the time of day. Times are epoch seconds, shown in UTC like the profile.
+ */
+export function edgeFormatter(edges: number[], time = false): (v: number) => string {
+  const width = edges.length > 1 ? Math.abs(edges[1] - edges[0]) : 1;
+  if (time) {
+    const chars = width >= 86_400 ? 10 : width >= 60 ? 16 : 19;
+    return (v) => new Date(v * 1000).toISOString().slice(0, chars).replace("T", " ");
+  }
+  const maxAbs = Math.max(...edges.map(Math.abs), 0);
+  const significant = Math.min(10, Math.max(2, Math.ceil(Math.log10(maxAbs / (width || 1))) + 1));
+  const big = new Intl.NumberFormat(undefined, { notation: "compact", maximumSignificantDigits: significant });
+  const decimals = width >= 1 ? 0 : Math.min(6, Math.ceil(-Math.log10(width)) + 1);
+  return (v) => (Math.abs(v) >= 1e6 ? big.format(v)
+    : v.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals }));
+}
+
 /** Histogram: columns grow from one baseline; 2px surface gap between touching bins. */
 export function histogramOption(
   t: ChartTheme, h: HistogramChart, opts: { time?: boolean; xLabel?: string } = {},
 ): EChartsCoreOption {
   const total = h.counts.reduce((a, b) => a + b, 0) + (h.below ?? 0) + (h.above ?? 0);
-  // Label precision follows the bin width, so 37–48 chars doesn't render as 37.00–48.53.
-  const width = h.edges.length > 1 ? Math.abs(h.edges[1] - h.edges[0]) : 1;
-  const decimals = width >= 1 ? 0 : Math.min(6, Math.ceil(-Math.log10(width)) + 1);
-  const fmtEdge = (v: number) =>
-    opts.time
-      ? new Date(v * 1000).toISOString().slice(0, 10)
-      : Math.abs(v) >= 1e6 ? fmtNum(v) : v.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  const fmtEdge = edgeFormatter(h.edges, opts.time);
   const cats = h.counts.map((_, i) => fmtEdge(h.edges[i]));
   return {
     ...base(t),
