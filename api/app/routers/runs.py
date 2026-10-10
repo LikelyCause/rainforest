@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 
 from .. import gpu, jobs
 from ..db import execute, fetch_all, fetch_one, jsonb
-from ..modeling.registry import MODELS, catalog, compatibility
+from ..modeling.registry import MODELS, catalog, compatibility, param_problems
 from ..schemas import RunRequest
 
 log = logging.getLogger(__name__)
@@ -72,6 +72,8 @@ def start_run(export_id: int, req: RunRequest) -> dict:
     if req.device == "cuda" and not gpu.gpu_available():
         info = gpu.detect()
         raise HTTPException(409, f"No usable GPU: {info['reason']}" if info else "No GPU is available to the API")
+    if problems := param_problems(spec, req.params):
+        raise HTTPException(422, {"message": "Invalid model parameters", "errors": problems})
     if req.order and sorted(req.order) != sorted(manifest["targets"]):
         raise HTTPException(422, f"order must be a permutation of {manifest['targets']}")
     run = fetch_one(

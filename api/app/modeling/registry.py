@@ -139,6 +139,34 @@ def device_params(spec: ModelSpec, device: str) -> dict[str, Any]:
     raise ValueError(f"{spec.label} can't train on {device!r} (supports: {', '.join(spec.devices)})")
 
 
+def _lightgbm_native_params() -> set[str]:
+    """LightGBM also takes its native parameter names and aliases (min_data_in_leaf, lambda_l2, ...)."""
+    try:
+        from lightgbm.basic import _ConfigAliases
+
+        return {a for names in _ConfigAliases._get_all_param_aliases().values() for a in names}
+    except Exception:  # noqa: BLE001 - private API; without it only the sklearn names are accepted
+        return set()
+
+
+def param_problems(spec: ModelSpec, params: dict[str, Any]) -> list[str]:
+    """Why `params` can't configure `spec`'s estimator: names it doesn't have, or values its own checks reject."""
+    if "random_state" in params:
+        return ["random_state is set from the run's seed; pass seed instead"]
+    est = spec.build({}, 0)
+    known = set(est.get_params())
+    unknown = sorted(set(params) - known - (_lightgbm_native_params() if spec.key == "lightgbm" else set()))
+    if unknown:
+        return [f"{spec.label} has no parameter {k!r}" for k in unknown]
+    try:
+        est.set_params(**{k: v for k, v in params.items() if k in known})
+        if hasattr(est, "_parameter_constraints"):  # sklearn's own type and range checks
+            est._validate_params()
+    except (ValueError, TypeError) as exc:
+        return [str(exc)]
+    return []
+
+
 def compatibility(spec: ModelSpec, export_family: str, contains_nan: bool) -> str | None:
     """None if the model can train on an export, else the reason it can't."""
     if contains_nan and not spec.handles_nan:
