@@ -41,10 +41,11 @@ from sklearn.preprocessing import (
     StandardScaler,
 )
 
+from . import bands
 from .config import get_settings
 from .parquet_rows import read_rows
 from .profiling import coerce_numeric, null_infinite, parse_datetime
-from .semantics import DEFAULT_FAMILY, DEFAULT_PARAMS, FAMILIES, NON_FEATURE_TYPES, NUMERIC
+from .semantics import DEFAULT_BIN_COUNT, DEFAULT_FAMILY, DEFAULT_PARAMS, FAMILIES, NON_FEATURE_TYPES, NUMERIC
 
 SPLIT_COL = "__split"
 ROW_ID = "__row_id"
@@ -460,12 +461,14 @@ def rows_for_budget(mb: int, width: int, floor: int = 1_000) -> int:
 
 
 def assign_splits(
-    y: pd.DataFrame, valid_size: float, test_size: float, seed: int
+    y: pd.DataFrame, valid_size: float, test_size: float, seed: int,
+    strata_edges: dict[str, list[float]] | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Return split codes per row (255 = dropped because a target is missing).
 
     Stratifies on the target combination, else on each target alone, else not at all. Strata with a single
-    row are pooled, so one odd label doesn't switch stratification off.
+    row are pooled, so one odd label doesn't switch stratification off. A numeric target (a key of `strata_edges`)
+    stratifies on bands, so each split covers its range: the given cut points, or 5 equal-count bands when empty.
     """
     n = len(y)
     codes = np.full(n, 255, dtype=np.uint8)
@@ -477,7 +480,11 @@ def assign_splits(
     if holdout <= 0:
         codes[idx] = 0
         return codes, info
-    labels = y.loc[labeled].astype(str)
+    strata = y.copy()
+    for c, edges in (strata_edges or {}).items():
+        vals = strata[c].to_numpy(dtype=float)
+        strata[c] = bands.assign(vals, edges if edges else bands.quantile_edges(vals, 5))
+    labels = strata.loc[labeled].astype(str)
     candidates = [list(y.columns)] + ([[c] for c in y.columns] if y.shape[1] > 1 else []) + [None]
     for cols in candidates:
         keys = None if cols is None else _pool_singletons(labels[cols].agg("|".join, axis=1).to_numpy())
@@ -540,6 +547,52 @@ def encode_targets(y: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, list[str]]]
     return pd.DataFrame(encoded), classes
 
 
+def prepare_targets(parquet_path: Path, targets: list[str], target_tasks: dict[str, dict], config: dict[str, Any],
+                    seed: int):
+    """Read, check and encode the targets, and split the rows. Class targets become codes; a number stays a float; bands
+    become codes of bands cut on the training rows. Numeric targets are read the way profiling read them, and a value
+    that doesn't read as a number fails the export rather than silently losing its row."""
+    tasks = {t: target_tasks.get(t, {}).get("task") or "classes" for t in targets}
+    numeric = [t for t in targets if tasks[t] != "classes"]
+    raw = pl.read_parquet(parquet_path, columns=targets)
+    y_raw = raw.to_pandas()
+    for t in numeric:
+        num = coerce_numeric(raw[t], target_tasks[t].get("decimal_comma"))
+        given = raw[t].fill_nan(None) if raw[t].dtype.is_float() else raw[t]
+        if lost := int(given.is_not_null().sum() - num.is_not_null().sum()):
+            raise ValueError(f"Target {t!r} has {lost:,} value(s) that don't read as numbers (or are infinite); fix "
+                             "them or predict it as classes.")
+        y_raw[t] = num.to_numpy()
+    class_targets = [t for t in targets if tasks[t] == "classes"]
+    check_target_classes(y_raw[class_targets])
+    chosen = {t: [float(e) for e in (target_tasks[t].get("bins") or {}).get("edges", [])] for t in numeric}
+    split, split_info = assign_splits(y_raw, float(config.get("valid_size", 0.15)),
+                                      float(config.get("test_size", 0.15)), seed, strata_edges=chosen)
+    train_rows = split == 0
+    y_enc, classes = encode_targets(y_raw[class_targets])
+    target_bins, target_stats = {}, {}
+    for t in numeric:
+        vals = y_raw[t].to_numpy(dtype=float)
+        if tasks[t] == "bins":
+            spec = target_tasks[t].get("bins") or {"k": DEFAULT_BIN_COUNT}
+            edges = bands.edges_for(spec, vals[train_rows])
+            if thin := bands.thin_bands(vals[split != 255], edges):
+                raise ValueError(f"Target {t!r}: band(s) {', '.join(thin)} have fewer than 2 rows; move or remove "
+                                 "cut points, or use fewer bands.")
+            y_enc[t] = bands.assign(vals, edges)
+            classes[t] = bands.band_labels(edges)
+            target_bins[t] = {"edges": edges, "labels": classes[t], "k": spec.get("k")}
+        else:
+            y_enc[t] = vals
+            tr = vals[train_rows & ~np.isnan(vals)]
+            if np.unique(tr).size < 2:
+                raise ValueError(f"Target {t!r} has a single value in the training rows; there is nothing to predict.")
+            target_stats[t] = {"mean": float(tr.mean()), "std": float(tr.std()), "min": float(tr.min()),
+                               "max": float(tr.max())}
+    info = {"target_tasks": tasks, "target_bins": target_bins, "target_stats": target_stats}
+    return y_raw, y_enc[targets], classes, split, split_info, info
+
+
 def _natural_key(v: str):
     try:
         return (0, float(v), v)
@@ -555,7 +608,9 @@ def run_export(
     config: dict[str, Any],
     progress: Callable[[float, str], None],
     family: str = DEFAULT_FAMILY,
+    target_tasks: dict[str, dict] | None = None,
 ) -> dict[str, Any]:
+    """`target_tasks`: per target {"task", "bins", "decimal_comma"}; a target left out is predicted as classes."""
     import joblib
     import sklearn
 
@@ -576,12 +631,9 @@ def run_export(
 
     # 1. targets + split ------------------------------------------------------------
     progress(0.02, "Assigning train / valid / test split")
-    y_raw = pl.read_parquet(parquet_path, columns=targets).to_pandas()
-    check_target_classes(y_raw)
-    y_enc, classes = encode_targets(y_raw)
-    split, split_info = assign_splits(
-        y_raw, float(config.get("valid_size", 0.15)), float(config.get("test_size", 0.15)), seed
-    )
+    y_raw, y_enc, classes, split, split_info, target_info = prepare_targets(parquet_path, targets, target_tasks or {},
+                                                                            config, seed)
+    tasks = target_info["target_tasks"]
 
     # 2. fit preprocessor on a training sample ---------------------------------------
     progress(0.08, "Fitting preprocessing pipeline on training rows")
@@ -605,7 +657,7 @@ def run_export(
     arrow_fields = (
         [pa.field(ROW_ID, pa.int64()), pa.field(SPLIT_COL, pa.string())]
         + [pa.field(n, pa.float32()) for n in feat_names]
-        + [pa.field(t, pa.int32()) for t in targets]
+        + [pa.field(t, pa.float64() if tasks[t] == "regression" else pa.int32()) for t in targets]
     )
     arrow_schema = pa.schema(arrow_fields)
     split_names = np.array(["train", "valid", "test"], dtype=object)
@@ -639,7 +691,8 @@ def run_export(
                 )
             cols: list[Any] = [pa.array(rows, pa.int64()), pa.array(split_names[split[rows]], pa.string())]
             cols += [pa.array(X[:, k]) for k in range(X.shape[1])]
-            cols += [pa.array(y_enc[t].to_numpy()[rows].astype(np.int32)) for t in targets]
+            cols += [pa.array(y_enc[t].to_numpy()[rows].astype(np.float64 if tasks[t] == "regression" else np.int32))
+                     for t in targets]
             writer.write_table(pa.Table.from_arrays(cols, schema=arrow_schema))
             del X, cols
             written += int(keep.sum())
@@ -659,8 +712,10 @@ def run_export(
         "feature_names": feat_names,
         "feature_source_field": feature_source,
         "targets": targets,
-        "target_classes": classes,
-        "target_kinds": {t: ("binary" if len(c) == 2 else "multiclass") for t, c in classes.items()},
+        "target_classes": {t: classes[t] for t in targets if tasks[t] != "regression"},
+        "target_kinds": {t: "regression" if tasks[t] == "regression"
+                         else ("binary" if len(classes[t]) == 2 else "multiclass") for t in targets},
+        **target_info,
         "split_column": SPLIT_COL,
         "split_counts": split_counts,
         "split_info": split_info,

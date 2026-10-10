@@ -177,3 +177,57 @@ def test_reuse_carries_the_task(app_, people):
     other = upload(lead, PRICES, targets="")
     start(lead, other, "tree", [lead], start="recipe", source=rid, targets=())
     assert _task(lead, other, "price") == ("bins", {"edges": [200, 400]})
+
+
+def test_explore_cache_follows_the_task(app_, people):
+    from app.analysis.runner import data_version
+    from app.db import connection
+    lead = people["lead"]
+    ds = upload(lead, PRICES, targets="")
+    start(lead, ds, "tree", [lead], targets=("price",))
+    rid = submit_and_finalize(lead, ds)["recipe"]["id"]
+    x = experiment(lead, ds, rid)
+    params = {"data": "raw", "decisions": f"experiment:{x['id']}"}
+    with connection() as conn:
+        before = data_version(conn, ds["id"], params)
+    adjust(lead, ds, x, "price", target_task="bins", target_bins={"k": 3})
+    with connection() as conn:
+        assert data_version(conn, ds["id"], params) != before
+
+
+def test_band_preview(app_, people):
+    lead = people["lead"]
+    ds = upload(lead, PRICES, targets="")
+    fid = fields(lead, ds)["price"]["id"]
+    r = lead.get(f"/api/fields/{fid}/bands?k=4").json()
+    assert len(r["labels"]) == len(r["counts"]) == 4 and sum(r["counts"]) == 400
+    r = lead.get(f"/api/fields/{fid}/bands?edges=100,300").json()
+    assert r["labels"] == ["< 100", "[100, 300)", "≥ 300"]
+    assert lead.get(f"/api/fields/{fid}/bands?edges=3,1").status_code == 422
+    assert lead.get(f"/api/fields/{fid}/bands").status_code == 422
+
+
+def _finalized_with_price(lead, **task):
+    ds = upload(lead, PRICES, targets="")
+    start(lead, ds, "tree", [lead], targets=("price",))
+    if task:
+        assert save(lead, fields(lead, ds)["price"]["id"], **task).status_code == 200
+    rid = submit_and_finalize(lead, ds)["recipe"]["id"]
+    return ds, experiment(lead, ds, rid)
+
+
+def test_regression_export_end_to_end(app_, people):
+    lead = people["lead"]
+    ds, x = _finalized_with_price(lead)
+    pv = lead.get(f"/api/datasets/{ds['id']}/export-preview?experiment_id={x['id']}").json()
+    assert pv["target_tasks"] == {"price": "regression"} and not pv["blocking"]
+    e = export(lead, ds, x)
+    assert e["summary"]["target_tasks"] == {"price": "regression"}
+    assert e["summary"]["target_kinds"] == {"price": "regression"}
+
+
+def test_preview_blocks_bands_with_too_few_rows(app_, people):
+    lead = people["lead"]
+    ds, x = _finalized_with_price(lead, target_task="bins", target_bins={"edges": [1000, 1001]})
+    pv = lead.get(f"/api/datasets/{ds['id']}/export-preview?experiment_id={x['id']}").json()
+    assert any("[1000, 1001)" in b for b in pv["blocking"]), pv["blocking"]

@@ -4,11 +4,12 @@ import logging
 import uuid
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 from fastapi import APIRouter, HTTPException, Query
 from psycopg import sql
 
-from .. import jobs, recipes
+from .. import bands, jobs, recipes
 from ..assessment import Source, core_key, lock_decisions, mark_decided, source_for, write_decision, write_settings
 from ..assessment import restore as restore_assessment
 from ..auth import CurrentUser
@@ -16,10 +17,10 @@ from ..config import get_settings
 from ..correlations import Assoc, screen_associations
 from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..processing import SUMMARY_COLS, refresh_target_state, upsert_correlations, upsert_settings
-from ..profiling import column_datetime_format, needs_screen, sample_indices, screen_codes
+from ..profiling import coerce_numeric, column_datetime_format, needs_screen, sample_indices, screen_codes
 from ..schemas import BulkDecisionIn, DecisionIn
-from ..semantics import (FAMILIES, NON_FEATURE_TYPES, SETTING_KEYS, settings_of, suggest, target_problem,
-                         validate_decision)
+from ..semantics import (FAMILIES, NON_FEATURE_TYPES, SETTING_KEYS, bins_problem, settings_of, suggest,
+                         target_problem, validate_decision)
 from .query import fields_where
 
 log = logging.getLogger(__name__)
@@ -128,6 +129,30 @@ def correlations(field_id: int, limit: int = Query(20, ge=1, le=200), exclude_ta
              ORDER BY strength DESC LIMIT %s""",
         (field_id, limit),
     )
+
+
+@router.get("/fields/{field_id}/bands")
+def band_preview(field_id: int, k: int | None = Query(None, ge=2, le=20), edges: str | None = None) -> dict:
+    """How a numeric field would be cut into bands, on the whole column (an export cuts equal-sized bands on its
+    training rows)."""
+    f = _field(field_id)
+    if (k is None) == (edges is None):
+        raise HTTPException(422, "Give either k or edges")
+    ds = fetch_one("SELECT parquet_path FROM meta.datasets WHERE id = %s", (f["dataset_id"],))
+    col = pl.read_parquet(ds["parquet_path"], columns=[f["name"]]).to_series()
+    vals = coerce_numeric(col, (f["stats"] or {}).get("decimal_comma")).to_numpy().astype(float)
+    try:
+        cut = [float(e) for e in edges.split(",")] if edges is not None else bands.quantile_edges(vals, k)
+    except ValueError:
+        raise HTTPException(422, "edges must be numbers separated by commas") from None
+    if not cut:
+        raise HTTPException(422, "Every value is the same, so there is nothing to cut into bands")
+    if problem := bins_problem({"edges": cut}):
+        raise HTTPException(422, problem)
+    idx = bands.assign(vals, cut)
+    present = idx[~np.isnan(idx)].astype(int)
+    return {"edges": cut, "labels": bands.band_labels(cut),
+            "counts": np.bincount(present, minlength=len(cut) + 1).tolist(), "missing": int(np.isnan(idx).sum())}
 
 
 @router.get("/fields/{field_id}/history")

@@ -35,11 +35,13 @@ def data_version(conn, dataset_id: int, params: dict) -> str:
     if params["data"].startswith("export:"):
         return params["data"]
     rows = conn.execute(
-        sql.SQL("SELECT field_id, action, semantic_type FROM {} d WHERE dataset_id = %s ORDER BY field_id").format(
+        sql.SQL("""SELECT field_id, action, semantic_type, target_task, target_bins FROM {} d
+                    WHERE dataset_id = %s ORDER BY field_id""").format(
             from_key(conn, dataset_id, params.get("decisions", "team")).decisions()),
         (dataset_id,),
     ).fetchall()
-    text = "\n".join(f"{r['field_id']}|{r['action']}|{r['semantic_type']}" for r in rows)
+    text = "\n".join(f"{r['field_id']}|{r['action']}|{r['semantic_type']}|{r['target_task']}|"
+                     f"{json.dumps(r['target_bins'], sort_keys=True)}" for r in rows)
     return "raw:" + hashlib.md5(text.encode()).hexdigest()
 
 
@@ -131,7 +133,7 @@ def _prepare(row: dict, ds: dict):
         dec = from_key(conn, row["dataset_id"], p.get("decisions", "team")).decisions()
         fields = conn.execute(
             sql.SQL("""SELECT f.id, f.name, f.stats ->> 'datetime_format' AS datetime_format, d.action,
-                              d.semantic_type
+                              d.semantic_type, d.target_task
                          FROM meta.fields f JOIN {} d ON d.field_id = f.id
                         WHERE f.dataset_id = %s ORDER BY f.ordinal""").format(dec),
             (row["dataset_id"],),
