@@ -147,7 +147,7 @@ def apply(conn, recipe: dict, source: dict, user_id: int) -> tuple[dict, list[in
     ds = conn.execute("SELECT name FROM meta.datasets WHERE id = %s", (source["dataset_id"],)).fetchone()
     order = {f["name"]: i for i, f in enumerate(fields)}
     summary = {
-        "source": {"recipe_id": source["id"], "dataset_id": source["dataset_id"],
+        "source": {"recipe_id": source["id"], "dataset_id": source["dataset_id"], "family": source["family"],
                    "dataset_name": ds["name"] if ds else None, "version": source["version"]},
         "carried": carried,
         "reopened": sorted(m["reopened"], key=lambda r: order[r["name"]]),

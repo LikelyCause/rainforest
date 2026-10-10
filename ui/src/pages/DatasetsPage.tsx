@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, uploadDataset } from "../api";
 import { PROCESSING, useMe, useOptions } from "../hooks";
-import { fmtAgo, fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
+import { baselineLabel, fmtAgo, fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
 import { ErrorAlert } from "../components/ui";
 import { PhaseBadge } from "./DatasetTeamPage";
 import { showError, toast } from "../toast";
@@ -302,7 +302,7 @@ export function DatasetsPage() {
   const uploaded = (ds: Dataset) => {
     highlight(ds.id);
     if (me.data?.role === "lead") {
-      toast({ message: `${ds.name} uploaded`, action: { label: "Start from a recipe…", run: () => nav(`/d/${ds.id}/versions`) } });
+      toast({ message: `${ds.name} uploaded`, action: { label: "Set up its baseline…", run: () => nav(`/d/${ds.id}/team`) } });
     }
   };
   const open = (ds: Dataset) => {
@@ -421,7 +421,7 @@ export function DatasetsPage() {
                       <td>
                         <div className="row" style={{ flexWrap: "nowrap" }}>
                           <StatusBadge ds={ds} />
-                          {ready && <PhaseBadge phase={ds.phase} version={ds.recipe_version} />}
+                          {ready && <PhaseBadge phase={ds.phase} label={ds.baseline ? baselineLabel(ds.baseline.family, ds.baseline.version, true) : null} />}
                           {ds.my_assessment?.submitted && <span className="badge good" title="You submitted your assessment">✓ submitted</span>}
                           {ds.warnings.length > 0 && (
                             <span className="badge warn" title={ds.warnings.join("\n")}>⚠ {ds.warnings.length}</span>

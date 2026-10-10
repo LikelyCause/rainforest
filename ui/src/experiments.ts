@@ -1,3 +1,4 @@
+import { baselineLabel } from "./format";
 import type { Experiment, Phase, Role } from "./types";
 
 export type ExperimentFilter = "all" | "mine" | "team" | "archived";
@@ -13,15 +14,16 @@ export function filterExperiments(list: Experiment[], filter: ExperimentFilter, 
   return live;
 }
 
-export function sourceLabel(x: Pick<Experiment, "assessor_id" | "recipe_version" | "owner_name">, me?: Viewer): string {
-  if (x.assessor_id === null) return `Recipe v${x.recipe_version}`;
+export function sourceLabel(x: Pick<Experiment, "assessor_id" | "recipe_family" | "recipe_version" | "owner_name">, me?: Viewer): string {
+  if (x.assessor_id === null) return baselineLabel(x.recipe_family, x.recipe_version);
   const whose = me && x.assessor_id === me.id ? "My" : `${x.owner_name ?? "An assessor"}'s`;
-  return `${whose} assessment (v${x.recipe_version})`;
+  return `${whose} assessment (${baselineLabel(x.recipe_family, x.recipe_version, true)})`;
 }
 
-export function privacyNote(x: Pick<Experiment, "private" | "assessor_id" | "recipe_version">): string | null {
-  if (x.private) return `Only you can see this until recipe v${x.recipe_version} reaches team review.`;
-  if (x.assessor_id !== null) return `Visible to the team since recipe v${x.recipe_version} reached review.`;
+export function privacyNote(x: Pick<Experiment, "private" | "assessor_id" | "recipe_family" | "recipe_version">): string | null {
+  const v = baselineLabel(x.recipe_family, x.recipe_version);
+  if (x.private) return `Only you can see this until ${v} reaches team review.`;
+  if (x.assessor_id !== null) return `Visible to the team since ${v} reached review.`;
   return null;
 }
 
@@ -40,19 +42,24 @@ export function addBlocked(x: Pick<Experiment, "archived_at" | "assessor_id" | "
 
 export interface SourceOption { value: string; label: string }
 
-/** What the viewer can build a new experiment from: their own assessment of the version being worked (when they
- * assess it), then every finalized version, newest first. */
+const FAMILY_ORDER = ["tree", "linear", "neural"];
+
+/** What the viewer can build a new experiment from: their own assessment of the baseline being worked (when they
+ * assess it), then every finalized baseline version, by model type and newest first. */
 export function sourceOptions(
-  versions: { id: number; version: number; phase: Phase }[],
-  team: { recipe: { id: number; version: number; phase: Phase }; me: unknown } | undefined,
+  versions: { id: number; family: string; version: number; phase: Phase }[],
+  team: { recipe: { id: number; family: string; version: number; phase: Phase }; me: unknown } | undefined,
   me: Viewer,
 ): SourceOption[] {
   const out: SourceOption[] = [];
   if (team?.me && team.recipe.phase !== "finalized") {
-    out.push({ value: `assessment:${team.recipe.id}:${me.id}`, label: `My assessment (v${team.recipe.version})` });
+    out.push({ value: `assessment:${team.recipe.id}:${me.id}`,
+      label: `My assessment (${baselineLabel(team.recipe.family, team.recipe.version, true)})` });
   }
-  for (const v of [...versions].filter((v) => v.phase === "finalized").sort((a, b) => b.version - a.version)) {
-    out.push({ value: `recipe:${v.id}`, label: `Recipe v${v.version} (finalized)` });
+  const finalized = versions.filter((v) => v.phase === "finalized")
+    .sort((a, b) => FAMILY_ORDER.indexOf(a.family) - FAMILY_ORDER.indexOf(b.family) || b.version - a.version);
+  for (const v of finalized) {
+    out.push({ value: `recipe:${v.id}`, label: `${baselineLabel(v.family, v.version)} (finalized)` });
   }
   return out;
 }

@@ -1,4 +1,6 @@
+import type { StartBaselineForm } from "./baselines";
 import type {
+  BaselineLine, FamilyKey,
   Analysis, AnalysisKind, AnalysisParams, CorrMatrix, BulkRequest, BulkResult, Correlation, Dataset, DecisionInput, Decision, ExportJob, ExportPreview, FieldFilter,
   FieldListItem, FieldResponse, ModelOption, ModelRun, OptionCatalog, SqlResult, SystemInfo, Device,
   AuthConfig, Me, PickUser, Role, TeamUser, TeamState, ReviewQueue, FieldReview, ReviewComment,
@@ -75,7 +77,7 @@ export const api = {
   datasets: () => request<Dataset[]>("/api/datasets"),
   dataset: (id: number) => request<Dataset>(`/api/datasets/${id}`),
   deleteDataset: (id: number) => request<{ fields: number; exports: number; runs: number }>(`/api/datasets/${id}`, { method: "DELETE" }),
-  patchDataset: (id: number, data: { model_family?: string; name?: string; target_columns?: string[] }) =>
+  patchDataset: (id: number, data: { name?: string; target_columns?: string[] }) =>
     request<Dataset>(`/api/datasets/${id}`, json("PATCH", data)),
   createSample: (data: { rows: number; fields: number; seed: number; target_kind: string }) =>
     request<Dataset>("/api/datasets/sample", json("POST", data)),
@@ -131,11 +133,15 @@ export const api = {
   finalize: (datasetId: number, acceptOpen: boolean) =>
     request<TeamState>(`/api/datasets/${datasetId}/finalize`, json("POST", { accept_open: acceptOpen })),
   versions: (datasetId: number) => request<RecipeVersion[]>(`/api/datasets/${datasetId}/recipes`),
+  baselines: (datasetId: number) => request<BaselineLine[]>(`/api/datasets/${datasetId}/baselines`),
+  startBaseline: (datasetId: number, data: StartBaselineForm) =>
+    request<TeamState>(`/api/datasets/${datasetId}/baselines`, json("POST", data)),
   finalizedRecipes: () => request<FinalizedRecipe[]>("/api/recipes"),
+  /** `a` and `b` are recipe ids. */
   recipeDiff: (datasetId: number, a: number, b: number) =>
     request<RecipeDiff>(`/api/datasets/${datasetId}/recipes/diff?a=${a}&b=${b}`),
-  newVersion: (datasetId: number, reopen: number[]) =>
-    request<TeamState>(`/api/datasets/${datasetId}/recipes`, json("POST", { reopen })),
+  newVersion: (datasetId: number, family: FamilyKey, reopen: number[]) =>
+    request<TeamState>(`/api/datasets/${datasetId}/recipes`, json("POST", { family, reopen })),
   applyRecipe: (datasetId: number, recipeId: number) =>
     request<TeamState>(`/api/datasets/${datasetId}/recipes/apply`, json("POST", { recipe_id: recipeId })),
   corrMatrix: (datasetId: number, q: { kept: boolean; target: string | null; limit?: number; add?: number[] }) => {

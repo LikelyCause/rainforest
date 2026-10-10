@@ -5,7 +5,7 @@ import { api } from "../api";
 import { useFields } from "../hooks";
 import { ErrorAlert } from "../components/ui";
 import { RunDetail } from "../components/RunDetail";
-import { familyShort, fmtAgo, fmtDate, fmtInt, fmtMetric, fmtNum, fmtPct } from "../format";
+import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtInt, fmtMetric, fmtNum, fmtPct } from "../format";
 import { toast } from "../toast";
 import { bestRuns, metricFor, type RunMetric } from "../runs";
 import { sourceLabel } from "../experiments";
@@ -152,10 +152,10 @@ function BuildPanel({ datasetId, family, rows, x }: { datasetId: number; family:
           </div>
         </details>
         <div className="row" style={{ justifyContent: "flex-end", marginTop: "auto" }}>
-          <span className="muted small-text">Model is set in the top bar</span>
+          <span className="muted small-text">Prepared as {baselineLabel(x.recipe_family, x.recipe_version)} decided</span>
           <button type="button" className="primary" disabled={!p || p.blocking.length > 0 || Boolean(splitError) || start.isPending}
             onClick={() => start.mutate({ valid_size: v, test_size: t, seed, fit_sample_rows: Math.max(fit, 1000) })}>
-            Export for {family} models
+            Export for {familyShort(family).toLowerCase()} models
           </button>
         </div>
         <ErrorAlert error={start.error} />
@@ -212,7 +212,8 @@ function TrainForm({ e, targets, onStarted }: { e: ExportJob; targets: string[];
       onStarted(run);
     },
   });
-  const shown = models.data?.filter((m) => showAll || m.compatible) ?? [];
+  const shown = models.data?.filter((m) => !m.planned && (showAll || m.compatible)) ?? [];
+  const planned = models.data?.filter((m) => m.planned) ?? [];
   const selected = models.data?.find((m) => m.key === model);
   const gpu = system.data?.gpu;
   const gpuChoice = Boolean(gpu?.available && selected?.devices?.includes("cuda"));
@@ -222,6 +223,11 @@ function TrainForm({ e, targets, onStarted }: { e: ExportJob; targets: string[];
       <label className="field">Model
         <select value={model} onChange={(ev) => setModel(ev.target.value)}>
           {shown.map((m) => <option key={m.key} value={m.key} disabled={!m.compatible}>{m.label}{m.compatible ? "" : " — not compatible"}</option>)}
+          {planned.length > 0 && (
+            <optgroup label="Planned">
+              {planned.map((m) => <option key={m.key} value={m.key} disabled>{m.label} (planned)</option>)}
+            </optgroup>
+          )}
         </select>
       </label>
       {selected && <span className="muted small-text">{selected.description}</span>}
@@ -297,7 +303,7 @@ function ExportRow({ e, onStarted, canAdd }: { e: ExportJob; onStarted: (r: Mode
         <div className="row">
           <b>Export #{e.id}</b>
           <span className="badge">{familyShort(e.model_family)}</span>
-          {e.recipe_version != null && <span className="badge" title="Built from this recipe version's snapshot">recipe v{e.recipe_version}</span>}
+          {e.recipe_version != null && <span className="badge" title="Built from this baseline version's snapshot">{baselineLabel(e.model_family, e.recipe_version, true)}</span>}
           {e.status === "done" ? <span className="badge good">✓ done</span>
             : e.status === "failed" ? <span className="badge bad">✕ failed</span>
             : <span className="badge accent"><span className="spinner" aria-hidden="true" /> {e.status}</span>}
@@ -360,7 +366,7 @@ function MlflowCell({ r }: { r: ModelRun }) {
     return <a href={r.mlflow_url} target="_blank" rel="noopener" onClick={(ev) => ev.stopPropagation()}>MLflow ↗</a>;
   }
   if (r.report?.mlflow_pending) {
-    return <span className="badge" title="This experiment is private while the recipe version is being assessed, and MLflow can't keep runs private. The run is logged when review opens.">after review</span>;
+    return <span className="badge" title="This experiment is private while its baseline version is being assessed, and MLflow can't keep runs private. The run is logged when review opens.">after review</span>;
   }
   if (r.report?.mlflow_error) {
     return <span className="badge warn" title={`Not logged to MLflow: ${r.report.mlflow_error}`}>not logged</span>;
@@ -398,7 +404,7 @@ function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: 
       <thead>
         <tr className="group-head">
           <td colSpan={6 + targets.length * 2}>
-            Export #{e.id} · {familyShort(e.model_family)}{e.recipe_version != null ? ` · recipe v${e.recipe_version}` : ""}{sc ? ` · ${fmtInt(sc.train)} / ${fmtInt(sc.valid)} / ${fmtInt(sc.test)}` : ""}
+            Export #{e.id} · {e.recipe_version != null ? baselineLabel(e.model_family, e.recipe_version, true) : familyShort(e.model_family)}{sc ? ` · ${fmtInt(sc.train)} / ${fmtInt(sc.valid)} / ${fmtInt(sc.test)}` : ""}
           </td>
         </tr>
         <tr>
@@ -442,7 +448,7 @@ function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: 
 /** An experiment's exports and runs: build an export from its source, train on it, compare the runs. */
 export function ExperimentWorkspace({ ds, x, canAdd }: { ds: Dataset; x: Experiment; canAdd: boolean }) {
   const datasetId = ds.id;
-  const family = ds.model_family;
+  const family = x.recipe_family;
   const [fresh, setFresh] = useState<number | null>(null);
   const exports = useQuery({
     queryKey: ["exports", datasetId, x.id],

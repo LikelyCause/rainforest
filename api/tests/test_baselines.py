@@ -235,3 +235,12 @@ def test_planned_models_are_listed_but_not_trainable(people):
     assert models["lightgbm"]["compatible"] and not models["lightgbm"]["planned"]
     r = lead.post(f"/api/exports/{e['id']}/runs", json={"model": "knn"})
     assert r.status_code == 422 and "planned" in r.json()["detail"]
+
+
+def test_team_state_names_the_baseline(people):
+    lead = people["lead"]
+    ds = upload(lead)
+    t = lead.get(f"/api/datasets/{ds['id']}/team").json()
+    assert t["recipe"]["label"] == "Trees baseline v1" and t["recipe"]["setup"] is True
+    t = start(lead, ds, "neural", [lead])
+    assert t["recipe"]["label"] == "Neural baseline v1" and t["recipe"]["setup"] is False

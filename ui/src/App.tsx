@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, Route, Routes, useMatch, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useAccess, useDataset, useFields, useMe, useOptions } from "./hooks";
+import { useAccess, useDataset, useFields, useMe } from "./hooks";
 import { ApiError, api, setUnauthorizedHandler } from "./api";
 import { Logo } from "./components/Logo";
 import { DatasetsPage } from "./pages/DatasetsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ForbiddenPage } from "./pages/ForbiddenPage";
 import { TeamPage } from "./pages/TeamPage";
-import { VersionsPage } from "./pages/VersionsPage";
+import { BaselinesPage } from "./pages/BaselinesPage";
 import { ReviewPage } from "./pages/ReviewPage";
 import { BulkEditPage } from "./pages/BulkEditPage";
 import { ExperimentPage, ExperimentsPage } from "./pages/ExperimentsPage";
@@ -16,46 +16,19 @@ import { ExplorePage } from "./pages/ExplorePage";
 import { DatasetTeamPage, PhaseBadge } from "./pages/DatasetTeamPage";
 import { DatasetLayout } from "./components/DatasetLayout";
 import { ErrorAlert, ReviewMeter } from "./components/ui";
-import { familyShort, roleLabel } from "./format";
-import { ToastRegion, showError, toast } from "./toast";
+import { baselineLabel, familyShort, roleLabel } from "./format";
+import { ToastRegion, showError } from "./toast";
 import type { Dataset, ExportJob, ModelRun } from "./types";
 
-function ModelSwitch({ ds }: { ds: Dataset }) {
-  const qc = useQueryClient();
-  const { data: options } = useOptions();
-  const m = useMutation({
-    mutationFn: (f: string) => api.patchDataset(ds.id, { model_family: f }),
-    onSuccess: (saved, f, ctx) => {
-      qc.setQueryData(["dataset", ds.id], saved);
-      for (const k of ["fieldQuery", "exportPreview"]) qc.invalidateQueries({ queryKey: [k, ds.id] });
-      const from = (ctx as { from?: string } | undefined)?.from;
-      toast({
-        message: `Now preparing for ${familyShort(f).toLowerCase()} models`,
-        detail: "Keep / drop, types and notes are kept; settings switch to this model's.",
-        duration: 6000,
-        action: from ? { label: "Undo", run: () => m.mutate(from) } : undefined,
-      });
-    },
-    onMutate: () => ({ from: ds.model_family }),
-    onError: (err, f) => showError(`Couldn't switch to ${familyShort(f)}`, err),
-  });
-  if (!options) return null;
+/** The baseline the dataset is working on (or last worked), linking to all of them. Replaces choosing a model type:
+ * that is fixed per baseline. */
+function BaselineChip({ ds }: { ds: Dataset }) {
+  const b = ds.baseline;
+  if (!b) return null;
   return (
-    <div className="model-switch">
-      <span id="model-label">Model</span>
-      <div className="segmented soft" role="radiogroup" aria-labelledby="model-label">
-        {options.families.map((f) => {
-          const on = (m.isPending ? m.variables : ds.model_family) === f.value;
-          return (
-            <button key={f.value} type="button" role="radio" aria-checked={on} className={on ? "on" : ""}
-              title={`${f.label}: ${f.examples}`} disabled={m.isPending}
-              onClick={() => !on && m.mutate(f.value)}>
-              {familyShort(f.value)}{m.isPending && on ? " …" : ""}
-            </button>
-          );
-        })}
-      </div>
-    </div>
+    <Link to={`/d/${ds.id}/baselines`} className="baseline-chip" title={`${b.label}${b.setup ? " · not set up yet" : ""}. All baselines →`}>
+      <span className="muted">Baseline</span> <b>{b.setup ? `${familyShort(b.family)} · set up` : baselineLabel(b.family, b.version, true)}</b>
+    </Link>
   );
 }
 
@@ -107,7 +80,7 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
         </NavLink>
       </nav>
       <div className="spacer" />
-      <ModelSwitch ds={ds} />
+      <BaselineChip ds={ds} />
       {!onReview && all.length > 0 && (nextTodo ? (
         <Link className="btn" to={`/d/${ds.id}/review/${nextTodo.id}`}>Next unreviewed › <kbd>U</kbd></Link>
       ) : ds.phase === "finalized" ? !onExperiments && (
@@ -247,7 +220,8 @@ export default function App() {
             <Route path="experiments" element={<ExperimentsPage />} />
             <Route path="experiments/:experimentId" element={<ExperimentPage />} />
             <Route path="team" element={<DatasetTeamPage />} />
-            <Route path="versions" element={<VersionsPage />} />
+            <Route path="baselines" element={<BaselinesPage />} />
+            <Route path="versions" element={<Navigate to="../baselines" replace />} />
           </Route>
           <Route path="*" element={<div className="empty">Page not found. <NavLink to="/">Go home</NavLink></div>} />
         </Route>

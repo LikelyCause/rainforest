@@ -6,51 +6,82 @@ import { useFields, useMe, useTeam } from "../hooks";
 import { useDatasetContext } from "../components/DatasetLayout";
 import { Empty, ErrorAlert } from "../components/ui";
 import { ReuseCard } from "../components/ReuseCard";
-import { familyShort, fmtAgo, fmtDate, fmtInt, TYPE_SHORT } from "../format";
+import { StartBaseline } from "../components/StartBaseline";
+import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtInt, TYPE_SHORT } from "../format";
 import { fmtChange, pickable, startLabel } from "../recipes";
 import { toast } from "../toast";
-import type { Dataset, RecipeVersion, TeamState } from "../types";
+import type { BaselineLine, Dataset, RecipeVersion } from "../types";
 import { PhaseBadge, useInvalidateTeam } from "./DatasetTeamPage";
 
-export function VersionsPage() {
+export function BaselinesPage() {
   const ds = useDatasetContext();
   const me = useMe().data;
   const team = useTeam(ds.id);
-  const versions = useQuery({ queryKey: ["versions", ds.id], queryFn: () => api.versions(ds.id) });
+  const lines = useQuery({ queryKey: ["baselines", ds.id], queryFn: () => api.baselines(ds.id) });
+  const [starting, setStarting] = useState(false);
   const lead = me?.role === "lead";
   const t = team.data;
-  const canReuse = Boolean(lead && t && t.recipe.version === 1 && t.recipe.phase === "assessing" && !t.recipe.reuse
-    && t.assessors.length === 0 && ds.status === "ready");
+  const cur = ds.baseline;
+  const inProgress = Boolean(t && t.recipe.phase !== "finalized" && !cur?.setup);
+  const canStart = Boolean(lead && ds.status === "ready" && t && (cur?.setup || t.recipe.phase === "finalized"));
+  const all = (lines.data ?? []).flatMap((l) => l.versions);
   return (
     <div className="page">
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <h1>Recipe versions {t && <PhaseBadge phase={t.recipe.phase} version={t.recipe.version} />}</h1>
+        <h1>Baselines</h1>
         <Link to={`/d/${ds.id}/team`}>Team page →</Link>
       </div>
-      <ErrorAlert error={team.error ?? versions.error} />
-      {canReuse && <StartFromRecipe ds={ds} />}
-      {t?.recipe.reuse && <ReuseCard reuse={t.recipe.reuse} version={t.recipe.version} />}
-      {t && lead && t.recipe.phase === "finalized" && <NewVersion ds={ds} team={t} />}
-      {t && t.recipe.phase !== "finalized" && t.recipe.version > 1 && (
+      <span className="secondary">
+        A baseline is the team's agreed preparation of this dataset for one model type. Each is assessed blind, reviewed
+        and finalized by a lead; a change is a new version. Experiments start from a finalized baseline.
+      </span>
+      <ErrorAlert error={team.error ?? lines.error} />
+      {canStart && (starting || cur?.setup ? <StartBaseline ds={ds} onCancel={cur?.setup ? undefined : () => setStarting(false)} /> : (
+        <div><button type="button" className="primary" onClick={() => setStarting(true)}>Start a baseline…</button></div>
+      ))}
+      {cur?.setup && !lead && <div className="alert info">A lead sets up this dataset's first baseline: its model type, targets and assessors.</div>}
+      {t?.recipe.reuse && <ReuseCard reuse={t.recipe.reuse} label={t.recipe.label ?? ""} />}
+      {t && inProgress && (
         <div className="alert info">
           <span className="grow">
-            Recipe v{t.recipe.version} is {t.recipe.phase === "assessing" ? "being assessed" : "in team review"}
+            {t.recipe.label} is {t.recipe.phase === "assessing" ? "being assessed" : "in team review"}
             {t.recipe.reopened != null ? `: ${t.recipe.reopened} field${t.recipe.reopened === 1 ? "" : "s"} reopened, the rest carried over and locked.`
-              : ": every field is open; a lead edits the team decision directly."} Exports keep using the latest finalized version.
+              : "."} Finalize it before starting another baseline or version. Exports keep using finalized versions.
           </span>
           <Link to={`/d/${ds.id}/team`}>Go to the team process →</Link>
         </div>
       )}
-      {versions.data && <History versions={versions.data} />}
-      {versions.data && versions.data.length > 1 && <Diff ds={ds} versions={versions.data} />}
+      {(lines.data ?? []).map((l) => (
+        <BaselineCard key={l.family} ds={ds} line={l} canChange={Boolean(lead && t?.recipe.phase === "finalized" && l.latest_finalized_id)} />
+      ))}
+      {all.length > 1 && <Diff ds={ds} versions={all} />}
     </div>
+  );
+}
+
+function BaselineCard({ ds, line, canChange }: { ds: Dataset; line: BaselineLine; canChange: boolean }) {
+  const [changing, setChanging] = useState(false);
+  const latest = line.versions.find((v) => v.id === line.latest_finalized_id);
+  return (
+    <section className="card stack" aria-label={`${line.label} baseline`}>
+      <div className="card-head">
+        <h2>{line.label} baseline</h2>
+        <span className="muted small-text">{line.versions.length} version{line.versions.length === 1 ? "" : "s"}</span>
+      </div>
+      <History versions={line.versions} />
+      {canChange && latest && (changing ? <NewVersion ds={ds} parent={latest} onCancel={() => setChanging(false)} /> : (
+        <div className="row">
+          <span className="secondary grow">{latest.label} is finalized and frozen. To change it, start v{line.versions[0].version + 1} and pick the fields to reopen.</span>
+          <button type="button" onClick={() => setChanging(true)}>New version…</button>
+        </div>
+      ))}
+    </section>
   );
 }
 
 function History({ versions }: { versions: RecipeVersion[] }) {
   return (
-    <section className="card stack" aria-label="Version history">
-      <div className="card-head"><h2>History</h2><span className="muted small-text">Finalized versions are frozen; each change is a new version.</span></div>
+    <div className="table-wrap" aria-label="Version history">
       <table className="data team">
         <thead><tr><th>Version</th><th>Phase</th><th>Started</th><th>Finalized</th><th>Fields worked</th><th>Built from</th></tr></thead>
         <tbody>
@@ -66,42 +97,44 @@ function History({ versions }: { versions: RecipeVersion[] }) {
           ))}
         </tbody>
       </table>
-    </section>
+    </div>
   );
 }
 
 function builtFrom(v: RecipeVersion): string {
   if (v.reuse) {
     const s = v.reuse.source;
-    return `Reused v${s.version} of ${s.dataset_name ?? `dataset #${s.dataset_id}`}${v.parent_id === null ? " (since deleted)" : ""}`;
+    return `Reused ${s.family ? baselineLabel(s.family, s.version) : `v${s.version}`} of ${s.dataset_name ?? `dataset #${s.dataset_id}`}${v.parent_id === null ? " (since deleted)" : ""}`;
   }
-  return v.parent_version ? `v${v.parent_version}` : "the suggestions";
+  if (v.parent_version && v.parent_family) return baselineLabel(v.parent_family, v.parent_version);
+  return "the suggestions";
 }
 
 function Diff({ ds, versions }: { ds: Dataset; versions: RecipeVersion[] }) {
-  const [a, setA] = useState(versions[1].version);
-  const [b, setB] = useState(versions[0].version);
+  const [a, setA] = useState(versions[1].id);
+  const [b, setB] = useState(versions[0].id);
+  const name = (id: number) => versions.find((v) => v.id === id)?.label ?? `#${id}`;
   const diff = useQuery({ queryKey: ["recipeDiff", ds.id, a, b], queryFn: () => api.recipeDiff(ds.id, a, b), enabled: a !== b });
   const pick = (value: number, set: (n: number) => void, label: string) => (
     <label className="field">{label}
       <select value={value} onChange={(e) => set(Number(e.target.value))}>
-        {versions.map((v) => <option key={v.id} value={v.version}>v{v.version}{v.phase === "finalized" ? "" : ` (${v.phase}, as it stands)`}</option>)}
+        {versions.map((v) => <option key={v.id} value={v.id}>{v.label}{v.phase === "finalized" ? "" : ` (${v.phase}, as it stands)`}</option>)}
       </select>
     </label>
   );
   const d = diff.data;
   return (
     <section className="card stack" aria-label="Compare versions">
-      <div className="card-head"><h2>Compare versions</h2><span className="muted small-text">Team decisions and settings only; assessments are never part of a version.</span></div>
+      <div className="card-head"><h2>Compare versions</h2><span className="muted small-text">Team decisions and settings only (decisions only across model types); assessments are never part of a version.</span></div>
       <div className="row" style={{ alignItems: "flex-end" }}>
         {pick(a, setA, "From")}
         {pick(b, setB, "To")}
       </div>
       <ErrorAlert error={diff.error} />
       {a === b ? <span className="muted small-text">Pick two different versions.</span> : d && (
-        d.fields.length === 0 && !d.targets ? <Empty title="No differences">v{a} and v{b} decide every field the same way.</Empty> : (
+        d.fields.length === 0 && !d.targets ? <Empty title="No differences">{name(a)} and {name(b)} decide every field the same way.</Empty> : (
           <table className="data diff" aria-label="Differences">
-            <thead><tr><th>Field</th><th>What changed (v{a} → v{b})</th></tr></thead>
+            <thead><tr><th>Field</th><th>What changed ({name(a)} → {name(b)})</th></tr></thead>
             <tbody>
               {d.targets && (
                 <tr><td><b>Targets</b></td><td>{d.targets.before.join(", ") || "none"} → {d.targets.after.join(", ") || "none"}</td></tr>
@@ -112,7 +145,7 @@ function Diff({ ds, versions }: { ds: Dataset; versions: RecipeVersion[] }) {
                   <td>
                     {f.change === "changed" ? (
                       <ul className="plain">{f.changes.map((c) => <li key={`${c.family}:${c.key}`}>{fmtChange(c, familyShort)}</li>)}</ul>
-                    ) : <span className="badge">{f.change === "added" ? `only in v${b}` : `only in v${a}`}</span>}
+                    ) : <span className="badge">{f.change === "added" ? `only in ${name(b)}` : `only in ${name(a)}`}</span>}
                   </td>
                 </tr>
               ))}
@@ -124,10 +157,9 @@ function Diff({ ds, versions }: { ds: Dataset; versions: RecipeVersion[] }) {
   );
 }
 
-function NewVersion({ ds, team }: { ds: Dataset; team: TeamState }) {
+function NewVersion({ ds, parent, onCancel }: { ds: Dataset; parent: RecipeVersion; onCancel: () => void }) {
   const fields = useFields(ds.id);
   const invalidate = useInvalidateTeam(ds.id);
-  const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [types, setTypes] = useState<Set<string>>(new Set());
   const [attention, setAttention] = useState(false);
@@ -139,30 +171,21 @@ function NewVersion({ ds, team }: { ds: Dataset; team: TeamState }) {
     all.forEach((f) => m.set(f.semantic_type, (m.get(f.semantic_type) ?? 0) + 1));
     return [...m.entries()].sort((x, y) => y[1] - x[1]);
   }, [all]);
-  const next = team.recipe.version + 1;
+  const next = (ds.baselines.find((b) => b.family === parent.family)?.version ?? parent.version) + 1;
   const start = useMutation({
-    mutationFn: () => api.newVersion(ds.id, [...chosen]),
+    mutationFn: () => api.newVersion(ds.id, parent.family, [...chosen]),
     onSuccess: (t) => {
       invalidate();
-      setOpen(false);
-      toast({ message: t.recipe.phase === "assessing" ? `Recipe v${t.recipe.version} started: assign assessors on the Team page`
-        : `Recipe v${t.recipe.version} started: edit the team decision in Review, then finalize` });
+      onCancel();
+      toast({ message: t.recipe.phase === "assessing" ? `${t.recipe.label} started: assign assessors on the Team page`
+        : `${t.recipe.label} started: edit the team decision in Review, then finalize` });
     },
   });
   const toggle = (id: number) => setChosen((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  if (!open) {
-    return (
-      <section className="card stack" aria-label="New version">
-        <div className="card-head"><h2>Change the recipe</h2></div>
-        <span className="secondary">Recipe v{team.recipe.version} is finalized and frozen. To change it, start v{next} from it and pick the fields to reopen: they go through blind assessment and review again, the rest are carried over and locked. Reopen nothing to edit the team decision directly.</span>
-        <div><button type="button" className="primary" onClick={() => setOpen(true)}>Start v{next}…</button></div>
-      </section>
-    );
-  }
   return (
-    <section className="card stack" aria-label="New version">
+    <section className="stack" aria-label="New version">
       <div className="card-head">
-        <h2>Start v{next}: fields to reopen</h2>
+        <h2>Start {familyShort(parent.family)} v{next} from {parent.label}: fields to reopen</h2>
         <span className="muted small-text num">{fmtInt(chosen.size)} of {fmtInt(all.length)} chosen</span>
       </div>
       <div className="row">
@@ -197,45 +220,10 @@ function NewVersion({ ds, team }: { ds: Dataset; team: TeamState }) {
         </table>
       </div>
       <div className="row" style={{ justifyContent: "flex-end" }}>
-        <button type="button" className="ghost" onClick={() => setOpen(false)}>Cancel</button>
+        <button type="button" className="ghost" onClick={onCancel}>Cancel</button>
         <button type="button" className="primary" disabled={start.isPending} onClick={() => start.mutate()}>{startLabel(next, chosen.size)}</button>
       </div>
       <ErrorAlert error={start.error} />
-    </section>
-  );
-}
-
-function StartFromRecipe({ ds }: { ds: Dataset }) {
-  const invalidate = useInvalidateTeam(ds.id);
-  const recipes = useQuery({ queryKey: ["finalizedRecipes"], queryFn: api.finalizedRecipes });
-  const [pick, setPick] = useState("");
-  const options = (recipes.data ?? []).filter((r) => r.dataset_id !== ds.id);
-  const apply = useMutation({
-    mutationFn: () => api.applyRecipe(ds.id, Number(pick)),
-    onSuccess: (t) => {
-      invalidate();
-      toast({ message: t.recipe.phase === "review" ? "Recipe applied: nothing needs assessing. Confirm by finalizing."
-        : `Recipe applied: ${t.recipe.reopened} field${t.recipe.reopened === 1 ? "" : "s"} to assess` });
-    },
-  });
-  return (
-    <section className="card stack" aria-label="Start from recipe">
-      <div className="card-head"><h2>Start from a recipe</h2><span className="muted small-text">Before anyone assesses this dataset</span></div>
-      <span className="secondary">Reuse a finalized recipe of any dataset. Fields match by name; those with the same type and no drift are carried over and locked, the rest are assessed as usual.</span>
-      {options.length === 0 && recipes.data ? <span className="muted">No finalized recipes yet.</span> : (
-        <div className="row">
-          <label className="field">Recipe
-            <select value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Recipe to start from">
-              <option value="">Choose a recipe…</option>
-              {options.map((r) => (
-                <option key={r.id} value={r.id}>{r.dataset_name} · v{r.version} · {r.field_count} fields · {r.finalized_by_name ?? "—"}, {fmtAgo(r.finalized_at)}</option>
-              ))}
-            </select>
-          </label>
-          <button type="button" className="primary" disabled={!pick || apply.isPending} onClick={() => apply.mutate()}>Start from this recipe</button>
-        </div>
-      )}
-      <ErrorAlert error={recipes.error ?? apply.error} />
     </section>
   );
 }

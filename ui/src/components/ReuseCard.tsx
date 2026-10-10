@@ -1,15 +1,16 @@
+import { baselineLabel } from "../format";
 import { reuseGroups } from "../recipes";
 import type { ReuseSummary } from "../types";
 
 /** How a reused recipe matched this dataset: carried, reopened (with why), missing, and the targets. */
-export function ReuseCard({ reuse, version }: { reuse: ReuseSummary; version: number }) {
+export function ReuseCard({ reuse, label }: { reuse: ReuseSummary; label: string }) {
   const g = reuseGroups(reuse);
   const list = (names: string[]) => names.length ? names.map((n) => <code key={n} className="target-code">{n}</code>) : <span className="muted">none</span>;
   return (
     <section className="card stack" aria-label="Reuse summary">
       <div className="card-head">
-        <h2>Started from {reuse.source.dataset_name ?? `dataset #${reuse.source.dataset_id}`} · v{reuse.source.version}</h2>
-        <span className="muted small-text">Recipe v{version} of this dataset</span>
+        <h2>Started from {reuse.source.dataset_name ?? `dataset #${reuse.source.dataset_id}`} · {reuse.source.family ? baselineLabel(reuse.source.family, reuse.source.version) : `v${reuse.source.version}`}</h2>
+        <span className="muted small-text">{label} of this dataset</span>
       </div>
       <div className="stack" style={{ gap: 6 }}>
         <div><b className="num">{g.carried.length}</b> carried over and locked: <span className="chips" style={{ display: "inline-flex" }}>{list(g.carried)}</span></div>

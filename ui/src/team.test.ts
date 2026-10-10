@@ -4,7 +4,7 @@ import type { Assessment } from "./types";
 
 const lead = { id: 1, role: "lead" as const };
 const member = { id: 2, role: "member" as const };
-const ds = (phase: "assessing" | "review" | "finalized") => ({ phase, recipe_version: 2 });
+const ds = (phase: "assessing" | "review" | "finalized") => ({ phase, baseline: { label: "Trees baseline v2" } });
 const mine = (submitted: boolean) => ({ me: { submitted, reviewed: 3, total: 5 } });
 
 describe("accessOf", () => {
@@ -19,7 +19,7 @@ describe("accessOf", () => {
     for (const who of [lead, member]) {
       const a = accessOf(ds("assessing"), who, { me: null });
       expect(a).toMatchObject({ source: "team", canEdit: false });
-      expect(a.note).toMatch(/recipe v2 is being assessed/);
+      expect(a.note).toMatch(/Trees baseline v2 is being assessed/);
     }
   });
 
@@ -53,9 +53,9 @@ describe("differing", () => {
 
 describe("finalizeQuestion", () => {
   it("asks only when disagreements are open", () => {
-    expect(finalizeQuestion(0, 1)).toBeNull();
-    expect(finalizeQuestion(1, 3)).toMatch(/^1 disagreement is still open\. Finalize recipe v3 anyway, keeping its current team decision\?$/);
-    expect(finalizeQuestion(2, 3)).toMatch(/2 disagreements are .* their current team decisions/);
+    expect(finalizeQuestion(0, "Trees baseline v1")).toBeNull();
+    expect(finalizeQuestion(1, "Trees baseline v3")).toMatch(/^1 disagreement is still open\. Finalize Trees baseline v3 anyway, keeping its current team decision\?$/);
+    expect(finalizeQuestion(2, "Trees baseline v3")).toMatch(/2 disagreements are .* their current team decisions/);
   });
 });
 

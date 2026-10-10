@@ -11,22 +11,23 @@ export interface Access {
   note: string;
 }
 
-export function accessOf(ds: Pick<Dataset, "phase" | "recipe_version">, me: Pick<Me, "id" | "role">, team: Pick<TeamState, "me"> | undefined): Access {
-  const v = `recipe v${ds.recipe_version ?? 1}`;
+export function accessOf(ds: Pick<Dataset, "phase"> & { baseline: Pick<NonNullable<Dataset["baseline"]>, "label"> | null },
+  me: Pick<Me, "id" | "role">, team: Pick<TeamState, "me"> | undefined): Access {
+  const v = ds.baseline?.label ?? "baseline";
   if (ds.phase === "assessing") {
     if (team?.me) {
       return team.me.submitted
         ? { source: "mine", canEdit: false, note: "You submitted your assessment. Unsubmit it on the Team page to make changes." }
         : { source: "mine", canEdit: true, note: "Your assessment. Nobody else sees your choices until team review." };
     }
-    return { source: "team", canEdit: false, note: `The ${v} is being assessed. You can browse the fields and their suggestions; only assigned assessors make choices.` };
+    return { source: "team", canEdit: false, note: `${v} is being assessed. You can browse the fields and their suggestions; only assigned assessors make choices.` };
   }
   if (ds.phase === "review") {
     return me.role === "lead"
       ? { source: "team", canEdit: true, note: "Team review: changes here set the team decision." }
       : { source: "team", canEdit: false, note: "Team review: a lead sets the team decision. You can comment on the Team page." };
   }
-  if (ds.phase === "finalized") return { source: "team", canEdit: false, note: `The ${v} is finalized; its decisions are frozen. A lead can start a new version on the Versions page.` };
+  if (ds.phase === "finalized") return { source: "team", canEdit: false, note: `${v} is finalized; its decisions are frozen. A lead can start a new version on the Baselines page.` };
   return { source: "team", canEdit: true, note: "" };
 }
 
@@ -51,9 +52,9 @@ export function differing<T extends Record<string, unknown>>(rows: T[], keys: (k
 }
 
 /** The question to ask before finalizing, or null when nothing is left open. */
-export function finalizeQuestion(open: number, version: number): string | null {
+export function finalizeQuestion(open: number, label: string): string | null {
   if (open === 0) return null;
-  return `${open} disagreement${open === 1 ? " is" : "s are"} still open. Finalize recipe v${version} anyway, keeping ` +
+  return `${open} disagreement${open === 1 ? " is" : "s are"} still open. Finalize ${label} anyway, keeping ` +
     `${open === 1 ? "its" : "their"} current team decision${open === 1 ? "" : "s"}?`;
 }
 

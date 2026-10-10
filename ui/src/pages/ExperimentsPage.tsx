@@ -60,11 +60,11 @@ function CreateDialog({ ds, me, onClose }: { ds: Dataset; me: Me; onClose: () =>
           </select>
         </label>
         {!loading && !options.length && (
-          <div className="alert warn">Nothing to experiment on yet: no recipe version is finalized, and you aren't assessing the current one.</div>
+          <div className="alert warn">Nothing to experiment on yet: no baseline is finalized, and you aren't assessing the current one.</div>
         )}
         {personal && (
           <span className="secondary small-text">
-            Exports use your own choices as they stand when you export. Only you see this experiment until recipe v{team.data?.recipe.version} reaches team review; its runs are logged to MLflow then.
+            Exports use your own choices as they stand when you export. Only you see this experiment until {team.data?.recipe.label} reaches team review; its runs are logged to MLflow then.
           </span>
         )}
         <ErrorAlert error={create.error} />
@@ -92,7 +92,7 @@ export function ExperimentsPage() {
         <button type="button" className="primary" onClick={() => setCreating(true)}>New experiment</button>
       </div>
       <p className="secondary" style={{ margin: 0 }}>
-        Each experiment holds exports and the models trained on them. Build one from a finalized recipe version, or from your own assessment while you assess; that one stays private to you until team review opens.
+        Each experiment holds exports and the models trained on them. Build one from a finalized baseline, or from your own assessment while you assess; that one stays private to you until team review opens.
       </p>
       <section className="card stack" style={{ gap: 10 }}>
         <div className="segmented soft" role="radiogroup" aria-label="Show" style={{ alignSelf: "flex-start" }}>
