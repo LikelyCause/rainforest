@@ -566,7 +566,7 @@ def screen_codes(s: pl.Series, corr_idx: np.ndarray | None) -> np.ndarray:
         s = s.fill_nan(None)
     if corr_idx is not None:
         s = s.gather(corr_idx)
-    return s.cast(pl.String).fill_null("\0null").rank("dense").to_numpy().astype(np.int64)
+    return s.cast(pl.String).fill_null("\0null").rank("dense").to_numpy().astype(np.int32)
 
 
 def _failed_examples(raw: pl.Series, parsed: pl.Series, k: int = 5) -> list[str]:
