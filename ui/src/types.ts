@@ -187,6 +187,7 @@ export interface OptionCatalog {
   allowed: Record<string, Record<string, Record<Dim, string[]>>>;
   default_params: Record<string, Record<string, any>>;
   non_feature_types: string[];
+  target_rule: { types: string[]; max_levels: number };
 }
 
 export interface Summary {
@@ -237,6 +238,21 @@ export interface ExportJob {
   finished_at: string | null;
 }
 
+export type Device = "cpu" | "cuda";
+
+export interface GpuInfo {
+  available: boolean;
+  name: string;
+  memory_mb: number | null;
+  driver: string | null;
+  count: number;
+  reason: string | null;
+}
+
+export interface SystemInfo {
+  gpu: GpuInfo | null;
+}
+
 export interface ModelOption {
   key: string;
   label: string;
@@ -244,6 +260,7 @@ export interface ModelOption {
   handles_nan: boolean;
   available: boolean;
   description: string;
+  devices?: Device[];
   compatible?: boolean;
   reason?: string | null;
 }
@@ -266,12 +283,13 @@ export interface ModelRun {
   status: "pending" | "running" | "done" | "failed";
   status_message: string | null;
   error: string | null;
-  config: { order?: string[] | null; cv?: number; params?: Record<string, unknown> };
+  config: { order?: string[] | null; cv?: number; params?: Record<string, unknown>; device?: Device };
   metrics: Metrics;
   report: {
     order?: string[];
     chain_method?: string;
     fit_seconds?: number;
+    device?: Device;
     model_label?: string;
     n_features?: number;
     evaluation?: Record<string, Record<string, TargetEvaluation>>; // split -> target

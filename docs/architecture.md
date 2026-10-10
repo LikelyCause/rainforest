@@ -16,9 +16,10 @@ add things. For endpoints see [api.md](api.md); for usage see the [README](../RE
 
 | Module | Responsibility |
 |---|---|
-| `main.py` | App, middleware, router registration, `/health`, `/api/options`. Startup runs `db.bootstrap()` and `jobs.start()`. |
+| `main.py` | App, middleware, router registration, `/health`, `/api/options`. Startup loads the session secret, then runs `db.bootstrap()` and `jobs.start()`. |
+| `auth.py` | Sign-in (`/api/auth/*`), the signed session cookie, the session secret, the login rate limiter, and `SecurityMiddleware`. |
 | `config.py` | `Settings` (pydantic-settings, read from the environment). |
-| `db.py` | Connection pool, query helpers, migrations, read-only role setup. |
+| `db.py` | Connection pools (the app's, and a small one for the console's read-only role), query helpers, migrations, read-only role setup. |
 | `jobs.py` | `submit(fn, *args)` onto a `ThreadPoolExecutor` of `JOB_WORKERS` threads; job ownership, the restart sweep and the global job slots. |
 | `ingest.py` | CSV / Parquet → Parquet, identifier sanitising, `COPY` into `raw.ds_<id>`. |
 | `profiling.py` | Type inference, statistics, charts, association sample vectors. |
@@ -26,8 +27,9 @@ add things. For endpoints see [api.md](api.md); for usage see the [README](../RE
 | `semantics.py` | Model families, semantic types, allowed settings per family and type, suggestions, validation, the option catalog. |
 | `processing.py` | The dataset pipeline (`process_dataset`), suggestion seeding, target-derived state (`refresh_target_state`), file cleanup. |
 | `transform.py` | Export: split, fit preprocessing on train rows, chunked transform, manifest. |
-| `parquet_rows.py` | `read_rows`: selected rows of a Parquet file, read one column chunk at a time (export fit sample, Explore samples). |
-| `modeling/registry.py`, `modeling/train.py` | Model catalog and compatibility; `ClassifierChain` training, evaluation, CLI. |
+| `parquet_rows.py` | `read_rows`: selected rows of a Parquet file, read a few column chunks at a time (export fit sample, Explore samples). |
+| `modeling/registry.py`, `modeling/train.py` | Model catalog, compatibility and device params; `ClassifierChain` training, evaluation, CLI. |
+| `gpu.py` | NVIDIA GPU detection (`nvidia-smi` plus an XGBoost CUDA test fit in a subprocess), cached per process. |
 | `analysis/prep.py`, `analysis/compute.py`, `analysis/runner.py` | Explore jobs: sampling and typing, the numeric work, caching and job lifecycle. |
 | `routers/*.py` | HTTP endpoints, one module per area (datasets, fields, query, exports, runs, explore). |
 | `sample_data.py` | Synthetic dataset generator (also a CLI: `python -m app.sample_data`). |
@@ -37,17 +39,34 @@ add things. For endpoints see [api.md](api.md); for usage see the [README](../RE
 
 | Path | Responsibility |
 |---|---|
-| `App.tsx` | Routes and the top bar (dataset switcher, workflow steps, Model switch). |
-| `api.ts`, `types.ts` | Typed fetch client for every endpoint; response types. |
+| `App.tsx` | Routes, the sign-in gate (`RequireAuth`), and the top bar (dataset switcher, workflow steps, Model switch, Sign out). |
+| `api.ts`, `types.ts` | Typed fetch client for every endpoint; response types. Any `401` (fetch or the upload XHR) sends the user to `/login?next=<current path>`. |
 | `hooks.ts` | Shared queries (`useDataset`, `useFields`, `useOptions`) and `useDebounced`. |
 | `saveQueue.ts` | Review decision saves: one serial lane per field, latest draft wins, failures surface with Retry, flushes on page hide. |
-| `pages/` | `DatasetsPage`, `ReviewPage`, `BulkEditPage`, `ExplorePage`, `ExportPage`. |
+| `pages/` | `LoginPage`, `DatasetsPage`, `ReviewPage`, `BulkEditPage`, `ExplorePage`, `ExportPage`. |
 | `components/` | `DatasetLayout` (gates dataset pages on status), `FieldList`, `FieldDetailView`, `DecisionPanel`, `RunDetail`, `Chart`; `components/explore/` holds the four Explore views, their shared state (`state.tsx`) and chart options (`options.ts`). |
 | `signals.ts`, `format.ts`, `theme.ts`, `charts.ts`, `toast.tsx` | Field signal thresholds, formatting and labels, chart theming, toasts. |
 
-Routes: `/` (datasets), `/d/:id/review/:fieldId?`, `/d/:id/bulk`, `/d/:id/explore/:view?`, `/d/:id/export`.
+Routes: `/login`, `/` (datasets), `/d/:id/review/:fieldId?`, `/d/:id/bulk`, `/d/:id/explore/:view?`, `/d/:id/export`.
 
 ## Request and data flow
+
+Every request first passes `auth.SecurityMiddleware`, before routing (so file downloads are covered too):
+
+1. **Host.** Unless `RAINFOREST_ALLOWED_HOSTS` is `*`, the `Host` header must match it (`localhost` always does).
+   `400` otherwise.
+2. **Unsafe methods** (`POST`, `PUT`, `PATCH`, `DELETE`): `Origin`, or failing that `Referer`, must be same-origin with
+   `Host` or `X-Forwarded-Host`, or be the Vite dev server (`403`); requests with neither header are not from a
+   browser and pass. A body must be `application/json`, or `multipart/form-data` on `/api/datasets/upload` (`415`).
+3. **Session.** Everything except `/health`, `/api/auth/login` and `/api/auth/logout` needs a valid `rf_session`
+   cookie (`401`), and nothing but those is served while `RAINFOREST_ADMIN_PASSWORD` is unset (`503`).
+
+The cookie is `base64(claims).HMAC`, with claims `{u, exp}`. The HMAC key is derived from the session secret plus the
+admin user and password, so changing either invalidates every session. The secret comes from
+`RAINFOREST_SESSION_SECRET` or is generated once into `DATA_DIR/session_secret` (mode 600; created with an atomic
+link so concurrent workers agree). It is deliberately not in Postgres, where the console's read-only role could read
+it. nginx forwards `Host` with its port and `X-Forwarded-Proto`, which the origin check and the cookie's `Secure`
+flag rely on.
 
 Requests are synchronous SQL against Postgres except where noted. Long work returns `202` with a row whose `status`
 the UI polls (`pending → running → done | failed`, with `progress` and `status_message`).
@@ -72,11 +91,15 @@ the UI polls (`pending → running → done | failed`, with `progress` and `stat
    columns and operators). `POST …/decisions/bulk` resolves and locks the set in one statement, plans per-field
    changes, and either returns the plan (`dry_run`) or applies it, storing a pre-change snapshot in
    `meta.bulk_batches` for undo.
-6. **SQL console.** `POST /api/sql` connects as `rainforest_ro` in a `READ ONLY` transaction with a statement timeout
-   and returns at most `SQL_MAX_ROWS` rows.
+6. **SQL console.** `POST /api/sql` takes a connection from the `rainforest_ro` pool (`SQL_POOL_MAX`; `503` when
+   busy), opens a `READ ONLY` transaction with `SET LOCAL statement_timeout`, and runs the text as a named
+   server-side cursor. psycopg sends the `DECLARE` over the extended protocol, so Postgres rejects a second statement
+   and `DECLARE` accepts only a query; a single `FETCH` pulls `SQL_MAX_ROWS + 1` rows to detect truncation. The
+   transaction is always rolled back, and the pool runs `DISCARD ALL` before reusing the connection, so settings or
+   advisory locks taken by a query don't carry over.
 7. **Export.** `POST …/exports` checks the preview's blocking issues and submits `exports._run`, which calls
    `transform.run_export` and writes `exports/<id>/{model_ready.parquet, preprocessor.joblib, manifest.json}`.
-8. **Training.** `POST /api/exports/{id}/runs` checks model compatibility and submits `runs._run`, which calls
+8. **Training.** `POST /api/exports/{id}/runs` checks model compatibility and the requested device (see `gpu.py`) and submits `runs._run`, which calls
    `modeling.train.train` and writes `models/run<id>_…/{classifier_chain.joblib, report.json}`; metrics and the
    report go to `meta.model_runs`.
 9. **Explore.** See [Analyses](#analyses-explore-jobs).
@@ -146,7 +169,7 @@ the dataset's Parquet copy, raw table, export and model directories.
 ## Where to add things
 
 **A model.** Add a `ModelSpec` to `MODELS` in `api/app/modeling/registry.py` (key, label, family, NaN support,
-builder, default params, importance source, optional `requires` package). The CLI, `/api/models`,
+builder, default params, importance source, optional `requires` package, `cuda_params` if it can train on a GPU). The CLI, `/api/models`,
 `/api/exports/{id}/models` and the Train form pick it up. Compatibility rules are in `registry.compatibility`.
 
 **A migration.** Add `api/app/migrations/NNN_description.sql` with the next number, written to be safe to run once
@@ -174,8 +197,10 @@ bodies in `schemas.py`, and list it in [api.md](api.md).
 
 ## Testing and CI
 
-`api/tests` uses pytest. `conftest.py` provides a generated sample Parquet; most tests are pure functions over it. The
-API tests in `test_explore.py` start the app against `RAINFOREST_TEST_DATABASE_URL` and skip without it. `make test`
+`api/tests` uses pytest. `conftest.py` provides a generated sample Parquet (most tests are pure functions over it) and
+the session-scoped `admin_login` fixture, which sets the admin credentials and signs a `TestClient` in. `test_auth.py`
+drives the app without its startup hook, so it needs no database. The API tests in `test_explore.py` and
+`test_sql_console.py` start the app against `RAINFOREST_TEST_DATABASE_URL` and skip without it. `make test`
 runs the suite locally, `make test-db` runs it against a throwaway `postgres:16` container. CI
 (`.github/workflows/ci.yml`, on pushes to `main` and pull requests) runs the API tests with a Postgres service, the UI
 typecheck and build, and `docker compose build`.

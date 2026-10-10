@@ -1,27 +1,20 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, NavLink, Navigate, Route, Routes, useMatch, useNavigate } from "react-router-dom";
+import { Link, NavLink, Navigate, Outlet, Route, Routes, useMatch, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDataset, useFields, useOptions } from "./hooks";
-import { api } from "./api";
+import { ApiError, api, setUnauthorizedHandler } from "./api";
+import { Logo } from "./components/Logo";
 import { DatasetsPage } from "./pages/DatasetsPage";
+import { LoginPage } from "./pages/LoginPage";
 import { ReviewPage } from "./pages/ReviewPage";
 import { BulkEditPage } from "./pages/BulkEditPage";
 import { ExportPage } from "./pages/ExportPage";
 import { ExplorePage } from "./pages/ExplorePage";
 import { DatasetLayout } from "./components/DatasetLayout";
-import { ReviewMeter } from "./components/ui";
+import { ErrorAlert, ReviewMeter } from "./components/ui";
 import { familyShort } from "./format";
 import { ToastRegion, showError, toast } from "./toast";
 import type { Dataset, ExportJob, ModelRun } from "./types";
-
-function Logo() {
-  return (
-    <svg viewBox="0 0 32 32" aria-hidden="true">
-      <path d="M16 3 6 15h5l-6 8h22l-6-8h5z" fill="var(--brand)" />
-      <rect x="14.5" y="22" width="3" height="7" rx="1" fill="var(--brand-trunk)" />
-    </svg>
-  );
-}
 
 function ModelSwitch({ ds }: { ds: Dataset }) {
   const qc = useQueryClient();
@@ -161,16 +154,66 @@ function TopBar() {
           {d.status === "ready" && <DatasetSteps ds={d} />}
         </>
       )}
+      <UserMenu />
     </header>
   );
 }
 
-export default function App() {
+function UserMenu() {
+  const nav = useNavigate();
+  const qc = useQueryClient();
+  const me = useQuery({ queryKey: ["me"], queryFn: api.me, staleTime: Infinity });
+  const out = useMutation({
+    mutationFn: api.logout,
+    onSuccess: () => {
+      qc.clear();
+      nav("/login", { replace: true });
+    },
+    onError: (err) => showError("Couldn't sign out", err),
+  });
   return (
-    <div className="app">
+    <div className="user-menu">
+      {me.data && <span className="muted small-text">{me.data.user}</span>}
+      <button type="button" className="ghost small" disabled={out.isPending} onClick={() => out.mutate()}>Sign out</button>
+    </div>
+  );
+}
+
+/** Renders the app once the session checks out; a 401 has already sent the user to /login. */
+function RequireAuth() {
+  const me = useQuery({ queryKey: ["me"], queryFn: api.me, staleTime: Infinity, retry: false });
+  if (me.isPending) return null;
+  if (me.error) {
+    if (me.error instanceof ApiError && me.error.status === 401) return null;
+    return (
+      <div className="login">
+        <div className="card login-card stack">
+          <div className="login-brand"><Logo /> Rainforest</div>
+          <ErrorAlert error={me.error} title={me.error instanceof ApiError && me.error.status === 503 ? "Not set up yet." : "Can't reach the API."} />
+        </div>
+      </div>
+    );
+  }
+  return (
+    <>
       <TopBar />
       <main className="main">
-        <Routes>
+        <Outlet />
+      </main>
+    </>
+  );
+}
+
+export default function App() {
+  const nav = useNavigate();
+  useEffect(() => {
+    setUnauthorizedHandler((next) => nav(`/login?next=${encodeURIComponent(next)}`, { replace: true }));
+  }, [nav]);
+  return (
+    <div className="app">
+      <Routes>
+        <Route path="/login" element={<main className="main"><LoginPage /></main>} />
+        <Route element={<RequireAuth />}>
           <Route path="/" element={<DatasetsPage />} />
           <Route path="/d/:datasetId" element={<DatasetLayout />}>
             <Route index element={<Navigate to="review" replace />} />
@@ -181,8 +224,8 @@ export default function App() {
             <Route path="export" element={<ExportPage />} />
           </Route>
           <Route path="*" element={<div className="empty">Page not found. <NavLink to="/">Go home</NavLink></div>} />
-        </Routes>
-      </main>
+        </Route>
+      </Routes>
       <ToastRegion />
     </div>
   );

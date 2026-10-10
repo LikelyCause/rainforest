@@ -28,18 +28,23 @@ Developer docs: [docs/architecture.md](docs/architecture.md) (how the pieces fit
 ## Quick start
 
 ```bash
-cp .env.example .env          # optional — every value has a default
+cp .env.example .env          # then set RAINFOREST_ADMIN_PASSWORD in it (required)
 docker compose up -d --build
 open http://localhost:8080
 ```
+
+Sign in as `admin` (or your `RAINFOREST_ADMIN_USER`) with that password. Until `RAINFOREST_ADMIN_PASSWORD` is set
+(the `.env.example` placeholder doesn't count), the API answers only `/health` and every other request gets a `503`
+saying to set it.
 
 1. **Datasets** → upload a CSV / Parquet file, or use **Generate sample ▾** (1k–2M rows, 30–400 fields, at most
    60M cells, with `column_a` / `column_b` targets that are binary + 3-class, both binary or both multiclass). On an empty install,
    *Open the 50k × 150 demo* does the same in one click. The upload is converted to Parquet, loaded into
    `raw.ds_<id>`, profiled and correlated, with live progress.
-   Then **Choose target ▾** on the dataset's row: pick one or more columns, or *No target (unsupervised)*. Saving
-   refreshes the target associations and leakage flags. Generated samples already have their two targets set. The row menu also
-   renames or deletes a dataset (deleting removes its fields, exports, model runs and their files).
+   Then **Choose target ▾** on the dataset's row: pick one or more columns, or *No target (unsupervised)*. A target
+   must be binary, categorical or discrete numeric with at most 100 distinct values; other fields are disabled in the
+   picker with the reason, and the API refuses them. Saving refreshes the target associations and leakage flags.
+   Generated samples already have their two targets set. The row menu also renames or deletes a dataset (deleting removes its fields, exports, model runs and their files).
 2. **Review** → walk the fields. Each field shows its signals (missing, skew, outliers, levels, target association
    with a leakage flag), its distribution and quantile strip, top tokens or weekdays, and its strongest
    **associations** (click a bar to jump to that field). Decisions autosave. The sidebar filters by status
@@ -93,7 +98,7 @@ families' settings are re-derived for the new type.
 | Text | TF-IDF → 32 SVD components | same | same |
 | Dates | year, month, day, weekday, hour, day-of-year, epoch days | + median impute + scaling | same |
 
-\* XGBoost is optional: `API_EXTRA_PIP=xgboost docker compose build api` (or set it in `.env`).
+\* XGBoost trains on the CPU in the default image and on an NVIDIA GPU in the GPU image (see [GPU](#gpu)).
 
 In the UI, settings a family doesn't use appear as a locked line with the reason, for example *"Not used for tree
 models — they split on value order, so rescaling changes nothing."* The API rejects them too
@@ -101,9 +106,22 @@ models — they split on value order, so rescaling changes nothing."* The API re
 
 **Type inference** (`api/app/profiling.py`) proposes `numeric_continuous`, `numeric_discrete`, `categorical`,
 `binary`, `text`, `datetime`, `identifier` or `constant`, with a confidence score and reasons. It detects numbers stored
-as text (`"1,234.50"`), dates stored as text (13 formats), integer and UUID keys, and free text compared with short
-categorical strings. Fields with a ≥ 0.95 association to a target are flagged as **possible leakage** and suggested
-for dropping.
+as text, dates stored as text (15 formats, including `YYYYMMDD` as text or integers), integer and UUID keys, and free
+text compared with short categorical strings.
+* Parse rates are measured over the whole column, and formats are chosen from values spread across the file, so a
+  clean head can't hide junk further down.
+* Commas are thousands separators only in valid groups (`"1,234.50"`). A column that writes decimals with a comma
+  (`"1,5"`, and no dot decimals) is read as decimals. Any other value with a comma doesn't parse.
+* `dd/mm` vs `mm/dd` is decided by values with a part above 12. When nothing decides it, month-first is assumed and
+  the reasons say so.
+* Values that don't parse as the inferred type, and ±inf, are counted in **Missing** because the export reads them as
+  missing. They're also reported as `stats.unparseable_count` (with examples) and `stats.inf_count`, shown as a *Read
+  as missing* signal. Unparseable values cap the type confidence at 0.65.
+* Integer columns retyped to datetime are read as `YYYYMMDD` when they are valid dates, otherwise as epoch
+  timestamps whose unit (s, ms, µs, ns) follows from their magnitude.
+* An upload target with more than 100 distinct values isn't made a target; the dataset gets a warning.
+
+Fields with a ≥ 0.95 association to a target are flagged as **possible leakage** and suggested for dropping.
 
 **Associations** use a seeded 100k-row sample:
 - Spearman ρ for numeric pairs (pairwise-complete, vectorised).
@@ -140,7 +158,9 @@ of failing.
 
 ## Export → ClassifierChain
 
-* **Leakage-safe split:** the train / valid / test split is assigned first, stratified on the target combination.
+* **Leakage-safe split:** the train / valid / test split is assigned first, stratified on the target combination
+  (single-row combinations are pooled; if the combinations still can't be stratified, on one target, else not at
+  all). An export fails, naming the class, when a target has a class with a single row.
   Every statistic is then fitted on training rows only (up to 500k of them by default), and the full file is
   transformed in chunks.
 * **Memory:** both steps are sized by output width. A transform chunk holds at most `EXPORT_CHUNK_MB` of dense
@@ -148,7 +168,9 @@ of failing.
   wide export fits on fewer rows (the manifest records `fit_sample_rows` and `chunk_rows`). Peak memory runs at a
   few times these budgets: a 300k-row export peaks at about 1.3–2 GB.
 * **Output:** float32 features, `__split`, `__row_id` (joins back to `raw.ds_<id>`), label-encoded targets, the fitted
-  `preprocessor.joblib`, and `manifest.json` (feature → source field, class mappings, model family, NaN report).
+  `preprocessor.joblib`, and `manifest.json` (feature → source field, class mappings, model family, NaN report, and
+  `inf_values`: ±inf per field, written as missing). Feature names never take a target's name or `__row_id` /
+  `__split`; a clashing feature gets a numbered suffix.
 * **Before you export**, the page summarises what will go in (kept / dropped / targets / customised fields, kept
   fields by type) and warns about unreviewed fields, kept leakage flags and a target count other than two. No target
   or no kept features blocks the export. Once an export exists, it shows how many decisions changed since, with
@@ -161,6 +183,9 @@ of failing.
     predictions of the earlier ones rather than the ground truth.
   * All targets binary → P(class 1) is passed down the chain; any multiclass target → the predicted class code.
   * NaN-capable models are wrapped so sklearn's finiteness check doesn't reject the NaN they handle natively.
+* **Classes missing from training** (a rare class that only landed in valid or test) keep their own probability
+  column (zero), so metrics stay aligned with the class names; the report lists them under `missing_from_train`. A
+  target with a single class in the training split stops the run before fitting.
 * **Metrics** per target on the valid and test splits: accuracy, balanced accuracy, log-loss, ROC-AUC (one-vs-rest
   macro for multiclass), precision / recall / F1 (macro and weighted, plus positive-class and specificity for binary
   targets), confusion matrices and a per-class table, plus the top importances per chain link.
@@ -173,16 +198,62 @@ make train EXPORT=1                          # LightGBM
 make train EXPORT=1 MODEL=random_forest
 docker compose exec api python -m app.modeling.train --export-id 1 --model xgboost \
     --order column_b,column_a --param n_estimators=1000 --param learning_rate=0.03
-make models                                  # what's registered / installed
+make train EXPORT=1 MODEL=xgboost DEVICE=cuda  # GPU image only
+make models                                  # what's registered / installed, and on which devices
 ```
 
 **Adding a model** means adding one `ModelSpec` to `api/app/modeling/registry.py`: key, family, NaN support,
 builder, default parameters and how to read importances. It then appears in the CLI, the API and the UI.
 
+## GPU
+
+XGBoost can train on an NVIDIA GPU. The default image ships the 5 MB CPU build (`xgboost-cpu`); the GPU image swaps
+in the CUDA build (`xgboost`, built with CUDA 13.3), which adds about 800 MB, mostly its NCCL dependency. Training
+on the GPU is a per-run choice: when the API sees a usable GPU, *Train ▾* shows a CPU / GPU switch with the GPU's
+name for models that support it (XGBoost: `device="cuda"`, `tree_method="hist"`). The runs table has a Device column, and each run's
+`report.json` records `device`. Other models always train on the CPU.
+
+**Host prerequisites**
+
+* NVIDIA driver **580 or newer** for the default CUDA 13 build. Blackwell cards (RTX 50xx) need the open kernel
+  modules (`nvidia-open`). With a 570–579 driver, build with `XGBOOST_GPU_PKG=xgboost-cu12==3.4.1` (CUDA 12.9).
+* [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html),
+  registered with Docker:
+
+  ```bash
+  sudo nvidia-ctk runtime configure --runtime=docker
+  sudo systemctl restart docker
+  ```
+
+* Check that containers can see the GPU:
+
+  ```bash
+  docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi
+  ```
+
+The host needs no CUDA toolkit: the XGBoost wheel bundles its CUDA runtime, and the toolkit mounts the driver.
+
+**Start**
+
+```bash
+make up-gpu      # docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+make gpu-check   # what the API sees: name, memory, driver, and whether XGBoost can use it
+```
+
+`docker-compose.gpu.yml` builds the API with `GPU=1` and reserves the host's GPUs for it. `GET /api/system` reports
+`{"gpu": null}` when no GPU is visible, or the GPU with `available: false` and a `reason` when XGBoost can't use it
+(CPU build, driver too old). The API detects this once per worker with a one-tree test fit, because XGBoost
+otherwise falls back to the CPU silently. A GPU run that falls back anyway fails rather than being recorded as a GPU
+run. Going back to the CPU image is `make up`.
+
+Not included: GPU-accelerated Explore (RAPIDS cuML for UMAP and clustering) is a possible later phase.
+
 ## Querying
 
 Connect any SQL client to `localhost:5432` (user and password from `.env`), or use the SQL tab in Bulk edit.
-The console runs as the SELECT-only `rainforest_ro` role, in a read-only transaction with a statement timeout.
+The console runs one query (`SELECT`, `WITH … SELECT`, `VALUES` or `TABLE`) as the SELECT-only `rainforest_ro` role,
+in a read-only transaction with a statement timeout. Postgres itself parses the text through a server-side cursor, so a
+second statement is refused however it's written, and only the rows shown (up to `SQL_MAX_ROWS`) are fetched rather than the whole result.
 `:dataset` in the console is replaced with the current dataset id.
 
 ```sql
@@ -230,7 +301,12 @@ Compose settings, read from `.env` (see `.env.example`):
 | `API_WORKERS` / `JOB_WORKERS` | 2 / 2 | uvicorn workers / background job threads per worker |
 | `JOB_SLOTS` | 2 | background jobs running at once across all workers; each uses `cpu_count // JOB_SLOTS` threads |
 | `LOG_LEVEL` | info | API log level |
-| `API_EXTRA_PIP` | – | extra packages baked into the API image (e.g. `xgboost`) |
+| `RAINFOREST_ADMIN_USER` | admin | sign-in user name |
+| `RAINFOREST_ADMIN_PASSWORD` | – (**required**) | sign-in password; without it the API refuses everything but `/health` |
+| `RAINFOREST_SESSION_SECRET` | generated | key that signs session cookies; if empty, one is generated on first start and kept in the data volume (`/data/session_secret`) |
+| `RAINFOREST_ALLOWED_HOSTS` | `*` | comma-separated hostnames / IPs the API answers to (`*.example.com` allowed). Set this to the names and addresses you use, e.g. `rainforest.lan,192.168.1.20`; `localhost` is always accepted |
+| `API_EXTRA_PIP` | – | extra packages baked into the API image (e.g. `catboost`) |
+| `XGBOOST_GPU_PKG` | `xgboost==3.4.1` | the CUDA XGBoost package for the GPU image (`xgboost-cu12==3.4.1` for 570–579 drivers) |
 
 The API reads further settings from its environment (`api/app/config.py`). Compose doesn't pass these through from
 `.env`, so set them under the `api` service's `environment:`:
@@ -245,13 +321,15 @@ The API reads further settings from its environment (`api/app/config.py`). Compo
 | `SAMPLE_MAX_CELLS` | 60000000 | cap on rows × fields for generated samples (about 2 GB peak) |
 | `DB_POOL_MAX` | 10 | connections per API worker |
 | `SQL_TIMEOUT_MS`, `SQL_MAX_ROWS` | 15000, 2000 | SQL console guard rails |
+| `SQL_POOL_MAX` | 4 | read-only console connections per API worker (also the number of console queries it runs at once) |
 
 ## Development
 
 ```bash
 # API (needs Postgres: `docker compose up -d db`)
 cd api && python -m venv .venv && . .venv/bin/activate && pip install -r requirements-dev.txt
-DATABASE_URL=postgresql://rainforest:rainforest@localhost:5432/rainforest DATA_DIR=./data uvicorn app.main:app --reload
+RAINFOREST_ADMIN_PASSWORD=dev DATABASE_URL=postgresql://rainforest:rainforest@localhost:5432/rainforest DATA_DIR=./data \
+  uvicorn app.main:app --reload
 
 # UI (proxies /api to :8000; set API_URL to point elsewhere)
 cd ui && npm ci && npm run dev    # http://localhost:5173
@@ -261,8 +339,10 @@ npm run typecheck
 make sample-csv
 ```
 
-**Tests** live in `api/tests` (105 tests). Most need no database; the 13 in `test_explore.py` and `test_jobs.py` that
-do run against an empty Postgres and skip unless `RAINFOREST_TEST_DATABASE_URL` is set.
+**Tests** live in `api/tests`. Most need no database, including the sign-in and request-check tests in
+`test_auth.py`. The API tests in `test_explore.py`, `test_sql_console.py` and `test_data_correctness.py`, and the job
+tests in `test_jobs.py`, run against an empty Postgres and skip unless `RAINFOREST_TEST_DATABASE_URL` is set; the API
+tests sign in through the `admin_login` fixture in `conftest.py`.
 
 ```bash
 make test                         # API suite locally; DB-backed tests skip
@@ -284,5 +364,16 @@ service (so nothing skips), the UI typecheck and build, and `docker compose buil
   and export read the Parquet copy. Budget roughly 2–3× the file size.
 * **Samples:** text-field and chart statistics come from a sample, and the UI labels them as such. If you change a
   field's type, the stored statistics still describe the inferred type (the UI says so). The export uses your type.
-* **Security:** there's no authentication. Keep the ports bound to localhost (the default for `db` and `api`) or put
-  the stack behind your SSO proxy.
+* **Security:** the UI port (`UI_PORT`, 8080) listens on every interface so you can reach it over the LAN; `api` and
+  `db` bind to localhost. Every API route except `/health` and sign-in needs the session cookie, file downloads
+  included.
+  * One admin user from `RAINFOREST_ADMIN_USER` / `RAINFOREST_ADMIN_PASSWORD`. The session cookie is signed, `HttpOnly`,
+    `SameSite=Strict`, lasts 7 days, and is `Secure` when the request came over HTTPS. Changing the user or password
+    signs everyone out.
+  * After 10 failed sign-ins from one address within 15 minutes, that address gets `429` until the window passes.
+    The count is kept per API worker.
+  * Requests that change data must be same-origin (`Origin` / `Referer` match the host; `http://localhost:5173` is also
+    accepted for `npm run dev`) and carry an `application/json` body (`multipart/form-data` for uploads), which
+    blocks cross-site form posts. Set `RAINFOREST_ALLOWED_HOSTS` as well, so a DNS-rebound name is refused outright.
+  * On plain HTTP the password and cookie cross the network unencrypted. Anywhere beyond a trusted LAN, put the UI
+    behind a TLS proxy that sets `X-Forwarded-Proto`.

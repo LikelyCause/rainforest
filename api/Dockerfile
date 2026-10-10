@@ -13,7 +13,12 @@ RUN apt-get update \
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
-# Optional extra models, e.g. `API_EXTRA_PIP=xgboost docker compose build api`
+# GPU=1 swaps the 5 MB CPU XGBoost for the CUDA 13 build (+~800 MB installed, mostly NCCL); host driver 580+.
+# For a 570-579 driver use XGBOOST_GPU_PKG=xgboost-cu12==3.4.1 (CUDA 12.9).
+ARG GPU=0
+ARG XGBOOST_GPU_PKG=xgboost==3.4.1
+RUN if [ "$GPU" = "1" ]; then pip uninstall -y xgboost-cpu && pip install "$XGBOOST_GPU_PKG"; fi
+# Optional extra packages, e.g. `API_EXTRA_PIP=catboost docker compose build api`
 ARG EXTRA_PIP=""
 RUN if [ -n "$EXTRA_PIP" ]; then pip install $EXTRA_PIP; fi
 

@@ -90,6 +90,7 @@ class RunRequest(BaseModel):
     cv: int = Field(5, ge=0, le=10)
     seed: int = 42
     params: dict[str, Any] = Field(default_factory=dict)
+    device: Literal["cpu", "cuda"] = "cpu"
 
 
 class AnalysisParams(BaseModel):

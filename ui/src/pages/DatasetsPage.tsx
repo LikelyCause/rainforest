@@ -2,11 +2,11 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, uploadDataset } from "../api";
-import { PROCESSING } from "../hooks";
+import { PROCESSING, useOptions } from "../hooks";
 import { fmtAgo, fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
 import { ErrorAlert } from "../components/ui";
 import { showError, toast } from "../toast";
-import type { Dataset } from "../types";
+import type { Dataset, FieldListItem, OptionCatalog } from "../types";
 
 const ACCEPT = /\.(csv|parquet|pq|txt)$/i;
 
@@ -48,9 +48,19 @@ function useUpload() {
   return { progress, start };
 }
 
+/** Why a field can't be a target (the API enforces the same rule), or null. */
+function targetBlocker(f: FieldListItem, rule: OptionCatalog["target_rule"] | undefined): string | null {
+  if (!rule) return null;
+  if (!rule.types.includes(f.semantic_type))
+    return `${f.semantic_type.replace("_", " ")}: a target must be binary, categorical or discrete numeric (change its type in Review first)`;
+  if ((f.n_unique ?? 0) > rule.max_levels) return `${fmtInt(f.n_unique)} distinct values: a target can have at most ${rule.max_levels} classes`;
+  return null;
+}
+
 function TargetPicker({ ds, onClose }: { ds: Dataset; onClose: () => void }) {
   const qc = useQueryClient();
   const fields = useQuery({ queryKey: ["fields", ds.id], queryFn: () => api.fields(ds.id) });
+  const rule = useOptions().data?.target_rule;
   const [q, setQ] = useState("");
   const [chosen, setChosen] = useState<Set<string>>(new Set(ds.target_columns));
   const save = useMutation({
@@ -82,15 +92,22 @@ function TargetPicker({ ds, onClose }: { ds: Dataset; onClose: () => void }) {
       </span></label>
       <div className="combo-list">
         {fields.isLoading && <span className="muted small-text" style={{ padding: 6 }}>Loading columns…</span>}
-        {shown.map((f) => (
-          <label key={f.id} className="check">
-            <span className="row" style={{ gap: 8, flexWrap: "nowrap", minWidth: 0 }}>
-              <input type="checkbox" checked={chosen.has(f.name)} onChange={() => toggle(f.name)} />
-              <span className="mono" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</span>
-            </span>
-            <span className="type-tag">{f.inferred_type.replace("_", " ")}</span>
-          </label>
-        ))}
+        {shown.map((f) => {
+          const blocker = targetBlocker(f, rule);
+          // A current target that no longer qualifies stays enabled so it can be unticked.
+          const disabled = blocker !== null && !chosen.has(f.name);
+          return (
+            <label key={f.id} className="check" title={blocker ?? undefined} style={blocker ? { flexWrap: "wrap", ...(disabled && { opacity: 0.55, cursor: "not-allowed" }) } : undefined}>
+              <span className="row" style={{ gap: 8, flexWrap: "nowrap", minWidth: 0 }}>
+                <input type="checkbox" checked={chosen.has(f.name)} disabled={disabled} onChange={() => toggle(f.name)}
+                  aria-describedby={blocker ? `tb-${f.id}` : undefined} />
+                <span className="mono" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</span>
+              </span>
+              <span className="type-tag">{f.semantic_type.replace("_", " ")}</span>
+              {blocker && <span id={`tb-${f.id}`} className="muted small-text" style={{ flexBasis: "100%" }}>{blocker}</span>}
+            </label>
+          );
+        })}
       </div>
       <ErrorAlert error={save.error} />
       <div className="row" style={{ justifyContent: "space-between", padding: "4px 2px 0" }}>

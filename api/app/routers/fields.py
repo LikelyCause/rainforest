@@ -8,7 +8,8 @@ from psycopg import sql
 from ..db import connection, fetch_all, fetch_one, jsonb
 from ..processing import SUMMARY_COLS, refresh_target_state, upsert_settings
 from ..schemas import BulkDecisionIn, DecisionIn
-from ..semantics import FAMILIES, NON_FEATURE_TYPES, SETTING_KEYS, settings_of, suggest, validate_decision
+from ..semantics import (FAMILIES, NON_FEATURE_TYPES, SETTING_KEYS, settings_of, suggest, target_problem,
+                         validate_decision)
 from .query import fields_where
 
 router = APIRouter(prefix="/api", tags=["fields"])
@@ -97,7 +98,7 @@ def save_decision(field_id: int, body: DecisionIn) -> dict:
     f = _field(field_id)
     fam = _family(f, body.family)
     d = body.model_dump(exclude={"family"})
-    errors = validate_decision(d, fam)
+    errors = validate_decision(d, fam, n_unique=f["n_unique"])
     if errors:
         raise HTTPException(422, {"message": "Invalid decision", "errors": errors})
     with connection() as conn:
@@ -387,6 +388,10 @@ def set_targets(conn, dataset_id: int, names: list[str]) -> list[dict]:
     unknown = [n for n in names if n not in by_name]
     if unknown:
         raise HTTPException(422, {"message": "Unknown column(s)", "errors": unknown})
+    ineligible = [f"{n}: {p}" for n in names
+                  if (p := target_problem(by_name[n]["semantic_type"], by_name[n]["n_unique"]))]
+    if ineligible:
+        raise HTTPException(422, {"message": "Not a valid target", "errors": ineligible})
     before = _merged_many(conn, [r["id"] for r in by_name.values()], fam)
     added = [by_name[n]["id"] for n in names if by_name[n]["action"] != "target"]
     removed = [r for n, r in by_name.items() if r["action"] == "target" and n not in names]

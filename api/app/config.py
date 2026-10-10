@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -35,6 +36,13 @@ class Settings(BaseSettings):
     # SQL console guard rails
     sql_timeout_ms: int = 15_000
     sql_max_rows: int = 2_000
+    sql_pool_max: int = 4
+
+    # Sign-in. With no admin password the API serves only /health and refuses everything else.
+    admin_user: str = Field("admin", validation_alias="RAINFOREST_ADMIN_USER")
+    admin_password: str = Field("", validation_alias="RAINFOREST_ADMIN_PASSWORD")
+    session_secret: str = Field("", validation_alias="RAINFOREST_SESSION_SECRET")
+    allowed_hosts: str = Field("*", validation_alias="RAINFOREST_ALLOWED_HOSTS")
 
     @property
     def uploads_dir(self) -> Path:

@@ -18,7 +18,7 @@ import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 import numpy as np
 import pandas as pd
@@ -43,7 +43,7 @@ from sklearn.preprocessing import (
 
 from .config import get_settings
 from .parquet_rows import read_rows
-from .profiling import coerce_numeric, parse_datetime
+from .profiling import coerce_numeric, null_infinite, parse_datetime
 from .semantics import DEFAULT_FAMILY, DEFAULT_PARAMS, FAMILIES, NON_FEATURE_TYPES, NUMERIC
 
 SPLIT_COL = "__split"
@@ -205,6 +205,7 @@ class FieldSpec:
     encoding: str
     params: dict[str, Any]
     datetime_format: str | None = None
+    decimal_comma: bool = False
 
 
 SCALERS = {
@@ -298,12 +299,25 @@ def build_preprocessor(specs: list[FieldSpec], seed: int = 0) -> ColumnTransform
     return ct
 
 
+class NumericCoercer:
+    """coerce_numeric with the field's profiled number format; counts the ±inf it turns into missing values."""
+
+    def __init__(self, decimal_comma: bool = False):
+        self.decimal_comma = decimal_comma
+        self.inf_count = 0
+
+    def __call__(self, s: pl.Series) -> pl.Series:
+        raw = coerce_numeric(s, self.decimal_comma, keep_inf=True)
+        self.inf_count += int(raw.is_infinite().sum())
+        return null_infinite(raw)
+
+
 def coercion_exprs(specs: list[FieldSpec], schema: pl.Schema) -> dict[str, Callable[[pl.Series], pl.Series]]:
     """Deterministic, fit-free casting of raw columns into what the preprocessor expects."""
     out: dict[str, Callable[[pl.Series], pl.Series]] = {}
     for f in specs:
         if f.semantic_type in NUMERIC:
-            out[f.name] = coerce_numeric
+            out[f.name] = NumericCoercer(f.decimal_comma)
         elif f.semantic_type == "datetime":
             fmt = f.datetime_format
             out[f.name] = lambda s, fmt=fmt: parse_datetime(s, fmt)
@@ -343,9 +357,12 @@ def readable_feature_names(pre: ColumnTransformer) -> list[str]:
     return out
 
 
-def safe_feature_names(names: list[str]) -> list[str]:
-    """LightGBM rejects JSON special chars in feature names; also guarantee uniqueness."""
-    out, seen = [], set()
+def safe_feature_names(names: list[str], reserved: Iterable[str] = ()) -> list[str]:
+    """LightGBM rejects JSON special chars in feature names; also guarantee uniqueness.
+
+    `reserved` names (targets, __row_id, __split) share the output file, so a feature never takes one.
+    """
+    out, seen = [], set(reserved)
     for n in names:
         base = re.sub(r"[^0-9A-Za-z_]+", "_", n).strip("_") or "f"
         cand, k = base, 2
@@ -396,40 +413,70 @@ def rows_for_budget(mb: int, width: int, floor: int = 1_000) -> int:
 def assign_splits(
     y: pd.DataFrame, valid_size: float, test_size: float, seed: int
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    """Return split codes per row (255 = dropped because a target is missing)."""
+    """Return split codes per row (255 = dropped because a target is missing).
+
+    Stratifies on the target combination, else on each target alone, else not at all. Strata with a single
+    row are pooled, so one odd label doesn't switch stratification off.
+    """
     n = len(y)
     codes = np.full(n, 255, dtype=np.uint8)
     labeled = y.notna().all(axis=1).to_numpy()
     idx = np.flatnonzero(labeled)
-    strat_key = y.loc[labeled].astype(str).agg("|".join, axis=1).to_numpy()
-    info: dict[str, Any] = {"dropped_unlabeled": int((~labeled).sum())}
-
-    def stratify_or_none(keys: np.ndarray) -> np.ndarray | None:
-        _, counts = np.unique(keys, return_counts=True)
-        return keys if counts.min() >= 2 else None
+    info: dict[str, Any] = {"dropped_unlabeled": int((~labeled).sum()), "stratified": False, "stratified_on": None}
 
     holdout = valid_size + test_size
     if holdout <= 0:
         codes[idx] = 0
-        info["stratified"] = False
         return codes, info
-    strat = stratify_or_none(strat_key)
-    train_idx, rest_idx, _, rest_keys = train_test_split(
-        idx, strat_key, test_size=holdout, random_state=seed, stratify=strat
-    )
+    labels = y.loc[labeled].astype(str)
+    candidates = [list(y.columns)] + ([[c] for c in y.columns] if y.shape[1] > 1 else []) + [None]
+    for cols in candidates:
+        keys = None if cols is None else _pool_singletons(labels[cols].agg("|".join, axis=1).to_numpy())
+        try:
+            train_idx, rest_idx, _, rest_keys = train_test_split(
+                idx, idx if keys is None else keys, test_size=holdout, random_state=seed, stratify=keys
+            )
+        except ValueError:  # more strata than the holdout has rows
+            continue
+        info["stratified"], info["stratified_on"] = cols is not None, cols
+        break
     codes[train_idx] = 0
     if test_size <= 0:
         codes[rest_idx] = 1
     elif valid_size <= 0:
         codes[rest_idx] = 2
     else:
-        strat2 = stratify_or_none(rest_keys)
-        v_idx, t_idx = train_test_split(
-            rest_idx, test_size=test_size / holdout, random_state=seed, stratify=strat2
-        )
+        strat2 = None if info["stratified_on"] is None else _pool_singletons(rest_keys)
+        try:
+            v_idx, t_idx = train_test_split(rest_idx, test_size=test_size / holdout, random_state=seed, stratify=strat2)
+        except ValueError:
+            v_idx, t_idx = train_test_split(rest_idx, test_size=test_size / holdout, random_state=seed)
         codes[v_idx], codes[t_idx] = 1, 2
-    info["stratified"] = strat is not None
     return codes, info
+
+
+def _pool_singletons(keys: np.ndarray) -> np.ndarray:
+    values, inverse, counts = np.unique(keys, return_inverse=True, return_counts=True)
+    lone = counts[inverse] < 2
+    if not lone.any():
+        return keys
+    out = keys.astype(object)
+    # Two or more lone rows form their own stratum; a single one joins the largest.
+    out[lone] = "\0pooled" if lone.sum() >= 2 else values[counts.argmax()]
+    return out
+
+
+def check_target_classes(y: pd.DataFrame) -> None:
+    """Every class needs two rows to reach both training and evaluation; fail before any work is done."""
+    for t in y.columns:
+        counts = y[t].dropna().astype(str).value_counts()
+        lone = counts.index[counts < 2].tolist()
+        if lone:
+            shown = ", ".join(repr(v) for v in lone[:10]) + (f" and {len(lone) - 10} more" if len(lone) > 10 else "")
+            raise ValueError(
+                f"Target {t!r} has {len(lone)} class(es) with a single row: {shown}. Every class needs at least "
+                "2 rows; fix or remove those rows, merge the class into another, or choose another target."
+            )
 
 
 def encode_targets(y: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, list[str]]]:
@@ -473,6 +520,8 @@ def run_export(
         raise ValueError("No fields are marked 'keep' — nothing to export.")
     if not targets:
         raise ValueError("No target fields — mark at least one field as a target.")
+    if clash := {ROW_ID, SPLIT_COL} & set(targets):
+        raise ValueError(f"Target name(s) {', '.join(sorted(clash))} are reserved for the export's own columns.")
 
     schema = pl.read_parquet_schema(parquet_path)
     n_rows = pl.scan_parquet(parquet_path).select(pl.len()).collect().item()
@@ -480,6 +529,7 @@ def run_export(
     # 1. targets + split ------------------------------------------------------------
     progress(0.02, "Assigning train / valid / test split")
     y_raw = pl.read_parquet(parquet_path, columns=targets).to_pandas()
+    check_target_classes(y_raw)
     y_enc, classes = encode_targets(y_raw)
     split, split_info = assign_splits(
         y_raw, float(config.get("valid_size", 0.15)), float(config.get("test_size", 0.15)), seed
@@ -493,13 +543,12 @@ def run_export(
     fit_cap = rows_for_budget(settings.export_fit_mb, estimated_width(specs))
     fit_idx = np.sort(rng.choice(train_idx, size=min(fit_rows, fit_cap, train_idx.size), replace=False))
     feature_cols = [f.name for f in specs]
-    coercers = coercion_exprs(specs, schema)
-    frame = to_pandas_frame(read_rows(parquet_path, feature_cols, fit_idx), specs, coercers, consume=True)
     pre = build_preprocessor(specs, seed)
-    pre.fit(frame)
-    del frame
+    pre.fit(to_pandas_frame(read_rows(parquet_path, feature_cols, fit_idx), specs, coercion_exprs(specs, schema),
+                            consume=True))
+    coercers = coercion_exprs(specs, schema)  # fresh, so inf counts cover the written rows only
     raw_names = readable_feature_names(pre)
-    feat_names = safe_feature_names(raw_names)
+    feat_names = safe_feature_names(raw_names, reserved=[ROW_ID, SPLIT_COL, *targets])
     feature_source = _feature_sources(pre, feat_names)
     chunk_rows = min(chunk_rows, rows_for_budget(settings.export_chunk_mb, len(feat_names)))
 
@@ -555,6 +604,8 @@ def run_export(
         "model_family": family,
         "contains_nan": bool(nan_counts.any()),
         "nan_features": {feat_names[k]: int(nan_counts[k]) for k in np.flatnonzero(nan_counts)},
+        "inf_values": {name: c.inf_count for name, c in coercers.items()
+                       if isinstance(c, NumericCoercer) and c.inf_count},
         "rows_written": written,
         "n_features": len(feat_names),
         "feature_names": feat_names,

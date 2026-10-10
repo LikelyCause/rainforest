@@ -2,6 +2,7 @@
 
     python -m app.modeling.train --export-id 3                       # LightGBM (default)
     python -m app.modeling.train --export-id 3 --model xgboost --order column_b,column_a
+    python -m app.modeling.train --export-id 3 --model xgboost --device cuda   # GPU image only
     python -m app.modeling.train --list-models
 
 Chain mechanics
@@ -43,7 +44,9 @@ from sklearn.metrics import (
 )
 from sklearn.multioutput import ClassifierChain
 
-from .registry import DEFAULT_MODEL, MODELS, ModelSpec, catalog, compatibility, get_model, importances
+from ..gpu import effective_device
+from .registry import (DEFAULT_MODEL, MODELS, ModelSpec, catalog, compatibility, device_params, get_model,
+                       importances)
 
 log = logging.getLogger("train")
 
@@ -94,11 +97,13 @@ def build_chain(spec: ModelSpec, target_kinds: list[str], order: list[int], seed
     )
 
 
-def chain_predict_proba(chain: ClassifierChain, X: np.ndarray) -> list[np.ndarray]:
+def chain_predict_proba(chain: ClassifierChain, X: np.ndarray, n_classes: list[int] | None = None) -> list[np.ndarray]:
     """Full class-probability matrix for every target (in original target order).
 
     `ClassifierChain.predict_proba` only returns P(class=1) per target, which is not
     enough for multiclass targets, so walk the fitted chain exactly as sklearn does.
+    Each estimator only knows the classes it saw in training; with `n_classes` (per target,
+    in target order) column j of the result is always encoded class j, zero for unseen ones.
     """
     n_targets = len(chain.estimators_)
     feature_chain = np.zeros((X.shape[0], n_targets))
@@ -107,7 +112,13 @@ def chain_predict_proba(chain: ClassifierChain, X: np.ndarray) -> list[np.ndarra
     for pos, est in enumerate(chain.estimators_):
         X_aug = np.hstack((X, feature_chain[:, :pos]))
         p = est.predict_proba(X_aug)
-        probas[chain.order_[pos]] = p
+        target = chain.order_[pos]
+        if n_classes is not None:
+            full = np.zeros((p.shape[0], n_classes[target]))
+            full[:, np.asarray(est.classes_, dtype=int)] = p
+            probas[target] = full
+        else:
+            probas[target] = p
         feature_chain[:, pos] = p[:, 1] if method == "predict_proba" else est.predict(X_aug)
     return probas  # type: ignore[return-value]
 
@@ -161,8 +172,9 @@ def evaluate(y_true: np.ndarray, proba: np.ndarray, labels: list[str] | None = N
 
 def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] | None = None, seed: int = 42,
           params: dict | None = None, cv: int | None = 5, out_dir: Path | None = None,
-          progress: Callable[[str], None] | None = None) -> dict[str, Any]:
+          progress: Callable[[str], None] | None = None, device: str = "cpu") -> dict[str, Any]:
     spec = get_model(model)
+    params = {**(params or {}), **device_params(spec, device)}
     manifest, df = load_export(export_dir)
     export_family = manifest.get("model_family", "tree")
     problem = compatibility(spec, export_family, bool(manifest.get("contains_nan", False)))
@@ -183,11 +195,25 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
         return part.select(feats).to_numpy().astype(np.float32), part.select(targets).to_numpy().astype(np.int64)
 
     X_tr, Y_tr = xy("train")
-    say(f"Fitting {spec.label} chain {' → '.join(order_names)} on {X_tr.shape[0]:,} rows × {X_tr.shape[1]:,} features")
+    n_classes = [len(manifest["target_classes"][t]) for t in targets]
+    missing_from_train: dict[str, list[str]] = {}
+    for i, t in enumerate(targets):
+        seen = set(np.unique(Y_tr[:, i]).tolist())
+        if len(seen) < 2:
+            raise ValueError(f"Target {t!r} has only one class in the training split; a classifier needs at least two.")
+        if absent := [c for k, c in enumerate(manifest["target_classes"][t]) if k not in seen]:
+            missing_from_train[t] = absent
+    say(f"Fitting {spec.label} chain {' → '.join(order_names)} on {X_tr.shape[0]:,} rows × {X_tr.shape[1]:,} features"
+        + (" on the GPU" if device == "cuda" else ""))
     chain = build_chain(spec, kinds, order, seed, params, cv)
     t0 = time.time()
     chain.fit(X_tr, Y_tr)
     fit_seconds = time.time() - t0
+    if device == "cuda":
+        # XGBoost quietly drops to the CPU when it can't reach the GPU; don't report that as a GPU run.
+        used = effective_device(chain.estimators_[0].get_booster())
+        if not used.startswith("cuda"):
+            raise RuntimeError(f"GPU training was requested but {spec.label} ran on {used}")
 
     say("Evaluating on validation and test splits")
     metrics: dict[str, Any] = {}
@@ -197,7 +223,7 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
         if len(X) == 0:
             continue
         with config_context(assume_finite=spec.handles_nan):
-            probas = chain_predict_proba(chain, X)
+            probas = chain_predict_proba(chain, X, n_classes)
             predicted = chain.predict(X).astype(int)
         metrics[split], details[split] = {}, {}
         for i, t in enumerate(targets):
@@ -231,9 +257,11 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
         "chain_method": chain.chain_method_,
         "cv": cv,
         "target_classes": manifest["target_classes"],
+        "missing_from_train": missing_from_train,
         "n_train": int(len(X_tr)),
         "n_features": len(feats),
         "fit_seconds": round(fit_seconds, 1),
+        "device": device,
         "params": {k: (list(v) if isinstance(v, tuple) else v) for k, v in {**spec.default_params, **(params or {})}.items()},
         "metrics": metrics,
         "evaluation": details,
@@ -257,12 +285,14 @@ def main() -> None:
     ap.add_argument("--cv", type=int, default=5, help="folds for out-of-fold chain features (0 = use truth)")
     ap.add_argument("--param", action="append", default=[], metavar="KEY=VALUE",
                     help="override a model parameter, e.g. --param n_estimators=1000 (repeatable)")
+    ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"], help="cuda needs the GPU image (XGBoost only)")
     args = ap.parse_args()
 
     if args.list_models:
         for m in catalog():
             print(f"{m['key']:24s} {m['family']:7s} {'nan-ok' if m['handles_nan'] else 'no-nan':7s} "
-                  f"{'available' if m['available'] else 'not installed'}  {m['description']}")
+                  f"{'available' if m['available'] else 'not installed':14s} {'/'.join(m['devices']):9s} "
+                  f"{m['description']}")
         return
     if args.export_dir is None:
         from ..config import get_settings
@@ -277,8 +307,9 @@ def main() -> None:
         except json.JSONDecodeError:
             overrides[k] = v
     report = train(export_dir, args.model, args.order.split(",") if args.order else None, args.seed, overrides,
-                   args.cv or None)
-    print(json.dumps({k: report[k] for k in ("model_dir", "model", "order", "chain_method", "n_train", "metrics")},
+                   args.cv or None, device=args.device)
+    print(json.dumps({k: report[k] for k in ("model_dir", "model", "device", "order", "chain_method", "n_train",
+                                             "metrics")},
                      indent=2))
     for split, by_target in report["evaluation"].items():
         for target, d in by_target.items():

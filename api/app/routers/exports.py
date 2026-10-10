@@ -194,7 +194,9 @@ def _run(export_id: int) -> None:
         progress(0.0, "Starting")
         fam = exp["model_family"]
         rows = fetch_all(
-            """SELECT f.name, f.stats ->> 'datetime_format' AS datetime_format, d.action, d.semantic_type, s.*
+            """SELECT f.name, f.stats ->> 'datetime_format' AS datetime_format,
+                      coalesce((f.stats ->> 'decimal_comma')::boolean, false) AS decimal_comma,
+                      d.action, d.semantic_type, s.*
                  FROM meta.fields f
                  JOIN meta.field_decisions d ON d.field_id = f.id
                  JOIN meta.field_settings s ON s.field_id = f.id AND s.family = %s
@@ -206,7 +208,7 @@ def _run(export_id: int) -> None:
                 name=r["name"], semantic_type=r["semantic_type"], imputation=r["imputation"],
                 impute_value=r["impute_value"], add_missing_indicator=r["add_missing_indicator"],
                 transform=r["transform"], scaling=r["scaling"], encoding=r["encoding"],
-                params=r["params"] or {}, datetime_format=r["datetime_format"],
+                params=r["params"] or {}, datetime_format=r["datetime_format"], decimal_comma=r["decimal_comma"],
             )
             for r in rows
             if r["action"] == "keep"

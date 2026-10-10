@@ -10,7 +10,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from .. import jobs
+from .. import gpu, jobs
 from ..db import execute, fetch_all, fetch_one, jsonb
 from ..modeling.registry import MODELS, catalog, compatibility
 from ..schemas import RunRequest
@@ -25,6 +25,12 @@ RUN_COLS = """id, export_id, dataset_id, model, family, status, status_message, 
 @router.get("/models")
 def list_models() -> list[dict]:
     return catalog()
+
+
+@router.get("/system")
+def system() -> dict:
+    """Training hardware. `gpu` is null when no NVIDIA GPU is visible to the API container."""
+    return {"gpu": gpu.detect()}
 
 
 def _export_manifest(export_id: int) -> tuple[dict, dict]:
@@ -61,6 +67,11 @@ def start_run(export_id: int, req: RunRequest) -> dict:
     reason = compatibility(spec, exp["model_family"], bool(manifest.get("contains_nan")))
     if reason:
         raise HTTPException(422, reason)
+    if req.device not in spec.devices:
+        raise HTTPException(422, f"{spec.label} can't train on {req.device!r} (supports: {', '.join(spec.devices)})")
+    if req.device == "cuda" and not gpu.gpu_available():
+        info = gpu.detect()
+        raise HTTPException(409, f"No usable GPU: {info['reason']}" if info else "No GPU is available to the API")
     if req.order and sorted(req.order) != sorted(manifest["targets"]):
         raise HTTPException(422, f"order must be a permutation of {manifest['targets']}")
     run = fetch_one(
@@ -117,7 +128,7 @@ def _run(run_id: int, export_dir: str, req: dict) -> None:
         if "n_jobs" in MODELS[req["model"]].default_params:
             params = {"n_jobs": jobs.cpu_threads(), **params}
         report = train(Path(export_dir), req["model"], req.get("order"), req["seed"], params,
-                       req["cv"] or None, out_dir, progress)
+                       req["cv"] or None, out_dir, progress, device=req.get("device", "cpu"))
         execute(
             """UPDATE meta.model_runs SET status = 'done', status_message = 'Done', metrics = %s, report = %s,
                       model_dir = %s, finished_at = now(), updated_at = now() WHERE id = %s""",

@@ -18,6 +18,7 @@ from .config import get_settings
 log = logging.getLogger(__name__)
 
 _pool: ConnectionPool | None = None
+_ro_pool: ConnectionPool | None = None
 _SCHEMA_LOCK_KEY = 7_311_204  # arbitrary advisory-lock id for schema bootstrap
 
 
@@ -36,10 +37,13 @@ def get_pool() -> ConnectionPool:
 
 
 def close_pool() -> None:
-    global _pool
+    global _pool, _ro_pool
     if _pool is not None:
         _pool.close()
         _pool = None
+    if _ro_pool is not None:
+        _ro_pool.close()
+        _ro_pool = None
 
 
 @contextmanager
@@ -71,6 +75,27 @@ def jsonb(value: Any) -> Jsonb:
 def readonly_conninfo() -> str:
     s = get_settings()
     return make_conninfo(s.database_url, user=s.readonly_role, password=s.readonly_password)
+
+
+def _reset_readonly(conn: psycopg.Connection) -> None:
+    # A console query can take session-level advisory locks or set session GUCs; none may outlive it.
+    conn.execute("DISCARD ALL")
+
+
+def get_readonly_pool() -> ConnectionPool:
+    """Small pool for the SQL console's read-only role; its size also caps concurrent console queries."""
+    global _ro_pool
+    if _ro_pool is None:
+        s = get_settings()
+        _ro_pool = ConnectionPool(
+            readonly_conninfo(),
+            min_size=1,
+            max_size=s.sql_pool_max,
+            kwargs={"autocommit": True, "prepare_threshold": None, "connect_timeout": 5},
+            reset=_reset_readonly,
+            open=True,
+        )
+    return _ro_pool
 
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"

@@ -231,7 +231,7 @@ DB_URL = os.environ.get("RAINFOREST_TEST_DATABASE_URL")
 
 
 @pytest.fixture(scope="module")
-def client(tmp_path_factory):
+def client(tmp_path_factory, admin_login):
     if not DB_URL:
         pytest.skip("set RAINFOREST_TEST_DATABASE_URL to run the API tests")
     from fastapi.testclient import TestClient
@@ -247,7 +247,7 @@ def client(tmp_path_factory):
     from app.main import app
 
     with TestClient(app) as c:
-        yield c
+        yield admin_login(c)
     db.close_pool()
     mp.undo()
     get_settings.cache_clear()
