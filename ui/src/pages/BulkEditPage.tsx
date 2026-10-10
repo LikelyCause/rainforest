@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { useAccess, useDebounced, useOptions } from "../hooks";
+import { can } from "../can";
+import { useAccess, useDebounced, useMe, useOptions } from "../hooks";
 import { JoinAssessment } from "../components/JoinAssessment";
 import { ExperimentModeBar } from "../components/ExperimentModeBar";
 import { useView, type View, viewKey, withView } from "../view";
@@ -477,6 +478,8 @@ export function BulkEditPage() {
   const ds = useDatasetContext();
   const view = useView();
   const access = useAccess(ds, view);
+  // The console reads every table, work in progress included, so it isn't a Viewer's.
+  const sql = can(useMe().data, "querySql");
   const st = useFinderState();
   const presetLabel = (p: string | null) => PRESETS.find((x) => x.key === p)?.label ?? "Custom filter";
   return (
@@ -489,9 +492,9 @@ export function BulkEditPage() {
       {access.note && <div className={`alert ${access.canEdit ? "info" : "warn"}`}>{access.note}</div>}
       <div className="tabs-inline" role="tablist">
         <button type="button" role="tab" aria-selected={st.tab === "fields"} className={st.tab === "fields" ? "on" : ""} onClick={() => st.setTab("fields")}>Fields</button>
-        <button type="button" role="tab" aria-selected={st.tab === "sql"} className={st.tab === "sql" ? "on" : ""} onClick={() => st.setTab("sql")}>SQL</button>
+        {sql && <button type="button" role="tab" aria-selected={st.tab === "sql"} className={st.tab === "sql" ? "on" : ""} onClick={() => st.setTab("sql")}>SQL</button>}
       </div>
-      {st.tab === "fields" || view ? <FieldFinder datasetId={ds.id} presetLabel={presetLabel} canEdit={access.canEdit} view={view} /> : <SqlConsole datasetId={ds.id} />}
+      {st.tab === "fields" || view || !sql ? <FieldFinder datasetId={ds.id} presetLabel={presetLabel} canEdit={access.canEdit} view={view} /> : <SqlConsole datasetId={ds.id} />}
     </div>
   );
 }

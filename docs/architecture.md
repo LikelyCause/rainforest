@@ -99,9 +99,10 @@ Every request first passes `auth.SecurityMiddleware`, before routing (so file do
    avatar_url}` is left in `request.state.user`. In `oidc` mode with settings missing, nothing but those paths is
    served (`503`).
 4. **Viewer.** A Viewer's unsafe method gets `403` unless it matches `auth.VIEWER_ALLOWED` (Explore analysis
-   requests, the field finder, the SQL console, their own picture), so a route added later is refused by default. On
-   `/api/auth/check` the method judged is the `X-Original-Method` nginx sends, so a Viewer browses MLflow but can't
-   change it.
+   requests, the field finder, their own picture), so a route added later is refused by default; the SQL console isn't
+   among them, since it reads every table. On `/api/auth/check` the method judged is the `X-Original-Method` nginx
+   sends, and a `POST` passes only for MLflow's search endpoints (`X-Original-URI`), so a Viewer browses MLflow but
+   can't change it.
 
 Routes take the user through the `CurrentUser` / `LeadUser` dependencies (`Annotated` aliases of `current_user` and
 `require_lead` in `auth.py`); `LeadUser` answers members and Viewers with `403`. Writes pass `user["id"]` to the row

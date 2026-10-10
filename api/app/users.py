@@ -46,6 +46,8 @@ def parse_accounts(text: str) -> list[Account]:
             raise ValueError(f"{raw!r}: the role must be one of {', '.join(ROLES)}")
         if any(a.key == key for a in out):
             raise ValueError(f"the key {key!r} appears twice")
+        if claim and any(a.claim_id == int(claim) for a in out):
+            raise ValueError(f"two entries claim #{claim}")
         out.append(Account(key, int(claim) if claim else None, name, role))
     if not any(a.role == "lead" for a in out):
         raise ValueError("there must be at least one lead")
@@ -63,9 +65,15 @@ def sync_accounts(conn, accounts: list[Account]) -> dict[str, list[str]]:
     conn.execute("LOCK TABLE meta.users IN SHARE ROW EXCLUSIVE MODE")
     done: dict[str, list[str]] = {"created": [], "updated": [], "deactivated": [], "reactivated": []}
     for a in accounts:
-        if a.claim_id is not None:
-            conn.execute("UPDATE meta.users SET key = %s WHERE id = %s AND key IS NULL AND NOT EXISTS "
-                         "(SELECT 1 FROM meta.users WHERE key = %s)", (a.key, a.claim_id, a.key))
+        if a.claim_id is not None and conn.execute("SELECT 1 FROM meta.users WHERE key = %s", (a.key,)).fetchone() is None:
+            # A claim that can't be honoured would quietly make a fresh account and deactivate the one meant, so it
+            # stops the start-up instead (the caller's transaction rolls everything back).
+            target = conn.execute("SELECT key FROM meta.users WHERE id = %s", (a.claim_id,)).fetchone()
+            if target is None:
+                raise ValueError(f"{a.key}#{a.claim_id}: there's no account #{a.claim_id}")
+            if target["key"] is not None:
+                raise ValueError(f"{a.key}#{a.claim_id}: account #{a.claim_id} already has the key {target['key']!r}")
+            conn.execute("UPDATE meta.users SET key = %s WHERE id = %s", (a.key, a.claim_id))
         row = conn.execute("SELECT * FROM meta.users WHERE key = %s", (a.key,)).fetchone()
         if row is None:
             conn.execute("INSERT INTO meta.users (key, name, role) VALUES (%s, %s, %s)", (a.key, a.name, a.role))

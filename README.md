@@ -191,7 +191,8 @@ a **Viewer** (`viewer`):
 
 | | Viewer | Member | Lead |
 |---|---|---|---|
-| Look at datasets, fields, Explore, experiments, runs and MLflow; query with the field finder and the SQL console | ✓ | ✓ | ✓ |
+| Look at datasets, fields, Explore, experiments, runs and MLflow; query with the field finder | ✓ | ✓ | ✓ |
+| Query with the SQL console (it reads every table, assessors' work in progress included) | | ✓ | ✓ |
 | Change their own picture | ✓ | ✓ | ✓ |
 | Upload, recompute Explore results, experiment (export a finalized baseline or your own assessment, train) | | ✓ | ✓ |
 | Adjust the experiments they own | | ✓ | ✓ |

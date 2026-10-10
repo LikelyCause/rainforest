@@ -18,7 +18,7 @@ from .db import connection
 MAX_BYTES = 5 * 1024 * 1024
 MAX_PIXELS = 40_000_000
 SIZE = 256
-FORMATS = {"JPEG", "PNG", "WEBP"}
+FORMATS = {"JPEG", "MPO", "PNG", "WEBP"}  # MPO: a phone JPEG with a second image (an HDR gain map); its first is kept
 NAME_RE = re.compile(r"[0-9a-f]{16}\.webp")
 
 

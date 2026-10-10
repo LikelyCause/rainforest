@@ -33,7 +33,8 @@ RAINFOREST_USERS=tanner#2:Tanner:lead;test-member:Test Member:member;test-viewer
 
 - **Enforced in one place:** the API's request check refuses every POST, PUT, PATCH and DELETE from a viewer with
   `403`, except: sign-in and sign-out, Explore analysis requests (served from cache or computed, never with
-  *recompute*), the field finder query, the read-only SQL console, and changing their own picture.
+  *recompute*), the field finder query, and changing their own picture. The SQL console is refused: it reads every
+  table, assessors' work in progress included.
 - **MLflow:** nginx passes the original method to the auth check, so a viewer can browse MLflow but not change it.
 - **What a viewer sees:** what the team shares. Personal assessments and private experiments stay hidden as today.
   While a baseline version is being assessed, a viewer doesn't see its in-progress team decision: the dataset's pages

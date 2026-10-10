@@ -16,6 +16,7 @@ def test_parse_accounts():
 @pytest.mark.parametrize("text,needle", [
     ("a:A:lead;a:B:member", "twice"), ("a:A:lead;x:X:boss", "role"), ("a:A:lead;bad", "key:Name:role"),
     ("Tanner:Tanner:lead", "key"), ("m:M:member", "lead"), ("a#x:A:lead", "id"), ("a::lead", "name"),
+    ("a#2:A:lead;b#2:B:member", "claim"),
 ])
 def test_parse_refuses(text, needle):
     with pytest.raises(ValueError, match=needle):
@@ -112,7 +113,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from .team_helpers import fields, finalized_trees, review_all, save, start, upload  # noqa: E402
 
 VIEWER_MAY = [("POST", r"/api/datasets/\{dataset_id\}/analyses"), ("POST", r"/api/datasets/\{dataset_id\}/fields/query"),
-              ("POST", r"/api/sql"), ("POST", r"/api/auth/pick"), ("POST", r"/api/auth/logout"),
+              ("POST", r"/api/auth/pick"), ("POST", r"/api/auth/logout"),
               ("PUT", r"/api/users/\{user_id\}/avatar"), ("DELETE", r"/api/users/\{user_id\}/avatar")]
 
 
@@ -283,3 +284,57 @@ def test_avatar_paths_cant_escape(app_):
     assert c.get("/api/auth/avatars/1/../../session_secret").status_code in (401, 404)  # never the file
     assert c.get("/api/auth/avatars/1/0123456789abcdef.webp").status_code == 404
     assert c.get("/api/auth/avatars/x/0123456789abcdef.webp").status_code == 404
+
+
+
+@needs_db
+def test_a_claim_that_cant_be_honoured_stops_the_sync(conn):
+    from app.users import sync_accounts
+    with pytest.raises(ValueError, match="#999999"):
+        sync_accounts(conn, parse_accounts("boss#999999:Boss:lead"))
+
+
+@needs_db
+def test_a_claim_on_an_account_with_another_key_stops_the_sync(conn):
+    from app.users import sync_accounts
+    sync_accounts(conn, parse_accounts("boss:Boss:lead"))
+    boss = conn.execute("SELECT id FROM meta.users WHERE key = 'boss'").fetchone()["id"]
+    with pytest.raises(ValueError, match="already"):
+        sync_accounts(conn, parse_accounts(f"boss:Boss:lead;other#{boss}:Other:member"))
+
+
+@needs_db
+def test_viewers_cant_use_the_sql_console(viewer, people):
+    assert viewer.post("/api/sql", json={"sql": "select 1"}).status_code == 403
+
+
+@needs_db
+@pytest.mark.parametrize("uri,code", [
+    ("/mlflow/ajax-api/2.0/mlflow/runs/search", 204), ("/mlflow/ajax-api/2.0/mlflow/logged-models/search?x=1", 204),
+    ("/mlflow/api/2.0/mlflow/experiments/search", 204), ("/mlflow/ajax-api/2.0/mlflow/runs/delete", 403),
+    ("/mlflow/ajax-api/2.0/mlflow/runs/search/../delete", 403),
+])
+def test_viewers_browse_mlflow_but_cant_change_it(viewer, uri, code):
+    r = viewer.get("/api/auth/check", headers={"X-Original-Method": "POST", "X-Original-URI": uri})
+    assert r.status_code == code
+
+
+@needs_db
+def test_phone_jpegs_with_a_second_image_are_accepted(member):
+    a, b = Image.new("RGB", (400, 300), (10, 20, 200)), Image.new("RGB", (100, 75), (0, 0, 0))
+    buf = io.BytesIO()
+    a.save(buf, "MPO", save_all=True, append_images=[b])
+    assert Image.open(io.BytesIO(buf.getvalue())).format == "MPO"
+    assert _put(member, member.user["id"], buf.getvalue(), "phone.jpg", "image/jpeg").status_code == 200
+
+
+@needs_db
+def test_viewer_can_explore_an_export_while_a_version_is_assessed(people, viewer):
+    from .team_helpers import experiment, export
+    lead = people["lead"]
+    ds, rid = finalized_trees(lead)
+    e = export(lead, ds, experiment(lead, ds, rid))
+    start(lead, ds, "tree", [lead], start="baseline", source=rid)
+    r = viewer.post(f"/api/datasets/{ds['id']}/analyses", json={"kind": "map", "params": {"data": f"export:{e['id']}"}})
+    assert r.status_code == 200, r.text
+    assert viewer.get(f"/api/analyses/{r.json()['id']}").status_code == 200

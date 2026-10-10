@@ -45,17 +45,25 @@ UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 # A viewer reads only. These writes are reads in disguise (Explore, the field finder, the read-only SQL console) or
 # their own picture; every other write, including any route added later, is refused.
 VIEWER_ALLOWED = [(m, re.compile(p)) for m, p in (
-    ("POST", r"/api/datasets/\d+/analyses"), ("POST", r"/api/datasets/\d+/fields/query"), ("POST", r"/api/sql"),
+    ("POST", r"/api/datasets/\d+/analyses"), ("POST", r"/api/datasets/\d+/fields/query"),
     ("PUT", r"/api/users/\d+/avatar"), ("DELETE", r"/api/users/\d+/avatar"),
 )]
+# MLflow's UI loads runs, models and traces with POSTs that only search; a viewer may make those and no other.
+MLFLOW_SEARCH = re.compile(r"/mlflow/(ajax-)?api/2\.0/mlflow/"
+                           r"(runs/search|experiments/search|logged-models/search|traces/search|"
+                           r"metrics/get-history-bulk-interval)")
 VIEWER_REFUSED = "Viewers can look but not change anything."
 
 
-def viewer_refused(user: dict, method: str, path: str, original_method: str | None = None) -> bool:
+def viewer_refused(user: dict, method: str, path: str, original_method: str | None = None,
+                   original_uri: str | None = None) -> bool:
     if user.get("role") != "viewer":
         return False
     if path == CHECK_PATH:  # nginx's auth_request for MLflow: judge the request it stands for
-        return (original_method or method).upper() in UNSAFE_METHODS
+        unsafe = (original_method or method).upper() in UNSAFE_METHODS
+        uri = (original_uri or "").split("?")[0]
+        return unsafe and not ((original_method or "").upper() == "POST" and ".." not in uri
+                               and MLFLOW_SEARCH.fullmatch(uri))
     return method in UNSAFE_METHODS and not any(m == method and p.fullmatch(path) for m, p in VIEWER_ALLOWED)
 
 
@@ -211,7 +219,8 @@ async def check_request(request: Request) -> JSONResponse | None:
     user = await run_in_threadpool(users.session_user, *ids) if ids else None
     if user is None:
         return JSONResponse({"detail": "Sign in required."}, 401)
-    if viewer_refused(user, request.method, path, request.headers.get("x-original-method")):
+    if viewer_refused(user, request.method, path, request.headers.get("x-original-method"),
+                      request.headers.get("x-original-uri")):
         return JSONResponse({"detail": VIEWER_REFUSED}, 403)
     request.state.user = user
     return None

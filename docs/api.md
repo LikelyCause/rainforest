@@ -22,8 +22,10 @@ batches.
 
 **Viewers.** A user with the `viewer` role (elsewhere on this page "the viewer" is whoever is asking) gets `403`
 (`"Viewers can look but not change anything."`) on every `POST`, `PUT`, `PATCH` and `DELETE` except
-`POST …/analyses` (never recomputed), `POST …/fields/query`, `POST /api/sql` and their own picture (`PUT` / `DELETE
-/api/users/{id}/avatar`); sign-in and sign-out are open. While the current baseline version is `assessing`, the field
+`POST …/analyses` (never recomputed), `POST …/fields/query` and their own picture (`PUT` / `DELETE
+/api/users/{id}/avatar`); sign-in and sign-out are open. The SQL console (`POST /api/sql`) is refused too: it reads
+every table, assessors' work in progress included. On `/api/auth/check` (MLflow) only MLflow's search requests may be
+`POST`s (`X-Original-URI`). While the current baseline version is `assessing`, the field
 routes, the field finder and Explore give a Viewer the dataset's latest finalized baseline's snapshot, or each field's
 suggestion (the `suggested` source) when it has none, read-only; from `review` on, the team decision like everyone
 else.

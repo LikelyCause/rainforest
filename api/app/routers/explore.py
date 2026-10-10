@@ -99,7 +99,7 @@ def get_analysis(analysis_id: int, user: CurrentUser) -> dict:
                 experiments.get_visible(conn, int(key.split(":")[1]), user)
             except HTTPException:
                 owner = -1  # not visible to this viewer: answer as for a missing analysis
-        if row is not None and user["role"] == "viewer" and key == "team" and \
+        if row is not None and user["role"] == "viewer" and key == "team" and row["params"].get("data", "raw") == "raw" and \
                 recipes.current(conn, row["dataset_id"])["phase"] == "assessing":
             owner = -1  # results from a version's work in progress, which viewers don't see before review
         if row is None or (owner is not None and owner != user["id"]) or (

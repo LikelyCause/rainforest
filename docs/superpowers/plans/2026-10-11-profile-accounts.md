@@ -15,7 +15,7 @@
 - `.env`: `RAINFOREST_USERS=key[#id]:Name:role;…`; key `[a-z0-9-]+`; roles `lead`, `member`, `viewer` (labels Team Lead, Team Member, Viewer).
 - Invalid list (duplicate key, unknown role, malformed entry, no lead) refuses startup with a message; nothing written.
 - Accounts are never deleted; removed keys and keyless accounts are deactivated (sessions ended) when `RAINFOREST_USERS` is set.
-- Viewer writes: `403` except pick/logout, `POST /api/datasets/{id}/analyses` (recompute forced off), `POST /api/datasets/{id}/fields/query`, `POST /api/sql`, own picture `PUT/DELETE /api/users/{id}/avatar`.
+- Viewer writes: `403` except pick/logout, `POST /api/datasets/{id}/analyses` (recompute forced off), `POST /api/datasets/{id}/fields/query`, own picture `PUT/DELETE /api/users/{id}/avatar`.
 - Viewers see an assessing version's decisions only from team review on: before that, the latest finalized baseline of the dataset, else the suggestions.
 - Pictures: JPEG/PNG/WebP, ≤ 5 MB, ≤ 40 MP, centred square 256², WebP q85, `avatars/<id>-<hash16>.webp`, served at `/api/auth/avatars/<id>/<hash16>.webp` with year-long immutable cache, `nosniff`, `default-src 'none'; sandbox`.
 - Self or a lead may change a picture; the picker never uploads.

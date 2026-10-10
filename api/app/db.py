@@ -160,7 +160,11 @@ def bootstrap() -> None:
             conn.execute("SELECT meta.import_orphan_experiments()")
             experiments.backfill_copies(conn)
             if s.auth_mode == "pick" and s.users.strip():
-                done = users.sync_accounts(conn, users.parse_accounts(s.users))
+                try:
+                    done = users.sync_accounts(conn, users.parse_accounts(s.users))
+                except ValueError as exc:
+                    conn.rollback()
+                    raise SystemExit(f"RAINFOREST_USERS: {exc}") from None
                 if any(done.values()):
                     log.info("accounts from RAINFOREST_USERS: %s", done)
             else:
