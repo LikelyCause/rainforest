@@ -105,3 +105,25 @@ def test_single_value_regression_target_is_refused(tmp_path):
     with pytest.raises(ValueError, match="single value"):
         run_export(tmp_path / "d.parquet", [_spec("x", "numeric_continuous")], ["y"], tmp_path / "e", {"seed": 1},
                    lambda *_: None, target_tasks={"y": {"task": "regression", "bins": None}})
+
+
+def test_mlp_predicts_a_large_scale_number(tmp_path):
+    n = 800
+    rng = np.random.default_rng(2)
+    x = rng.normal(size=n)
+    df = pl.DataFrame({"x": x, "z": rng.normal(size=n), "price": 200_000 + 50_000 * x + rng.normal(scale=5_000, size=n)})
+    df.write_parquet(tmp_path / "d.parquet")
+    run_export(tmp_path / "d.parquet", [_spec("x", "numeric_continuous", "neural"), _spec("z", "numeric_continuous", "neural")],
+               ["price"], tmp_path / "e", {"seed": 1}, lambda *_: None, family="neural",
+               target_tasks={"price": {"task": "regression", "bins": None}})
+    report = train(tmp_path / "e", "mlp", cv=None, out_dir=tmp_path / "m")
+    assert report["metrics"]["test"]["price"]["r2"] > 0.9
+
+
+def test_number_links_chain_out_of_fold_on_shuffled_folds():
+    from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+    from sklearn.model_selection import KFold
+    chain = TargetChain(RandomForestClassifier(), RandomForestRegressor(), ["regression", "binary"], [0, 1], cv=5, seed=3)
+    folds = chain._folds("regression")
+    assert isinstance(folds, KFold) and folds.shuffle and folds.n_splits == 5
+    assert chain._folds("binary") == 5  # class links fold as ClassifierChain does

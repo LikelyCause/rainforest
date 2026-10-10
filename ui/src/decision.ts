@@ -114,3 +114,9 @@ export function parseEdges(text: string): number[] | string {
   if (nums.some((n, i) => i > 0 && n <= nums[i - 1])) return "Cut points must be ascending, each different";
   return nums;
 }
+
+/** A typed band count: a whole number from 2 to 20, else null (the API's rule). */
+export function bandCount(text: string): number | null {
+  const k = Number(text);
+  return text.trim() !== "" && Number.isInteger(k) && k >= 2 && k <= 20 ? k : null;
+}

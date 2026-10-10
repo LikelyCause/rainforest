@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type Chan
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import { pendingDraft, queueSave } from "../saveQueue";
-import { defaultTask, NUMERIC, paramProblem, parseEdges, retype, taskLabel, toInput, withEncoding, type ParamRule } from "../decision";
+import { bandCount, defaultTask, NUMERIC, paramProblem, parseEdges, retype, taskLabel, toInput, withEncoding, type ParamRule } from "../decision";
 import { baselineDiff, revertedInput } from "../experiments";
 import type { DecisionInput, Dim, FieldResponse, OptionCatalog, TargetBins, TargetTask } from "../types";
 import type { View } from "../view";
@@ -375,6 +375,8 @@ function BandSettings({ fieldId, bins, readOnly, onChange }: {
 }) {
   const [mode, setMode] = useState<"k" | "edges">("k" in bins ? "k" : "edges");
   const [text, setText] = useState("edges" in bins ? bins.edges.join(", ") : "");
+  // Typed as text, so "12" can pass through "1" on the way.
+  const [kText, setKText] = useState(String("k" in bins ? bins.k : 5));
   const parsed = parseEdges(text);
   const preview = useQuery({
     queryKey: ["bands", fieldId, JSON.stringify(bins)],
@@ -398,8 +400,9 @@ function BandSettings({ fieldId, bins, readOnly, onChange }: {
       {mode === "k" ? (
         <div className="setting-row">
           <label htmlFor="d-bands-k">Bands</label>
-          <input id="d-bands-k" type="number" min={2} max={20} step={1} value={"k" in bins ? bins.k : 5} disabled={readOnly}
-            onChange={(e) => { const k = Number(e.target.value); if (Number.isInteger(k) && k >= 2 && k <= 20) onChange({ k }); }} />
+          <input id="d-bands-k" type="number" min={2} max={20} step={1} value={kText} disabled={readOnly}
+            onChange={(e) => { setKText(e.target.value); const k = bandCount(e.target.value); if (k !== null) onChange({ k }); }}
+            onBlur={() => setKText(String("k" in bins ? bins.k : 5))} />
         </div>
       ) : (
         <div className="setting-row">

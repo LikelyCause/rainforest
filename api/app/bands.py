@@ -13,16 +13,20 @@ def quantile_edges(values: np.ndarray, k: int) -> list[float]:
         return []
     lo = v.min()
     above = v[v > lo]
-    edges = {_readable(float(e), lo) if e > lo else (float(above.min()) if above.size else None)
+    edges = {_readable(float(e), lo, v) if e > lo else (float(above.min()) if above.size else None)
              for e in np.quantile(v, np.arange(1, k) / k)}
     return sorted(e for e in edges if e is not None)
 
 
-def _readable(e: float, lo: float) -> float:
-    """A cut point rounded to 4 significant digits so its label reads well, unless that would put it on or below the
-    minimum (and empty the lowest band)."""
-    r = float(f"{e:.4g}")
-    return r if r > lo else e
+def _readable(e: float, lo: float, v: np.ndarray) -> float:
+    """A cut point rounded to as few significant digits (4 or more) as move almost no rows across it (at most 0.5%):
+    rounding across a cluster of equal values would move them all, and could empty a band."""
+    below = v < e
+    for digits in range(4, 13):
+        r = float(f"{e:.{digits}g}")
+        if r > lo and np.count_nonzero((v < r) != below) <= 0.005 * v.size:
+            return r
+    return e
 
 
 def edges_for(bins: dict, train_values: np.ndarray) -> list[float]:

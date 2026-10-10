@@ -110,3 +110,13 @@ describe("target tasks", () => {
     expect(parseEdges("a")).toMatch(/number/);
   });
 });
+
+describe("band count", () => {
+  it("accepts whole numbers from 2 to 20 only", async () => {
+    const { bandCount } = await import("./decision");
+    expect(bandCount("12")).toBe(12);
+    expect(bandCount("1")).toBeNull();
+    expect(bandCount("21")).toBeNull();
+    expect(bandCount("2.5")).toBeNull();
+  });
+});

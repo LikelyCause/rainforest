@@ -56,3 +56,12 @@ def test_equal_sized_cut_points_are_rounded_for_readable_labels():
 def test_rounding_never_moves_a_cut_onto_the_minimum():
     v = np.array([100.0001] * 50 + [100.0002] * 50)
     assert np.unique(assign(v, quantile_edges(v, 2))).size == 2
+
+
+@pytest.mark.parametrize("cap", [99.99999, 1234.56])
+def test_rounding_never_empties_a_band_at_a_repeated_value(cap):
+    rng = np.random.default_rng(1)
+    v = np.r_[rng.uniform(0, cap, 700), np.full(300, cap)]
+    edges = quantile_edges(v, 5)
+    assert thin_bands(v, edges) == []
+
