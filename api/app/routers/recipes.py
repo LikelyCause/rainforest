@@ -17,8 +17,8 @@ router = APIRouter(prefix="/api", tags=["recipes"])
 def finalized_recipes(_: CurrentUser) -> list[dict]:
     """Every finalized recipe version of every dataset, newest first: what "Start from recipe" offers."""
     with connection() as conn:
-        return conn.execute(
-            """SELECT r.id, r.dataset_id, d.name AS dataset_name, r.version,
+        rows = conn.execute(
+            """SELECT r.id, r.dataset_id, d.name AS dataset_name, r.family, r.version,
                       (SELECT count(*) FROM jsonb_object_keys(r.snapshot -> 'fields')) AS field_count,
                       r.finalized_by, u.name AS finalized_by_name, r.finalized_at
                  FROM meta.recipes r JOIN meta.datasets d ON d.id = r.dataset_id
@@ -26,6 +26,7 @@ def finalized_recipes(_: CurrentUser) -> list[dict]:
                 WHERE r.phase = 'finalized' AND r.snapshot IS NOT NULL
                 ORDER BY r.finalized_at DESC, r.id DESC"""
         ).fetchall()
+    return [{**r, "label": recipes.label(r)} for r in rows]
 
 
 @router.get("/datasets/{dataset_id}/recipes")

@@ -212,3 +212,12 @@ def test_leak_names_follow_the_target_set(people):
     with connection() as conn:
         assert "cc" in leak_names(conn, ds["id"], ["c"])
         assert "cc" not in leak_names(conn, ds["id"], ["y"])
+
+
+def test_finalized_baselines_list_names_their_type(people):
+    lead = people["lead"]
+    ds = upload(lead)
+    start(lead, ds, "neural", [lead])
+    rid = submit_and_finalize(lead, ds)["recipe"]["id"]
+    row = next(r for r in lead.get("/api/recipes").json() if r["id"] == rid)
+    assert row["family"] == "neural" and row["label"] == "Neural baseline v1"
