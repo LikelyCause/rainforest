@@ -37,13 +37,16 @@ class Source:
     - team: the team decision of the baseline in progress (the working tables);
     - assessment: one assessor's assessment of a version (`user_id`);
     - experiment: a team experiment's own copy of its baseline (`experiment`);
-    - baseline: a finalized baseline's snapshot, read-only (`snapshot_of` set).
+    - baseline: a finalized baseline's snapshot, read-only (`snapshot_of` set);
+    - suggested: each field's suggestion for the version's family, read-only (what a Viewer sees of a version being
+      assessed on a dataset with no finalized baseline).
     `denied` is the (status, message) a write gets, or None when the viewer may write."""
     recipe: dict
     user_id: int | None = None
     denied: tuple[int, str] | None = None
     experiment: dict | None = None
     snapshot_of: bool = False
+    suggested: bool = False
 
     @property
     def kind(self) -> str:
@@ -51,6 +54,8 @@ class Source:
             return "assessment"
         if self.experiment is not None:
             return "experiment"
+        if self.suggested:
+            return "suggested"
         return "baseline" if self.snapshot_of else "team"
 
     @property
@@ -70,7 +75,8 @@ class Source:
         """Stable name of the source, as stored with Explore results."""
         return {"assessment": f"assessment:{self.recipe['id']}:{self.user_id}",
                 "experiment": f"experiment:{(self.experiment or {}).get('id')}",
-                "baseline": f"baseline:{self.recipe['id']}", "team": "team"}[self.kind]
+                "baseline": f"baseline:{self.recipe['id']}", "suggested": f"suggested:{self.recipe['id']}",
+                "team": "team"}[self.kind]
 
     def require_write(self) -> None:
         if self.denied:
@@ -94,6 +100,18 @@ class Source:
                       FROM meta.experiment_decisions e JOIN meta.fields f ON f.id = e.field_id
                      WHERE e.experiment_id = {})"""
             ).format(sql.Literal(self.experiment["id"]))
+        if self.kind == "suggested":
+            return sql.SQL(
+                """(SELECT f.id AS field_id, f.dataset_id, coalesce(sg ->> 'action', 'keep') AS action,
+                           coalesce(sg ->> 'semantic_type', f.inferred_type) AS semantic_type,
+                           CASE WHEN sg ->> 'action' = 'target'
+                                THEN meta.default_target_task(coalesce(sg ->> 'semantic_type', f.inferred_type),
+                                                              f.n_unique) END AS target_task,
+                           NULL::jsonb AS target_bins, NULL::text AS notes, false AS reviewed, 'suggested' AS source,
+                           now() AS updated_at
+                      FROM meta.fields f CROSS JOIN LATERAL (SELECT f.suggestion -> {fam} AS sg) s
+                     WHERE f.dataset_id = {ds})"""
+            ).format(fam=sql.Literal(self.family), ds=sql.Literal(self.recipe["dataset_id"]))
         return sql.SQL(
             """(SELECT f.id AS field_id, f.dataset_id, e.value -> 'decision' ->> 'action' AS action,
                        e.value -> 'decision' ->> 'semantic_type' AS semantic_type,
@@ -110,6 +128,18 @@ class Source:
         """A relation shaped like meta.field_settings."""
         if self.kind == "team":
             return sql.SQL("meta.field_settings")
+        if self.kind == "suggested":
+            return sql.SQL(
+                """(SELECT f.id AS field_id, {fam}::text AS family, f.dataset_id, v.imputation, v.impute_value,
+                           coalesce(v.add_missing_indicator, false) AS add_missing_indicator, v.transform, v.scaling,
+                           v.encoding, coalesce(v.params, '{{}}'::jsonb) AS params, 'suggested' AS source,
+                           now() AS updated_at
+                      FROM meta.fields f
+                      CROSS JOIN LATERAL jsonb_to_record(f.suggestion -> {fam}) AS v(
+                          imputation text, impute_value text, add_missing_indicator boolean, transform text,
+                          scaling text, encoding text, params jsonb)
+                     WHERE f.dataset_id = {ds})"""
+            ).format(fam=sql.Literal(self.family), ds=sql.Literal(self.recipe["dataset_id"]))
         if self.kind == "assessment":
             return sql.SQL(
                 """(SELECT s.field_id, s.family, f.dataset_id, s.imputation, s.impute_value, s.add_missing_indicator,
@@ -166,6 +196,8 @@ def source_for(conn, dataset_id: int, user: dict, recipe: dict | None = None, lo
         return _view_source(conn, dataset_id, user, view, lock)
     recipe = recipe or recipes.current(conn, dataset_id, lock)
     name = recipes.label(recipe)
+    if user.get("role") == "viewer" and recipe["phase"] == "assessing":
+        return viewer_source(conn, recipe)
     if recipe["phase"] == "assessing":
         mine = assessor_row(conn, recipe["id"], user["id"])
         if mine is None:
@@ -177,6 +209,18 @@ def source_for(conn, dataset_id: int, user: dict, recipe: dict | None = None, lo
         return Source(recipe, None, None if user["role"] == "lead" else (403, "Only a lead sets the team decision."))
     return Source(recipe, None, (409, f"{name} is finalized; its decisions can't change. Start a new version to "
                                       "change them."))
+
+
+def viewer_source(conn, recipe: dict) -> Source:
+    """What a Viewer reads of a version being assessed: nothing of its work in progress. The dataset's latest finalized
+    baseline when it has one, else each field's suggestion."""
+    denied = (403, "Viewers can look but not change anything.")
+    latest = conn.execute(
+        f"SELECT {recipes.RECIPE_COLS} FROM meta.recipes WHERE dataset_id = %s AND phase = 'finalized' "
+        "ORDER BY finalized_at DESC, id DESC LIMIT 1", (recipe["dataset_id"],)).fetchone()
+    if latest is not None:
+        return Source(latest, snapshot_of=True, denied=denied)
+    return Source(recipe, suggested=True, denied=denied)
 
 
 def _view_source(conn, dataset_id: int, user: dict, view: str, lock: str | None) -> Source:
@@ -219,6 +263,11 @@ def from_key(conn, dataset_id: int, key: str) -> Source:
         if recipe is None or recipe["dataset_id"] != dataset_id:
             raise HTTPException(404, "Baseline not found")
         return Source(recipe, snapshot_of=True)
+    if kind == "suggested":
+        recipe = recipes.get(conn, int(rest))
+        if recipe is None or recipe["dataset_id"] != dataset_id:
+            raise HTTPException(404, "Recipe not found")
+        return Source(recipe, suggested=True)
     if kind == "experiment":
         from . import experiments
         x = experiments.get(conn, int(rest))

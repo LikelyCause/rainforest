@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 from scipy.cluster.hierarchy import leaves_list, linkage, optimal_leaf_ordering
 from scipy.spatial.distance import squareform
 
-from .. import experiments, jobs
+from .. import experiments, jobs, recipes
 from psycopg import sql
 
 from ..analysis.runner import ROW_COLS, data_version, find_or_create, public, run_analysis
@@ -66,6 +66,8 @@ def decision_source(conn, dataset_id: int, user: dict, kept: bool, view: str | N
     if view:
         return source_for(conn, dataset_id, user, view=view)
     src = source_for(conn, dataset_id, user)
+    if src.kind in ("baseline", "suggested"):  # a Viewer while a version is assessed
+        return src
     return src if kept and src.personal else Source(src.recipe)
 
 
@@ -79,7 +81,8 @@ def request_analysis(dataset_id: int, req: AnalysisRequest, user: CurrentUser) -
             # Part of the cache key, so results computed from different people's choices never mix.
             params["decisions"] = decision_source(conn, dataset_id, user, params["kept"], req.view).key
         _validate_source(conn, dataset_id, params, user)
-        row, created = find_or_create(conn, dataset_id, req.kind, params, req.recompute, user["id"])
+        recompute = req.recompute and user["role"] != "viewer"
+        row, created = find_or_create(conn, dataset_id, req.kind, params, recompute, user["id"])
     if created:
         jobs.submit(run_analysis, row["id"])
     return row
@@ -96,6 +99,9 @@ def get_analysis(analysis_id: int, user: CurrentUser) -> dict:
                 experiments.get_visible(conn, int(key.split(":")[1]), user)
             except HTTPException:
                 owner = -1  # not visible to this viewer: answer as for a missing analysis
+        if row is not None and user["role"] == "viewer" and key == "team" and \
+                recipes.current(conn, row["dataset_id"])["phase"] == "assessing":
+            owner = -1  # results from a version's work in progress, which viewers don't see before review
         if row is None or (owner is not None and owner != user["id"]) or (
                 row["params"].get("data", "raw").startswith("export:")
                 and not _export_visible(conn, row["params"]["data"], user)):

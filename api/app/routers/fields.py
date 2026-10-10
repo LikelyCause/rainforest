@@ -92,7 +92,7 @@ def get_field(field_id: int, user: CurrentUser, family: str | None = None, view:
         src = source_for(conn, f["dataset_id"], user, view=view)
         fam = _family(src, family)
         decision = _merged(conn, field_id, fam, src)
-        locked = None if src.kind in ("experiment", "baseline") else recipes.locked_problem(conn, src.recipe, [field_id])
+        locked = None if src.kind in ("experiment", "baseline", "suggested") else recipes.locked_problem(conn, src.recipe, [field_id])
         if src.team:
             targets = conn.execute(
                 """SELECT other_field_id AS field_id, other_field_name AS name, method, value, strength
@@ -156,7 +156,12 @@ def band_preview(field_id: int, k: int | None = Query(None, ge=2, le=20), edges:
 
 
 @router.get("/fields/{field_id}/history")
-def history(field_id: int) -> list[dict]:
+def history(field_id: int, user: CurrentUser) -> list[dict]:
+    f = _field(field_id)
+    if user["role"] == "viewer":
+        with connection() as conn:
+            if recipes.current(conn, f["dataset_id"])["phase"] == "assessing":
+                return []  # a version's work in progress, which viewers see only from team review
     return fetch_all(
         """SELECT h.changed_at, h.family, h.previous, h.current, h.batch_id, h.user_id, u.name AS user_name
              FROM meta.decision_history h LEFT JOIN meta.users u ON u.id = h.user_id
@@ -297,7 +302,7 @@ def bulk_decisions(dataset_id: int, body: BulkDecisionIn, user: CurrentUser, vie
         for srow in conn.execute(sql.SQL("SELECT * FROM {} s WHERE field_id = ANY(%s)").format(src.settings()),
                                  (ids,)).fetchall():
             settings.setdefault(srow["field_id"], {})[srow["family"]] = srow
-        if src.kind in ("experiment", "baseline"):
+        if src.kind in ("experiment", "baseline", "suggested"):
             # An experiment's copy holds its baseline's model type only; other types' suggestions don't apply.
             rows = [{**r, "suggestion": {src.family: (r["suggestion"] or {}).get(src.family)}
                      if (r["suggestion"] or {}).get(src.family) else {}} for r in rows]

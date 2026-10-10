@@ -502,7 +502,7 @@ def list_fields(dataset_id: int, user: CurrentUser, view: str | None = None) -> 
                         WHERE f.dataset_id = %s ORDER BY f.ordinal""").format(src.decisions()),
             (open_ is None, open_ or [], dataset_id),
         ).fetchall()
-        if src.kind in ("experiment", "baseline"):
+        if src.kind in ("experiment", "baseline", "suggested"):
             leaks = leak_names(conn, dataset_id, view_targets(conn, src))
             rows = [{**r, "is_target": r["action"] == "target", "leakage": r["name"] in leaks} for r in rows]
         return rows
