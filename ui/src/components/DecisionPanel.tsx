@@ -178,10 +178,9 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
                 : `More than ${catalog.target_rule.max_levels} distinct values`)
               : "Only numeric fields can be predicted as a number or as bands");
             return (
-              <div className={`setting${task !== fallback ? " edited" : ""}`}>
-                <div className="setting-row">
-                  <span>Predict as</span>
-                  <div className="segmented" role="radiogroup" aria-label="Predict as">
+              <div className={`setting predict-as${task !== fallback ? " edited" : ""}`}>
+                <span className="setting-label">Predict as</span>
+                <div className="segmented full" role="radiogroup" aria-label="Predict as">
                     {(["classes", "regression", "bins"] as const).map((t) => (
                       <button key={t} type="button" role="radio" aria-checked={task === t} className={task === t ? "on" : ""}
                         disabled={!allowedTask(t)} title={hint(t)}
@@ -189,7 +188,6 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
                         {taskLabel(t)}
                       </button>
                     ))}
-                  </div>
                 </div>
                 {task !== fallback && fallback && <div className="suggested">default for this type: {taskLabel(fallback).toLowerCase()}</div>}
                 {task === "bins" && (
@@ -391,7 +389,7 @@ function BandSettings({ fieldId, bins, readOnly, onChange }: {
   };
   return (
     <div className="stack band-settings" style={{ gap: 6 }}>
-      <div className="segmented" role="radiogroup" aria-label="Bands">
+      <div className="segmented full soft" role="radiogroup" aria-label="Bands">
         {(["k", "edges"] as const).map((m) => (
           <button key={m} type="button" role="radio" aria-checked={mode === m} className={mode === m ? "on" : ""} disabled={readOnly}
             onClick={() => pick(m)}>{m === "k" ? "Equal-sized" : "Cut points"}</button>

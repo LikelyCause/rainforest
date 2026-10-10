@@ -485,7 +485,7 @@ export function ExperimentWorkspace({ ds, x, canAdd }: { ds: Dataset; x: Experim
       <section className="card stack">
         <div className="card-head">
           <h2>Model runs</h2>
-          <span className="muted small-text">test split · ★ best on the validation split within an export · click a run for precision, recall, F1 and confusion matrices</span>
+          <span className="muted small-text">test split · ★ best on the validation split within an export · click a run for its full results</span>
         </div>
         <ErrorAlert error={runs.error} />
         {groups.length ? (
