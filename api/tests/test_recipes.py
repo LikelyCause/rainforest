@@ -136,7 +136,7 @@ def test_a_new_version_reopens_only_the_chosen_fields(people):
         detail = a.get(f"/api/fields/{ids['z']}").json()
         assert "carried over" in detail["locked"] and a.get(f"/api/fields/{ids['x']}").json()["locked"] is None
         r = _save(a, ids["z"], action="drop")
-        assert r.status_code == 409 and "z: carried over into recipe v2" in r.json()["detail"]
+        assert r.status_code == 409 and "z: carried over into trees baseline v2" in r.json()["detail"]
         r = a.post(f"/api/datasets/{ds['id']}/assessment/submit")
         assert r.status_code == 409 and "2 left" in r.text
         r = a.post(f"/api/datasets/{ds['id']}/decisions/bulk", json={"filters": [], "action": "drop", "dry_run": True})
@@ -160,14 +160,15 @@ def test_a_new_version_reopens_only_the_chosen_fields(people):
         s1, s2 = _snapshot(v1["id"]), _snapshot(v2["id"])
         assert s1["fields"]["x"]["decision"]["action"] == "keep", "v1 is untouched"
         assert s2["fields"]["x"]["decision"]["action"] == "drop" and s2["fields"]["z"] == s1["fields"]["z"]
-        d = c.get(f"/api/datasets/{ds['id']}/recipes/diff?a=1&b=2").json()
+        d = c.get(f"/api/datasets/{ds['id']}/recipes/diff?a={v1['id']}&b={v2['id']}").json()
         assert [x["name"] for x in d["fields"]] == ["x"]
         assert {"key": "action", "family": None, "before": "keep", "after": "drop"} in d["fields"][0]["changes"]
-        assert c.get(f"/api/datasets/{ds['id']}/recipes/diff?a=1&b=9").status_code == 404
+        assert c.get(f"/api/datasets/{ds['id']}/recipes/diff?a={v1['id']}&b=999999999").status_code == 404
 
         versions = c.get(f"/api/datasets/{ds['id']}/recipes").json()
-        assert [(v["version"], v["phase"], v["reopened"]) for v in versions] == [(2, "finalized", 2),
-                                                                                (1, "finalized", None)]
+        assert [(v["family"], v["version"], v["phase"], v["reopened"]) for v in versions] == [
+            ("tree", 2, "finalized", 2), ("tree", 1, "finalized", None)]
+        assert versions[0]["label"] == "Trees baseline v2"
         assert versions[0]["created_by_name"] == lead.user["name"] and versions[0]["finalized_at"]
         assert versions[0]["parent_version"] == 1
     finally:
@@ -189,7 +190,8 @@ def test_a_new_version_with_nothing_reopened_is_edited_directly(people):
         hist = lead.get(f"/api/fields/{z}/history").json()
         assert hist[0]["user_id"] == lead.user["id"], "direct edits are in the history"
         assert lead.post(f"/api/datasets/{ds['id']}/finalize", json={}).json()["recipe"]["version"] == 2
-        d = lead.get(f"/api/datasets/{ds['id']}/recipes/diff?a=1&b=2").json()
+        v = {r["version"]: r["id"] for r in lead.get(f"/api/datasets/{ds['id']}/recipes").json()}
+        d = lead.get(f"/api/datasets/{ds['id']}/recipes/diff?a={v[1]}&b={v[2]}").json()
         assert d["fields"][0]["changes"] == [{"key": "imputation", "family": "tree", "before": "none",
                                               "after": "mean"}]
     finally:
@@ -207,14 +209,15 @@ def test_versions_and_diffs_show_no_assessment_while_assessing(people):
         _assign(lead, ds, a, b)
         assert _save(b, x, action="drop", imputation="constant", impute_value="13579.2468", notes=secret
                      ).status_code == 200
+        v = {r["version"]: r["id"] for r in lead.get(f"/api/datasets/{ds['id']}/recipes").json()}
         for who in (a, lead, c):
-            for path in (f"/api/datasets/{ds['id']}/recipes", f"/api/datasets/{ds['id']}/recipes/diff?a=1&b=2",
-                         f"/api/datasets/{ds['id']}/recipes/diff?a=2&b=1", "/api/recipes",
+            for path in (f"/api/datasets/{ds['id']}/recipes", f"/api/datasets/{ds['id']}/recipes/diff?a={v[1]}&b={v[2]}",
+                         f"/api/datasets/{ds['id']}/recipes/diff?a={v[2]}&b={v[1]}", "/api/recipes",
                          f"/api/datasets/{ds['id']}/team", f"/api/datasets/{ds['id']}/export-preview"):
                 r = who.get(path)
                 assert r.status_code == 200, (path, r.text)
                 assert secret not in r.text and "13579.2468" not in r.text, f"{path} leaked to {who.user['name']}"
-            assert who.get(f"/api/datasets/{ds['id']}/recipes/diff?a=1&b=2").json()["fields"] == []
+            assert who.get(f"/api/datasets/{ds['id']}/recipes/diff?a={v[1]}&b={v[2]}").json()["fields"] == []
     finally:
         lead.delete(f"/api/datasets/{ds['id']}")
 

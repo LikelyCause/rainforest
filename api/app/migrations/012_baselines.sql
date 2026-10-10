@@ -3,10 +3,12 @@
 ALTER TABLE meta.recipes ADD COLUMN IF NOT EXISTS family TEXT NOT NULL DEFAULT 'tree';
 ALTER TABLE meta.recipes DROP CONSTRAINT IF EXISTS recipes_family_check;
 ALTER TABLE meta.recipes ADD CONSTRAINT recipes_family_check CHECK (family IN ('tree', 'linear', 'neural'));
--- Finalized rows are frozen by a trigger; their family is set once here, from the dataset's model family.
+-- Recipes from before baselines get their dataset's model family (datasets that already have a baseline of another
+-- family are past that). Finalized rows are frozen by a trigger, so it is set aside for this one update.
 ALTER TABLE meta.recipes DISABLE TRIGGER recipes_frozen;
 UPDATE meta.recipes r SET family = d.model_family FROM meta.datasets d
- WHERE d.id = r.dataset_id AND r.family <> d.model_family;
+ WHERE d.id = r.dataset_id AND r.family <> d.model_family
+   AND NOT EXISTS (SELECT 1 FROM meta.recipes o WHERE o.dataset_id = r.dataset_id AND o.family <> 'tree');
 ALTER TABLE meta.recipes ENABLE TRIGGER recipes_frozen;
 ALTER TABLE meta.recipes DROP CONSTRAINT IF EXISTS recipes_dataset_id_version_key;
 CREATE UNIQUE INDEX IF NOT EXISTS recipes_family_version_idx ON meta.recipes (dataset_id, family, version);

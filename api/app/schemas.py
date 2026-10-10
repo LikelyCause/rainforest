@@ -154,7 +154,18 @@ class CommentIn(BaseModel):
     body: str = Field(min_length=1, max_length=4000, pattern=r"\S")
 
 
+class StartBaselineIn(BaseModel):
+    family: str
+    start: Literal["scratch", "baseline", "recipe"] = Field(
+        "scratch", description="scratch: the suggestions; baseline: a finalized baseline of this dataset; recipe: a "
+                               "finalized baseline of another dataset (a new dataset's first baseline only)")
+    source_recipe_id: int | None = None
+    targets: list[str] = Field(default_factory=list, max_length=50)
+    assessors: list[int] = Field(default_factory=list, max_length=200)
+
+
 class NewVersionIn(BaseModel):
+    family: str | None = Field(None, description="The baseline's model family; default: the current baseline's")
     reopen: list[int] = Field(default_factory=list, max_length=5000,
                               description="Fields to assess again; none means the lead edits the decisions directly")
 

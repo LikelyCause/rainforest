@@ -332,8 +332,7 @@ def test_review_adopts_agreement_queues_disagreement_and_finalize_freezes(people
         assert snap["target_order"] == ["y"] and set(snap["fields"]) == {"x", "z", "w", "c", "y"}
         assert snap["fields"]["x"]["decision"] == {"action": "drop", "semantic_type": "numeric_continuous",
                                                    "notes": None}
-        assert set(snap["fields"]["z"]["settings"]) == {"tree", "linear", "neural"}
-        assert snap["fields"]["z"]["settings"]["linear"]["imputation"] == "mean"
+        assert set(snap["fields"]["z"]["settings"]) == {"tree"}  # a baseline keeps its own model type's settings
         assert snap["fields"]["x"]["inferred_type"] == "numeric_continuous"
         assert snap["fields"]["x"]["null_pct"] > 0.1 and snap["fields"]["c"]["n_unique"] == 3
         assert rec["schema_fingerprint"] and rec["finalized_by"] == lead.user["id"]
@@ -353,7 +352,7 @@ def test_team_exports_wait_for_a_finalized_recipe(people):
     ds = _upload(lead)
     try:
         r = lead.post(f"/api/datasets/{ds['id']}/exports", json={})
-        assert r.status_code == 409 and "Recipe v1 is being assessed" in r.json()["detail"]
+        assert r.status_code == 409 and "Trees baseline v1 is being assessed" in r.json()["detail"]
         pv = lead.get(f"/api/datasets/{ds['id']}/export-preview").json()
         assert pv["recipe"]["phase"] == "assessing" and "finalizes" in pv["blocking"][0]
         assert lead.post(f"/api/datasets/{ds['id']}/exports", json={"source": "assessment"}).status_code == 422
@@ -451,7 +450,8 @@ READS = {
     "review queue": lambda c, d, f, x: c.get(f"/api/datasets/{d}/review"),
     "field review": lambda c, d, f, x: c.get(f"/api/fields/{f['x']['id']}/review"),
     "recipe versions": lambda c, d, f, x: c.get(f"/api/datasets/{d}/recipes"),
-    "recipe diff": lambda c, d, f, x: c.get(f"/api/datasets/{d}/recipes/diff?a=1&b=1"),
+    "recipe diff": lambda c, d, f, x: c.get(
+        f"/api/datasets/{d}/recipes/diff?a={x['ds']['recipe_id']}&b={x['ds']['recipe_id']}"),
     "finalized recipes": lambda c, d, f, x: c.get("/api/recipes"),
     "explore correlations kept": lambda c, d, f, x: c.get(f"/api/datasets/{d}/explore/correlations?kept=true"),
     "explore correlations": lambda c, d, f, x: c.get(f"/api/datasets/{d}/explore/correlations"),
