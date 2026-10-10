@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { FieldListItem } from "../types";
 import { TYPE_SHORT } from "../format";
 import { attentionOf } from "../signals";
+import type { View } from "../view";
 import { useFailedSaves } from "../saveQueue";
 import { Empty, StatusGlyph, glyphFor } from "./ui";
 
@@ -10,6 +11,8 @@ export type StatusFilter = "todo" | "kept" | "dropped" | "all";
 export interface WorkingSet { key: string; label: string; ids: number[] }
 
 interface Props {
+  /** The decision source the list shows (view.ts), for its failed-save marks. */
+  view?: View;
   fields: FieldListItem[];
   visible: FieldListItem[];
   settled: Set<number>;
@@ -48,7 +51,7 @@ export function FieldList(p: Props) {
   const listRef = useRef<HTMLDivElement>(null);
   const activeEl = useRef<HTMLDivElement>(null);
   const [typesOpen, setTypesOpen] = useState(false);
-  const failed = useFailedSaves();
+  const failed = useFailedSaves(p.view ?? null);
   useEffect(() => {
     activeEl.current?.scrollIntoView({ block: "nearest" });
   }, [activeId, visible.length]);

@@ -167,6 +167,8 @@ export interface FieldResponse {
   target_associations: TargetAssoc[];
   /** Why the field can't change in this version (carried over), or null. */
   locked?: string | null;
+  /** In an experiment: the baseline's own decision and settings for this field. */
+  baseline?: { action: Action; semantic_type: string; notes: string | null; settings: Omit<SettingsRow, "source"> | null } | null;
 }
 
 export type CorrMethod = "spearman" | "cramers_v" | "correlation_ratio";
@@ -265,11 +267,26 @@ export interface Experiment {
   mlflow_experiment_id?: string | null;
   /** Its best finished run on the validation split. */
   best?: { metric: string; value: number; run_id: number; target: string } | null;
+  /** The experiment's targets in chain order (team experiments). */
+  target_order?: string[] | null;
+  /** List rows and detail: fields that differ from the baseline, and whether the targets do. */
+  adjusted_count?: number;
+  targets_changed?: boolean;
+  /** Whether the viewer may adjust its fields (its owner, on an experiment they made). */
+  can_adjust?: boolean;
+}
+
+export interface Adjustments {
+  fields: { name: string; change: "changed" | "added" | "removed"; changes: DiffChange[] }[];
+  targets: { before: string[]; after: string[] } | null;
+  count: number;
+  targets_changed: boolean;
 }
 
 export interface ExperimentDetail extends Experiment {
   exports: ExportJob[];
   runs: ModelRun[];
+  adjustments: Adjustments;
 }
 
 export interface ExportJob {

@@ -55,7 +55,7 @@ export function reuseGroups(s: ReuseSummary): {
   };
 }
 
-const SETTING_LABEL: Record<string, string> = {
+export const SETTING_LABEL: Record<string, string> = {
   action: "Decision", semantic_type: "Type", notes: "Notes", imputation: "Missing values", impute_value: "Fill value",
   add_missing_indicator: "Missing flag", transform: "Transform", scaling: "Scaling", encoding: "Encoding",
   params: "Encoder parameters",

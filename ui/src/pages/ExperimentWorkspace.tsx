@@ -404,7 +404,8 @@ function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: 
       <thead>
         <tr className="group-head">
           <td colSpan={6 + targets.length * 2}>
-            Export #{e.id} · {e.recipe_version != null ? baselineLabel(e.recipe_family ?? e.model_family, e.recipe_version, true) : familyShort(e.model_family)}{sc ? ` · ${fmtInt(sc.train)} / ${fmtInt(sc.valid)} / ${fmtInt(sc.test)}` : ""}
+            Export #{e.id} · {e.recipe_version != null ? baselineLabel(e.recipe_family ?? e.model_family, e.recipe_version, true) : familyShort(e.model_family)}
+            {adjustedNote(e)}{sc ? ` · ${fmtInt(sc.train)} / ${fmtInt(sc.valid)} / ${fmtInt(sc.test)}` : ""}
           </td>
         </tr>
         <tr>
@@ -495,4 +496,11 @@ export function ExperimentWorkspace({ ds, x, canAdd }: { ds: Dataset; x: Experim
       </section>
     </>
   );
+}
+
+/** " · 3 fields adjusted · targets changed", from what the export recorded. */
+function adjustedNote(e: ExportJob): string {
+  const a = (e.config as { adjustments?: { count?: number; targets_changed?: boolean } } | null)?.adjustments;
+  if (!a) return "";
+  return `${a.count ? ` · ${a.count} field${a.count === 1 ? "" : "s"} adjusted` : ""}${a.targets_changed ? " · targets changed" : ""}`;
 }

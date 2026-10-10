@@ -18,6 +18,7 @@ import { DatasetLayout } from "./components/DatasetLayout";
 import { ErrorAlert, ReviewMeter } from "./components/ui";
 import { baselineLabel, familyShort, roleLabel } from "./format";
 import { ToastRegion, showError } from "./toast";
+import { useView, withView } from "./view";
 import type { Dataset, ExportJob, ModelRun } from "./types";
 
 /** The baseline the dataset is working on (or last worked), linking to all of them. Replaces choosing a model type:
@@ -37,8 +38,9 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
   const onReview = useMatch("/d/:datasetId/review/*");
   const onExperiments = useMatch("/d/:datasetId/experiments/*");
   const onTeam = useMatch("/d/:datasetId/team");
-  const access = useAccess(ds);
-  const fields = useFields(ds.id);
+  const view = useView();
+  const access = useAccess(ds, view);
+  const fields = useFields(ds.id, true, view);
   const exports = useQuery({ queryKey: ["exports", ds.id], queryFn: () => api.exports(ds.id) });
   const runs = useQuery({ queryKey: ["runs", ds.id], queryFn: () => api.runs(ds.id) });
   const all = fields.data ?? [];
@@ -48,7 +50,7 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
   const targets = reviewed.filter((f) => f.action === "target").length;
   const running = [...(exports.data ?? []), ...(runs.data ?? [])]
     .filter((j: ExportJob | ModelRun) => j.status === "pending" || j.status === "running").length;
-  const nextTodo = access.canEdit ? all.find((f) => !f.reviewed) : undefined;
+  const nextTodo = access.canEdit && !view ? all.find((f) => !f.reviewed) : undefined;
   const step = ({ isActive }: { isActive: boolean }) => `step${isActive ? " active" : ""}`;
 
   // U jumps back into review from Bulk edit, Explore and Experiments, matching its meaning on the Review page.
@@ -66,11 +68,11 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
   return (
     <>
       <nav className="steps" aria-label="Workflow">
-        <NavLink to={`/d/${ds.id}/review`} className={step} title={`${kept} kept · ${dropped} dropped · ${targets} targets · ${all.length - reviewed.length} to do`}>
+        <NavLink to={withView(`/d/${ds.id}/review`, view)} className={step} title={`${kept} kept · ${dropped} dropped · ${targets} targets · ${all.length - reviewed.length} to do`}>
           <span><span className="n">1</span>Review<span className="count num">{reviewed.length}/{all.length}</span></span>
           <ReviewMeter kept={kept} dropped={dropped} targets={targets} total={all.length} />
         </NavLink>
-        <NavLink to={`/d/${ds.id}/bulk`} className={step}><span>Bulk edit</span></NavLink>
+        <NavLink to={withView(`/d/${ds.id}/bulk`, view)} className={step}><span>Bulk edit</span></NavLink>
         <NavLink to={`/d/${ds.id}/explore`} className={step}><span>Explore</span></NavLink>
         <NavLink to={`/d/${ds.id}/team`} className={step} title="Assessors, team review and finalizing">
           <span>Team <PhaseBadge phase={ds.phase} /></span>
@@ -81,7 +83,7 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
       </nav>
       <div className="spacer" />
       <BaselineChip ds={ds} />
-      {!onReview && all.length > 0 && (nextTodo ? (
+      {!onReview && !view && all.length > 0 && (nextTodo ? (
         <Link className="btn" to={`/d/${ds.id}/review/${nextTodo.id}`}>Next unreviewed › <kbd>U</kbd></Link>
       ) : ds.phase === "finalized" ? !onExperiments && (
         <Link className="btn" to={`/d/${ds.id}/experiments`} style={{ background: "var(--good)", borderColor: "var(--good)", color: "#fff" }}>All reviewed → Experiments</Link>

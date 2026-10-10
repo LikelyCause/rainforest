@@ -1,4 +1,5 @@
 import type { StartBaselineForm } from "./baselines";
+import { type View, viewQuery } from "./view";
 import type {
   BaselineLine, FamilyKey,
   Analysis, AnalysisKind, AnalysisParams, CorrMatrix, BulkRequest, BulkResult, Correlation, Dataset, DecisionInput, Decision, ExportJob, ExportPreview, FieldFilter,
@@ -82,18 +83,18 @@ export const api = {
   createSample: (data: { rows: number; fields: number; seed: number; target_kind: string }) =>
     request<Dataset>("/api/datasets/sample", json("POST", data)),
   sampleLimits: () => request<{ max_cells: number }>("/api/datasets/sample/limits"),
-  fields: (id: number) => request<FieldListItem[]>(`/api/datasets/${id}/fields`),
-  field: (fieldId: number, family: string) => request<FieldResponse>(`/api/fields/${fieldId}?family=${family}`),
+  fields: (id: number, view: View = null) => request<FieldListItem[]>(`/api/datasets/${id}/fields${viewQuery(view)}`),
+  field: (fieldId: number, view: View = null) => request<FieldResponse>(`/api/fields/${fieldId}${viewQuery(view)}`),
   correlations: (fieldId: number, limit = 20) =>
     request<Correlation[]>(`/api/fields/${fieldId}/correlations?limit=${limit}`),
-  saveDecision: (fieldId: number, d: DecisionInput & { family: string }) =>
-    request<Decision>(`/api/fields/${fieldId}/decision`, json("PUT", d)),
-  bulk: (datasetId: number, data: BulkRequest) =>
-    request<BulkResult>(`/api/datasets/${datasetId}/decisions/bulk`, json("POST", data)),
-  bulkUndo: (datasetId: number, batchId: string) =>
-    request<{ restored: number }>(`/api/datasets/${datasetId}/decisions/bulk/${batchId}/undo`, { method: "POST" }),
-  queryFields: (datasetId: number, data: { filters: FieldFilter[]; order_by: string; descending: boolean; limit?: number }) =>
-    request<Record<string, unknown>[]>(`/api/datasets/${datasetId}/fields/query`, json("POST", data)),
+  saveDecision: (fieldId: number, d: DecisionInput, view: View = null) =>
+    request<Decision>(`/api/fields/${fieldId}/decision${viewQuery(view)}`, json("PUT", d)),
+  bulk: (datasetId: number, data: BulkRequest, view: View = null) =>
+    request<BulkResult>(`/api/datasets/${datasetId}/decisions/bulk${viewQuery(view)}`, json("POST", data)),
+  bulkUndo: (datasetId: number, batchId: string, view: View = null) =>
+    request<{ restored: number }>(`/api/datasets/${datasetId}/decisions/bulk/${batchId}/undo${viewQuery(view)}`, { method: "POST" }),
+  queryFields: (datasetId: number, data: { filters: FieldFilter[]; order_by: string; descending: boolean; limit?: number }, view: View = null) =>
+    request<Record<string, unknown>[]>(`/api/datasets/${datasetId}/fields/query${viewQuery(view)}`, json("POST", data)),
   sql: (sql: string) => request<SqlResult>("/api/sql", json("POST", { sql })),
   sqlExamples: () => request<{ title: string; sql: string }[]>("/api/sql/examples"),
   exportPreview: (id: number, family: string, recipeId?: number | null, experimentId?: number | null) =>
@@ -112,6 +113,8 @@ export const api = {
   experiment: (id: number) => request<ExperimentDetail>(`/api/experiments/${id}`),
   createExperiment: (datasetId: number, data: { name: string; source: string; notes?: string | null }) =>
     request<Experiment>(`/api/datasets/${datasetId}/experiments`, json("POST", data)),
+  revertAdjustments: (id: number, fieldIds: number[] | null) =>
+    request<ExperimentDetail>(`/api/experiments/${id}/adjustments/revert`, json("POST", { field_ids: fieldIds })),
   patchExperiment: (id: number, data: { name?: string; notes?: string | null; archived?: boolean }) =>
     request<Experiment>(`/api/experiments/${id}`, json("PATCH", data)),
   createAnalysis: (datasetId: number, data: { kind: AnalysisKind; params: AnalysisParams; recompute?: boolean }) =>

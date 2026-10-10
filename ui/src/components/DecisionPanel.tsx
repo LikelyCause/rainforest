@@ -1,7 +1,9 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ChangeEvent } from "react";
 import { pendingDraft, queueSave } from "../saveQueue";
 import { NUMERIC, paramProblem, retype, toInput, withEncoding, type ParamRule } from "../decision";
+import { baselineDiff, revertedInput } from "../experiments";
 import type { DecisionInput, Dim, FieldResponse, OptionCatalog } from "../types";
+import type { View } from "../view";
 
 const DIMS: Dim[] = ["imputation", "transform", "scaling", "encoding"];
 const DIM_LABEL: Record<Dim, string> = { imputation: "Missing values", transform: "Transform", scaling: "Scaling", encoding: "Encoding" };
@@ -32,6 +34,8 @@ interface Props {
   readOnly?: string | null;
   /** Whose decision this is, when it isn't simply the team's ("Your assessment"). */
   owner?: string;
+  /** The decision source (see view.ts); null for the baseline in progress. */
+  view?: View;
 }
 
 function retypeWarning(type: string, data: FieldResponse): string | null {
@@ -48,13 +52,13 @@ function retypeWarning(type: string, data: FieldResponse): string | null {
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
 export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function DecisionPanel(
-  { data, catalog, familyLabel, typing, onConfirmed, onShowShortcuts, readOnly, owner }, ref,
+  { data, catalog, familyLabel, typing, onConfirmed, onShowShortcuts, readOnly, owner, view = null }, ref,
 ) {
   const f = data.field;
   const sugg = f.suggestion;
   const family = data.family;
   const server = toInput(data.decision, family);
-  const [draft, setDraft] = useState<DecisionInput>(() => pendingDraft(f.id) ?? server);
+  const [draft, setDraft] = useState<DecisionInput>(() => pendingDraft(f.id, view) ?? server);
   const draftRef = useRef(draft);
   const before = useRef(server);
   const noteRef = useRef<HTMLTextAreaElement>(null);
@@ -64,7 +68,7 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
     if (readOnly) return;
     draftRef.current = next;
     setDraft(next);
-    void queueSave(f.id, f.dataset_id, f.name, next, delay);
+    void queueSave(f.id, f.dataset_id, f.name, next, delay, view);
   };
   const update = (patch: Partial<DecisionInput>, delay?: number) => commit({ ...draftRef.current, ...patch }, delay);
 
@@ -231,6 +235,9 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
             </div>
           )}
 
+          {data.baseline !== undefined && <BaselineLine draft={draft} data={data} readOnly={Boolean(readOnly)}
+            onRevert={() => data.baseline && commit(revertedInput(draftRef.current, data.baseline), 0)} />}
+
           {sugg.reasons.length > 0 && (
             <div className="why">
               <h3>Why these suggestions</h3>
@@ -308,4 +315,22 @@ function ParamInput({ id, title, step, value, rule, onChange }: {
 function Reason({ text }: { text: string }) {
   const m = /^([A-Z][\w /-]{1,24}): (.*)$/.exec(text);
   return m ? <><b>{m[1]}</b>: {m[2]}</> : <>{text}</>;
+}
+
+/** In an experiment: whether this field differs from its baseline, and a way back. */
+function BaselineLine({ draft, data, readOnly, onRevert }: {
+  draft: DecisionInput; data: FieldResponse; readOnly: boolean; onRevert: () => void;
+}) {
+  if (!data.baseline) return <div className="baseline-line small-text muted">Not in the baseline.</div>;
+  const changed = baselineDiff(draft, data.baseline);
+  return (
+    <div className={`baseline-line small-text${changed.length ? " changed" : ""}`}>
+      {changed.length === 0 ? <span className="muted">Same as the baseline</span> : (
+        <>
+          <span className="grow">Changed from the baseline: <b>{changed.join(", ")}</b></span>
+          {!readOnly && <button type="button" className="link" onClick={onRevert}>Revert to baseline</button>}
+        </>
+      )}
+    </div>
+  );
 }

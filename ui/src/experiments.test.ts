@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addBlocked, canEdit, filterExperiments, mlflowExperimentUrl, privacyNote, sourceLabel, sourceOptions } from "./experiments";
+import { addBlocked, baselineDiff, canEdit, filterExperiments, mlflowExperimentUrl, privacyNote, revertedInput, sourceLabel, sourceOptions } from "./experiments";
 import type { Experiment } from "./types";
 
 const me = { id: 2, role: "member" as const };
@@ -92,5 +92,21 @@ describe("mlflowExperimentUrl", () => {
     const url = mlflowExperimentUrl("7", 4)!;
     expect(url.startsWith("/mlflow/#/experiments/7?searchFilter=")).toBe(true);
     expect(decodeURIComponent(url.split("=").slice(1).join("="))).toBe("tags.`rainforest.experiment_id` = '4'");
+  });
+});
+
+describe("baseline comparison", () => {
+  const base = { action: "keep" as const, semantic_type: "numeric_continuous", notes: null,
+    settings: { imputation: "none", impute_value: null, add_missing_indicator: false, transform: "none", scaling: "none", encoding: "none", params: {} } };
+  const draft = { family: "tree", action: "drop" as const, semantic_type: "numeric_continuous", imputation: "median", impute_value: null,
+    add_missing_indicator: false, transform: "none", scaling: "none", encoding: "none", params: {}, notes: "mine", reviewed: true };
+  it("lists what an experiment changed, by label", () => {
+    expect(baselineDiff(draft, base)).toEqual(["Decision", "Missing values"]);
+    expect(baselineDiff(draft, null)).toEqual([]);
+  });
+  it("reverts a draft to the baseline's decision and settings, keeping the note", () => {
+    const r = revertedInput(draft, base);
+    expect(r).toMatchObject({ action: "keep", imputation: "none", notes: "mine" });
+    expect(baselineDiff(r, base)).toEqual([]);
   });
 });

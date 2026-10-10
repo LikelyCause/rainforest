@@ -1,5 +1,7 @@
+import { toInput } from "./decision";
 import { baselineLabel } from "./format";
-import type { Experiment, Phase, Role } from "./types";
+import { SETTING_LABEL } from "./recipes";
+import type { Decision, DecisionInput, Experiment, FieldResponse, Phase, Role } from "./types";
 
 export type ExperimentFilter = "all" | "mine" | "team" | "archived";
 
@@ -73,4 +75,24 @@ export function mlflowExperimentUrl(mlflowExperimentId: string | null | undefine
 
 export function metricLabel(metric: string): string {
   return metric.startsWith("roc_auc") ? "AUC" : metric;
+}
+
+type BaselineField = NonNullable<FieldResponse["baseline"]>;
+const COMPARED = ["action", "semantic_type", "imputation", "impute_value", "add_missing_indicator", "transform", "scaling",
+  "encoding", "params"] as const;
+
+const baselineInput = (base: BaselineField, family: string): DecisionInput =>
+  toInput({ ...base, ...(base.settings ?? {}) } as unknown as Decision, family);
+
+/** What a draft in an experiment changes from its baseline, as setting labels (notes don't count). */
+export function baselineDiff(draft: DecisionInput, base: FieldResponse["baseline"]): string[] {
+  if (!base) return [];
+  const b = baselineInput(base, draft.family ?? "");
+  return COMPARED.filter((k) => JSON.stringify(draft[k] ?? null) !== JSON.stringify(b[k] ?? null))
+    .map((k) => SETTING_LABEL[k] ?? k);
+}
+
+/** The draft put back to its baseline's decision and settings; the experiment's own note stays. */
+export function revertedInput(draft: DecisionInput, base: BaselineField): DecisionInput {
+  return { ...baselineInput(base, draft.family ?? ""), notes: draft.notes, reviewed: true };
 }

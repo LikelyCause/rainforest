@@ -4,8 +4,9 @@ export const PHASE_LABEL: Record<Phase, string> = { assessing: "Assessing", revi
 
 /** What the viewer works on in Review and Bulk edit, and whether they can change it. */
 export interface Access {
-  /** "mine": the viewer's own blind assessment; "team": the team decision. */
-  source: "mine" | "team";
+  /** "mine": the viewer's own blind assessment; "team": the team decision; "experiment": a team experiment's copy
+   * of its baseline; "baseline": a finalized baseline. */
+  source: "mine" | "team" | "experiment" | "baseline";
   canEdit: boolean;
   /** Why editing is off (or what is being edited), for a banner. */
   note: string;

@@ -355,7 +355,7 @@ function Comparison({ item, family, catalog, canComment }: { item: QueueItem; fa
 function TeamDecision({ item, ds, catalog, readOnly, onSettled }: {
   item: QueueItem; ds: Dataset; catalog: OptionCatalog; readOnly: string | null; onSettled: () => void;
 }) {
-  const field = useQuery({ queryKey: ["field", item.field_id, ds.model_family], queryFn: () => api.field(item.field_id, ds.model_family) });
+  const field = useQuery({ queryKey: ["field", item.field_id, "current"], queryFn: () => api.field(item.field_id) });
   if (!field.data) return <aside className="decision"><ErrorAlert error={field.error} /></aside>;
   return (
     <DecisionPanel data={field.data} catalog={catalog} familyLabel={familyShort(ds.model_family)} typing={false}
