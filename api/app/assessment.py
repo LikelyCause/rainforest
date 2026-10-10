@@ -98,7 +98,8 @@ def source_for(conn, dataset_id: int, user: dict, recipe: dict | None = None, lo
         return Source(recipe, user["id"])
     if recipe["phase"] == "review":
         return Source(recipe, None, None if user["role"] == "lead" else (403, "Only a lead sets the team decision."))
-    return Source(recipe, None, (409, f"{name} is finalized; its decisions can't change."))
+    return Source(recipe, None, (409, f"{name} is finalized; its decisions can't change. Start a new version to "
+                                      "change them."))
 
 
 def from_key(conn, dataset_id: int, key: str) -> Source:
@@ -186,14 +187,21 @@ def _decision_target(src: Source) -> tuple[sql.Composable, sql.Composable]:
 
 
 # ------------------------------------------------------------------------------------------ assessors
-def seed(conn, recipe_id: int, dataset_id: int, user_id: int) -> None:
-    """Start an assessor from the suggestions (the team decision before review is the suggestion, with the
-    dataset's targets). Rows they already have, from an earlier assignment, stay."""
+def seed(conn, recipe: dict, user_id: int) -> None:
+    """Start an assessor from the team decision: on a new dataset that is the suggestions with the dataset's targets,
+    on a later version the version before. Fields carried over (locked) come in reviewed, with their notes, as they
+    stand. Rows they already have, from an earlier assignment, stay."""
+    recipe_id, dataset_id = recipe["id"], recipe["dataset_id"]
+    open_ = recipes.open_field_ids(conn, recipe)
     conn.execute(
-        """INSERT INTO meta.assessments (recipe_id, user_id, field_id, action, semantic_type)
-           SELECT %s, %s, d.field_id, d.action, d.semantic_type FROM meta.field_decisions d WHERE d.dataset_id = %s
+        """INSERT INTO meta.assessments (recipe_id, user_id, field_id, action, semantic_type, notes, reviewed, source)
+           SELECT %(r)s, %(u)s, d.field_id, d.action, d.semantic_type,
+                  CASE WHEN o.open THEN NULL ELSE d.notes END, NOT o.open, d.source
+             FROM meta.field_decisions d
+             CROSS JOIN LATERAL (SELECT %(all)s OR d.field_id = ANY(%(open)s) AS open) o
+            WHERE d.dataset_id = %(ds)s
            ON CONFLICT DO NOTHING""",
-        (recipe_id, user_id, dataset_id),
+        {"r": recipe_id, "u": user_id, "ds": dataset_id, "all": open_ is None, "open": open_ or []},
     )
     conn.execute(
         """INSERT INTO meta.assessment_settings
@@ -208,15 +216,20 @@ def seed(conn, recipe_id: int, dataset_id: int, user_id: int) -> None:
 
 
 def progress(conn, recipe: dict) -> list[dict]:
-    """Per assessor: fields reviewed out of the total and whether they submitted. Never their choices."""
+    """Per assessor: fields reviewed out of the fields to assess (the reopened ones on a later version) and whether
+    they submitted. Never their choices."""
+    open_ = recipes.open_field_ids(conn, recipe)
     return conn.execute(
         """SELECT a.user_id, u.name, a.assigned_at, a.assigned_by, a.submitted_at,
                   (SELECT count(*) FROM meta.assessments x
-                    WHERE x.recipe_id = a.recipe_id AND x.user_id = a.user_id AND x.reviewed) AS reviewed,
-                  (SELECT count(*) FROM meta.fields f WHERE f.dataset_id = %s) AS total
+                    WHERE x.recipe_id = a.recipe_id AND x.user_id = a.user_id AND x.reviewed
+                      AND (%(all)s OR x.field_id = ANY(%(open)s))) AS reviewed,
+                  CASE WHEN %(all)s THEN (SELECT count(*) FROM meta.fields f WHERE f.dataset_id = %(ds)s)
+                       ELSE %(n_open)s END AS total
              FROM meta.dataset_assessors a JOIN meta.users u ON u.id = a.user_id
-            WHERE a.recipe_id = %s ORDER BY u.name, a.user_id""",
-        (recipe["dataset_id"], recipe["id"]),
+            WHERE a.recipe_id = %(r)s ORDER BY u.name, a.user_id""",
+        {"ds": recipe["dataset_id"], "r": recipe["id"], "all": open_ is None, "open": open_ or [],
+         "n_open": len(open_ or [])},
     ).fetchall()
 
 

@@ -124,6 +124,8 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 table.data.team td { vertical-align: middle; }
 .name-cell { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
 table.data.team tr.inactive td { color: var(--text-muted); }
+table.data.diff td { vertical-align: top; }
+ul.plain { margin: 0; padding-left: 16px; }
 .page { max-width: 1280px; margin: 0 auto; padding: 24px 16px 48px; display: flex; flex-direction: column; gap: 16px; }
 
 /* ------------------------------------------------------------------ primitives */

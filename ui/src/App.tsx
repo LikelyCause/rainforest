@@ -8,6 +8,7 @@ import { DatasetsPage } from "./pages/DatasetsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ForbiddenPage } from "./pages/ForbiddenPage";
 import { TeamPage } from "./pages/TeamPage";
+import { VersionsPage } from "./pages/VersionsPage";
 import { ReviewPage } from "./pages/ReviewPage";
 import { BulkEditPage } from "./pages/BulkEditPage";
 import { ExportPage } from "./pages/ExportPage";
@@ -244,6 +245,7 @@ export default function App() {
             <Route path="explore/:view?" element={<ExplorePage />} />
             <Route path="export" element={<ExportPage />} />
             <Route path="team" element={<DatasetTeamPage />} />
+            <Route path="versions" element={<VersionsPage />} />
           </Route>
           <Route path="*" element={<div className="empty">Page not found. <NavLink to="/">Go home</NavLink></div>} />
         </Route>

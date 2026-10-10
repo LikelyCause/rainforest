@@ -60,7 +60,11 @@ function SplitBar({ valid, test, rows }: { valid: number; test: number; rows: nu
 function BuildPanel({ datasetId, family, rows }: { datasetId: number; family: string; rows: number | null }) {
   const qc = useQueryClient();
   const fields = useFields(datasetId);
-  const preview = useQuery({ queryKey: ["exportPreview", datasetId, family], queryFn: () => api.exportPreview(datasetId, family) });
+  const versions = useQuery({ queryKey: ["versions", datasetId], queryFn: () => api.versions(datasetId) });
+  const finalized = (versions.data ?? []).filter((v) => v.phase === "finalized");
+  // null: the latest finalized version, which is what the API builds from by default.
+  const [recipeId, setRecipeId] = useState<number | null>(null);
+  const preview = useQuery({ queryKey: ["exportPreview", datasetId, family, recipeId], queryFn: () => api.exportPreview(datasetId, family, recipeId) });
   const exports = useQuery({ queryKey: ["exports", datasetId], queryFn: () => api.exports(datasetId) });
   const [valid, setValid] = useState("15");
   const [test, setTest] = useState("15");
@@ -76,7 +80,7 @@ function BuildPanel({ datasetId, family, rows }: { datasetId: number; family: st
 
   const start = useMutation({
     mutationFn: (cfg: { valid_size: number; test_size: number; seed: number; fit_sample_rows: number }) =>
-      api.startExport(datasetId, { ...cfg, model_family: family }),
+      api.startExport(datasetId, { ...cfg, model_family: family, recipe_id: recipeId }),
     onSuccess: (e) => {
       qc.invalidateQueries({ queryKey: ["exports", datasetId] });
       toast({ message: `Export #${e.id} started` });
@@ -93,7 +97,17 @@ function BuildPanel({ datasetId, family, rows }: { datasetId: number; family: st
   return (
     <section className="card build-panel">
       <div className="stack" style={{ gap: 10, minWidth: 0 }}>
-        <h2>What will be exported</h2>
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <h2>What will be exported</h2>
+          {finalized.length > 0 && (
+            <label className="field row" style={{ gap: 6 }}>Recipe
+              <select value={recipeId ?? ""} aria-label="Recipe version" onChange={(e) => setRecipeId(e.target.value ? Number(e.target.value) : null)}>
+                <option value="">latest finalized (v{finalized[0].version})</option>
+                {finalized.map((v) => <option key={v.id} value={v.id}>v{v.version} · {v.finalized_by_name ?? "—"}, {fmtAgo(v.finalized_at)}</option>)}
+              </select>
+            </label>
+          )}
+        </div>
         <ErrorAlert error={preview.error} />
         {p && (
           <>
@@ -113,11 +127,11 @@ function BuildPanel({ datasetId, family, rows }: { datasetId: number; family: st
             {p.blocking.map((b) => <ErrorAlert key={b} error={{ message: b }} />)}
             {p.last_export && (p.changed_since_export ? (
               <div className="alert warn">
-                <span className="grow">{p.changed_since_export} decision{p.changed_since_export === 1 ? "" : "s"} changed since Export #{p.last_export.id}</span>
+                <span className="grow">{p.changed_since_export} field{p.changed_since_export === 1 ? "" : "s"} decided differently than in Export #{p.last_export.id}</span>
                 <button type="button" className="small" disabled={start.isPending || p.blocking.length > 0} onClick={reExport}>Re-export with same split</button>
               </div>
             ) : (
-              <span className="badge good" style={{ alignSelf: "flex-start" }}>✓ Up to date with Export #{p.last_export.id}</span>
+              <span className="badge good" style={{ alignSelf: "flex-start" }}>✓ Same decisions as Export #{p.last_export.id}</span>
             ))}
           </>
         )}
@@ -262,6 +276,7 @@ function ExportRow({ e, onStarted }: { e: ExportJob; onStarted: (r: ModelRun) =>
         <div className="row">
           <b>Export #{e.id}</b>
           <span className="badge">{familyShort(e.model_family)}</span>
+          {e.recipe_version != null && <span className="badge" title="Built from this recipe version's snapshot">recipe v{e.recipe_version}</span>}
           {e.status === "done" ? <span className="badge good">✓ done</span>
             : e.status === "failed" ? <span className="badge bad">✕ failed</span>
             : <span className="badge accent"><span className="spinner" aria-hidden="true" /> {e.status}</span>}
@@ -359,7 +374,7 @@ function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: 
       <thead>
         <tr className="group-head">
           <td colSpan={7 + targets.length * 2}>
-            Export #{e.id} · {familyShort(e.model_family)}{sc ? ` · ${fmtInt(sc.train)} / ${fmtInt(sc.valid)} / ${fmtInt(sc.test)}` : ""}
+            Export #{e.id} · {familyShort(e.model_family)}{e.recipe_version != null ? ` · recipe v${e.recipe_version}` : ""}{sc ? ` · ${fmtInt(sc.train)} / ${fmtInt(sc.valid)} / ${fmtInt(sc.test)}` : ""}
           </td>
         </tr>
         <tr>

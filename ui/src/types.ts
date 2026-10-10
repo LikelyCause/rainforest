@@ -25,6 +25,8 @@ export interface Dataset {
   phase: Phase | null;
   /** Datasets list only: the viewer's own assessment of the current version, when they are assigned. */
   my_assessment?: { reviewed: number; submitted: boolean } | null;
+  /** Fields the current version reopened; null when every field is open. */
+  reopened?: number | null;
   field_count?: number;
   reviewed_count?: number;
   kept_count?: number;
@@ -53,6 +55,8 @@ export interface FieldListItem {
   semantic_type: string;
   reviewed: boolean;
   source: "suggested" | "user";
+  /** Carried over into this recipe version from the one before, so it can't change here. */
+  locked?: boolean;
 }
 
 export interface HistogramChart {
@@ -158,6 +162,8 @@ export interface FieldResponse {
   family: string;
   decision: Decision;
   target_associations: TargetAssoc[];
+  /** Why the field can't change in this version (carried over), or null. */
+  locked?: string | null;
 }
 
 export type CorrMethod = "spearman" | "cramers_v" | "correlation_ratio";
@@ -219,7 +225,7 @@ export interface ExportPreview {
   unreviewed: number;
   warnings: string[];
   blocking: string[];
-  last_export?: { id: number; created_at: string; status: string } | null;
+  last_export?: { id: number; created_at: string; status: string; recipe_id: number | null } | null;
   changed_since_export?: number | null;
   recipe?: { id: number; version: number; phase: Phase };
 }
@@ -233,6 +239,8 @@ export interface ExportJob {
   error: string | null;
   model_family: string;
   config: Record<string, any>;
+  recipe_id: number | null;
+  recipe_version: number | null;
   n_rows: number | null;
   n_features: number | null;
   summary: Record<string, any>;
@@ -462,6 +470,8 @@ export interface Recipe {
   dataset_id: number;
   version: number;
   phase: Phase;
+  /** "all": every field is open; "reopened": only the reopened ones, the rest are carried over and locked. */
+  scope: "all" | "reopened";
   parent_id: number | null;
   created_by: number | null;
   created_at: string;
@@ -470,6 +480,72 @@ export interface Recipe {
   schema_fingerprint: string | null;
   created_by_name?: string | null;
   finalized_by_name?: string | null;
+  /** How many fields this version reopened; null when every field is open. */
+  reopened?: number | null;
+  reuse?: ReuseSummary | null;
+}
+
+export type ReopenReason = "new" | "type_changed" | "drift" | "target" | "settings";
+
+export interface ReopenedField {
+  name: string;
+  reason: ReopenReason;
+  before?: string;
+  after?: string;
+  drift?: { null_pct?: [number, number]; n_unique?: [number, number] };
+  problem?: string;
+}
+
+/** How a finalized recipe was matched onto a new dataset. */
+export interface ReuseSummary {
+  source: { recipe_id: number; dataset_id: number; dataset_name: string | null; version: number };
+  carried: string[];
+  reopened: ReopenedField[];
+  missing: string[];
+  targets: string[];
+  targets_not_carried: { name: string; problem: string }[];
+}
+
+export interface RecipeVersion extends Recipe {
+  created_by_name: string | null;
+  finalized_by_name: string | null;
+  reopened: number | null;
+  reuse: ReuseSummary | null;
+  parent_dataset_id: number | null;
+  parent_version: number | null;
+  parent_dataset_name: string | null;
+}
+
+export interface FinalizedRecipe {
+  id: number;
+  dataset_id: number;
+  dataset_name: string;
+  version: number;
+  field_count: number;
+  finalized_by: number | null;
+  finalized_by_name: string | null;
+  finalized_at: string;
+}
+
+export interface DiffChange {
+  key: string;
+  /** The model family a setting belongs to; null for the shared decision. */
+  family: string | null;
+  before: unknown;
+  after: unknown;
+}
+
+export interface DiffField {
+  name: string;
+  change: "changed" | "added" | "removed";
+  changes: DiffChange[];
+}
+
+export interface RecipeDiff {
+  a: Pick<Recipe, "id" | "version" | "phase">;
+  b: Pick<Recipe, "id" | "version" | "phase">;
+  fields: DiffField[];
+  targets: { before: string[]; after: string[] } | null;
 }
 
 export interface AssessorProgress {

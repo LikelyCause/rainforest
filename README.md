@@ -177,11 +177,35 @@ on the Datasets list and in the top bar.
    panel as Review). Bulk edit is for leads only in this phase and changes team decisions.
 3. **Finalized.** A lead finalizes once the queue is settled, or confirms finalizing with fields left as they stand.
    Finalizing freezes the version: its snapshot records every field's decision, its settings for every model family,
-   its inferred type and key stats, and the target order. A finalized version's decisions can't change.
+   its inferred type and key stats, and the target order. A finalized version's decisions can't change; the way to
+   change them is a new version.
 
-Team exports are built from the current recipe once it is finalized; until then Export says why it's waiting. Explore
-is shared: raw-data analyses use the team decision, except that while assessing, *Kept only* uses your own
-choices, and results are cached per decision source so they never mix people's choices.
+**New versions.** On a dataset's **Versions** page (linked from the Team page) a lead starts the next version from
+the latest finalized one and picks the fields to reopen, with search and the same filters as the Review list (type,
+*Needs attention*, name); none are picked by default. Reopened fields go through blind assessment and team review
+again with the assessors the lead assigns: assessors only assess those, *Submit assessment* needs just those reviewed,
+and the review queue holds only disagreements among them. Every other field is **carried over and locked** (🔒 in
+the Review list; the decision panel says why): nobody changes it in that version, the lead included. With nothing
+reopened the version opens straight in team review and the lead edits the team decision directly (recorded in each
+field's history) and finalizes. The Versions page lists every version (who started and finalized it and when, its
+phase, how many fields it reopened, what it was built from) and compares any two: the fields whose decision or
+settings differ. Only team decisions are compared; a version still being worked is compared as its team decision
+stands, never with anyone's assessment.
+
+**Starting from a recipe.** A new dataset (before anyone is assigned to it) can start from any finalized recipe of
+any dataset: *Start from a recipe* on its Versions page (the upload toast links there for leads), or `recipe_id`
+on the upload API. Fields match by name. A matched field whose inferred type is unchanged and whose stats haven't
+drifted (missing share within 10 points, distinct values within half to double) is carried over and locked, with
+the recipe's decision, settings and notes. Everything else is reopened for assessment: new fields, changed types,
+drift (with the numbers), a carried target that's no longer a valid target, settings no longer valid for the data.
+Recipe fields missing from the new data are listed. The recipe's targets carry over when they're still valid targets
+here. The summary stays on the dataset's Team and Versions pages, and the version records the recipe it came from.
+If nothing needs assessing, the version opens in team review and a lead confirms it by finalizing.
+
+**Exports** are built from a finalized version's snapshot (the latest by default; Export has a version selector),
+never from the decisions being worked on, so an old version always exports the same way while a newer one is in
+progress. Explore is shared: raw-data analyses use the team decision, except that while assessing, *Kept only* uses
+your own choices, and results are cached per decision source so they never mix people's choices.
 
 Datasets that existed before recipes became recipe v1, finalized from their decisions at the time by the first lead,
 and their exports point at it.
@@ -276,8 +300,9 @@ of failing.
 
 ## Export → ClassifierChain
 
-Exports are built from the dataset's current recipe once a lead has finalized it (see [Team workflow](#team-workflow));
-each export records the recipe (`recipe_id`), and its manifest's `config` the recipe id and version.
+Exports are built from a finalized recipe version's snapshot, the latest unless you pick another (see
+[Team workflow](#team-workflow)); each export records the recipe (`recipe_id`, shown as *recipe vN* in the list), and
+its manifest's `config` the recipe id and version.
 
 * **Leakage-safe split:** the train / valid / test split is assigned first, stratified on the target combination
   (single-row combinations are pooled; if the combinations still can't be stratified, on one target, else not at
@@ -395,7 +420,8 @@ the sign-in page (and back) if it isn't. The server has no published port of its
   plus `fit_seconds`. Characters MLflow doesn't allow in a key become `_`.
 * **Artifacts:** `report.json` and `model/classifier_chain.joblib`, the same files *Files* offers on the run. The
   server stores them on the `mlartifacts` volume and proxies uploads and downloads, so clients only talk HTTP to it.
-* **Tags:** `rainforest.dataset_id`, `rainforest.dataset_name`, `rainforest.export_id`, `rainforest.run_id`,
+* **Tags:** `rainforest.dataset_id`, `rainforest.dataset_name`, `rainforest.export_id`, `rainforest.recipe_id`
+  and `rainforest.recipe_version` (the recipe version the export was built from), `rainforest.run_id`,
   `rainforest.model`, `rainforest.model_family`, and `rainforest.git_sha` when the image was built with `GIT_SHA`
   (`make up` passes the checkout's commit).
 * **Links:** the runs table has an *MLflow ↗* link per logged run, and the run's detail links to it too.

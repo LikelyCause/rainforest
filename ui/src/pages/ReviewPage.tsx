@@ -307,7 +307,7 @@ export function ReviewPage() {
         <DecisionPanel key={`${current.field.id}:${current.family}:${panelVersion}`} ref={panel} data={current}
           catalog={options.data} familyLabel={familyLabel} typing={typing}
           onConfirmed={onConfirmed} onShowShortcuts={() => setOverlay(true)}
-          readOnly={access.canEdit ? null : access.note}
+          readOnly={access.canEdit ? (current.locked ?? null) : access.note}
           owner={access.source === "mine" ? "Your assessment" : undefined} />
       ) : (
         <aside className="decision" />

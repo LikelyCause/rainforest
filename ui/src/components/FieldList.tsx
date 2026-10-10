@@ -151,10 +151,10 @@ export function FieldList(p: Props) {
           return (
             <div key={f.id} id={`fl-${f.id}`} ref={active ? activeEl : undefined} role="option" aria-selected={active}
               className={`field-item${active ? " active" : ""}${f.action === "drop" ? " dropped" : ""}${p.settled.has(f.id) && !active ? " settled" : ""}`}
-              onClick={() => onSelect(f.id)} title={`${f.name} — ${f.semantic_type}${f.reviewed ? " · reviewed" : ""}`}>
+              onClick={() => onSelect(f.id)} title={`${f.name} — ${f.semantic_type}${f.reviewed ? " · reviewed" : ""}${f.locked ? " · carried over, locked" : ""}`}>
               <StatusGlyph kind={glyphFor(f, failed.has(f.id))} reviewed={f.reviewed} />
               <span className="name">{f.name}</span>
-              <span className={`att${mark ? ` ${mark.cls}` : ""}`} title={mark?.title}>{mark?.text}</span>
+              <span className={`att${mark ? ` ${mark.cls}` : ""}`} title={f.locked ? "Carried over from the version before; locked" : mark?.title}>{f.locked ? "🔒" : mark?.text}</span>
               <span className="type-tag">{TYPE_SHORT[f.semantic_type]}</span>
             </div>
           );

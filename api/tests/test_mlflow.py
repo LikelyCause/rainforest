@@ -47,7 +47,8 @@ def _model_dir(tmp_path):
 
 
 def _run_row(run_id=7, dataset_id=3):
-    return {"id": run_id, "dataset_id": dataset_id, "export_id": 5, "model": "lightgbm",
+    return {"id": run_id, "dataset_id": dataset_id, "export_id": 5, "recipe_id": 11, "recipe_version": 2,
+            "model": "lightgbm",
             "created_at": datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc),
             "finished_at": datetime(2026, 10, 1, 12, 5, tzinfo=timezone.utc)}
 
@@ -72,6 +73,7 @@ def test_logs_params_metrics_tags_and_artifacts(file_store, tmp_path):
     t = run.data.tags
     assert t["rainforest.dataset_id"] == "3" and t["rainforest.dataset_name"] == "Churn"
     assert t["rainforest.export_id"] == "5" and t["rainforest.run_id"] == "7"
+    assert t["rainforest.recipe_id"] == "11" and t["rainforest.recipe_version"] == "2"
     assert t["rainforest.model_family"] == "tree" and t["rainforest.user"] == "ana"
     assert t["rainforest.git_sha"] == "abc1234" and t["mlflow.source.git.commit"] == "abc1234"
     assert t["mlflow.runName"] == "run 7 · LightGBM"
@@ -137,8 +139,10 @@ def _train_run(export_dir) -> int:
 
     ds = db.fetch_one("INSERT INTO meta.datasets (name, file_format, status) VALUES ('Churn', 'generated', 'ready') "
                       "RETURNING id")["id"]
-    exp = db.fetch_one("INSERT INTO meta.exports (dataset_id, status, output_dir) VALUES (%s, 'done', %s) RETURNING id",
-                       (ds, str(export_dir)))["id"]
+    recipe = db.fetch_one("INSERT INTO meta.recipes (dataset_id, version, phase) VALUES (%s, 3, 'review') RETURNING id",
+                          (ds,))["id"]
+    exp = db.fetch_one("INSERT INTO meta.exports (dataset_id, status, output_dir, recipe_id) "
+                       "VALUES (%s, 'done', %s, %s) RETURNING id", (ds, str(export_dir), recipe))["id"]
     user = db.fetch_one("INSERT INTO meta.users (name, email) VALUES ('Ana', 'ana@example.com') RETURNING id")["id"]
     run_id = db.fetch_one("INSERT INTO meta.model_runs (export_id, dataset_id, model, family, created_by) "
                           "VALUES (%s, %s, 'lightgbm', 'tree', %s) RETURNING id", (exp, ds, user))["id"]
@@ -160,6 +164,9 @@ def test_training_run_is_logged_and_linked(database, file_store, tree_export):  
     logged = file_store.get_run(run["mlflow_run_id"])
     assert logged.data.tags["rainforest.run_id"] == str(run_id)
     assert logged.data.tags["rainforest.user"] == "Ana <ana@example.com>"
+    assert logged.data.tags["rainforest.recipe_version"] == "3"
+    assert logged.data.tags["rainforest.recipe_id"] == str(db.fetch_one(
+        "SELECT recipe_id FROM meta.exports WHERE id = %s", (run["export_id"],))["recipe_id"])
     assert logged.data.params["estimator.n_estimators"] == "20" and logged.data.params["cv"] == "2"
     assert logged.data.metrics["test.column_a.roc_auc"] == run["metrics"]["test"]["column_a"]["roc_auc"]
     assert {a.path for a in file_store.list_artifacts(run["mlflow_run_id"], "model")} == {

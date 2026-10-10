@@ -2,6 +2,7 @@ import type {
   Analysis, AnalysisKind, AnalysisParams, CorrMatrix, BulkRequest, BulkResult, Correlation, Dataset, DecisionInput, Decision, ExportJob, ExportPreview, FieldFilter,
   FieldListItem, FieldResponse, ModelOption, ModelRun, OptionCatalog, SqlResult, SystemInfo, Device,
   AuthConfig, Me, PickUser, Role, TeamUser, TeamState, ReviewQueue, FieldReview, ReviewComment,
+  RecipeVersion, FinalizedRecipe, RecipeDiff,
 } from "./types";
 
 export class ApiError extends Error {
@@ -93,10 +94,10 @@ export const api = {
     request<Record<string, unknown>[]>(`/api/datasets/${datasetId}/fields/query`, json("POST", data)),
   sql: (sql: string) => request<SqlResult>("/api/sql", json("POST", { sql })),
   sqlExamples: () => request<{ title: string; sql: string }[]>("/api/sql/examples"),
-  exportPreview: (id: number, family: string) =>
-    request<ExportPreview>(`/api/datasets/${id}/export-preview?family=${family}`),
+  exportPreview: (id: number, family: string, recipeId?: number | null) =>
+    request<ExportPreview>(`/api/datasets/${id}/export-preview?family=${family}${recipeId ? `&recipe_id=${recipeId}` : ""}`),
   exports: (id: number) => request<ExportJob[]>(`/api/datasets/${id}/exports`),
-  startExport: (id: number, cfg: Record<string, number | string>) =>
+  startExport: (id: number, cfg: Record<string, number | string | null>) =>
     request<ExportJob>(`/api/datasets/${id}/exports`, json("POST", cfg)),
   modelsForExport: (exportId: number) => request<ModelOption[]>(`/api/exports/${exportId}/models`),
   system: () => request<SystemInfo>("/api/system"),
@@ -121,6 +122,14 @@ export const api = {
     request<ReviewComment[]>(`/api/fields/${fieldId}/comments`, json("POST", { body })),
   finalize: (datasetId: number, acceptOpen: boolean) =>
     request<TeamState>(`/api/datasets/${datasetId}/finalize`, json("POST", { accept_open: acceptOpen })),
+  versions: (datasetId: number) => request<RecipeVersion[]>(`/api/datasets/${datasetId}/recipes`),
+  finalizedRecipes: () => request<FinalizedRecipe[]>("/api/recipes"),
+  recipeDiff: (datasetId: number, a: number, b: number) =>
+    request<RecipeDiff>(`/api/datasets/${datasetId}/recipes/diff?a=${a}&b=${b}`),
+  newVersion: (datasetId: number, reopen: number[]) =>
+    request<TeamState>(`/api/datasets/${datasetId}/recipes`, json("POST", { reopen })),
+  applyRecipe: (datasetId: number, recipeId: number) =>
+    request<TeamState>(`/api/datasets/${datasetId}/recipes/apply`, json("POST", { recipe_id: recipeId })),
   corrMatrix: (datasetId: number, q: { kept: boolean; target: string | null; limit?: number; add?: number[] }) => {
     const p = new URLSearchParams({ kept: q.kept ? "1" : "0", limit: String(q.limit ?? 60) });
     if (q.target) p.set("target", q.target);

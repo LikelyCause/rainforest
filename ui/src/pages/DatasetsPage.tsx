@@ -298,6 +298,12 @@ export function DatasetsPage() {
     setFresh(id);
     window.setTimeout(() => setFresh((f) => (f === id ? null : f)), 1500);
   };
+  const uploaded = (ds: Dataset) => {
+    highlight(ds.id);
+    if (me.data?.role === "lead") {
+      toast({ message: `${ds.name} uploaded`, action: { label: "Start from a recipe…", run: () => nav(`/d/${ds.id}/versions`) } });
+    }
+  };
   const open = (ds: Dataset) => {
     const last = lastVisited(ds.id);
     nav(`/d/${ds.id}/review${last ? `/${last}` : ""}`);
@@ -330,7 +336,7 @@ export function DatasetsPage() {
       e.preventDefault();
       depth = 0;
       setDragging(false);
-      void upload.start(e.dataTransfer?.files[0]).then((ds) => ds && highlight(ds.id));
+      void upload.start(e.dataTransfer?.files[0]).then((ds) => ds && uploaded(ds));
     };
     window.addEventListener("dragenter", enter);
     window.addEventListener("dragleave", leave);
@@ -350,7 +356,7 @@ export function DatasetsPage() {
   return (
     <div className="page">
       <input ref={fileInput} type="file" accept=".csv,.parquet,.pq,.txt" hidden
-        onChange={(e) => { void upload.start(e.target.files?.[0]).then((ds) => ds && highlight(ds.id)); e.target.value = ""; }} />
+        onChange={(e) => { void upload.start(e.target.files?.[0]).then((ds) => ds && uploaded(ds)); e.target.value = ""; }} />
       <div className="row" style={{ justifyContent: "space-between" }}>
         <h1>Datasets</h1>
         {rows.length > 0 && (
@@ -388,7 +394,8 @@ export function DatasetsPage() {
               )}
               {rows.map((ds) => {
                 const ready = ds.status === "ready";
-                const total = ds.field_count ?? ds.column_count ?? 0;
+                // An assessor of a later version only assesses the reopened fields.
+                const total = (ds.my_assessment && ds.reopened != null ? ds.reopened : ds.field_count) ?? ds.column_count ?? 0;
                 // An assessor sees their own progress; everyone else the team decision's.
                 const reviewed = ds.my_assessment?.reviewed ?? ds.reviewed_count ?? 0;
                 return (

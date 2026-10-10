@@ -4,13 +4,14 @@ import logging
 import shutil
 import uuid
 from pathlib import Path
+from typing import Callable
 
 import polars as pl
 from psycopg import sql
 
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 
-from .. import jobs, recipes
+from .. import jobs, recipes, reuse
 from ..assessment import source_for
 from ..auth import CurrentUser, LeadUser
 from ..config import get_settings
@@ -43,7 +44,7 @@ def _targets(raw: str | None) -> list[str]:
 
 
 def _create(name: str, filename: str | None, fmt: str, targets: list[str], user_id: int,
-            upload_path: Path | None = None) -> dict:
+            upload_path: Path | None = None, recipe_id: int | None = None) -> dict:
     with connection() as conn:
         ds = conn.execute(
             """INSERT INTO meta.datasets (name, source_filename, file_format, target_columns, status, status_message,
@@ -52,7 +53,10 @@ def _create(name: str, filename: str | None, fmt: str, targets: list[str], user_
             (name, filename, fmt, targets, jobs.owner_id(), None if upload_path is None else str(upload_path),
              user_id),
         ).fetchone()
-        recipes.create_first(conn, ds["id"], user_id)
+        first = recipes.create_first(conn, ds["id"], user_id)
+        if recipe_id is not None:
+            # Processing applies it (reuse.apply) before the dataset is ready.
+            conn.execute("UPDATE meta.recipes SET parent_id = %s WHERE id = %s", (recipe_id, first["id"]))
     return get_dataset(ds["id"])
 
 
@@ -65,7 +69,11 @@ def list_datasets(user: CurrentUser) -> list[dict]:
     rows = fetch_all(
         f"""SELECT {SELECT_DATASET}, (a.user_id IS NOT NULL) AS assigned, a.submitted_at AS my_submitted_at,
                    (SELECT count(*) FROM meta.assessments x
-                     WHERE x.recipe_id = rc.id AND x.user_id = a.user_id AND x.reviewed) AS my_reviewed,
+                     WHERE x.recipe_id = rc.id AND x.user_id = a.user_id AND x.reviewed
+                       AND (rc.scope = 'all' OR x.field_id IN (SELECT field_id FROM meta.recipe_reopened o
+                                                                WHERE o.recipe_id = rc.id))) AS my_reviewed,
+                   CASE WHEN rc.scope = 'reopened'
+                        THEN (SELECT count(*) FROM meta.recipe_reopened o WHERE o.recipe_id = rc.id) END AS reopened,
                    coalesce(c.field_count, 0) AS field_count, coalesce(c.reviewed_count, 0) AS reviewed_count,
                    coalesce(c.kept_count, 0) AS kept_count, coalesce(c.dropped_count, 0) AS dropped_count,
                    coalesce(c.target_count, 0) AS target_count,
@@ -128,7 +136,13 @@ def upload(
     file: UploadFile = File(...),
     name: str | None = Form(None),
     targets: str | None = Form(None, description="Comma-separated target columns"),
+    recipe_id: int | None = Form(None, description="Start from this finalized recipe once processed (leads only)"),
 ) -> dict:
+    if recipe_id is not None:
+        if user["role"] != "lead":
+            raise HTTPException(403, "Only a lead can start a dataset from a recipe.")
+        with connection() as conn:
+            reuse.check_source(conn, recipe_id)
     filename = file.filename or "upload"
     suffix = Path(filename).suffix.lower()
     fmt = {".csv": "csv", ".txt": "csv", ".tsv": "csv", ".parquet": "parquet", ".pq": "parquet"}.get(suffix)
@@ -149,7 +163,7 @@ def upload(
         dest.unlink(missing_ok=True)
         raise HTTPException(400, "Uploaded file is empty")
     try:
-        ds = _create(name or Path(filename).stem, filename, fmt, _targets(targets), user["id"], dest)
+        ds = _create(name or Path(filename).stem, filename, fmt, _targets(targets), user["id"], dest, recipe_id)
     except Exception:
         dest.unlink(missing_ok=True)
         raise
@@ -215,11 +229,10 @@ def update_dataset(dataset_id: int, body: DatasetPatch, user: CurrentUser) -> di
         raise HTTPException(422, f"Unknown model family {body.model_family!r}")
     if body.target_columns is not None and ds["status"] != "ready":
         raise HTTPException(409, "Targets can be changed once the dataset is ready")
-    uncorrelated: list[dict] = []
-    screen: list[int] = []
+    start = _nothing
     with connection() as conn:
         if body.target_columns is not None:
-            _check_targets_editable(conn, dataset_id, user)
+            _check_targets_editable(conn, dataset_id, user, list(dict.fromkeys(body.target_columns)))
         conn.execute(
             """UPDATE meta.datasets SET model_family = coalesce(%s, model_family), name = coalesce(%s, name),
                       updated_at = now() WHERE id = %s""",
@@ -227,29 +240,46 @@ def update_dataset(dataset_id: int, body: DatasetPatch, user: CurrentUser) -> di
         )
         if body.target_columns is not None:
             uncorrelated, added = set_targets(conn, dataset_id, list(dict.fromkeys(body.target_columns)), user["id"])
-            screen = added if added and has_screen_fields(conn, dataset_id) else []
-            conn.execute(
-                """UPDATE meta.datasets SET warnings = array(
-                       SELECT w FROM unnest(warnings) w WHERE w NOT LIKE 'Target column(s) not found%%')
-                    WHERE id = %s""",
-                (dataset_id,),
-            )
-            if uncorrelated:
-                conn.execute(
-                    """UPDATE meta.datasets SET status = 'correlating', progress = 0, error = NULL, owner = %s,
-                              status_message = 'Queued: associations for new target(s)' WHERE id = %s""",
-                    (jobs.owner_id(), dataset_id),
-                )
-    if uncorrelated:
-        jobs.submit(correlate_targets, dataset_id, [r["id"] for r in uncorrelated], screen)
-    elif screen:
-        jobs.submit(screen_targets, dataset_id, screen)
+            start = queue_target_work(conn, dataset_id, uncorrelated, added)
+    start()
     return get_dataset(dataset_id)
 
 
-def _check_targets_editable(conn, dataset_id: int, user: dict) -> None:
+def _nothing() -> None:
+    pass
+
+
+def queue_target_work(conn, dataset_id: int, uncorrelated: list[dict], added: list[int],
+                      inline: bool = False) -> Callable[[], None]:
+    """After targets changed (fields.set_targets): the work still to do, to call once the transaction commits.
+    Targets with no associations yet get them computed (the dataset shows as correlating meanwhile), new targets get
+    the leak screen. `inline` runs it in the calling job instead of queueing a job."""
+    screen = added if added and has_screen_fields(conn, dataset_id) else []
+    conn.execute(
+        """UPDATE meta.datasets SET warnings = array(
+               SELECT w FROM unnest(warnings) w WHERE w NOT LIKE 'Target column(s) not found%%')
+            WHERE id = %s""",
+        (dataset_id,),
+    )
+    run = (lambda fn, *args: fn(*args)) if inline else jobs.submit
+    if uncorrelated:
+        if not inline:
+            conn.execute(
+                """UPDATE meta.datasets SET status = 'correlating', progress = 0, error = NULL, owner = %s,
+                          status_message = 'Queued: associations for new target(s)' WHERE id = %s""",
+                (jobs.owner_id(), dataset_id),
+            )
+        ids = [r["id"] for r in uncorrelated]
+        return lambda: run(correlate_targets, dataset_id, ids, screen)
+    if screen:
+        return lambda: run(screen_targets, dataset_id, screen)
+    return _nothing
+
+
+def _check_targets_editable(conn, dataset_id: int, user: dict, names: list[str]) -> None:
     """Targets are part of the team decision. They are set before anyone assesses (every assessor starts from
-    them); after that only a lead changes them, in review. A finalized version is frozen."""
+    them); after that only a lead changes them, in review. A finalized version is frozen, and fields carried over
+    into a later version keep their role."""
     recipe = recipes.current(conn, dataset_id, lock="update")
     if recipe["phase"] == "assessing":
         if conn.execute("SELECT 1 FROM meta.dataset_assessors WHERE recipe_id = %s LIMIT 1",
@@ -258,6 +288,13 @@ def _check_targets_editable(conn, dataset_id: int, user: dict) -> None:
                                      "review, or unassign everyone first.")
     else:
         source_for(conn, dataset_id, user, recipe).require_write()
+    changed = [r["id"] for r in conn.execute(
+        """SELECT f.id FROM meta.fields f JOIN meta.field_decisions d ON d.field_id = f.id
+            WHERE f.dataset_id = %s AND (d.action = 'target') <> (f.name = ANY(%s))""",
+        (dataset_id, names),
+    ).fetchall()]
+    if (locked := recipes.locked_problem(conn, recipe, changed)) is not None:
+        raise HTTPException(409, locked)
 
 
 def correlate_targets(dataset_id: int, target_ids: list[int], screen_ids: list[int] | None = None) -> None:
@@ -372,11 +409,14 @@ def list_fields(dataset_id: int, user: CurrentUser) -> list[dict]:
     """Lightweight rows for the review sidebar, with the decisions the viewer works on (their own while assessing)."""
     with connection() as conn:
         src = source_for(conn, dataset_id, user)
+        # Carried-over fields of a later version are locked; a finalized version is frozen whole anyway.
+        open_ = None if src.recipe["phase"] == "finalized" else recipes.open_field_ids(conn, src.recipe)
         return conn.execute(
             sql.SQL("""SELECT f.id, f.ordinal, f.name, f.inferred_type, f.inference_confidence, f.is_target,
                               f.null_pct, f.n_unique, f.max_target_assoc, f.leakage_flag AS leakage,
-                              d.action, d.semantic_type, d.reviewed, d.source
+                              d.action, d.semantic_type, d.reviewed, d.source,
+                              NOT (%s OR f.id = ANY(%s)) AS locked
                          FROM meta.fields f JOIN {} d ON d.field_id = f.id
                         WHERE f.dataset_id = %s ORDER BY f.ordinal""").format(src.decisions()),
-            (dataset_id,),
+            (open_ is None, open_ or [], dataset_id),
         ).fetchall()

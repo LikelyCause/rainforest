@@ -188,9 +188,10 @@ def test_a_job_that_runs_again_drops_its_old_error(client):
 
     ds = upload(client, _numbers_csv(), targets="y")
     try:
-        row = fetch_one("""INSERT INTO meta.exports (dataset_id, status, error, model_family, config)
-                           VALUES (%s, 'failed', 'Interrupted by an API restart.', 'tree', '{"seed": 1}')
-                           RETURNING id""", (ds["id"],))
+        recipe = set_phase(ds["id"], "finalized")
+        row = fetch_one("""INSERT INTO meta.exports (dataset_id, status, error, model_family, config, recipe_id)
+                           VALUES (%s, 'failed', 'Interrupted by an API restart.', 'tree', '{"seed": 1}', %s)
+                           RETURNING id""", (ds["id"], recipe["id"]))
         exports._run(row["id"])
         done = client.get(f"/api/exports/{row['id']}").json()
         assert done["status"] == "done" and done["error"] is None

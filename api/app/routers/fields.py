@@ -8,7 +8,7 @@ import polars as pl
 from fastapi import APIRouter, HTTPException, Query
 from psycopg import sql
 
-from .. import jobs
+from .. import jobs, recipes
 from ..assessment import Source, lock_decisions, source_for, write_decision, write_settings
 from ..assessment import restore as restore_assessment
 from ..auth import CurrentUser
@@ -76,7 +76,9 @@ def get_field(field_id: int, user: CurrentUser, family: str | None = None) -> di
     f = _field(field_id)
     fam = _family(f, family)
     with connection() as conn:
-        decision = _merged(conn, field_id, fam, source_for(conn, f["dataset_id"], user))
+        src = source_for(conn, f["dataset_id"], user)
+        decision = _merged(conn, field_id, fam, src)
+        locked = recipes.locked_problem(conn, src.recipe, [field_id])
     targets = fetch_all(
         """SELECT other_field_id AS field_id, other_field_name AS name, method, value, strength
              FROM meta.v_correlations WHERE field_id = %s AND other_is_target ORDER BY other_field_name""",
@@ -84,7 +86,7 @@ def get_field(field_id: int, user: CurrentUser, family: str | None = None) -> di
     )
     suggestions = f.pop("suggestion") or {}
     f["suggestion"] = suggestions.get(fam, {})
-    return {"field": f, "family": fam, "decision": decision, "target_associations": targets}
+    return {"field": f, "family": fam, "decision": decision, "target_associations": targets, "locked": locked}
 
 
 @router.get("/fields/{field_id}/correlations")
@@ -121,6 +123,8 @@ def save_decision(field_id: int, body: DecisionIn, user: CurrentUser) -> dict:
     with connection() as conn:
         src = source_for(conn, f["dataset_id"], user, lock="share")
         src.require_write()
+        if (locked := recipes.locked_problem(conn, src.recipe, [field_id])) is not None:
+            raise HTTPException(409, locked)
         lock_decisions(conn, src, [field_id])
         prev = _merged(conn, field_id, fam, src)
         if prev is None:
@@ -186,6 +190,9 @@ def bulk_decisions(dataset_id: int, body: BulkDecisionIn, user: CurrentUser) -> 
                 src.fields_view(), fields_where(dataset_id, body.filters))
         else:
             target = sql.SQL("d.field_id = ANY({})").format(sql.Literal(body.field_ids))
+        # Fields carried over into this version are locked; bulk edits pass over them.
+        if (open_ := recipes.open_field_ids(conn, src.recipe)) is not None:
+            target = sql.SQL("{} AND d.field_id = ANY({})").format(target, sql.Literal(open_))
         # Resolve and lock in one statement so the set can't drift between preview and write. An assessor's rows
         # are only theirs to change, so they are locked right after.
         rows = conn.execute(
@@ -276,6 +283,8 @@ def undo_bulk(dataset_id: int, batch_id: str, user: CurrentUser) -> dict:
                 ORDER BY field_id FOR UPDATE""",
             (dataset_id, [int(k) for k in snapshot]),
         ).fetchall()]
+        if (locked := recipes.locked_problem(conn, src.recipe, ids)) is not None:
+            raise HTTPException(409, locked)
         prev = _merged_many(conn, ids, fam)
         for fid in ids:
             snap = snapshot[str(fid)]

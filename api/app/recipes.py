@@ -13,10 +13,10 @@ from .db import jsonb
 from .semantics import SETTING_KEYS
 
 PHASES = ("assessing", "review", "finalized")
-RECIPE_COLS = """id, dataset_id, version, phase, parent_id, created_by, created_at, finalized_by, finalized_at,
+RECIPE_COLS = """id, dataset_id, version, phase, scope, parent_id, created_by, created_at, finalized_by, finalized_at,
                  schema_fingerprint"""
 # Joins a dataset row `d` to its current (latest) version as `rc`.
-CURRENT_JOIN = """LEFT JOIN LATERAL (SELECT id, version, phase FROM meta.recipes
+CURRENT_JOIN = """LEFT JOIN LATERAL (SELECT id, version, phase, scope FROM meta.recipes
                                        WHERE dataset_id = d.id ORDER BY version DESC LIMIT 1) rc ON true"""
 
 
@@ -29,15 +29,15 @@ def create_first(conn, dataset_id: int, user_id: int) -> dict:
     ).fetchone()
 
 
-def start_version(conn, dataset_id: int, user_id: int | None, phase: str = "assessing") -> dict:
+def start_version(conn, dataset_id: int, user_id: int | None, phase: str = "assessing", scope: str = "all") -> dict:
     """The next version after a finalized one, with the finalized one as its parent."""
     parent = current(conn, dataset_id, lock="update")
     if parent["phase"] != "finalized":
         raise HTTPException(409, f"{label(parent)} isn't finalized yet")
     return conn.execute(
-        f"""INSERT INTO meta.recipes (dataset_id, version, phase, parent_id, created_by)
-            VALUES (%s, %s, %s, %s, %s) RETURNING {RECIPE_COLS}""",
-        (dataset_id, parent["version"] + 1, phase, parent["id"], user_id),
+        f"""INSERT INTO meta.recipes (dataset_id, version, phase, scope, parent_id, created_by)
+            VALUES (%s, %s, %s, %s, %s, %s) RETURNING {RECIPE_COLS}""",
+        (dataset_id, parent["version"] + 1, phase, scope, parent["id"], user_id),
     ).fetchone()
 
 
@@ -58,6 +58,49 @@ def current(conn, dataset_id: int, lock: str | None = None) -> dict:
 
 def get(conn, recipe_id: int) -> dict | None:
     return conn.execute(f"SELECT {RECIPE_COLS} FROM meta.recipes WHERE id = %s", (recipe_id,)).fetchone()
+
+
+def latest_finalized(conn, dataset_id: int) -> dict | None:
+    return conn.execute(
+        f"""SELECT {RECIPE_COLS} FROM meta.recipes WHERE dataset_id = %s AND phase = 'finalized'
+             ORDER BY version DESC LIMIT 1""",
+        (dataset_id,),
+    ).fetchone()
+
+
+def open_field_ids(conn, recipe: dict) -> list[int] | None:
+    """The fields this version works on: None for every field, else the reopened ones (the rest were carried over
+    and are locked)."""
+    if recipe["scope"] == "all":
+        return None
+    return [r["field_id"] for r in conn.execute(
+        "SELECT field_id FROM meta.recipe_reopened WHERE recipe_id = %s ORDER BY field_id", (recipe["id"],)
+    ).fetchall()]
+
+
+def locked_problem(conn, recipe: dict, field_ids: list[int]) -> str | None:
+    """Why some of `field_ids` can't change in this version (they were carried over), or None."""
+    open_ = open_field_ids(conn, recipe)
+    if open_ is None or recipe["phase"] == "finalized":
+        return None
+    locked = conn.execute(
+        "SELECT name FROM meta.fields WHERE id = ANY(%s) AND NOT id = ANY(%s) ORDER BY ordinal", (field_ids, open_)
+    ).fetchall()
+    if not locked:
+        return None
+    one = len(locked) == 1
+    names = ", ".join(r["name"] for r in locked[:8]) + ("…" if len(locked) > 8 else "")
+    return (f"{names}: carried over into {label(recipe).lower()} and locked. To change "
+            f"{'it' if one else 'them'}, start a new version that reopens {'it' if one else 'them'}.")
+
+
+def snapshot_of(conn, recipe: dict) -> dict:
+    """A finalized version's stored snapshot; for the version being worked, the team decision as it stands."""
+    if recipe["phase"] == "finalized":
+        row = conn.execute("SELECT snapshot FROM meta.recipes WHERE id = %s", (recipe["id"],)).fetchone()
+        if row and row["snapshot"] is not None:
+            return row["snapshot"]
+    return snapshot(conn, recipe["dataset_id"])
 
 
 def label(recipe: dict) -> str:
@@ -127,3 +170,63 @@ def backfill_snapshots(conn) -> int:
             (jsonb(snapshot(conn, r["dataset_id"])), schema_fingerprint(conn, r["dataset_id"]), r["id"]),
         )
     return len(rows)
+
+
+def snapshot_targets(snap: dict) -> list[str]:
+    """The snapshot's targets in chain order."""
+    targets = [n for n, f in snap["fields"].items() if f["decision"]["action"] == "target"]
+    order = [t for t in snap.get("target_order") or [] if t in targets]
+    return order + [t for t in targets if t not in order]
+
+
+def spec_rows(conn, dataset_id: int, snap: dict, family: str) -> list[dict]:
+    """Each field of the dataset the snapshot covers, in column order: its decision and `family`'s settings from the
+    snapshot, plus what the data says (inferred type, leakage flag, suggestion, stored date format). Exports and their
+    preview read this, never the live team decision, so a version always exports the same way."""
+    out = []
+    for f in conn.execute(
+        """SELECT name, inferred_type, leakage_flag AS leakage, suggestion, n_unique,
+                  stats ->> 'datetime_format' AS datetime_format,
+                  coalesce((stats ->> 'decimal_comma')::boolean, false) AS decimal_comma
+             FROM meta.fields WHERE dataset_id = %s ORDER BY ordinal""",
+        (dataset_id,),
+    ).fetchall():
+        s = snap["fields"].get(f["name"])
+        if s is None:
+            continue
+        settings = s["settings"].get(family) or (f["suggestion"] or {}).get(family) or {}
+        out.append({**f, "action": s["decision"]["action"], "semantic_type": s["decision"]["semantic_type"],
+                    **{k: settings.get(k) for k in SETTING_KEYS}})
+    return out
+
+
+def _norm(key: str, v):
+    if key == "impute_value":
+        return None if v is None else str(v)
+    if key == "add_missing_indicator":
+        return bool(v)
+    if key == "params":
+        return v or {}
+    return v
+
+
+def diff(before: dict, after: dict, family: str | None = None) -> dict:
+    """What changed between two snapshots: per field, each part of the decision and each family's setting that
+    differs (only `family`'s when given), fields added or removed, and the targets."""
+    b_fields, a_fields = before["fields"], after["fields"]
+    out = []
+    for name in [*a_fields, *(n for n in b_fields if n not in a_fields)]:
+        b, a = b_fields.get(name), a_fields.get(name)
+        if b is None or a is None:
+            out.append({"name": name, "change": "added" if b is None else "removed", "changes": []})
+            continue
+        changes = [{"key": k, "family": None, "before": b["decision"].get(k), "after": a["decision"].get(k)}
+                   for k in ("action", "semantic_type", "notes") if b["decision"].get(k) != a["decision"].get(k)]
+        for fam in [family] if family else sorted(set(b["settings"]) | set(a["settings"])):
+            bs, as_ = b["settings"].get(fam) or {}, a["settings"].get(fam) or {}
+            changes += [{"key": k, "family": fam, "before": bs.get(k), "after": as_.get(k)}
+                        for k in SETTING_KEYS if _norm(k, bs.get(k)) != _norm(k, as_.get(k))]
+        if changes:
+            out.append({"name": name, "change": "changed", "changes": changes})
+    tb, ta = snapshot_targets(before), snapshot_targets(after)
+    return {"fields": out, "targets": None if tb == ta else {"before": tb, "after": ta}}
