@@ -221,3 +221,16 @@ def test_choosing_a_target_later_screens_high_cardinality_fields(client):
         assert assoc[0]["name"] == "y" and assoc[0]["strength"] > 0.95
     finally:
         client.delete(f"/api/datasets/{ds['id']}")
+
+
+def test_making_a_field_the_target_in_review_screens_it_too(client):
+    ds = upload(client, _leaky_csv(seed=2))
+    try:
+        y = fields_of(client, ds)["y"]
+        cur = client.get(f"/api/fields/{y['id']}").json()["decision"]
+        r = client.put(f"/api/fields/{y['id']}/decision",
+                       json={**{k: cur[k] for k in SAVED_KEYS}, "action": "target", "family": "tree"})
+        assert r.status_code == 200, r.text
+        wait_until(lambda: fields_of(client, ds)["merchant"]["leakage"], timeout=60)
+    finally:
+        client.delete(f"/api/datasets/{ds['id']}")
