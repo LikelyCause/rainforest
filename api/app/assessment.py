@@ -25,20 +25,44 @@ SHARED_COLS = ("action", "semantic_type", "notes", "reviewed")
 
 @dataclass(frozen=True)
 class Source:
-    """The decisions a request sees: the team's (`user_id` None) or one assessor's assessment of a recipe version.
+    """The decisions a request reads and writes. Four kinds:
+    - team: the team decision of the baseline in progress (the working tables);
+    - assessment: one assessor's assessment of a version (`user_id`);
+    - experiment: a team experiment's own copy of its baseline (`experiment`);
+    - baseline: a finalized baseline's snapshot, read-only (`snapshot_of` set).
     `denied` is the (status, message) a write gets, or None when the viewer may write."""
     recipe: dict
     user_id: int | None = None
     denied: tuple[int, str] | None = None
+    experiment: dict | None = None
+    snapshot_of: bool = False
+
+    @property
+    def kind(self) -> str:
+        if self.user_id is not None:
+            return "assessment"
+        if self.experiment is not None:
+            return "experiment"
+        return "baseline" if self.snapshot_of else "team"
 
     @property
     def personal(self) -> bool:
-        return self.user_id is not None
+        return self.kind == "assessment"
+
+    @property
+    def team(self) -> bool:
+        return self.kind == "team"
+
+    @property
+    def family(self) -> str:
+        return self.recipe["family"]
 
     @property
     def key(self) -> str:
-        """Stable name of the source, as stored with Explore results and (later) experiments."""
-        return f"assessment:{self.recipe['id']}:{self.user_id}" if self.personal else "team"
+        """Stable name of the source, as stored with Explore results."""
+        return {"assessment": f"assessment:{self.recipe['id']}:{self.user_id}",
+                "experiment": f"experiment:{(self.experiment or {}).get('id')}",
+                "baseline": f"baseline:{self.recipe['id']}", "team": "team"}[self.kind]
 
     def require_write(self) -> None:
         if self.denied:
@@ -46,28 +70,66 @@ class Source:
 
     def decisions(self) -> sql.Composable:
         """A relation shaped like meta.field_decisions."""
-        if not self.personal:
+        if self.kind == "team":
             return sql.SQL("meta.field_decisions")
+        if self.kind == "assessment":
+            return sql.SQL(
+                """(SELECT a.field_id, f.dataset_id, a.action, a.semantic_type, a.notes, a.reviewed, a.source,
+                           a.updated_at
+                      FROM meta.assessments a JOIN meta.fields f ON f.id = a.field_id
+                     WHERE a.recipe_id = {} AND a.user_id = {})"""
+            ).format(sql.Literal(self.recipe["id"]), sql.Literal(self.user_id))
+        if self.kind == "experiment":
+            return sql.SQL(
+                """(SELECT e.field_id, f.dataset_id, e.action, e.semantic_type, e.notes, e.reviewed, e.source,
+                           e.updated_at
+                      FROM meta.experiment_decisions e JOIN meta.fields f ON f.id = e.field_id
+                     WHERE e.experiment_id = {})"""
+            ).format(sql.Literal(self.experiment["id"]))
         return sql.SQL(
-            """(SELECT a.field_id, f.dataset_id, a.action, a.semantic_type, a.notes, a.reviewed, a.source, a.updated_at
-                  FROM meta.assessments a JOIN meta.fields f ON f.id = a.field_id
-                 WHERE a.recipe_id = {} AND a.user_id = {})"""
-        ).format(sql.Literal(self.recipe["id"]), sql.Literal(self.user_id))
+            """(SELECT f.id AS field_id, f.dataset_id, e.value -> 'decision' ->> 'action' AS action,
+                       e.value -> 'decision' ->> 'semantic_type' AS semantic_type,
+                       e.value -> 'decision' ->> 'notes' AS notes, true AS reviewed, 'suggested' AS source,
+                       r.finalized_at AS updated_at
+                  FROM meta.recipes r CROSS JOIN LATERAL jsonb_each(r.snapshot -> 'fields') e
+                  JOIN meta.fields f ON f.dataset_id = r.dataset_id AND f.name = e.key
+                 WHERE r.id = {})"""
+        ).format(sql.Literal(self.recipe["id"]))
 
     def settings(self) -> sql.Composable:
         """A relation shaped like meta.field_settings."""
-        if not self.personal:
+        if self.kind == "team":
             return sql.SQL("meta.field_settings")
+        if self.kind == "assessment":
+            return sql.SQL(
+                """(SELECT s.field_id, s.family, f.dataset_id, s.imputation, s.impute_value, s.add_missing_indicator,
+                           s.transform, s.scaling, s.encoding, s.params, s.source, s.updated_at
+                      FROM meta.assessment_settings s JOIN meta.fields f ON f.id = s.field_id
+                     WHERE s.recipe_id = {} AND s.user_id = {})"""
+            ).format(sql.Literal(self.recipe["id"]), sql.Literal(self.user_id))
+        if self.kind == "experiment":
+            return sql.SQL(
+                """(SELECT s.field_id, s.family, f.dataset_id, s.imputation, s.impute_value, s.add_missing_indicator,
+                           s.transform, s.scaling, s.encoding, s.params, s.source, s.updated_at
+                      FROM meta.experiment_settings s JOIN meta.fields f ON f.id = s.field_id
+                     WHERE s.experiment_id = {})"""
+            ).format(sql.Literal(self.experiment["id"]))
         return sql.SQL(
-            """(SELECT s.field_id, s.family, f.dataset_id, s.imputation, s.impute_value, s.add_missing_indicator,
-                       s.transform, s.scaling, s.encoding, s.params, s.source, s.updated_at
-                  FROM meta.assessment_settings s JOIN meta.fields f ON f.id = s.field_id
-                 WHERE s.recipe_id = {} AND s.user_id = {})"""
-        ).format(sql.Literal(self.recipe["id"]), sql.Literal(self.user_id))
+            """(SELECT f.id AS field_id, {fam}::text AS family, f.dataset_id, v.imputation, v.impute_value,
+                       coalesce(v.add_missing_indicator, false) AS add_missing_indicator, v.transform, v.scaling,
+                       v.encoding, coalesce(v.params, '{{}}'::jsonb) AS params, 'suggested' AS source,
+                       r.finalized_at AS updated_at
+                  FROM meta.recipes r CROSS JOIN LATERAL jsonb_each(r.snapshot -> 'fields') e
+                  JOIN meta.fields f ON f.dataset_id = r.dataset_id AND f.name = e.key
+                  CROSS JOIN LATERAL jsonb_to_record(e.value -> 'settings' -> {fam}) AS v(
+                      imputation text, impute_value text, add_missing_indicator boolean, transform text,
+                      scaling text, encoding text, params jsonb)
+                 WHERE r.id = {rid})"""
+        ).format(fam=sql.Literal(self.family), rid=sql.Literal(self.recipe["id"]))
 
     def fields_view(self) -> sql.Composable:
         """A relation shaped like meta.v_fields (the Bulk edit finder's columns)."""
-        if not self.personal:
+        if self.kind == "team":
             return sql.SQL("meta.v_fields")
         return sql.SQL(
             """(SELECT p.*, dc.action, dc.semantic_type, dc.reviewed, dc.source AS decision_source, dc.notes,
@@ -75,8 +137,8 @@ class Source:
                        s.add_missing_indicator, s.params, s.source AS settings_source
                   FROM meta.v_field_profiles p
                   LEFT JOIN {dec} dc ON dc.field_id = p.field_id
-                  LEFT JOIN {set} s ON s.field_id = p.field_id AND s.family = p.model_family) v"""
-        ).format(dec=self.decisions(), set=self.settings())
+                  LEFT JOIN {set} s ON s.field_id = p.field_id AND s.family = {fam}) v"""
+        ).format(dec=self.decisions(), set=self.settings(), fam=sql.Literal(self.family))
 
 
 def assessor_row(conn, recipe_id: int, user_id: int) -> dict | None:
@@ -85,8 +147,13 @@ def assessor_row(conn, recipe_id: int, user_id: int) -> dict | None:
     ).fetchone()
 
 
-def source_for(conn, dataset_id: int, user: dict, recipe: dict | None = None, lock: str | None = None) -> Source:
-    """What `user` reads and may write on this dataset now. Writers pass lock="share" (see recipes.current)."""
+def source_for(conn, dataset_id: int, user: dict, recipe: dict | None = None, lock: str | None = None,
+               view: str | None = None) -> Source:
+    """What `user` reads and may write on this dataset now: by default the baseline in progress (their own
+    assessment while they assess it), or with `view` an experiment's copy (`experiment:<id>`) or a finalized
+    baseline (`baseline:<recipe_id>`, read-only). Writers pass lock="share" (see recipes.current)."""
+    if view:
+        return _view_source(conn, dataset_id, user, view, lock)
     recipe = recipe or recipes.current(conn, dataset_id, lock)
     name = recipes.label(recipe)
     if recipe["phase"] == "assessing":
@@ -102,20 +169,57 @@ def source_for(conn, dataset_id: int, user: dict, recipe: dict | None = None, lo
                                       "change them."))
 
 
+def _view_source(conn, dataset_id: int, user: dict, view: str, lock: str | None) -> Source:
+    from . import experiments
+
+    kind, _, raw = view.partition(":")
+    if kind not in ("experiment", "baseline") or not raw.isdigit():
+        raise HTTPException(422, "view must be experiment:<id> or baseline:<recipe_id>")
+    if kind == "baseline":
+        recipe = recipes.get(conn, int(raw))
+        if recipe is None or recipe["dataset_id"] != dataset_id or recipe["phase"] != "finalized":
+            raise HTTPException(404, "No finalized baseline of this dataset with that id")
+        return Source(recipe, snapshot_of=True,
+                      denied=(409, f"{recipes.label(recipe)} is finalized; its decisions can't change."))
+    x = experiments.get_visible(conn, int(raw), user)
+    if x["dataset_id"] != dataset_id:
+        raise HTTPException(404, "Experiment not found")
+    if x["assessor_id"] is not None:
+        raise HTTPException(409, "A personal experiment follows your assessment; change your assessment instead.")
+    if lock:
+        x = conn.execute(f"SELECT {experiments.COLS} FROM {experiments.FROM} WHERE x.id = %s FOR {lock.upper()} OF x",
+                         (x["id"],)).fetchone()
+    return Source(recipes.get(conn, x["recipe_id"]), experiment=x, denied=experiments.adjust_denied(x, user))
+
+
 def from_key(conn, dataset_id: int, key: str) -> Source:
     """The read side of a stored source key (Explore results)."""
     if key == "team":
         return Source(recipes.current(conn, dataset_id))
-    _, recipe_id, user_id = key.split(":")
-    recipe = recipes.get(conn, int(recipe_id))
-    if recipe is None or recipe["dataset_id"] != dataset_id:
-        raise HTTPException(404, "Recipe not found")
-    return Source(recipe, int(user_id))
+    kind, _, rest = key.partition(":")
+    if kind == "assessment":
+        recipe_id, user_id = rest.split(":")
+        recipe = recipes.get(conn, int(recipe_id))
+        if recipe is None or recipe["dataset_id"] != dataset_id:
+            raise HTTPException(404, "Recipe not found")
+        return Source(recipe, int(user_id))
+    if kind == "baseline":
+        recipe = recipes.get(conn, int(rest))
+        if recipe is None or recipe["dataset_id"] != dataset_id:
+            raise HTTPException(404, "Baseline not found")
+        return Source(recipe, snapshot_of=True)
+    if kind == "experiment":
+        from . import experiments
+        x = experiments.get(conn, int(rest))
+        if x is None or x["dataset_id"] != dataset_id:
+            raise HTTPException(404, "Experiment not found")
+        return Source(recipes.get(conn, x["recipe_id"]), experiment=x)
+    raise HTTPException(422, f"Unknown decision source {key!r}")
 
 
 def key_owner(key: str | None) -> int | None:
-    """The user a stored source key belongs to, or None for the team."""
-    if not key or key == "team":
+    """The user a stored source key is private to (an assessment's assessor), or None."""
+    if not key or not key.startswith("assessment:"):
         return None
     return int(key.rsplit(":", 1)[1])
 
@@ -148,8 +252,26 @@ def write_decision(conn, src: Source, field_id: int, d: dict, decided: bool) -> 
 
 
 def write_settings(conn, src: Source, dataset_id: int, field_id: int, family: str, s: dict, source: str) -> None:
-    if not src.personal:
+    if src.kind == "team":
         upsert_settings(conn, dataset_id, field_id, family, s, source)
+        return
+    if src.kind == "experiment":
+        if family != src.family:
+            return  # an experiment's copy holds its baseline's model type only
+        conn.execute(
+            """INSERT INTO meta.experiment_settings
+                  (experiment_id, field_id, family, imputation, impute_value, add_missing_indicator, transform,
+                   scaling, encoding, params, source, updated_at)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+               ON CONFLICT (experiment_id, field_id, family) DO UPDATE SET
+                  imputation = EXCLUDED.imputation, impute_value = EXCLUDED.impute_value,
+                  add_missing_indicator = EXCLUDED.add_missing_indicator, transform = EXCLUDED.transform,
+                  scaling = EXCLUDED.scaling, encoding = EXCLUDED.encoding, params = EXCLUDED.params,
+                  source = EXCLUDED.source, updated_at = now()""",
+            (src.experiment["id"], field_id, family, s["imputation"], s.get("impute_value"),
+             s.get("add_missing_indicator", False), s["transform"], s["scaling"], s["encoding"],
+             jsonb(s.get("params") or {}), source),
+        )
         return
     conn.execute(
         """INSERT INTO meta.assessment_settings
@@ -168,20 +290,19 @@ def write_settings(conn, src: Source, dataset_id: int, field_id: int, family: st
 
 
 def restore(conn, src: Source, field_id: int, snap: dict) -> None:
-    """Put an assessor's field back to a bulk snapshot (decision and every family's settings)."""
+    """Put an assessor's (or an experiment's) field back to a bulk snapshot (decision and settings)."""
     dec = snap["decision"]
+    table, where = _decision_target(src)
     conn.execute(
-        """UPDATE meta.assessments SET action = %s, semantic_type = %s, notes = %s, reviewed = %s, source = %s,
-                  updated_at = now()
-            WHERE recipe_id = %s AND user_id = %s AND field_id = %s""",
-        (dec["action"], dec["semantic_type"], dec["notes"], dec["reviewed"], dec["source"], src.recipe["id"],
-         src.user_id, field_id),
+        sql.SQL("""UPDATE {} SET action = %s, semantic_type = %s, notes = %s, reviewed = %s, source = %s,
+                          updated_at = now() WHERE field_id = %s AND {}""").format(table, where),
+        (dec["action"], dec["semantic_type"], dec["notes"], dec["reviewed"], dec["source"], field_id),
     )
     families = [s["family"] for s in snap["settings"]]
+    stable, swhere = _settings_target(src)
     conn.execute(
-        """DELETE FROM meta.assessment_settings
-            WHERE recipe_id = %s AND user_id = %s AND field_id = %s AND NOT family = ANY(%s)""",
-        (src.recipe["id"], src.user_id, field_id, families),
+        sql.SQL("DELETE FROM {} WHERE field_id = %s AND NOT family = ANY(%s) AND {}").format(stable, swhere),
+        (field_id, families),
     )
     for s in snap["settings"]:
         write_settings(conn, src, 0, field_id, s["family"], s, s["source"])
@@ -194,10 +315,25 @@ def lock_decisions(conn, src: Source, field_ids: list[int]) -> None:
 
 
 def _decision_target(src: Source) -> tuple[sql.Composable, sql.Composable]:
-    if not src.personal:
+    if src.kind == "team":
         return sql.SQL("meta.field_decisions"), sql.SQL("true")
-    return sql.SQL("meta.assessments"), sql.SQL("recipe_id = {} AND user_id = {}").format(
-        sql.Literal(src.recipe["id"]), sql.Literal(src.user_id))
+    if src.kind == "experiment":
+        return sql.SQL("meta.experiment_decisions"), sql.SQL("experiment_id = {}").format(
+            sql.Literal(src.experiment["id"]))
+    if src.kind == "assessment":
+        return sql.SQL("meta.assessments"), sql.SQL("recipe_id = {} AND user_id = {}").format(
+            sql.Literal(src.recipe["id"]), sql.Literal(src.user_id))
+    raise HTTPException(409, "A finalized baseline can't change")
+
+
+def _settings_target(src: Source) -> tuple[sql.Composable, sql.Composable]:
+    if src.kind == "experiment":
+        return sql.SQL("meta.experiment_settings"), sql.SQL("experiment_id = {}").format(
+            sql.Literal(src.experiment["id"]))
+    if src.kind == "assessment":
+        return sql.SQL("meta.assessment_settings"), sql.SQL("recipe_id = {} AND user_id = {}").format(
+            sql.Literal(src.recipe["id"]), sql.Literal(src.user_id))
+    raise HTTPException(409, "Only an assessment's or an experiment's settings are restored this way")
 
 
 # ------------------------------------------------------------------------------------------ assessors

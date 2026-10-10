@@ -64,12 +64,12 @@ SQL_EXAMPLES = [
 
 
 @router.post("/datasets/{dataset_id}/fields/query")
-def query_fields(dataset_id: int, q: FieldQuery, user: CurrentUser) -> list[dict]:
+def query_fields(dataset_id: int, q: FieldQuery, user: CurrentUser, view: str | None = None) -> list[dict]:
     if q.order_by not in QUERYABLE:
         raise HTTPException(422, f"Cannot order by {q.order_by!r}")
     with connection() as conn:
         query = sql.SQL("SELECT * FROM {} WHERE {} ORDER BY {} {} NULLS LAST LIMIT {}").format(
-            source_for(conn, dataset_id, user).fields_view(),
+            source_for(conn, dataset_id, user, view=view).fields_view(),
             fields_where(dataset_id, q.filters),
             sql.Identifier(q.order_by),
             sql.SQL("DESC" if q.descending else "ASC"),

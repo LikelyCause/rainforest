@@ -42,11 +42,21 @@ def _field(field_id: int) -> dict:
     return f
 
 
-def _family(f: dict, family: str | None) -> str:
-    fam = family or f["active_family"]
-    if fam not in FAMILIES:
-        raise HTTPException(422, f"Unknown model family {fam!r}")
-    return fam
+def _family(src: Source, family: str | None) -> str:
+    """The model family a request reads or writes settings for: always its baseline's."""
+    if family is not None and family != src.family:
+        raise HTTPException(422, f"{recipes.label(src.recipe)} prepares data for "
+                                 f"{FAMILIES[src.family]['label'].lower()}; it has no {family!r} settings")
+    return src.family
+
+
+def view_targets(conn, src: Source) -> list[str]:
+    """The targets a non-team source decides on, in chain order (an experiment's own order first)."""
+    names = [r["name"] for r in conn.execute(
+        sql.SQL("""SELECT f.name FROM meta.fields f JOIN {} d ON d.field_id = f.id
+                    WHERE d.action = 'target' ORDER BY f.ordinal""").format(src.decisions())).fetchall()]
+    order = (src.experiment or {}).get("target_order") or []
+    return [n for n in order if n in names] + [n for n in names if n not in order]
 
 
 def _merged_sql(src: Source | None) -> sql.Composable:
@@ -72,21 +82,39 @@ def _merged_many(conn, field_ids: list[int], family: str, src: Source | None = N
 
 
 @router.get("/fields/{field_id}")
-def get_field(field_id: int, user: CurrentUser, family: str | None = None) -> dict:
+def get_field(field_id: int, user: CurrentUser, family: str | None = None, view: str | None = None) -> dict:
+    """A field with the decision the viewer works on (the source `view` names, else the baseline in progress); in
+    an experiment, also the baseline's own decision for it."""
     f = _field(field_id)
-    fam = _family(f, family)
+    baseline = None
     with connection() as conn:
-        src = source_for(conn, f["dataset_id"], user)
+        src = source_for(conn, f["dataset_id"], user, view=view)
+        fam = _family(src, family)
         decision = _merged(conn, field_id, fam, src)
-        locked = recipes.locked_problem(conn, src.recipe, [field_id])
-    targets = fetch_all(
-        """SELECT other_field_id AS field_id, other_field_name AS name, method, value, strength
-             FROM meta.v_correlations WHERE field_id = %s AND other_is_target ORDER BY other_field_name""",
-        (field_id,),
-    )
+        locked = None if src.kind in ("experiment", "baseline") else recipes.locked_problem(conn, src.recipe, [field_id])
+        if src.team:
+            targets = conn.execute(
+                """SELECT other_field_id AS field_id, other_field_name AS name, method, value, strength
+                     FROM meta.v_correlations WHERE field_id = %s AND other_is_target ORDER BY other_field_name""",
+                (field_id,),
+            ).fetchall()
+        else:
+            targets = conn.execute(
+                """SELECT other_field_id AS field_id, other_field_name AS name, method, value, strength
+                     FROM meta.v_correlations WHERE field_id = %s AND other_field_name = ANY(%s)
+                    ORDER BY other_field_name""",
+                (field_id, view_targets(conn, src)),
+            ).fetchall()
+        if src.kind == "experiment":
+            entry = recipes.snapshot_of(conn, src.recipe)["fields"].get(f["name"])
+            if entry is not None:
+                baseline = {**entry["decision"], "settings": entry["settings"].get(fam)}
     suggestions = f.pop("suggestion") or {}
     f["suggestion"] = suggestions.get(fam, {})
-    return {"field": f, "family": fam, "decision": decision, "target_associations": targets, "locked": locked}
+    out = {"field": f, "family": fam, "decision": decision, "target_associations": targets, "locked": locked}
+    if src.kind == "experiment":
+        out["baseline"] = baseline
+    return out
 
 
 @router.get("/fields/{field_id}/correlations")
@@ -113,15 +141,16 @@ def history(field_id: int) -> list[dict]:
 
 
 @router.put("/fields/{field_id}/decision")
-def save_decision(field_id: int, body: DecisionIn, user: CurrentUser) -> dict:
+def save_decision(field_id: int, body: DecisionIn, user: CurrentUser, view: str | None = None) -> dict:
     f = _field(field_id)
-    fam = _family(f, body.family)
     d = body.model_dump(exclude={"family"})
-    errors = validate_decision(d, fam, n_unique=f["n_unique"])
-    if errors:
-        raise HTTPException(422, {"message": "Invalid decision", "errors": errors})
+    screen_after = False
     with connection() as conn:
-        src = source_for(conn, f["dataset_id"], user, lock="share")
+        src = source_for(conn, f["dataset_id"], user, lock="share", view=view)
+        fam = _family(src, body.family)
+        errors = validate_decision(d, fam, n_unique=f["n_unique"])
+        if errors:
+            raise HTTPException(422, {"message": "Invalid decision", "errors": errors})
         src.require_write()
         if (locked := recipes.locked_problem(conn, src.recipe, [field_id])) is not None:
             raise HTTPException(409, locked)
@@ -135,7 +164,7 @@ def save_decision(field_id: int, body: DecisionIn, user: CurrentUser) -> dict:
         settings = settings_of(d)
         write_settings(conn, src, f["dataset_id"], field_id, fam, settings,
                        prev["settings_source"] if _same_settings(prev, settings) else "user")
-        if prev["semantic_type"] != d["semantic_type"]:
+        if prev["semantic_type"] != d["semantic_type"] and src.kind != "experiment":
             # Other families' settings were chosen for the old type; re-derive them for the new one.
             stats = {k: f[k] for k in STAT_KEYS}
             for other in FAMILIES:
@@ -143,9 +172,14 @@ def save_decision(field_id: int, body: DecisionIn, user: CurrentUser) -> dict:
                     write_settings(conn, src, f["dataset_id"], field_id, other,
                                    suggest(d["semantic_type"], stats, False, other), "suggested")
         row = _merged(conn, field_id, fam, src)
-        if src.personal:
+        if src.kind == "experiment" and (prev["action"] == "target") != (d["action"] == "target"):
+            screen_after = _experiment_target_changed(conn, src, f, d["action"] == "target")
+        if not src.team:
             # Only the team decision has history, target state and a stored date format: an assessor's choices
-            # stay theirs until review.
+            # stay theirs until review, and an experiment's stay in the experiment.
+            if screen_after:
+                conn.commit()
+                jobs.submit(target_associations_job, f["dataset_id"], [field_id])
             return row
         if d["semantic_type"] == "datetime" and not (f["stats"] or {}).get("datetime_format"):
             _remember_datetime_format(conn, f)
@@ -180,11 +214,12 @@ def _remember_datetime_format(conn, f: dict) -> None:
 
 
 @router.post("/datasets/{dataset_id}/decisions/bulk")
-def bulk_decisions(dataset_id: int, body: BulkDecisionIn, user: CurrentUser) -> dict:
-    fam = _active_family(dataset_id)
+def bulk_decisions(dataset_id: int, body: BulkDecisionIn, user: CurrentUser, view: str | None = None) -> dict:
+    _active_family(dataset_id)
     with connection() as conn:
-        src = source_for(conn, dataset_id, user, lock="share")
+        src = source_for(conn, dataset_id, user, lock="share", view=view)
         src.require_write()
+        fam = src.family
         if body.filters is not None:
             target = sql.SQL("d.field_id IN (SELECT field_id FROM {} WHERE {})").format(
                 src.fields_view(), fields_where(dataset_id, body.filters))
@@ -201,10 +236,10 @@ def bulk_decisions(dataset_id: int, body: BulkDecisionIn, user: CurrentUser) -> 
                         WHERE d.dataset_id = {} AND {} AND NOT d.field_id = ANY({})
                         ORDER BY f.ordinal {}""").format(
                 src.decisions(), sql.Literal(dataset_id), target, sql.Literal(body.excluded_ids),
-                sql.SQL("" if src.personal else "FOR UPDATE OF d")),
+                sql.SQL("FOR UPDATE OF d" if src.team else "")),
         ).fetchall()
         ids = [r["field_id"] for r in rows]
-        if src.personal:
+        if not src.team:
             lock_decisions(conn, src, ids)
         settings: dict[int, dict[str, dict]] = {}
         for srow in conn.execute(sql.SQL("SELECT * FROM {} s WHERE field_id = ANY(%s)").format(src.settings()),
@@ -235,6 +270,13 @@ def bulk_decisions(dataset_id: int, body: BulkDecisionIn, user: CurrentUser) -> 
                 (batch_id, src.recipe["id"], src.user_id, summary, jsonb(snapshot)),
             )
             return {"batch_id": str(batch_id), "dry_run": False, **result}
+        if src.kind == "experiment":
+            conn.execute(
+                """INSERT INTO meta.experiment_batches (id, experiment_id, user_id, summary, snapshot)
+                   VALUES (%s, %s, %s, %s, %s)""",
+                (batch_id, src.experiment["id"], user["id"], summary, jsonb(snapshot)),
+            )
+            return {"batch_id": str(batch_id), "dry_run": False, **result}
         _write_history(conn, dataset_id, fam, batch_id, prev, _merged_many(conn, changed_ids, fam), user["id"])
         conn.execute(
             "INSERT INTO meta.bulk_batches (id, dataset_id, summary, snapshot, user_id) VALUES (%s, %s, %s, %s, %s)",
@@ -245,19 +287,27 @@ def bulk_decisions(dataset_id: int, body: BulkDecisionIn, user: CurrentUser) -> 
 
 
 @router.post("/datasets/{dataset_id}/decisions/bulk/{batch_id}/undo")
-def undo_bulk(dataset_id: int, batch_id: str, user: CurrentUser) -> dict:
+def undo_bulk(dataset_id: int, batch_id: str, user: CurrentUser, view: str | None = None) -> dict:
     try:
         bid = uuid.UUID(batch_id)
     except ValueError:
         raise HTTPException(404, "Bulk batch not found") from None
-    fam = _active_family(dataset_id)
+    _active_family(dataset_id)
     with connection() as conn:
-        src = source_for(conn, dataset_id, user, lock="share")
+        src = source_for(conn, dataset_id, user, lock="share", view=view)
+        fam = src.family
+        batches = "assessment_batches" if src.personal else "experiment_batches"
         if src.personal:
             batch = conn.execute(
                 """SELECT snapshot, undone_at FROM meta.assessment_batches
                     WHERE id = %s AND recipe_id = %s AND user_id = %s FOR UPDATE""",
                 (bid, src.recipe["id"], src.user_id),
+            ).fetchone()
+        elif src.kind == "experiment":
+            batch = conn.execute(
+                """SELECT snapshot, undone_at FROM meta.experiment_batches
+                    WHERE id = %s AND experiment_id = %s FOR UPDATE""",
+                (bid, src.experiment["id"]),
             ).fetchone()
         else:
             batch = conn.execute(
@@ -270,12 +320,13 @@ def undo_bulk(dataset_id: int, batch_id: str, user: CurrentUser) -> dict:
         if batch["undone_at"] is not None:
             raise HTTPException(409, "This bulk change was already undone")
         snapshot: dict = batch["snapshot"]
-        if src.personal:
+        if not src.team:
             ids = sorted(int(k) for k in snapshot)
             lock_decisions(conn, src, ids)
             for fid in ids:
                 restore_assessment(conn, src, fid, snapshot[str(fid)])
-            conn.execute("UPDATE meta.assessment_batches SET undone_at = now() WHERE id = %s", (bid,))
+            conn.execute(sql.SQL("UPDATE meta.{} SET undone_at = now() WHERE id = %s").format(sql.Identifier(batches)),
+                         (bid,))
             return {"restored": len(ids), "batch_id": None}
         # Fields deleted since (dataset reprocessed) can't be restored; skip them.
         ids = [r["field_id"] for r in conn.execute(
@@ -481,6 +532,25 @@ def screen_pairs(dataset_id: int, target_ids: list[int]) -> list[tuple[int, int,
     others = [codes(f) for f in fields if not f["is_target"]
               and needs_screen(f["inferred_type"], f["n_unique"] or 0, False, s.corr_max_levels)]
     return [(a.i, a.j, a) for a in screen_associations(targets, others)]
+
+
+def _experiment_target_changed(conn, src: Source, f: dict, became: bool) -> bool:
+    """Keep an experiment's target order in step with its copy; whether the new target needs the leak screen."""
+    x = src.experiment
+    order = [n for n in (x.get("target_order") or []) if n != f["name"]] + ([f["name"]] if became else [])
+    conn.execute("UPDATE meta.experiments SET target_order = %s WHERE id = %s", (order, x["id"]))
+    return became and has_screen_fields(conn, f["dataset_id"])
+
+
+def target_associations_job(dataset_id: int, target_ids: list[int]) -> None:
+    """Background job: the leak screen for fields an experiment made targets. Associations are shared, so this only
+    adds them; the baseline's own target state is left alone."""
+    try:
+        pairs = screen_pairs(dataset_id, target_ids)
+        with connection() as conn:
+            upsert_correlations(conn, dataset_id, pairs)
+    except Exception:  # noqa: BLE001
+        log.exception("leak screen for experiment targets of dataset %s failed", dataset_id)
 
 
 def screen_targets(dataset_id: int, target_ids: list[int]) -> None:

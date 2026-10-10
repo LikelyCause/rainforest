@@ -279,11 +279,12 @@ def test_review_adopts_agreement_queues_disagreement_and_finalize_freezes(people
     try:
         _assign(lead, ds, a, b)
         f = _fields(a, ds)
-        # Agreement on z with different settings: tree settings tie (suggestion wins), linear picks the common one.
+        # Agreement on z with different settings: they tie, so the suggestion wins (a baseline has one model type).
         assert _save(a, f["z"]["id"], imputation="mean", notes="z looks fine").status_code == 200
         assert _save(b, f["z"]["id"], imputation="constant", impute_value="0").status_code == 200
-        for who in (a, b):
-            assert _save(who, f["z"]["id"], family="linear", imputation="mean").status_code == 200
+        cur = a.get(f"/api/fields/{f['z']['id']}").json()["decision"]
+        r = a.put(f"/api/fields/{f['z']['id']}/decision", json={**{k: cur[k] for k in KEYS}, "family": "linear"})
+        assert r.status_code == 422, "a baseline has one model type"
         # Disagreement on x (keep vs drop) and on w's type.
         assert _save(b, f["x"]["id"], action="drop", notes="x is noise").status_code == 200
         assert _save(a, f["w"]["id"], semantic_type="numeric_discrete").status_code == 200
@@ -298,9 +299,7 @@ def test_review_adopts_agreement_queues_disagreement_and_finalize_freezes(people
         assert team["z"]["reviewed"] and team["c"]["reviewed"] and not team["x"]["reviewed"]
         z_tree = lead.get(f"/api/fields/{f['z']['id']}?family=tree").json()["decision"]
         assert z_tree["imputation"] == "none" and z_tree["settings_source"] == "suggested"
-        z_lin = lead.get(f"/api/fields/{f['z']['id']}?family=linear").json()["decision"]
-        assert z_lin["imputation"] == "mean" and z_lin["settings_source"] == "user"
-        assert z_lin["notes"] == f"{a.user['name']}: z looks fine"
+        assert z_tree["notes"] == f"{a.user['name']}: z looks fine"
         hist = lead.get(f"/api/fields/{f['z']['id']}/history").json()
         assert hist and hist[0]["user_id"] == b.user["id"], "adoption is recorded, by whoever opened review"
 
@@ -499,7 +498,7 @@ READS = {
 
 
 # Reads that must be refused outright, whatever they would contain.
-REFUSED = {"undo another's batch": 404, "another's analysis": 404, "review queue": 409, "field review": 409,
+REFUSED = {"undo another's batch": 404, "field detail linear": 422, "another's analysis": 404, "review queue": 409, "field review": 409,
            **{name: 404 for name in ("experiment", "rename experiment", "export", "export data", "export pipeline",
                                      "export manifest", "export models", "export preview of experiment",
                                      "export into experiment", "train on export", "run", "run model", "run report",

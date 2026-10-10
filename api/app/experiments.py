@@ -76,6 +76,23 @@ def require_writable(x: dict, user: dict) -> None:
         raise HTTPException(403, "Only the assessor whose assessment it is can add to a personal experiment.")
 
 
+def adjust_denied(x: dict, user: dict) -> tuple[int, str] | None:
+    """Why `user` can't adjust this experiment's copy of its baseline, or None: only its owner can, on a team
+    experiment they made (not the default one for a baseline's exports), while it isn't archived."""
+    if x["assessor_id"] is not None:
+        return 409, "A personal experiment follows your assessment; change your assessment instead."
+    if x["is_default"] or x["owner"] != user["id"]:
+        return 403, ("Only the experiment's owner adjusts it. Start your own experiment from this baseline to try "
+                     "changes.")
+    if x["archived_at"] is not None:
+        return 409, f"Experiment {x['name']!r} is archived; unarchive it to adjust it."
+    return None
+
+
+def can_adjust(x: dict, user: dict) -> bool:
+    return adjust_denied(x, user) is None
+
+
 def require_editable(x: dict, user: dict) -> None:
     """Renaming, notes, archiving: the owner (the assessor, for a personal one) or a lead."""
     if user["role"] != "lead" and user["id"] not in (x["owner"], x["assessor_id"]):

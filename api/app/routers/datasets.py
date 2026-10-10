@@ -452,13 +452,17 @@ def _run_dirs(models_dir: Path, runs: list[dict]) -> set[Path]:
 
 
 @router.get("/{dataset_id}/fields")
-def list_fields(dataset_id: int, user: CurrentUser) -> list[dict]:
-    """Lightweight rows for the review sidebar, with the decisions the viewer works on (their own while assessing)."""
+def list_fields(dataset_id: int, user: CurrentUser, view: str | None = None) -> list[dict]:
+    """Lightweight rows for the review sidebar, with the decisions the viewer works on (their own while assessing,
+    or the source `view` names). Outside the team decision, targets and leak flags follow that source's targets."""
+    from ..leakage import leak_names
+    from .fields import view_targets
+
     with connection() as conn:
-        src = source_for(conn, dataset_id, user)
+        src = source_for(conn, dataset_id, user, view=view)
         # Carried-over fields of a later version are locked; a finalized version is frozen whole anyway.
         open_ = None if src.recipe["phase"] == "finalized" else recipes.open_field_ids(conn, src.recipe)
-        return conn.execute(
+        rows = conn.execute(
             sql.SQL("""SELECT f.id, f.ordinal, f.name, f.inferred_type, f.inference_confidence, f.is_target,
                               f.null_pct, f.n_unique, f.max_target_assoc, f.leakage_flag AS leakage,
                               d.action, d.semantic_type, d.reviewed, d.source,
@@ -467,3 +471,7 @@ def list_fields(dataset_id: int, user: CurrentUser) -> list[dict]:
                         WHERE f.dataset_id = %s ORDER BY f.ordinal""").format(src.decisions()),
             (open_ is None, open_ or [], dataset_id),
         ).fetchall()
+        if src.kind in ("experiment", "baseline"):
+            leaks = leak_names(conn, dataset_id, view_targets(conn, src))
+            rows = [{**r, "is_target": r["action"] == "target", "leakage": r["name"] in leaks} for r in rows]
+        return rows
