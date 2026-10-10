@@ -58,7 +58,9 @@ sign-in: see [Deploying for a team](#deploying-for-a-team) (`make up-keycloak` r
    finalizes. See [Team workflow](#team-workflow).
 2. **Review** → walk the fields. Each field shows its signals (missing, skew, outliers, levels, target association
    with a leakage flag), its distribution and quantile strip, top tokens or weekdays, and its strongest
-   **associations** (click a bar to jump to that field). Decisions autosave. The sidebar filters by status
+   **associations** (click a bar to jump to that field). The decision panel lists *Why these suggestions*: one line
+   per suggested setting, naming it and the evidence behind it (e.g. *Imputation: median, plus a column flagging
+   missing rows; 12.3% of values are missing*). Decisions autosave. The sidebar filters by status
    (*To do* · *Kept* · *Dropped* · *All*), by type, and by *Needs attention* (unreviewed fields with a leakage flag,
    mostly missing or constant, with low type confidence, or whose save failed).
 3. **Bulk edit** → find fields with presets (*Unreviewed*, *Missing > 20%*, *Skewed numerics*, *Target-associated*,
@@ -203,7 +205,8 @@ on the Datasets list and in the top bar.
    (fields reviewed, submitted or not), never their choices. Everyone else can browse the fields with their
    suggestions and use Explore, read-only. *Submit assessment* needs every field reviewed; an assessor can unsubmit
    until review opens, and a lead can unassign someone (their choices are kept but don't count). Targets are set
-   before anyone is assigned, since every assessor starts from them.
+   before anyone is assigned, since every assessor starts from them. A lead who opens Review or Bulk edit on a
+   dataset they aren't assessing gets *Assess it myself*, which assigns them like anyone else.
 2. **Team review** opens by itself when the last assigned assessor submits (or a lead unassigns the last one who
    hadn't). Fields where every assessor chose the same keep / drop / target and type are **adopted** as the team
    decision; each model family's settings take the most common choice, and a tie takes the suggestion. The rest
@@ -382,7 +385,7 @@ the recipe (`recipe_id`, shown as *recipe vN* in the list) and its experiment, a
   they're in the field's own units. A field retyped to date / time has its date format detected once over the whole
   column when you save, so every chunk of the export reads it the same way.
 * **Before you export**, the page summarises what will go in (kept / dropped / targets / customised fields, kept
-  fields by type) and warns about unreviewed fields, kept leakage flags and a lone target (nothing to chain). No
+  fields by type) and warns about unreviewed fields and kept leakage flags. No
   target, no kept features or a single-row target class blocks the export. Once an export exists, it shows how many
   decisions changed since, with *Re-export with same split*. Validation and test share, seed and the fit-row cap are adjustable.
 * **Compatibility:** tree models train on any export. Linear and neural models need an export prepared for their
@@ -400,7 +403,8 @@ the recipe (`recipe_id`, shown as *recipe vN* in the list) and its experiment, a
   macro for multiclass), precision / recall / F1 (macro and weighted, plus positive-class and specificity for binary
   targets), confusion matrices, a per-class table and ROC curves (one-vs-rest per class for multiclass targets, up to
   200 points each), plus the top importances per chain link.
-* **On the page:** each export has *Train ▾* (model and chain order), *Files ▾* (Parquet, preprocessor, manifest) and
+* **On the page:** each export has *Train ▾* (the model, and which of the export's targets to train in which chain
+  order: tick one target for a single model, or several and order them), *Files ▾* (Parquet, preprocessor, manifest) and
   *Use from code* (the CLI command and class mappings). Runs are listed per export, with that export's targets as
   columns, showing test-split AUC and macro-F1. In each of these columns ★ marks the run that scored best on the
   validation split for that target and metric, so choosing it doesn't use the test split. A run expands into, per

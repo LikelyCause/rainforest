@@ -74,6 +74,19 @@ def test_tree_models_train_on_tree_export(tree_export, tmp_path, model):
     assert report["params"] == {**MODELS[model].default_params, **fast}
 
 
+def test_a_run_can_train_one_target_or_reorder(tree_export, tmp_path):
+    one = train(tree_export, "lightgbm", order_names=["column_b"], seed=0, params={"n_estimators": 30}, cv=3,
+                out_dir=tmp_path / "one")
+    assert one["order"] == ["column_b"] and set(one["metrics"]["test"]) == {"column_b"}
+    assert one["metrics"]["test"]["column_b"]["accuracy"] > 0.5
+    both = train(tree_export, "lightgbm", order_names=["column_b", "column_a"], seed=0, params={"n_estimators": 30},
+                 cv=3, out_dir=tmp_path / "both")
+    assert both["order"] == ["column_b", "column_a"] and set(both["metrics"]["test"]) == {"column_a", "column_b"}
+    for bad, msg in ((["column_a", "column_a"], "only once"), (["nope"], "Not targets")):
+        with pytest.raises(ValueError, match=msg):
+            train(tree_export, "lightgbm", order_names=bad, out_dir=tmp_path / "bad")
+
+
 def test_cuda_run_that_falls_back_to_cpu_fails(tree_export, tmp_path):
     """No GPU here, so XGBoost silently trains on the CPU; the run must not be recorded as a GPU run."""
     with pytest.raises(RuntimeError, match="GPU training was requested but XGBoost ran on cpu"):

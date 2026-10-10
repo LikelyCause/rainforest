@@ -282,7 +282,7 @@ def suggest(t: str, stats: dict[str, Any], is_target: bool, family: str = DEFAUL
     reasons: list[str] = []
     if is_target:
         out["action"] = "target"
-        out["reasons"] = ["configured as a target column"]
+        out["reasons"] = ["Target: marked as a target column, so it is predicted rather than used as a feature"]
         return out
 
     null_pct = stats.get("null_pct") or 0.0
@@ -292,65 +292,70 @@ def suggest(t: str, stats: dict[str, Any], is_target: bool, family: str = DEFAUL
 
     if t in NON_FEATURE_TYPES:
         out["action"] = "drop"
-        reasons.append("identifiers carry no generalisable signal" if t == "identifier" else "no variance")
+        reasons.append("Drop: an identifier (a key or ID) carries no signal that carries over to new rows" if t == "identifier"
+                       else "Drop: every row has the same value, so it can't help predict anything")
     elif null_pct >= 0.95:
         out["action"] = "drop"
-        reasons.append(f"{null_pct:.0%} missing")
+        reasons.append(f"Drop: {null_pct:.0%} of values are missing")
 
     if t in NUMERIC:
         if fam["handles_nan"]:
             if null_pct > 0:
-                reasons.append(f"{null_pct:.1%} missing → left as NaN; the trees learn which side missing values go")
+                reasons.append(f"Imputation: none; {null_pct:.1%} of values are missing and tree models learn where missing "
+                               "values belong")
             if abs(skew) > 2 or outliers > 0.03:
-                reasons.append("skew / outliers need no treatment — tree splits only depend on order")
+                reasons.append("Transform: none; skew and outliers don't affect tree models, which only use the order of values")
         else:
             if null_pct > 0:
                 out["imputation"] = "median"
                 if null_pct >= 0.01:
                     out["add_missing_indicator"] = True
-                    reasons.append(f"{null_pct:.1%} missing → median + missing indicator")
+                    reasons.append(f"Imputation: median, plus a column flagging missing rows; {null_pct:.1%} of values are "
+                                   "missing")
                 else:
-                    reasons.append("few missing values → median")
+                    reasons.append(f"Imputation: median; only {null_pct:.2%} of values are missing")
             if abs(skew) > 1:
                 out["transform"] = "log1p"
-                reasons.append(f"skewness {skew:.1f} → signed log1p")
+                reasons.append(f"Transform: signed log1p, to even out a skewed distribution (skewness {skew:.1f})")
             elif outliers > 0.03:
                 out["transform"] = "clip"
-                reasons.append(f"{outliers:.1%} IQR outliers → winsorize")
+                reasons.append(f"Transform: winsorize (clip extremes); {outliers:.1%} of values are outliers by the IQR rule")
             out["scaling"] = "quantile_normal" if family == "neural" and abs(skew) > 1 else "standard"
-            reasons.append(f"{SCALINGS[out['scaling']].lower()} scaling for gradient-based fitting")
+            reasons.append(f"Scaling: {SCALINGS[out['scaling']].lower()}; {fam['label'].lower()} fit better when features "
+                           "share a scale")
         if t == "numeric_discrete" and n_levels <= 12:
-            reasons.append("few distinct levels — consider treating as categorical")
+            reasons.append(f"Type: only {n_levels} distinct values; consider treating it as categorical")
     elif t == "categorical":
         if fam["needs_onehot"]:
             out["encoding"] = "onehot" if n_levels <= 200 else "frequency"
             if out["encoding"] == "onehot":
-                reasons.append(f"{n_levels} levels → one-hot (top 30 kept, rest grouped)")
+                reasons.append(f"Encoding: one-hot; {n_levels} levels, the 30 most common get their own column and "
+                                   "the rest share one")
             else:
-                reasons.append(f"{n_levels:,} levels → frequency encoding")
+                reasons.append(f"Encoding: frequency; {n_levels:,} levels are too many for one-hot")
         elif n_levels <= 8:
             out["encoding"] = "onehot"
-            reasons.append(f"{n_levels} levels → one-hot")
+            reasons.append(f"Encoding: one-hot; only {n_levels} levels")
         elif n_levels <= 1000:
             out["encoding"] = "ordinal"
-            reasons.append(f"{n_levels} levels → ordinal codes (trees split these well, no width blow-up)")
+            reasons.append(f"Encoding: ordinal codes; {n_levels} levels, which trees split well without adding columns")
         else:
             out["encoding"] = "frequency"
-            reasons.append(f"{n_levels:,} levels → frequency encoding")
+            reasons.append(f"Encoding: frequency; {n_levels:,} levels are too many for one-hot")
         out["params"] = dict(DEFAULT_PARAMS.get(out["encoding"], {}))
         if null_pct > 0:
-            reasons.append("missing values become their own '__missing__' level")
+            reasons.append("Imputation: missing values become their own level, '__missing__'")
     elif t == "binary":
         out["imputation"] = "most_frequent" if null_pct < 0.05 else "constant"
     elif t == "text":
         out["encoding"] = "tfidf_svd"
         out["params"] = dict(DEFAULT_PARAMS["tfidf_svd"])
-        reasons.append("free text → TF-IDF reduced to 32 SVD components")
+        reasons.append("Encoding: TF-IDF reduced to 32 SVD components, which turns free text into numbers")
     elif t == "datetime":
         if not fam["handles_nan"]:
             out["imputation"] = "median"
             out["scaling"] = "standard"
-        reasons.append("expanded to year / month / weekday / hour / epoch-days")
+        reasons.append("Encoding: split into year, month, weekday, hour and days since 1970")
 
     out["reasons"] = reasons
     return out

@@ -251,7 +251,8 @@ def target_suggestion(t: str, stats: dict, is_target: bool, max_target_assoc: fl
     by_family = suggest_all(t, stats, is_target)
     leak = not is_target and max_target_assoc is not None and max_target_assoc >= LEAKAGE_THRESHOLD
     if leak:
-        reason = f"association {max_target_assoc:.2f} with a target — likely target leakage"
+        reason = (f"Drop: likely target leakage; its association with a target is {max_target_assoc:.2f}, too close to "
+                  "the target itself")
         by_family = {
             fam: {**sugg, "action": "drop", "reasons": [reason, *sugg.get("reasons", [])]}
             for fam, sugg in by_family.items()

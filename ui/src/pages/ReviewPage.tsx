@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useAccess, useFields, useOptions } from "../hooks";
+import { JoinAssessment } from "../components/JoinAssessment";
 import { useDatasetContext } from "../components/DatasetLayout";
 import { FieldList, type StatusFilter, type WorkingSet } from "../components/FieldList";
 import { FieldDetailView } from "../components/FieldDetailView";
@@ -281,6 +282,7 @@ export function ReviewPage() {
           <button type="button" className="small" onClick={prev} aria-label="Previous field">‹ <kbd>K</kbd></button>
           <button type="button" className="small" onClick={next} aria-label="Next field"><kbd>J</kbd> ›</button>
         </div>
+        <JoinAssessment ds={ds} />
         {detail.isFetching && detail.isPlaceholderData && <div className="loading-bar" aria-hidden="true" />}
         {finish ? (
           <FinishCard finish={finish} scope={scope} datasetId={datasetId} workingSet={workingSet} finishTo={finishTo}

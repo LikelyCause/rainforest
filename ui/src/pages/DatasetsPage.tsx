@@ -255,6 +255,7 @@ function FirstRun({ onBrowse, onDemo, busy }: { onBrowse: () => void; onDemo: ()
       <div className="stack" style={{ justifyContent: "center", gap: 12 }}>
         <h2>No data handy?</h2>
         <div><button type="button" className="primary" disabled={busy} onClick={onDemo}>Open the 50k × 150 demo</button></div>
+        <span className="muted small-text">Or pick its size and targets with <b>Generate sample ▾</b> above.</span>
         <div className="chips">
           {["leaky feature", "ID columns", "numbers-as-text", "missingness"].map((c) => <span key={c} className="badge">{c}</span>)}
         </div>
@@ -359,12 +360,12 @@ export function DatasetsPage() {
         onChange={(e) => { void upload.start(e.target.files?.[0]).then((ds) => ds && uploaded(ds)); e.target.value = ""; }} />
       <div className="row" style={{ justifyContent: "space-between" }}>
         <h1>Datasets</h1>
-        {rows.length > 0 && (
-          <div className="row">
-            <SampleMenu onCreated={(ds) => highlight(ds.id)} />
+        <div className="row">
+          <SampleMenu onCreated={(ds) => highlight(ds.id)} />
+          {rows.length > 0 && (
             <button type="button" className="primary" onClick={browse} disabled={upload.progress !== null}>↑ Upload CSV / Parquet</button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
       <ErrorAlert error={error} />
       {isLoading && <div className="stack"><span className="skeleton" /><span className="skeleton" /></div>}
