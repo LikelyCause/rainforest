@@ -2,7 +2,7 @@
 another baseline, or from another dataset's. Needs RAINFOREST_TEST_DATABASE_URL."""
 from .conftest import set_phase
 from .team_helpers import app_, people  # noqa: F401  (fixtures)
-from .team_helpers import fields, save, start, submit_and_finalize, upload
+from .team_helpers import experiment, export, fields, finalized_trees, save, start, submit_and_finalize, upload
 
 
 def test_recipes_have_a_family_and_versions_count_per_family(app_):
@@ -221,3 +221,17 @@ def test_finalized_baselines_list_names_their_type(people):
     rid = submit_and_finalize(lead, ds)["recipe"]["id"]
     row = next(r for r in lead.get("/api/recipes").json() if r["id"] == rid)
     assert row["family"] == "neural" and row["label"] == "Neural baseline v1"
+
+
+def test_planned_models_are_listed_but_not_trainable(people):
+    from app.modeling.registry import catalog
+
+    assert {m["key"] for m in catalog() if m.get("planned")} == {"linear_svm", "knn", "cnn", "rnn"}
+    lead = people["lead"]
+    ds, rid = finalized_trees(lead)
+    e = export(lead, ds, experiment(lead, ds, rid, "planned"))
+    models = {m["key"]: m for m in lead.get(f"/api/exports/{e['id']}/models").json()}
+    assert models["knn"]["planned"] and not models["knn"]["compatible"] and models["knn"]["reason"] == "planned"
+    assert models["lightgbm"]["compatible"] and not models["lightgbm"]["planned"]
+    r = lead.post(f"/api/exports/{e['id']}/runs", json={"model": "knn"})
+    assert r.status_code == 422 and "planned" in r.json()["detail"]

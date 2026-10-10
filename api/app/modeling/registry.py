@@ -177,11 +177,23 @@ def compatibility(spec: ModelSpec, export_family: str, contains_nan: bool) -> st
     return None
 
 
+# Models on the roadmap: listed so people know they're coming, never trainable.
+PLANNED = {
+    "linear_svm": {"label": "Linear SVM", "family": "linear", "description": "Linear support vector machine."},
+    "knn": {"label": "k-nearest neighbours", "family": "neural", "description": "Distance-based classifier."},
+    "cnn": {"label": "Convolutional network", "family": "neural", "description": "Convolutional neural network."},
+    "rnn": {"label": "Recurrent network", "family": "neural", "description": "Recurrent neural network."},
+}
+
+
 def catalog() -> list[dict[str, Any]]:
     return [
         {"key": m.key, "label": m.label, "family": m.family, "handles_nan": m.handles_nan,
-         "available": m.available, "description": m.description, "devices": m.devices}
+         "available": m.available, "description": m.description, "devices": m.devices, "planned": False}
         for m in MODELS.values()
+    ] + [
+        {"key": key, **p, "handles_nan": False, "available": False, "devices": [], "planned": True}
+        for key, p in PLANNED.items()
     ]
 
 

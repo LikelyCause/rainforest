@@ -324,7 +324,8 @@ def main() -> None:
     if args.list_models:
         for m in catalog():
             print(f"{m['key']:24s} {m['family']:7s} {'nan-ok' if m['handles_nan'] else 'no-nan':7s} "
-                  f"{'available' if m['available'] else 'not installed':14s} {'/'.join(m['devices']):9s} "
+                  f"{'planned' if m['planned'] else 'available' if m['available'] else 'not installed':14s} "
+                  f"{'/'.join(m['devices']):9s} "
                   f"{m['description']}")
         return
     if args.export_dir is None:
