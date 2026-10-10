@@ -53,16 +53,18 @@ saying to set it.
 3. **Bulk edit** → find fields with presets (*Unreviewed*, *Missing > 20%*, *Skewed numerics*, *Target-associated*,
    *High-card categoricals*, *Text*, *Possible leaks*, *Edited by you*) or your own filters, then **Accept
    suggestions**, **Keep**, **Drop** or **Mark reviewed**. Each bulk action shows a preview of what will change before
-   you apply it, and can be undone from the toast. *Accept suggestions* leaves preprocessing settings you customised
-   alone unless it changes the field's type. *Review these N →* (`R`) opens the matching fields as a working
-   set in Review. The **SQL** tab is a read-only console with examples.
+   you apply it, and can be undone from the toast. The table shows the first 500 matches; bulk actions apply to every
+   match except the rows you untick, and the bar says so. *Accept suggestions* leaves preprocessing settings you
+   customised alone unless it changes the field's type. *Review these N →* (`R`) opens the shown fields as a
+   working set in Review. The **SQL** tab is a read-only console with examples.
    A field counts as *edited by you* once you change its keep / drop or type, and its settings as *customised* once
    they differ from what was suggested; confirming or annotating a suggestion leaves it a suggestion. Decisions still
    at the suggestion and not yet reviewed follow target changes (a new leak flag drops them).
 4. **Explore** → correlations heatmap, a 2-D map of rows, per-field statistical tests against a target, and feature
    importance. See [Explore](#explore).
 5. **Export & train** → fit the preprocessing on the training split, write the model-ready Parquet, and train
-   chains with any compatible model. Runs are compared side by side, and the best result in each column is starred.
+   chains with any compatible model. Runs on an export are compared side by side, and the best on the validation
+   split is starred.
 
 The top bar shows the workflow steps **Review · Bulk edit · Explore · Export & train** and the **Model** switch
 (*Trees* · *Linear* · *Neural*).
@@ -209,8 +211,9 @@ of failing.
   macro for multiclass), precision / recall / F1 (macro and weighted, plus positive-class and specificity for binary
   targets), confusion matrices and a per-class table, plus the top importances per chain link.
 * **On the page:** each export has *Train ▾* (model and chain order), *Files ▾* (Parquet, preprocessor, manifest) and
-  *Use from code* (the CLI command and class mappings). The runs table compares test-split AUC and macro-F1 per
-  target, stars the best within each export, and expands a run into its full metrics and confusion matrices.
+  *Use from code* (the CLI command and class mappings). Runs are listed per export, with that export's targets as
+  columns, showing test-split AUC and macro-F1. The ★ marks the run that scored best on the validation split, so
+  choosing it doesn't use the test split. A run expands into its full metrics and confusion matrices.
 
 ```bash
 make train EXPORT=1                          # LightGBM

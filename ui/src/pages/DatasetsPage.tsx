@@ -66,7 +66,9 @@ function TargetPicker({ ds, onClose }: { ds: Dataset; onClose: () => void }) {
   const save = useMutation({
     mutationFn: (names: string[]) => api.patchDataset(ds.id, { target_columns: names }),
     onSuccess: () => {
-      for (const k of ["datasets", "dataset", "fields", "field", "corr", "corrMatrix", "analysis"]) qc.invalidateQueries({ queryKey: [k] });
+      for (const k of ["datasets", "dataset", "fields", "field", "corr", "corrMatrix", "analysis", "fieldQuery", "exportPreview"]) {
+        qc.invalidateQueries({ queryKey: [k] });
+      }
       onClose();
     },
   });

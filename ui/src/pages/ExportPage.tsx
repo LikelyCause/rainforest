@@ -8,6 +8,7 @@ import { ErrorAlert } from "../components/ui";
 import { RunDetail } from "../components/RunDetail";
 import { familyShort, fmtAgo, fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
 import { toast } from "../toast";
+import { bestRuns, metricFor, type RunMetric } from "../runs";
 import type { ExportJob, ModelRun } from "../types";
 
 const FAMILY_EXPLAINER: Record<string, string> = {
@@ -318,23 +319,11 @@ function ExportRow({ e, onStarted }: { e: ExportJob; onStarted: (r: ModelRun) =>
   );
 }
 
+/** One export's runs as their own table: its targets are its columns, and ★ compares only runs on its features. */
 function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: number | null }) {
   const [open, setOpen] = useState<number | null>(null);
   const targets: string[] = e.summary?.targets ?? [];
-  const metricFor = (r: ModelRun, t: string, m: "auc" | "f1") => {
-    const x = r.metrics?.test?.[t];
-    if (!x) return undefined;
-    return m === "auc" ? x.roc_auc ?? x.roc_auc_ovr_macro : x.f1_macro;
-  };
-  // Best is judged within one export only: runs on different exports used different features (#52).
-  const best = useMemo(() => {
-    const out: Record<string, number> = {};
-    for (const t of targets) for (const m of ["auc", "f1"] as const) {
-      const vals = runs.map((r) => metricFor(r, t, m)).filter((v): v is number => v !== undefined);
-      if (vals.length > 1) out[`${t}:${m}`] = Math.max(...vals);
-    }
-    return out;
-  }, [runs, targets]);
+  const best = useMemo(() => bestRuns(runs, targets), [runs, targets]);
   // Open a run's detail as soon as the run you just started finishes.
   const prevStatus = useRef(new Map<number, string>());
   useEffect(() => {
@@ -343,20 +332,34 @@ function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: 
       prevStatus.current.set(r.id, r.status);
     }
   }, [runs, fresh]);
-  const cell = (r: ModelRun, t: string, m: "auc" | "f1") => {
-    const v = metricFor(r, t, m);
+  const cell = (r: ModelRun, t: string, m: RunMetric) => {
+    const v = metricFor(r, "test", t, m);
     if (v === undefined) return <td className="num muted">—</td>;
-    const isBest = v === best[`${t}:${m}`];
-    return <td className="num" style={isBest ? { fontWeight: 700 } : undefined}>{fmtNum(v, 3)}{isBest ? " ★" : ""}</td>;
+    const isBest = best[`${t}:${m}`] === r.id;
+    return (
+      <td className="num" style={isBest ? { fontWeight: 700 } : undefined}
+        title={isBest ? `Best on the validation split (${fmtNum(metricFor(r, "valid", t, m), 3)})` : undefined}>
+        {fmtNum(v, 3)}{isBest ? " ★" : ""}
+      </td>
+    );
   };
   const sc = e.summary?.split_counts;
   return (
-    <>
-      <tr className="group-head">
-        <td colSpan={6 + targets.length * 2}>
-          Export #{e.id} · {familyShort(e.model_family)}{sc ? ` · ${fmtInt(sc.train)} / ${fmtInt(sc.valid)} / ${fmtInt(sc.test)}` : ""}
-        </td>
-      </tr>
+    <table className="data runs">
+      <thead>
+        <tr className="group-head">
+          <td colSpan={6 + targets.length * 2}>
+            Export #{e.id} · {familyShort(e.model_family)}{sc ? ` · ${fmtInt(sc.train)} / ${fmtInt(sc.valid)} / ${fmtInt(sc.test)}` : ""}
+          </td>
+        </tr>
+        <tr>
+          <th>Model</th><th>Chain order</th><th>Status</th>
+          {targets.map((t) => <th key={"a" + t} className="num">{t} AUC</th>)}
+          {targets.map((t) => <th key={"f" + t} className="num">{t} F1 (macro)</th>)}
+          <th className="num">Fit</th><th>Device</th><th />
+        </tr>
+      </thead>
+      <tbody>
       {runs.map((r) => {
         const order = r.report?.order ?? r.config?.order ?? targets;
         return (
@@ -382,7 +385,8 @@ function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: 
           </Fragment>
         );
       })}
-    </>
+      </tbody>
+    </table>
   );
 }
 
@@ -409,7 +413,7 @@ export function ExportPage() {
   const groups = (exports.data ?? [])
     .map((e) => ({ e, runs: (runs.data ?? []).filter((r) => r.export_id === e.id) }))
     .filter((g) => g.runs.length);
-  const headTargets: string[] = groups[0]?.e.summary?.targets ?? ds.target_columns;
+
 
   return (
     <div className="page">
@@ -428,24 +432,12 @@ export function ExportPage() {
       <section className="card stack">
         <div className="card-head">
           <h2>Model runs</h2>
-          <span className="muted small-text">test split · ★ best within an export · click a run for precision, recall, F1 and confusion matrices</span>
+          <span className="muted small-text">test split · ★ best on the validation split within an export · click a run for precision, recall, F1 and confusion matrices</span>
         </div>
         <ErrorAlert error={runs.error} />
         {groups.length ? (
-          <div className="table-wrap" style={{ maxHeight: "none" }}>
-            <table className="data runs">
-              <thead>
-                <tr>
-                  <th>Model</th><th>Chain order</th><th>Status</th>
-                  {headTargets.map((t) => <th key={"a" + t} className="num">{t} AUC</th>)}
-                  {headTargets.map((t) => <th key={"f" + t} className="num">{t} F1 (macro)</th>)}
-                  <th className="num">Fit</th><th>Device</th><th />
-                </tr>
-              </thead>
-              <tbody>
-                {groups.map((g) => <RunsGroup key={g.e.id} e={g.e} runs={g.runs} fresh={fresh} />)}
-              </tbody>
-            </table>
+          <div className="table-wrap stack" style={{ maxHeight: "none" }}>
+            {groups.map((g) => <RunsGroup key={g.e.id} e={g.e} runs={g.runs} fresh={fresh} />)}
           </div>
         ) : (
           <div className="empty">Train a chain on a finished export to compare models here.</div>

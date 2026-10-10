@@ -6,6 +6,7 @@ import { useDebounced, useOptions } from "../hooks";
 import { useDatasetContext } from "../components/DatasetLayout";
 import { Empty, ErrorAlert, StatusGlyph, glyphFor } from "../components/ui";
 import { fmtNum, fmtPct, TYPE_SHORT } from "../format";
+import { completeFilters, finderState, PRESETS, QUERY_LIMIT, selectionLabel, type Preset } from "../finder";
 import { LEAK_AT } from "../signals";
 import { showError, toast } from "../toast";
 import type { BulkRequest, BulkResult, FieldFilter, OptionCatalog, SqlResult } from "../types";
@@ -49,18 +50,6 @@ const OPS: Record<Kind, string[]> = {
   enum: ["in"],
 };
 
-interface Preset { key: string; label: string; filters: FieldFilter[]; sort?: string }
-const PRESETS: Preset[] = [
-  { key: "unreviewed", label: "Unreviewed", filters: [{ column: "reviewed", op: "=", value: "false" }] },
-  { key: "missing", label: "Missing > 20%", filters: [{ column: "null_pct", op: ">", value: 0.2 }], sort: "-null_pct" },
-  { key: "skewed", label: "Skewed numerics", filters: [{ column: "skewness", op: ">", value: 2 }], sort: "-skewness" },
-  { key: "target", label: "Target-associated", filters: [{ column: "max_target_assoc", op: ">=", value: 0.3 }, { column: "is_target", op: "=", value: "false" }], sort: "-max_target_assoc" },
-  { key: "highcard", label: "High-card categoricals", filters: [{ column: "inferred_type", op: "in", value: ["categorical"] }, { column: "n_unique", op: ">", value: 50 }], sort: "-n_unique" },
-  { key: "text", label: "Text", filters: [{ column: "inferred_type", op: "in", value: ["text"] }] },
-  { key: "leaks", label: "Possible leaks", filters: [{ column: "max_target_assoc", op: ">=", value: LEAK_AT }, { column: "is_target", op: "=", value: "false" }], sort: "-max_target_assoc" },
-  { key: "edited", label: "Edited by you", filters: [{ column: "decision_source", op: "in", value: ["user"] }] },
-];
-
 function enumValues(col: string, catalog: OptionCatalog | undefined): { value: string; label: string }[] {
   if (col === "action" || col === "suggested_action") return ["keep", "drop", "target"].map((v) => ({ value: v, label: v }));
   if (col === "decision_source") return [{ value: "user", label: "you" }, { value: "suggested", label: "suggestion" }];
@@ -73,21 +62,15 @@ function enumValues(col: string, catalog: OptionCatalog | undefined): { value: s
 // Finder state lives in the URL so leaving Bulk edit and coming back loses nothing (P10).
 function useFinderState() {
   const [params, setParams] = useSearchParams();
-  const preset = params.get("preset");
-  const raw = params.get("f");
-  const filters: FieldFilter[] = useMemo(() => {
-    if (raw) { try { return JSON.parse(raw); } catch { /* fall through */ } }
-    return (PRESETS.find((p) => p.key === preset) ?? PRESETS[0]).filters;
-  }, [raw, preset]);
-  const sort = params.get("sort") ?? (PRESETS.find((p) => p.key === preset)?.sort ?? "ordinal");
-  const tab = params.get("tab") === "sql" ? "sql" : "fields";
+  const key = params.toString();
+  const state = useMemo(() => finderState(params), [key]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = (patch: Record<string, string | null>) => {
     const next = new URLSearchParams(params);
     for (const [k, v] of Object.entries(patch)) v === null ? next.delete(k) : next.set(k, v);
     setParams(next, { replace: true });
   };
   return {
-    tab, preset: preset ?? (raw ? null : "unreviewed"), modified: Boolean(raw), filters, sort,
+    ...state,
     setTab: (t: string) => set({ tab: t === "sql" ? "sql" : null }),
     setPreset: (p: Preset) => set({ preset: p.key, f: null, sort: p.sort ?? null }),
     setFilters: (f: FieldFilter[]) => set({ f: JSON.stringify(f) }),
@@ -121,16 +104,18 @@ function FieldFinder({ datasetId, presetLabel }: { datasetId: number; presetLabe
   const st = useFinderState();
   const openSet = useOpenWorkingSet(datasetId);
   const filters = useDebounced(st.filters, 250);
-  const complete = filters.filter((f) => f.op === "is_null" || f.op === "not_null" || (f.value !== undefined && f.value !== "" && !(Array.isArray(f.value) && !f.value.length)));
+  const complete = completeFilters(filters);
   const sortCol = st.sort.replace(/^-/, "");
   const desc = st.sort.startsWith("-");
 
   const q = useQuery({
     queryKey: ["fieldQuery", datasetId, complete, st.sort],
-    queryFn: () => api.queryFields(datasetId, { filters: complete, order_by: sortCol, descending: desc }),
+    // One row past the limit tells a full page from a truncated one.
+    queryFn: () => api.queryFields(datasetId, { filters: complete, order_by: sortCol, descending: desc, limit: QUERY_LIMIT + 1 }),
     placeholderData: (prev) => prev,
   });
-  const rows = (q.data ?? []) as any[];
+  const truncated = (q.data?.length ?? 0) > QUERY_LIMIT;
+  const rows = (q.data ?? []).slice(0, QUERY_LIMIT) as any[];
   const [excluded, setExcluded] = useState<Set<number>>(new Set());
   useEffect(() => setExcluded(new Set()), [JSON.stringify(complete)]);
   const selected = rows.filter((r) => !excluded.has(r.field_id));
@@ -239,8 +224,10 @@ function FieldFinder({ datasetId, presetLabel }: { datasetId: number; presetLabe
       <ErrorAlert error={q.error} />
       <div className="row" style={{ justifyContent: "space-between" }}>
         <span className="secondary">
-          {q.isFetching && !q.data ? "Searching…" : `${rows.length}${rows.length >= 500 ? "+" : ""} field${rows.length === 1 ? "" : "s"} match`}
-          {excluded.size > 0 && ` · ${selected.length} selected`}
+          {q.isFetching && !q.data ? "Searching…"
+            : truncated ? `More than ${QUERY_LIMIT} fields match; the first ${QUERY_LIMIT} are shown`
+            : `${rows.length} field${rows.length === 1 ? "" : "s"} match`}
+          {(excluded.size > 0 || truncated) && ` · bulk actions: ${selectionLabel(rows.length, excluded.size, truncated)}`}
         </span>
         <button type="button" className="primary" disabled={!selected.length} onClick={reviewSet}>
           Review these {selected.length} → <kbd>R</kbd>
@@ -321,7 +308,7 @@ function FieldFinder({ datasetId, presetLabel }: { datasetId: number; presetLabe
             </div>
           ) : (
             <div className="bulk-bar">
-              <span className="grow num">{selected.length} selected</span>
+              <span className="grow num">{selectionLabel(rows.length, excluded.size, truncated)}</span>
               {ACTIONS.map((a) => (
                 <button key={a.label} type="button" className="small" disabled={!selected.length || preview.isPending}
                   onClick={() => preview.mutate(a)}>{a.label}</button>

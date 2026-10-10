@@ -186,6 +186,8 @@ export interface OptionCatalog {
   /** allowed[family][type][dim] */
   allowed: Record<string, Record<string, Record<Dim, string[]>>>;
   default_params: Record<string, Record<string, any>>;
+  /** param_rules[encoding][param] */
+  param_rules?: Record<string, Record<string, { integer: boolean; min: number; max: number }>>;
   non_feature_types: string[];
   target_rule: { types: string[]; max_levels: number };
 }

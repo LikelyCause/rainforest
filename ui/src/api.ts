@@ -34,14 +34,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (res.status === 401 && path !== "/api/auth/login") signedOut();
   if (res.status === 204) return undefined as T;
   const body = await res.json().catch(() => null);
-  if (!res.ok) {
-    const detail = body?.detail;
-    if (typeof detail === "string") throw new ApiError(detail, res.status);
-    if (detail?.message) throw new ApiError(detail.message, res.status, detail.errors ?? (detail.detail ? [detail.detail] : []));
-    if (Array.isArray(detail)) throw new ApiError("Invalid request", res.status, detail.map((d: any) => `${d.loc?.join(".")}: ${d.msg}`));
-    throw new ApiError(`Request failed (${res.status})`, res.status);
-  }
+  if (!res.ok) throw errorFromBody(res.status, body);
   return body as T;
+}
+
+/** The API's error shapes as one ApiError: a plain detail, {message, errors | detail}, or FastAPI's 422 list. */
+export function errorFromBody(status: number, body: any, fallback = `Request failed (${status})`): ApiError {
+  const detail = body?.detail;
+  if (typeof detail === "string") return new ApiError(detail, status);
+  if (detail?.message) return new ApiError(detail.message, status, detail.errors ?? (detail.detail ? [detail.detail] : []));
+  if (Array.isArray(detail)) return new ApiError("Invalid request", status, detail.map((d: any) => `${d.loc?.join(".")}: ${d.msg}`));
+  return new ApiError(fallback, status);
 }
 
 const json = (method: string, data: unknown): RequestInit => ({ method, body: JSON.stringify(data) });
@@ -112,7 +115,7 @@ export function uploadDataset(
       try { body = JSON.parse(xhr.responseText); } catch { /* non-JSON error page */ }
       if (xhr.status === 401) signedOut();
       if (xhr.status >= 200 && xhr.status < 300) resolve(body);
-      else reject(new ApiError(typeof body?.detail === "string" ? body.detail : `Upload failed (${xhr.status})`, xhr.status));
+      else reject(errorFromBody(xhr.status, body, `Upload failed (${xhr.status})`));
     };
     xhr.onerror = () => reject(new ApiError("Network error during upload", 0));
     xhr.send(form);
