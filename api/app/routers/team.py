@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from .. import experiments, jobs, recipes
-from ..assessment import (Source, adopt, assessments_by_field, assessor_row, disagreements, progress, seed,
+from ..assessment import (Source, adopt, assessments_by_field, assessor_row, core_key, disagreements, progress, seed,
                           settings_key, write_decision, write_settings)
 from ..auth import CurrentUser, LeadUser
 from ..db import connection
@@ -213,8 +213,9 @@ def open_review(conn, recipe: dict, actor_id: int) -> list[int]:
             continue
         prev = before[f["id"]]
         notes = "\n".join(f"{r['user_name']}: {r['notes']}" for r in rows if r["notes"]) or None
-        decided = (prev["action"], prev["semantic_type"]) != (plan["action"], plan["semantic_type"])
+        decided = core_key(prev) != core_key(plan)
         write_decision(conn, team, f["id"], {"action": plan["action"], "semantic_type": plan["semantic_type"],
+                                             "target_task": plan["target_task"], "target_bins": plan["target_bins"],
                                              "notes": notes, "reviewed": True}, decided)
         for family, s in plan["settings"].items():
             same = settings_key(s) == settings_key(suggestion(plan["semantic_type"], family))
@@ -244,7 +245,8 @@ def review_queue(dataset_id: int, user: CurrentUser) -> dict:
         by_field = _by_field(conn, recipe)
         dis = sorted(disagreements(by_field))
         rows = conn.execute(
-            """SELECT f.id, f.name, f.ordinal, f.inferred_type, d.action, d.semantic_type, d.reviewed,
+            """SELECT f.id, f.name, f.ordinal, f.inferred_type, d.action, d.semantic_type, d.target_task, d.target_bins,
+                      d.reviewed,
                       (SELECT count(*) FROM meta.review_comments c
                         WHERE c.recipe_id = %s AND c.field_id = f.id) AS comments
                  FROM meta.fields f JOIN meta.field_decisions d ON d.field_id = f.id
@@ -253,9 +255,10 @@ def review_queue(dataset_id: int, user: CurrentUser) -> dict:
         ).fetchall()
         queue = [{
             "field_id": r["id"], "name": r["name"], "inferred_type": r["inferred_type"],
-            "team": {"action": r["action"], "semantic_type": r["semantic_type"]},
+            "team": {k: r[k] for k in ("action", "semantic_type", "target_task", "target_bins")},
             "resolved": r["reviewed"], "comments": r["comments"],
-            "assessments": [{k: a[k] for k in ("user_id", "user_name", "action", "semantic_type", "notes")}
+            "assessments": [{k: a[k] for k in ("user_id", "user_name", "action", "semantic_type", "target_task",
+                                               "target_bins", "notes")}
                             for a in by_field[r["id"]]],
         } for r in rows]
         return {"recipe": recipe, "summary": _review_summary(conn, recipe), "queue": queue}
@@ -271,7 +274,8 @@ def field_review(field_id: int, user: CurrentUser) -> dict:
         rows = _by_field(conn, recipe).get(field_id, [])
         return {
             "disagreement": field_id in disagreements({field_id: rows}),
-            "assessments": [{k: a[k] for k in ("user_id", "user_name", "action", "semantic_type", "notes", "settings")}
+            "assessments": [{k: a[k] for k in ("user_id", "user_name", "action", "semantic_type", "target_task",
+                                               "target_bins", "notes", "settings")}
                             for a in rows],
             "comments": _comments(conn, recipe["id"], field_id),
         }

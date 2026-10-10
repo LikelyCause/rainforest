@@ -16,6 +16,7 @@ from .db import jsonb
 from .semantics import SETTING_KEYS, suggest, validate_decision
 
 PHASES = ("assessing", "review", "finalized")
+DECISION_KEYS = ("action", "semantic_type", "notes", "target_task", "target_bins")
 FAMILY_LABEL = {"tree": "Trees", "linear": "Linear", "neural": "Neural"}
 RECIPE_COLS = """id, dataset_id, family, version, phase, scope, parent_id, created_by, created_at, finalized_by,
                  finalized_at, schema_fingerprint"""
@@ -121,7 +122,9 @@ def load_working(conn, dataset_id: int, snap: dict | None, family: str, targets:
         upsert_settings(conn, dataset_id, f["id"], family, chosen,
                         "suggested" if settings_key(chosen) == settings_key(sugg) else "user")
     conn.execute("UPDATE meta.datasets SET model_family = %s, updated_at = now() WHERE id = %s", (family, dataset_id))
-    return set_targets(conn, dataset_id, list(targets), user_id)
+    tasks = None if snap is None else {t: {"target_task": v["task"], "target_bins": v["bins"]}
+                                       for t, v in snapshot_target_tasks(snap).items()}
+    return set_targets(conn, dataset_id, list(targets), user_id, tasks)
 
 
 def current(conn, dataset_id: int, lock: str | None = None) -> dict:
@@ -211,7 +214,8 @@ def snapshot(conn, dataset_id: int, src=None, family: str | None = None, targets
     dec = src.decisions() if src is not None else sql.SQL("meta.field_decisions")
     sets = src.settings() if src is not None else sql.SQL("meta.field_settings")
     fields = conn.execute(
-        sql.SQL("""SELECT f.id, f.name, f.inferred_type, f.null_pct, f.n_unique, d.action, d.semantic_type, d.notes
+        sql.SQL("""SELECT f.id, f.name, f.inferred_type, f.null_pct, f.n_unique, d.action, d.semantic_type, d.notes,
+                          d.target_task, d.target_bins
                      FROM meta.fields f JOIN {} d ON d.field_id = f.id
                     WHERE f.dataset_id = %s ORDER BY f.ordinal""").format(dec),
         (dataset_id,),
@@ -226,7 +230,7 @@ def snapshot(conn, dataset_id: int, src=None, family: str | None = None, targets
     return {
         "fields": {
             f["name"]: {
-                "decision": {k: f[k] for k in ("action", "semantic_type", "notes")},
+                "decision": {k: f[k] for k in DECISION_KEYS},
                 "settings": settings.get(f["id"], {}),
                 "inferred_type": f["inferred_type"],
                 "null_pct": f["null_pct"],
@@ -270,6 +274,12 @@ def snapshot_targets(snap: dict) -> list[str]:
     return order + [t for t in targets if t not in order]
 
 
+def snapshot_target_tasks(snap: dict) -> dict[str, dict]:
+    """How each of the snapshot's targets is predicted, in chain order."""
+    return {t: {"task": snap["fields"][t]["decision"].get("target_task") or "classes",
+                "bins": snap["fields"][t]["decision"].get("target_bins")} for t in snapshot_targets(snap)}
+
+
 def spec_rows(conn, dataset_id: int, snap: dict, family: str) -> list[dict]:
     """Each field of the dataset the snapshot covers, in column order: its decision and `family`'s settings from the
     snapshot, plus what the data says (inferred type, leakage flag, suggestion, stored date format). Exports and their
@@ -287,6 +297,7 @@ def spec_rows(conn, dataset_id: int, snap: dict, family: str) -> list[dict]:
             continue
         settings = s["settings"].get(family) or (f["suggestion"] or {}).get(family) or {}
         out.append({**f, "action": s["decision"]["action"], "semantic_type": s["decision"]["semantic_type"],
+                    "target_task": s["decision"].get("target_task"), "target_bins": s["decision"].get("target_bins"),
                     **{k: settings.get(k) for k in SETTING_KEYS}})
     return out
 
@@ -312,7 +323,8 @@ def diff(before: dict, after: dict, family: str | None = None, decisions_only: b
             out.append({"name": name, "change": "added" if b is None else "removed", "changes": []})
             continue
         changes = [{"key": k, "family": None, "before": b["decision"].get(k), "after": a["decision"].get(k)}
-                   for k in ("action", "semantic_type", "notes") if b["decision"].get(k) != a["decision"].get(k)]
+                   for k in ("action", "semantic_type", "target_task", "target_bins", "notes")
+                   if b["decision"].get(k) != a["decision"].get(k)]
         for fam in [] if decisions_only else [family] if family else sorted(set(b["settings"]) | set(a["settings"])):
             bs, as_ = b["settings"].get(fam) or {}, a["settings"].get(fam) or {}
             changes += [{"key": k, "family": fam, "before": bs.get(k), "after": as_.get(k)}

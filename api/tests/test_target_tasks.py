@@ -4,7 +4,8 @@ import pytest
 
 from app.semantics import SEMANTIC_TYPES, default_task
 
-from .team_helpers import DB_URL, app_, fields, people, save, upload  # noqa: F401
+from .team_helpers import (DB_URL, adjust, app_, experiment, export, fields, people, review_all, save,  # noqa: F401
+                           start, submit_and_finalize, upload)
 
 pytestmark = pytest.mark.skipif(not DB_URL, reason="set RAINFOREST_TEST_DATABASE_URL to run the API tests")
 
@@ -74,3 +75,105 @@ def test_every_target_has_a_task(app_):
         bad = conn.execute("""SELECT count(*) AS n FROM meta.field_decisions
                                WHERE (action = 'target') <> (target_task IS NOT NULL)""").fetchone()["n"]
         assert bad == 0
+
+
+PRICES = "x,z,price,c\n" + "".join(f"{i % 17},{(i * 7) % 11},{i * 1.5 + (i % 5)},{'pq'[i % 2]}\n" for i in range(400))
+
+
+def _task(client, ds, name, view=None):
+    d = fields(client, ds, view)[name]
+    got = client.get(f"/api/fields/{d['id']}" + (f"?view={view}" if view else "")).json()["decision"]
+    return got["target_task"], got["target_bins"]
+
+
+def test_put_sets_validates_and_keeps_the_task(app_, people):
+    lead = people["lead"]
+    ds = upload(lead, PRICES, targets="")
+    start(lead, ds, "tree", [lead], targets=("price",))
+    fid = fields(lead, ds)["price"]["id"]
+    assert _task(lead, ds, "price") == ("regression", None)
+    assert save(lead, fid, target_task="bins", target_bins={"edges": [100, 300]}).status_code == 200
+    assert _task(lead, ds, "price") == ("bins", {"edges": [100, 300]})
+    r = save(lead, fid, target_task="classes")
+    assert r.status_code == 422 and "continuous" in r.text
+    r = save(lead, fid, target_task="bins", target_bins={"edges": [5, 1]})
+    assert r.status_code == 422 and "ascending" in r.text
+
+
+def test_put_without_task_keeps_it(app_, people):
+    lead = people["lead"]
+    ds = upload(lead, PRICES, targets="")
+    start(lead, ds, "tree", [lead], targets=("price",))
+    fid = fields(lead, ds)["price"]["id"]
+    save(lead, fid, target_task="bins", target_bins={"k": 4})
+    cur = lead.get(f"/api/fields/{fid}").json()["decision"]
+    body = {k: cur[k] for k in ("action", "semantic_type", "imputation", "impute_value", "add_missing_indicator",
+                                "transform", "scaling", "encoding", "params", "notes", "reviewed")}
+    assert lead.put(f"/api/fields/{fid}/decision", json={**body, "notes": "n"}).status_code == 200
+    assert _task(lead, ds, "price") == ("bins", {"k": 4})
+    assert save(lead, fid, target_task="bins").status_code == 200
+    assert _task(lead, ds, "price") == ("bins", {"k": 4})
+
+
+def test_a_task_disagreement_goes_to_review(app_, people):
+    lead, a, b = people["lead"], people["a"], people["b"]
+    ds = upload(lead, PRICES, targets="")
+    start(lead, ds, "tree", [a, b], targets=("price",))
+    fid = fields(a, ds)["price"]["id"]
+    save(a, fid, target_task="regression")
+    save(b, fid, target_task="bins", target_bins={"k": 3})
+    for who in (a, b):
+        review_all(who, ds)
+        assert who.post(f"/api/datasets/{ds['id']}/assessment/submit").status_code == 200
+    queue = lead.get(f"/api/datasets/{ds['id']}/review").json()["queue"]
+    row = next(q for q in queue if q["name"] == "price")
+    assert {(x["target_task"], (x["target_bins"] or {}).get("k")) for x in row["assessments"]} == {
+        ("regression", None), ("bins", 3)}
+
+
+def test_agreed_task_is_adopted_finalized_and_carried(app_, people):
+    """Review Focus 1: the task survives adoption, finalize, a new version, an experiment copy and a revert."""
+    lead, a, b = people["lead"], people["a"], people["b"]
+    ds = upload(lead, PRICES, targets="")
+    start(lead, ds, "tree", [a, b], targets=("price",))
+    for who in (a, b):
+        save(who, fields(who, ds)["price"]["id"], target_task="bins", target_bins={"k": 4})
+    st = submit_and_finalize(lead, ds, a, b)
+    rid = st["recipe"]["id"]
+    from app.db import fetch_one
+    snap = fetch_one("SELECT snapshot FROM meta.recipes WHERE id = %s", (rid,))["snapshot"]
+    assert snap["fields"]["price"]["decision"]["target_task"] == "bins"
+    assert snap["fields"]["price"]["decision"]["target_bins"] == {"k": 4}
+    assert _task(lead, ds, "price", f"baseline:{rid}") == ("bins", {"k": 4})
+    x = experiment(lead, ds, rid)
+    view = f"experiment:{x['id']}"
+    assert _task(lead, ds, "price", view) == ("bins", {"k": 4})
+    adjust(lead, ds, x, "price", target_task="regression")
+    adj = lead.get(f"/api/experiments/{x['id']}").json()["adjustments"]
+    assert any(c["key"] == "target_task" for f in adj["fields"] for c in f["changes"])
+    fid = fields(lead, ds, view)["price"]["id"]
+    r = lead.post(f"/api/experiments/{x['id']}/adjustments/revert", json={"field_ids": [fid]})
+    assert r.status_code == 200, r.text
+    assert _task(lead, ds, "price", view) == ("bins", {"k": 4})
+    start(lead, ds, "tree", [lead], start="baseline", source=rid, targets=("price",))
+    assert _task(lead, ds, "price") == ("bins", {"k": 4})
+
+
+def test_bulk_review_keeps_the_task(app_, people):
+    lead = people["lead"]
+    ds = upload(lead, PRICES, targets="")
+    start(lead, ds, "tree", [lead], targets=("price",))
+    save(lead, fields(lead, ds)["price"]["id"], target_task="bins", target_bins={"k": 3}, reviewed=False)
+    review_all(lead, ds)
+    assert _task(lead, ds, "price") == ("bins", {"k": 3})
+
+
+def test_reuse_carries_the_task(app_, people):
+    lead = people["lead"]
+    ds = upload(lead, PRICES, targets="")
+    start(lead, ds, "tree", [lead], targets=("price",))
+    save(lead, fields(lead, ds)["price"]["id"], target_task="bins", target_bins={"edges": [200, 400]})
+    rid = submit_and_finalize(lead, ds)["recipe"]["id"]
+    other = upload(lead, PRICES, targets="")
+    start(lead, other, "tree", [lead], start="recipe", source=rid, targets=())
+    assert _task(lead, other, "price") == ("bins", {"edges": [200, 400]})

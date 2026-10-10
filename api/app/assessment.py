@@ -8,6 +8,7 @@ meta.field_settings).
 """
 from __future__ import annotations
 
+import json
 from collections import Counter
 from dataclasses import dataclass
 from typing import Callable
@@ -21,6 +22,13 @@ from .processing import upsert_settings
 from .semantics import FAMILIES, SETTING_KEYS
 
 SHARED_COLS = ("action", "semantic_type", "notes", "reviewed")
+TARGET_COLS = ("target_task", "target_bins")
+
+
+def core_key(d: dict) -> tuple:
+    """What assessors must agree on for a field: its role, its type and, for a target, how it is predicted."""
+    return (d["action"], d["semantic_type"], d.get("target_task"),
+            json.dumps(d.get("target_bins"), sort_keys=True))
 
 
 @dataclass(frozen=True)
@@ -74,21 +82,23 @@ class Source:
             return sql.SQL("meta.field_decisions")
         if self.kind == "assessment":
             return sql.SQL(
-                """(SELECT a.field_id, f.dataset_id, a.action, a.semantic_type, a.notes, a.reviewed, a.source,
-                           a.updated_at
+                """(SELECT a.field_id, f.dataset_id, a.action, a.semantic_type, a.target_task, a.target_bins, a.notes,
+                           a.reviewed, a.source, a.updated_at
                       FROM meta.assessments a JOIN meta.fields f ON f.id = a.field_id
                      WHERE a.recipe_id = {} AND a.user_id = {})"""
             ).format(sql.Literal(self.recipe["id"]), sql.Literal(self.user_id))
         if self.kind == "experiment":
             return sql.SQL(
-                """(SELECT e.field_id, f.dataset_id, e.action, e.semantic_type, e.notes, e.reviewed, e.source,
-                           e.updated_at
+                """(SELECT e.field_id, f.dataset_id, e.action, e.semantic_type, e.target_task, e.target_bins, e.notes,
+                           e.reviewed, e.source, e.updated_at
                       FROM meta.experiment_decisions e JOIN meta.fields f ON f.id = e.field_id
                      WHERE e.experiment_id = {})"""
             ).format(sql.Literal(self.experiment["id"]))
         return sql.SQL(
             """(SELECT f.id AS field_id, f.dataset_id, e.value -> 'decision' ->> 'action' AS action,
                        e.value -> 'decision' ->> 'semantic_type' AS semantic_type,
+                       e.value -> 'decision' ->> 'target_task' AS target_task,
+                       nullif(e.value -> 'decision' -> 'target_bins', 'null'::jsonb) AS target_bins,
                        e.value -> 'decision' ->> 'notes' AS notes, true AS reviewed, 'suggested' AS source,
                        r.finalized_at AS updated_at
                   FROM meta.recipes r CROSS JOIN LATERAL jsonb_each(r.snapshot -> 'fields') e
@@ -132,7 +142,7 @@ class Source:
         if self.kind == "team":
             return sql.SQL("meta.v_fields")
         return sql.SQL(
-            """(SELECT p.*, dc.action, dc.semantic_type, dc.reviewed, dc.source AS decision_source, dc.notes,
+            """(SELECT p.*, dc.action, dc.semantic_type, dc.target_task, dc.target_bins, dc.reviewed, dc.source AS decision_source, dc.notes,
                        dc.updated_at AS decided_at, s.imputation, s.transform, s.scaling, s.encoding,
                        s.add_missing_indicator, s.params, s.source AS settings_source
                   FROM meta.v_field_profiles p
@@ -242,15 +252,25 @@ def personal_snapshot(conn, recipe: dict, user_id: int) -> dict:
 
 # ------------------------------------------------------------------------------------------------- writes
 def write_decision(conn, src: Source, field_id: int, d: dict, decided: bool) -> None:
-    """Shared columns of one field's decision; `decided` marks it a real change (source becomes 'user')."""
+    """Shared columns of one field's decision; `decided` marks it a real change (source becomes 'user'). A target
+    task left out of `d` keeps the stored one (the trigger re-checks it against the type)."""
     table, where = _decision_target(src)
+    explicit = d.get("target_task") is not None
     conn.execute(
         sql.SQL("""UPDATE {} SET action = %(action)s, semantic_type = %(semantic_type)s, notes = %(notes)s,
                           reviewed = %(reviewed)s, source = CASE WHEN %(decided)s THEN 'user' ELSE source END,
+                          target_task = CASE WHEN %(explicit)s THEN %(target_task)s ELSE target_task END,
+                          target_bins = CASE WHEN %(explicit)s THEN %(target_bins)s ELSE target_bins END,
                           updated_at = now()
                     WHERE field_id = %(field_id)s AND {}""").format(table, where),
-        {**{c: d[c] for c in SHARED_COLS}, "decided": decided, "field_id": field_id},
+        {**{c: d[c] for c in SHARED_COLS}, "decided": decided, "field_id": field_id, "explicit": explicit,
+         "target_task": d.get("target_task"), "target_bins": jsonb(d["target_bins"]) if d.get("target_bins") else None},
     )
+
+
+def mark_decided(conn, src: Source, field_id: int) -> None:
+    table, where = _decision_target(src)
+    conn.execute(sql.SQL("UPDATE {} SET source = 'user' WHERE field_id = %s AND {}").format(table, where), (field_id,))
 
 
 def write_settings(conn, src: Source, dataset_id: int, field_id: int, family: str, s: dict, source: str) -> None:
@@ -297,8 +317,10 @@ def restore(conn, src: Source, field_id: int, snap: dict) -> None:
     table, where = _decision_target(src)
     conn.execute(
         sql.SQL("""UPDATE {} SET action = %s, semantic_type = %s, notes = %s, reviewed = %s, source = %s,
-                          updated_at = now() WHERE field_id = %s AND {}""").format(table, where),
-        (dec["action"], dec["semantic_type"], dec["notes"], dec["reviewed"], dec["source"], field_id),
+                          target_task = %s, target_bins = %s, updated_at = now()
+                    WHERE field_id = %s AND {}""").format(table, where),
+        (dec["action"], dec["semantic_type"], dec["notes"], dec["reviewed"], dec["source"], dec.get("target_task"),
+         jsonb(dec["target_bins"]) if dec.get("target_bins") else None, field_id),
     )
     families = [s["family"] for s in snap["settings"]]
     stable, swhere = _settings_target(src)
@@ -346,8 +368,9 @@ def seed(conn, recipe: dict, user_id: int) -> None:
     recipe_id, dataset_id = recipe["id"], recipe["dataset_id"]
     open_ = recipes.open_field_ids(conn, recipe)
     conn.execute(
-        """INSERT INTO meta.assessments (recipe_id, user_id, field_id, action, semantic_type, notes, reviewed, source)
-           SELECT %(r)s, %(u)s, d.field_id, d.action, d.semantic_type,
+        """INSERT INTO meta.assessments (recipe_id, user_id, field_id, action, semantic_type, target_task, target_bins,
+                                         notes, reviewed, source)
+           SELECT %(r)s, %(u)s, d.field_id, d.action, d.semantic_type, d.target_task, d.target_bins,
                   CASE WHEN o.open THEN NULL ELSE d.notes END, NOT o.open, d.source
              FROM meta.field_decisions d
              CROSS JOIN LATERAL (SELECT %(all)s OR d.field_id = ANY(%(open)s) AS open) o
@@ -399,10 +422,10 @@ def adopt(assessments: list[dict], suggestion: Callable[[str, str], dict]) -> di
     """The team decision for a field every assessor agreed on, or None when they disagree.
 
     `assessments`: one dict per assessor with `action`, `semantic_type` and `settings` ({family: settings}), in
-    assessor order. Agreement means the same action and semantic type. Each family's settings are the most
-    common choice; a tie takes `suggestion(semantic_type, family)`.
+    assessor order. Agreement means the same action, semantic type and target task (`core_key`). Each family's
+    settings are the most common choice; a tie takes `suggestion(semantic_type, family)`.
     """
-    if not assessments or len({(a["action"], a["semantic_type"]) for a in assessments}) != 1:
+    if not assessments or len({core_key(a) for a in assessments}) != 1:
         return None
     first = assessments[0]
     families = sorted({f for a in assessments for f in a["settings"]}) or list(FAMILIES)
@@ -417,12 +440,13 @@ def adopt(assessments: list[dict], suggestion: Callable[[str, str], dict]) -> di
         else:
             settings[fam] = suggestion(first["semantic_type"], fam)
         settings[fam] = {k: settings[fam].get(k) for k in SETTING_KEYS}
-    return {"action": first["action"], "semantic_type": first["semantic_type"], "settings": settings}
+    return {"action": first["action"], "semantic_type": first["semantic_type"], "target_task": first.get("target_task"),
+            "target_bins": first.get("target_bins"), "settings": settings}
 
 
 def disagreements(by_field: dict[int, list[dict]]) -> set[int]:
-    """Fields whose assessors differ on action or semantic type."""
-    return {fid for fid, rows in by_field.items() if len({(r["action"], r["semantic_type"]) for r in rows}) > 1}
+    """Fields whose assessors differ on action, semantic type or target task."""
+    return {fid for fid, rows in by_field.items() if len({core_key(r) for r in rows}) > 1}
 
 
 def assessments_by_field(conn, recipe_id: int, user_ids: list[int]) -> dict[int, list[dict]]:

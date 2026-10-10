@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from psycopg import sql
 
 from .. import jobs, recipes
-from ..assessment import Source, lock_decisions, source_for, write_decision, write_settings
+from ..assessment import Source, core_key, lock_decisions, mark_decided, source_for, write_decision, write_settings
 from ..assessment import restore as restore_assessment
 from ..auth import CurrentUser
 from ..config import get_settings
@@ -62,8 +62,8 @@ def view_targets(conn, src: Source) -> list[str]:
 def _merged_sql(src: Source | None) -> sql.Composable:
     """Shared decision joined to one family's settings, from `src` (the team's decision when None)."""
     return sql.SQL(
-        """SELECT d.field_id, d.dataset_id, d.action, d.semantic_type, d.notes, d.reviewed, d.source,
-                  d.updated_at, s.family, s.imputation, s.impute_value, s.add_missing_indicator, s.transform,
+        """SELECT d.field_id, d.dataset_id, d.action, d.semantic_type, d.target_task, d.target_bins, d.notes,
+                  d.reviewed, d.source, d.updated_at, s.family, s.imputation, s.impute_value, s.add_missing_indicator, s.transform,
                   s.scaling, s.encoding, s.params, s.source AS settings_source
              FROM {} d
              JOIN {} s ON s.field_id = d.field_id AND s.family = %s"""
@@ -148,6 +148,7 @@ def save_decision(field_id: int, body: DecisionIn, user: CurrentUser, view: str 
     with connection() as conn:
         src = source_for(conn, f["dataset_id"], user, lock="share", view=view)
         fam = _family(src, body.family)
+        d = _with_stored_task(d, _merged(conn, field_id, fam, src))
         errors = validate_decision(d, fam, n_unique=f["n_unique"])
         if errors:
             # A type change brings the new type's suggested settings when the ones sent were for the old type.
@@ -165,9 +166,11 @@ def save_decision(field_id: int, body: DecisionIn, user: CurrentUser, view: str 
         prev = _merged(conn, field_id, fam, src)
         if prev is None:
             raise HTTPException(409, "This field has no decision to change")
-        # Provenance follows real changes: confirming or annotating a suggestion leaves it a suggestion.
-        decided = prev["action"] != d["action"] or prev["semantic_type"] != d["semantic_type"]
-        write_decision(conn, src, field_id, d, decided)
+        # Provenance follows real changes: confirming or annotating a suggestion leaves it a suggestion. What is stored
+        # is compared, since the trigger may settle the target task.
+        write_decision(conn, src, field_id, d, False)
+        if core_key(prev) != core_key(_merged(conn, field_id, fam, src)):
+            mark_decided(conn, src, field_id)
         settings = settings_of(d)
         write_settings(conn, src, f["dataset_id"], field_id, fam, settings,
                        prev["settings_source"] if _same_settings(prev, settings) else "user")
@@ -205,6 +208,20 @@ def save_decision(field_id: int, body: DecisionIn, user: CurrentUser, view: str 
     if screen:
         jobs.submit(screen_targets, f["dataset_id"], [field_id])
     return row
+
+
+def _with_stored_task(d: dict, was: dict | None) -> dict:
+    """A target saved without a task keeps the stored one, and bands saved without settings keep the stored
+    settings; a field that isn't a target has neither."""
+    if d["action"] != "target":
+        return {**d, "target_task": None, "target_bins": None}
+    if was is None or was["action"] != "target":
+        return d
+    if d.get("target_task") is None and was["semantic_type"] == d["semantic_type"]:
+        return {**d, "target_task": was["target_task"], "target_bins": was["target_bins"]}
+    if d.get("target_task") == "bins" and d.get("target_bins") is None and was["target_task"] == "bins":
+        return {**d, "target_bins": was["target_bins"]}
+    return d
 
 
 def _remember_datetime_format(conn, f: dict) -> None:
@@ -356,7 +373,8 @@ def undo_bulk(dataset_id: int, batch_id: str, user: CurrentUser, view: str | Non
             conn.execute(
                 """UPDATE meta.field_decisions d
                       SET action = r.action, semantic_type = r.semantic_type, notes = r.notes,
-                          reviewed = r.reviewed, source = r.source, updated_at = r.updated_at
+                          reviewed = r.reviewed, source = r.source, target_task = r.target_task,
+                          target_bins = r.target_bins, updated_at = r.updated_at
                      FROM jsonb_populate_record(NULL::meta.field_decisions, %s) r
                     WHERE d.field_id = r.field_id""",
                 (jsonb(snap["decision"]),),
@@ -581,8 +599,10 @@ def screen_targets(dataset_id: int, target_ids: list[int]) -> None:
                 (f"The leak screen for the new target(s) could not run: {exc}", dataset_id))
 
 
-def set_targets(conn, dataset_id: int, names: list[str], user_id: int) -> tuple[list[dict], list[int]]:
-    """Make exactly `names` the targets (in that order). Returns the target fields whose associations were
+def set_targets(conn, dataset_id: int, names: list[str], user_id: int,
+                tasks: dict[str, dict] | None = None) -> tuple[list[dict], list[int]]:
+    """Make exactly `names` the targets (in that order), predicted as `tasks` says ({name: {"target_task",
+    "target_bins"}}; a target left out gets its type's default, or keeps its task if it was one already). Returns the target fields whose associations were
     never computed because their profiled type has no association sample (text, identifier), and the ids of
     fields that just became targets."""
     fam = conn.execute("SELECT model_family FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()["model_family"]
@@ -605,8 +625,10 @@ def set_targets(conn, dataset_id: int, names: list[str], user_id: int) -> tuple[
     unknown = [n for n in names if n not in by_name]
     if unknown:
         raise HTTPException(422, {"message": "Unknown column(s)", "errors": unknown})
+    tasks = {n: t for n, t in (tasks or {}).items() if n in names and t.get("target_task")}
     ineligible = [f"{n}: {p}" for n in names
-                  if (p := target_problem(by_name[n]["semantic_type"], by_name[n]["n_unique"]))]
+                  if (p := target_problem(by_name[n]["semantic_type"], by_name[n]["n_unique"],
+                                          tasks.get(n, {}).get("target_task")))]
     if ineligible:
         raise HTTPException(422, {"message": "Not a valid target", "errors": ineligible})
     before = _merged_many(conn, [r["id"] for r in by_name.values()], fam)
@@ -616,6 +638,9 @@ def set_targets(conn, dataset_id: int, names: list[str], user_id: int) -> tuple[
         "UPDATE meta.field_decisions SET action = 'target', updated_at = now() WHERE field_id = ANY(%s)",
         (added,),
     )
+    for n, t in tasks.items():
+        conn.execute("UPDATE meta.field_decisions SET target_task = %s, target_bins = %s WHERE field_id = %s",
+                     (t["target_task"], jsonb(t["target_bins"]) if t.get("target_bins") else None, by_name[n]["id"]))
     for r in removed:
         # The action itself is re-derived from the field's (now non-target) suggestion by refresh_target_state;
         # it was reviewed as a target, so as a feature it is unreviewed.
