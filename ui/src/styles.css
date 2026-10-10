@@ -127,12 +127,13 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .picker h1 { margin: 0; font-size: 22px; }
 .profile-grid { --circle: clamp(72px, 14vmin, 128px); list-style: none; margin: 0; padding: 4px;
   display: flex; flex-wrap: wrap; justify-content: center; gap: 28px 24px; max-height: 70vh; overflow-y: auto; }
-.profile { display: flex; flex-direction: column; align-items: center; gap: 8px; width: calc(var(--circle) + 32px); height: auto;
+.profile { display: flex; flex-direction: column; align-items: center; gap: 8px; width: calc(var(--circle) + 56px); height: auto;
   padding: 12px 8px; background: transparent; border: 1px solid transparent; border-radius: var(--radius); }
 .profile:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--border); }
-.profile .avatar { width: var(--circle); height: var(--circle); font-size: calc(var(--circle) * 0.36); }
+.profile .avatar, .profile .avatar.initials { width: var(--circle); height: var(--circle); font-size: calc(var(--circle) * 0.34); }
 .profile:hover:not(:disabled) .avatar { box-shadow: 0 0 0 3px var(--border-strong); }
-.profile-name { font-weight: 600; font-size: 14px; color: var(--text-primary); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-name { font-weight: 600; font-size: 14px; line-height: 1.25; color: var(--text-primary); max-width: 100%;
+  overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .profile-note { margin: 0; }
 .avatar { flex: none; width: 32px; height: 32px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border);
   background: var(--surface-2); display: inline-grid; place-items: center; overflow: hidden; }
