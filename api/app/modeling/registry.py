@@ -240,7 +240,7 @@ def regressor_params(spec: ModelSpec, params: dict[str, Any]) -> dict[str, Any]:
     if model_params.settings_for(spec.key):
         # A catalogued model says which settings reach a regressor; the rest (class weights, ...) stay with classifiers.
         catalogued = {s.name for s in model_params.settings_for(spec.key) or []}
-        routed = model_params.route(spec.key, params)[1]
+        routed = model_params.route(spec.key, model_params.effective(spec.key, params))[1]
         return {k: v for k, v in routed.items()
                 if k in known and (k in catalogued or k not in _classifier_only(spec))}
     return {k: v for k, v in params.items() if k in known and k not in _classifier_only(spec)}
@@ -250,6 +250,7 @@ def classifier_params(spec: ModelSpec, params: dict[str, Any]) -> dict[str, Any]
     """The run's parameters a classifier gets: a catalogued model's settings for number targets stay out."""
     if not model_params.settings_for(spec.key):
         return params
+    params = model_params.effective(spec.key, params)
     return {k: v for k, v in params.items() if k not in model_params.applies_to(spec.key, "numbers")}
 
 
@@ -263,10 +264,11 @@ def dry_fit_problem(spec: ModelSpec, params: dict[str, Any], kinds: list[str]) -
         merged["n_jobs"] = 1
     rng = np.random.default_rng(0)
     X = rng.normal(size=(64, 4))
-    classes = [k for k in kinds if k != "regression"]
+    binary = (X[:, 0] > 0).astype(int)
+    # A setting can suit one class shape and not the other (is_unbalance is binary-only), so try each the run has.
+    shapes = ([binary] if "binary" in kinds else []) + ([binary + (X[:, 1] > 0)] if "multiclass" in kinds else [])
     try:
-        if classes:
-            y = (X[:, 0] > 0).astype(int) + (0 if all(k == "binary" for k in classes) else (X[:, 1] > 0))
+        for y in shapes:
             spec.build(classifier_params(spec, merged), 0).fit(X, y)
         if "regression" in kinds and spec.build_regressor is not None:
             spec.build_regressor({**spec.regressor_defaults, **regressor_params(spec, merged)}, 0).fit(X, np.abs(X[:, 0]) + 1)

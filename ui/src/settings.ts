@@ -31,12 +31,18 @@ export function isVisible(s: ModelSetting, values: Record<string, SettingValue>,
   return Object.entries(s.when ?? {}).every(([other, allowed]) => allowed.includes(current(other, values, settings)));
 }
 
-/** The settings a run sends: visible, not run-level, and different from their default. */
-export function changed(values: Record<string, SettingValue>, settings: ModelSetting[]): Record<string, SettingValue> {
+/** Whether a setting is for a kind of target the run has (all of them when `kinds` isn't given). */
+export function suitsTargets(s: ModelSetting, kinds?: string[]): boolean {
+  if (!kinds) return true;
+  return (s.applies !== "classes" || kinds.some((k) => k !== "regression")) && (s.applies !== "numbers" || kinds.includes("regression"));
+}
+
+/** The settings a run sends: shown, for the run's kinds of target, not run-level, and different from their default. */
+export function changed(values: Record<string, SettingValue>, settings: ModelSetting[], kinds?: string[]): Record<string, SettingValue> {
   const out: Record<string, SettingValue> = {};
   for (const s of settings) {
     if (s.group === "run" || !(s.name in values) || values[s.name] === s.default) continue;
-    if (isVisible(s, values, settings)) out[s.name] = values[s.name];
+    if (isVisible(s, values, settings) && suitsTargets(s, kinds)) out[s.name] = values[s.name];
   }
   return out;
 }
@@ -57,15 +63,26 @@ export function runFields(values: Record<string, SettingValue>, settings: ModelS
   return { seed: Number(current("seed", values, settings) ?? 42), cv: Number(current("cv", values, settings) ?? 5) };
 }
 
-/** Visible settings with a problem, by name. */
-export function problems(values: Record<string, SettingValue>, settings: ModelSetting[]): Record<string, string> {
+/** Shown settings with a problem, by name, including the API's cross-setting rule for the quantile loss. */
+export function problems(values: Record<string, SettingValue>, settings: ModelSetting[], kinds?: string[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (const s of settings) {
-    if (!isVisible(s, values, settings)) continue;
+    if (!isVisible(s, values, settings) || !suitsTargets(s, kinds)) continue;
     const p = settingProblem(s, current(s.name, values, settings));
     if (p) out[s.name] = p;
   }
+  const alpha = settings.find((s) => s.name === "alpha");
+  if (alpha && !out.alpha && current("objective", values, settings) === "quantile" && suitsTargets(alpha, kinds)) {
+    const a = Number(current("alpha", values, settings));
+    if (!(a > 0 && a < 1)) out.alpha = "must be between 0 and 1 for the quantile loss";
+  }
   return out;
+}
+
+/** A run's settings for Train again, kept only where they still fit the catalog; the names dropped are listed. */
+export function prefillValues(saved: Record<string, SettingValue>, settings: ModelSetting[]): { values: Record<string, SettingValue>; dropped: string[] } {
+  const values = restore(saved, settings);
+  return { values, dropped: Object.keys(saved).filter((k) => !(k in values)) };
 }
 
 /** "num_leaves 127 · learning_rate 0.02", labelled when the catalog is known. */

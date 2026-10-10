@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { changed, isVisible, restore, runFields, settingProblem } from "./settings";
+import { changed, isVisible, prefillValues, problems, restore, runFields, settingProblem } from "./settings";
 import type { ModelSetting } from "./types";
 
 const S = (o: Partial<ModelSetting>): ModelSetting => ({ name: "x", label: "X", help: "", group: "trees", kind: "int", default: 1,
@@ -38,5 +38,24 @@ describe("settings", () => {
   it("reads the run fields with their defaults", () => {
     expect(runFields({}, settings)).toEqual({ seed: 42, cv: 5 });
     expect(runFields({ seed: 7, cv: 0 }, settings)).toEqual({ seed: 7, cv: 0 });
+  });
+});
+
+describe("settings by target kind and rule", () => {
+  const cw = S({ name: "class_weight", kind: "choice", default: null, applies: "classes", options: [{ value: null, label: "None" }, { value: "balanced", label: "Balanced" }] });
+  const obj = S({ name: "objective", kind: "choice", default: "regression", applies: "numbers", options: [{ value: "regression", label: "L2" }, { value: "quantile", label: "Quantile" }] });
+  const alpha = S({ name: "alpha", kind: "float", default: 0.9, min: 0.001, max: 1000, applies: "numbers", when: { objective: ["huber", "quantile"] } });
+  const all = [...settings, cw, obj, alpha];
+  it("leaves out settings for target kinds the run doesn't have", () => {
+    expect(changed({ class_weight: "balanced", num_leaves: 9 }, all, ["regression"])).toEqual({ num_leaves: 9 });
+    expect(problems({ class_weight: "bogus" }, all, ["regression"])).toEqual({});
+  });
+  it("checks the quantile alpha as you type", () => {
+    expect(problems({ objective: "quantile", alpha: 5 }, all, ["regression"]).alpha).toMatch(/between 0 and 1/);
+  });
+  it("prefills Train again through restore", () => {
+    const { values, dropped } = prefillValues({ num_leaves: 127, lambda_l2: 3, max_depth: 999 }, settings);
+    expect(values).toEqual({ num_leaves: 127 });
+    expect(dropped).toEqual(["lambda_l2", "max_depth"]);
   });
 });

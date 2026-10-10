@@ -93,6 +93,7 @@ def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
     if problem := regression_problem(spec, kinds):
         raise HTTPException(422, problem)
     if model_params.settings_for(spec.key):
+        req.params = model_params.normalize(spec.key, req.params)
         if problems := model_params.setting_problems(spec.key, req.params):
             raise HTTPException(422, {"message": "Invalid model settings", "errors": problems})
         stats = manifest.get("target_stats") or {}

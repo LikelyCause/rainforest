@@ -48,11 +48,13 @@ RUN = [
 
 DART = {"boosting_type": ("dart",)}
 GOSS = {"data_sample_strategy": ("goss",)}
+BAGGING = {"data_sample_strategy": ("bagging",)}
 LIGHTGBM = RUN + [
     Setting("boosting_type", "Boosting", "How trees are added.", "trees", "choice", "gbdt", options=(
         _opt("gbdt", "Gradient boosting", "Each tree corrects the previous ones. The usual choice."),
         _opt("dart", "DART", "Drops random trees while boosting, which can reduce overfitting; slower."),
-        _opt("rf", "Random forest", "Independent trees on bagged rows; needs subsample < 1 and a bagging frequency."))),
+        _opt("rf", "Random forest", "Independent trees on sampled rows or features; needs a row sample below 1 with "
+             "bagging, or a feature sample below 1."))),
     Setting("n_estimators", "Trees", "Boosting rounds. More fits more closely, and slower.", "trees", "int", 600, 1,
             10_000, 50),
     Setting("num_leaves", "Leaves per tree", "The main complexity control. More leaves fit finer patterns and "
@@ -62,11 +64,11 @@ LIGHTGBM = RUN + [
     Setting("min_child_samples", "Min rows per leaf", "Larger values make smoother, more conservative trees.",
             "trees", "int", 40, 1, 10_000),
     Setting("learning_rate", "Learning rate", "How much each tree counts. Lower needs more trees and usually "
-            "generalizes better.", "learning", "float", 0.04, 0.001, 1.0, log=True),
+            "generalizes better.", "learning", "float", 0.04, 0.001, 1.0, 0.005),
     Setting("subsample", "Row sample", "Share of rows each tree sees (bagging).", "sampling", "float", 0.8, 0.1,
-            1.0, 0.05),
+            1.0, 0.05, when=BAGGING),
     Setting("subsample_freq", "Bagging every", "Redraw the row sample every k trees; 0 turns bagging off.",
-            "sampling", "int", 1, 0, 100),
+            "sampling", "int", 1, 0, 100, when=BAGGING),
     Setting("colsample_bytree", "Feature sample", "Share of features each tree sees.", "sampling", "float", 0.7,
             0.1, 1.0, 0.05),
     Setting("reg_alpha", "L1 penalty", "Pushes leaf values to zero; helps with many weak features.",
@@ -107,8 +109,8 @@ LIGHTGBM = RUN + [
     Setting("linear_tree", "Linear leaves", "Fit a linear model in each leaf instead of a constant.", "advanced",
             "bool", False),
     Setting("data_sample_strategy", "Row sampling", "Bagging samples rows at random; GOSS keeps the rows with the "
-            "largest errors.", "advanced", "choice", "bagging", options=(_opt("bagging", "Bagging"),
-                                                                         _opt("goss", "GOSS"))),
+            "largest errors; with GOSS the bagging settings don't apply.", "advanced", "choice", "bagging",
+            options=(_opt("bagging", "Bagging"), _opt("goss", "GOSS"))),
     Setting("top_rate", "GOSS top share", "Share of large-error rows GOSS keeps.", "advanced", "float", 0.2, 0.01,
             1.0, 0.05, when=GOSS),
     Setting("other_rate", "GOSS other share", "Share of the remaining rows GOSS samples.", "advanced", "float", 0.1,
@@ -174,6 +176,21 @@ def setting_problems(model: str, params: dict) -> list[str]:
     if params.get("objective") == "quantile" and not 0 < params.get("alpha", 0.9) < 1:
         out.append("alpha must be between 0 and 1 for the quantile loss")
     return out
+
+
+def normalize(model: str, params: dict) -> dict:
+    """A run's params with whole numbers for whole-number settings (JSON clients may send 600.0, which LightGBM refuses
+    mid-run)."""
+    kinds = {s.name: s.kind for s in settings_for(model) or []}
+    return {k: int(v) if kinds.get(k) in ("int", "int_or_none") and isinstance(v, float) and v.is_integer() else v
+            for k, v in params.items()}
+
+
+def effective(model: str, params: dict) -> dict:
+    """What a model is built with: GOSS samples rows itself, so the bagging defaults are switched off with it."""
+    if model == "lightgbm" and params.get("data_sample_strategy") == "goss":
+        return {**params, "subsample": 1.0, "subsample_freq": 0}
+    return params
 
 
 def applies_to(model: str, kind: str | None = None) -> set[str]:

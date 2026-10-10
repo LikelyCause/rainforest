@@ -105,3 +105,21 @@ def test_dry_fit_is_quick_with_many_trees():
 
 def test_regressor_gets_routed_settings():
     assert regressor_params(MODELS["lightgbm"], {"class_weight": "balanced", "objective": "huber"}) == {"objective": "huber"}
+
+
+def test_goss_works_with_the_default_bagging_settings():
+    from app.modeling.params import effective
+    assert dry_fit_problem(MODELS["lightgbm"], {"data_sample_strategy": "goss"}, ["binary", "regression"]) is None
+    assert effective("lightgbm", {"data_sample_strategy": "goss"})["subsample_freq"] == 0
+    assert "bagging" in setting_problems("lightgbm", {"data_sample_strategy": "goss", "subsample": 0.5})[0]
+
+
+def test_whole_numbers_sent_as_floats_become_ints():
+    from app.modeling.params import normalize
+    out = normalize("lightgbm", {"n_estimators": 600.0, "max_depth": -1.0, "learning_rate": 0.1})
+    assert out == {"n_estimators": 600, "max_depth": -1, "learning_rate": 0.1}
+    assert type(out["n_estimators"]) is int
+
+
+def test_dry_fit_tries_a_binary_link_in_a_mixed_chain():
+    assert dry_fit_problem(MODELS["lightgbm"], {"is_unbalance": True, "scale_pos_weight": 2.0}, ["binary", "multiclass"])

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { changed, GROUP_LABEL, GROUP_ORDER, isVisible, settingProblem } from "../settings";
+import { changed, GROUP_LABEL, GROUP_ORDER, isVisible, problems, suitsTargets } from "../settings";
 import type { ModelSetting, SettingValue } from "../types";
 
 type Values = Record<string, SettingValue>;
@@ -20,8 +20,9 @@ function NumberInput({ s, value, onChange, id }: { s: ModelSetting; value: numbe
     setText(String(value));
   }
   return (
-    <input id={id} type="number" inputMode="decimal" value={text} min={s.min ?? undefined} max={s.max ?? undefined}
-      step={s.step ?? (s.kind === "float" ? "any" : 1)}
+    // No min/max on the element: a browser counts steps from min, so arrows from a default like 600 would land on 601.
+    // The range is checked in settingProblem instead.
+    <input id={id} type="number" inputMode="decimal" value={text} step={s.step ?? (s.kind === "float" ? "any" : 1)}
       onChange={(e) => {
         setText(e.target.value);
         const n = Number(e.target.value);
@@ -67,10 +68,11 @@ function Control({ s, value, onChange }: { s: ModelSetting; value: SettingValue;
   return <NumberInput s={s} id={id} value={Number(value)} onChange={onChange} />;
 }
 
-function Row({ s, values, onChange }: { s: ModelSetting; values: Values; onChange: (name: string, v: SettingValue) => void }) {
+function Row({ s, values, onChange, problem }: {
+  s: ModelSetting; values: Values; onChange: (name: string, v: SettingValue) => void; problem: string | undefined;
+}) {
   const value = s.name in values ? values[s.name] : s.default;
   const isChanged = value !== s.default;
-  const problem = settingProblem(s, value);
   return (
     <div className={`setting ms-row${isChanged ? " edited" : ""}`}>
       <div className="ms-line">
@@ -95,14 +97,12 @@ export function ModelSettings({ settings, values, onChange, kinds }: {
   const [open, setOpen] = useState(false);
   const [advanced, setAdvanced] = useState(false);
   const [q, setQ] = useState("");
-  const diff = changed(values, settings);
+  const diff = changed(values, settings, kinds);
+  const issues = problems(values, settings, kinds);
   const runChanged = settings.filter((s) => s.group === "run" && s.name in values && values[s.name] !== s.default).length;
   const n = Object.keys(diff).length + runChanged;
-  const hasClasses = kinds.some((k) => k !== "regression");
-  const hasNumbers = kinds.includes("regression");
   const set = (name: string, v: SettingValue) => onChange({ ...values, [name]: v });
-  const visible = (s: ModelSetting) => isVisible(s, values, settings)
-    && (s.applies !== "classes" || hasClasses) && (s.applies !== "numbers" || hasNumbers);
+  const visible = (s: ModelSetting) => isVisible(s, values, settings) && suitsTargets(s, kinds);
   const inAdvanced = settings.filter((s) => s.group === "advanced" && visible(s));
   const advancedChanged = inAdvanced.filter((s) => s.name in diff).length;
   const query = q.trim().toLowerCase();
@@ -125,7 +125,7 @@ export function ModelSettings({ settings, values, onChange, kinds }: {
             return (
               <section key={g} className="stack ms-group" style={{ gap: 2 }} aria-label={GROUP_LABEL[g]}>
                 <h4>{GROUP_LABEL[g]}</h4>
-                {rows.map((s) => <Row key={s.name} s={s} values={values} onChange={set} />)}
+                {rows.map((s) => <Row key={s.name} s={s} values={values} onChange={set} problem={issues[s.name]} />)}
               </section>
             );
           })}
@@ -139,7 +139,7 @@ export function ModelSettings({ settings, values, onChange, kinds }: {
                 <>
                   <input type="search" placeholder="Search settings" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search settings" />
                   {inAdvanced.filter((s) => !query || `${s.label} ${s.name} ${s.help}`.toLowerCase().includes(query))
-                    .map((s) => <Row key={s.name} s={s} values={values} onChange={set} />)}
+                    .map((s) => <Row key={s.name} s={s} values={values} onChange={set} problem={issues[s.name]} />)}
                 </>
               )}
             </section>

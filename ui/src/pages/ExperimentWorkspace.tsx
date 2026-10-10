@@ -10,7 +10,7 @@ import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtInt, fmtMetric, fmtNum,
 import { toast } from "../toast";
 import { bestRuns, columnLabels, metricFor, type RunMetric } from "../runs";
 import { sourceLabel } from "../experiments";
-import { changed, problems, restore, runFields } from "../settings";
+import { changed, prefillValues, problems, restore, runFields } from "../settings";
 import type { Dataset, Experiment, ExportJob, ModelRun, SettingValue, TrainPrefill } from "../types";
 
 const FAMILY_EXPLAINER: Record<string, string> = {
@@ -202,8 +202,8 @@ function remembered(exportId: number, model: string): unknown {
   try { return JSON.parse(localStorage.getItem(settingsKey(exportId, model)) ?? "null"); } catch { return null; }
 }
 
-function TrainForm({ e, targets, onStarted, prefill }: {
-  e: ExportJob; targets: string[]; onStarted: (r: ModelRun) => void; prefill?: TrainPrefill | null;
+function TrainForm({ e, targets, onStarted, prefill, onPrefillUsed }: {
+  e: ExportJob; targets: string[]; onStarted: (r: ModelRun) => void; prefill?: TrainPrefill | null; onPrefillUsed?: () => void;
 }) {
   const qc = useQueryClient();
   const models = useQuery({ queryKey: ["exportModels", e.id], queryFn: () => api.modelsForExport(e.id), staleTime: 60_000 });
@@ -211,8 +211,19 @@ function TrainForm({ e, targets, onStarted, prefill }: {
   const [model, setModel] = useState(prefill?.model ?? "");
   const [gpuOn, setGpuOn] = useState(false);
   const [order, setOrder] = useState<string[]>(prefill?.order ?? targets);
-  const [valuesByModel, setValuesByModel] = useState<Record<string, Record<string, SettingValue>>>(
-    prefill ? { [prefill.model]: prefill.values } : {});
+  const [valuesByModel, setValuesByModel] = useState<Record<string, Record<string, SettingValue>>>({});
+  const [dropped, setDropped] = useState<string[]>([]);
+  // Train again: the run's settings become this model's remembered ones (once), so closing and reopening the menu,
+  // or opening it later, shows the latest edits rather than the run again.
+  useEffect(() => {
+    const catalog = prefill && models.data?.find((m) => m.key === prefill.model)?.settings;
+    if (!prefill || !catalog) return;
+    const { values: v, dropped: d } = prefillValues(prefill.values, catalog);
+    setValuesByModel((old) => ({ ...old, [prefill.model]: v }));
+    try { localStorage.setItem(settingsKey(e.id, prefill.model), JSON.stringify(v)); } catch { /* not remembered */ }
+    setDropped(d);
+    onPrefillUsed?.();
+  }, [prefill, models.data]); // eslint-disable-line react-hooks/exhaustive-deps
   const [showAll, setShowAll] = useState(false);
   useEffect(() => {
     if (!model && models.data) {
@@ -226,12 +237,12 @@ function TrainForm({ e, targets, onStarted, prefill }: {
     setValuesByModel((old) => ({ ...old, [model]: v }));
     try { localStorage.setItem(settingsKey(e.id, model), JSON.stringify(v)); } catch { /* private mode: not remembered */ }
   };
-  const settingProblems = selectedSettings ? Object.keys(problems(values, selectedSettings)).length : 0;
   const kinds: string[] = order.map((t) => e.summary?.target_kinds?.[t]).filter(Boolean);
+  const settingProblems = selectedSettings ? Object.keys(problems(values, selectedSettings, kinds)).length : 0;
   const start = useMutation({
     mutationFn: () => api.startRun(e.id, {
       model, order, device: useGpu ? "cuda" : "cpu",
-      ...(selectedSettings ? { params: changed(values, selectedSettings), ...runFields(values, selectedSettings) } : { cv: 5 }),
+      ...(selectedSettings ? { params: changed(values, selectedSettings, kinds), ...runFields(values, selectedSettings) } : { cv: 5 }),
     }),
     onSuccess: (run) => {
       qc.setQueryData<ModelRun[]>(["runs", e.dataset_id, e.experiment_id], (old) => [run, ...(old ?? []).filter((r) => r.id !== run.id)]);
@@ -277,6 +288,9 @@ function TrainForm({ e, targets, onStarted, prefill }: {
       {targets.length > 1 && <TargetOrder targets={targets} order={order} onChange={setOrder} />}
       {selectedSettings && selected?.compatible && (
         <ModelSettings settings={selectedSettings} values={values} onChange={setValues} kinds={kinds} />
+      )}
+      {dropped.length > 0 && (
+        <span className="muted small-text">Not carried over (no longer settings of this model): {dropped.join(", ")}</span>
       )}
       <ErrorAlert error={start.error} />
       {settingProblems > 0 && <span className="small-text" role="alert" style={{ color: "var(--bad)" }}>Fix the settings marked above to train.</span>}
@@ -325,8 +339,8 @@ function featuresByType(e: ExportJob): string {
   return Object.entries(by).map(([t, x]) => `${t.replace("_", " ")}: ${x.fields} → ${x.features}`).join("\n");
 }
 
-function ExportRow({ e, onStarted, canAdd, prefill }: {
-  e: ExportJob; onStarted: (r: ModelRun) => void; canAdd: boolean; prefill: TrainPrefill | null;
+function ExportRow({ e, onStarted, canAdd, prefill, onPrefillUsed }: {
+  e: ExportJob; onStarted: (r: ModelRun) => void; canAdd: boolean; prefill: TrainPrefill | null; onPrefillUsed: () => void;
 }) {
   const s = e.summary ?? {};
   const by = s.features_by_type as Record<string, { fields: number }> | undefined;
@@ -372,8 +386,8 @@ function ExportRow({ e, onStarted, canAdd, prefill }: {
         <div className="row" style={{ flexWrap: "nowrap" }}>
           {canAdd && (
             <Pop label="Train ▾" primary openSignal={prefill?.exportId === e.id ? prefill : null}>
-              {() => <TrainForm key={prefill?.exportId === e.id ? JSON.stringify(prefill) : "new"} e={e} targets={s.targets ?? []}
-                onStarted={onStarted} prefill={prefill?.exportId === e.id ? prefill : null} />}
+              {() => <TrainForm e={e} targets={s.targets ?? []} onStarted={onStarted}
+                prefill={prefill?.exportId === e.id ? prefill : null} onPrefillUsed={onPrefillUsed} />}
             </Pop>
           )}
           <Pop label="Files ▾">{() => (
@@ -521,7 +535,8 @@ export function ExperimentWorkspace({ ds, x, canAdd }: { ds: Dataset; x: Experim
         <div className="card-head"><h2>Exports</h2></div>
         <ErrorAlert error={exports.error} />
         {exports.data?.length === 0 && <div className="empty">No exports yet.{canAdd ? " Build one above, then train models on it." : ""}</div>}
-        {exports.data?.map((e) => <ExportRow key={e.id} e={e} onStarted={onStarted} canAdd={canAdd} prefill={prefill} />)}
+        {exports.data?.map((e) => <ExportRow key={e.id} e={e} onStarted={onStarted} canAdd={canAdd} prefill={prefill}
+          onPrefillUsed={() => setPrefill(null)} />)}
       </section>
 
       <section className="card stack">

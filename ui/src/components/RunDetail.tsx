@@ -214,7 +214,7 @@ function RunSettings({ run, onTrainAgain }: { run: ModelRun; onTrainAgain: ((p: 
   return (
     <div className="row run-settings" style={{ gap: 10 }}>
       <span className="secondary small-text">Settings: <span className="mono">{text}</span></span>
-      {onTrainAgain && (
+      {onTrainAgain && settings && (
         <button type="button" className="small" onClick={() => onTrainAgain({
           exportId: run.export_id, model: run.model, order: run.report?.order ?? run.config?.order ?? [],
           values: { ...params, ...(run.config?.seed !== undefined ? { seed: run.config.seed } : {}),
