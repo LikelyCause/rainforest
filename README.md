@@ -45,6 +45,42 @@ Out of the box sign-in is in *pick* mode: the sign-in page lists the team and yo
 the built-in lead **Admin**. That's for one person, dev and demos; it doesn't authenticate anyone. A team sets up OIDC
 sign-in: see [Deploying for a team](#deploying-for-a-team) (`make up-keycloak` runs a ready-made Keycloak to try it).
 
+### On your own
+
+Every dataset goes through the same steps whether one person uses Rainforest or a team; on your own you are the lead
+and the only assessor.
+
+1. Sign in as **Admin** (a lead) and upload a file or generate a sample on **Datasets**.
+2. On the dataset's **Team** step, set up its first baseline: pick the model type (*Trees* for LightGBM, XGBoost and
+   random forests), keep *the suggestions* as the starting point, tick the targets, and leave yourself as the only
+   assessor. *Start* opens **Review**.
+3. Walk the fields in **Review** (or mark them in bulk in **Bulk edit**: *Accept suggestions*, *Mark reviewed*) until
+   every field is reviewed.
+4. On the **Team** step, *Submit assessment*. With one assessor there is nothing to settle, so team review opens with
+   every field adopted; *Finalize* freezes the baseline.
+5. On **Experiments**, create an experiment from the finalized baseline, *Adjust fields* if you want to try other
+   choices, export, and train (LightGBM by default). Runs and their preparation are logged to MLflow.
+
+To change the baseline later, start a new version on the **Baselines** page; to prepare the data for another model
+type, start a baseline of that type there (it can start from the one you finalized).
+
+### As a team
+
+1. A lead adds people (pick mode: the **Team** page; OIDC: the identity provider's groups, see [Sign-in](#sign-in))
+   and uploads the dataset.
+2. The lead sets up the dataset's baseline on its **Team** step: model type, starting point, targets, and the
+   assessors (themselves too, if they assess).
+3. Each assessor works through **Review** and **Bulk edit** on their own assessment, which nobody else sees, then
+   *Submit assessment* on the **Team** step. The lead follows everyone's progress there.
+4. When the last assessor submits, team review opens: fields everyone agreed on are adopted, and the disagreements
+   form a queue on the **Team** step, each assessor's choice side by side, with comments. The lead settles them and
+   *Finalize*s.
+5. Everyone builds experiments from the finalized baseline; each person adjusts only their own. Results are compared
+   on **Experiments** and in MLflow.
+
+[Team workflow](#team-workflow) and [Experiments](#experiments) describe each step in full. The walkthrough below
+covers each screen.
+
 1. **Datasets** → upload a CSV / Parquet file, or use **Generate sample ▾** (1k–2M rows, 30–400 fields, at most
    60M cells, with `column_a` / `column_b` targets that are binary + 3-class, both binary or both multiclass). On an
    empty install, *Open the 50k × 150 demo* does the same in one click. The upload is converted to Parquet, loaded into
@@ -55,9 +91,9 @@ sign-in: see [Deploying for a team](#deploying-for-a-team) (`make up-keycloak` r
    refreshes the target associations and leakage flags. Generated samples already have their two targets set. The row
    menu also renames or deletes a dataset (deleting removes its fields, exports, model runs and their files).
    A new dataset's first baseline (*Trees v1*) waits to be set up: a lead chooses its model type, what it starts
-   from, its targets and its assessors on the dataset's **Team** step (row menu → *Assessors…*). Each assessor
-   reviews every field blind, and the team settles the disagreements before a lead finalizes. See
-   [Team workflow](#team-workflow).
+   from, its targets and its assessors on the dataset's **Team** step (row menu → *Assessors…*). Until then Review is
+   read-only. Each assessor reviews every field blind, and disagreements are settled before a lead finalizes; with a
+   single assessor there are none. See [Team workflow](#team-workflow).
 2. **Review** → walk the fields. Each field shows its signals (missing, skew, outliers, levels, target association
    with a leakage flag), its distribution and quantile strip, top tokens or weekdays, and its strongest
    **associations** (click a bar to jump to that field). The decision panel lists *Why these suggestions*: one line
@@ -232,7 +268,8 @@ on its Team page. The form asks for:
    decision; the settings take the most common choice, and a tie takes the suggestion. The rest
    form the **review queue** on the Team page: each assessor's choice, settings and notes side by side, with the
    differences marked, and a comment thread. Everyone can comment; a lead sets the team decision (the same decision
-   panel as Review). Bulk edit is for leads only in this phase and changes team decisions.
+   panel as Review). Bulk edit is for leads only in this phase and changes team decisions. With a single assessor
+   (one person using Rainforest alone) every field is adopted and the queue is empty.
 3. **Finalized.** A lead finalizes once the queue is settled, or confirms finalizing with fields left as they stand.
    Finalizing freezes the version: its snapshot records every field's decision, its settings for the baseline's
    model type, its inferred type and key stats, and the target order. A finalized version's decisions can't change;
