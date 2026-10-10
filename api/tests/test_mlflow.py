@@ -139,8 +139,9 @@ def _train_run(export_dir) -> int:
                       "RETURNING id")["id"]
     exp = db.fetch_one("INSERT INTO meta.exports (dataset_id, status, output_dir) VALUES (%s, 'done', %s) RETURNING id",
                        (ds, str(export_dir)))["id"]
-    run_id = db.fetch_one("INSERT INTO meta.model_runs (export_id, dataset_id, model, family) "
-                          "VALUES (%s, %s, 'lightgbm', 'tree') RETURNING id", (exp, ds))["id"]
+    user = db.fetch_one("INSERT INTO meta.users (name, email) VALUES ('Ana', 'ana@example.com') RETURNING id")["id"]
+    run_id = db.fetch_one("INSERT INTO meta.model_runs (export_id, dataset_id, model, family, created_by) "
+                          "VALUES (%s, %s, 'lightgbm', 'tree', %s) RETURNING id", (exp, ds, user))["id"]
     req = {"model": "lightgbm", "order": None, "seed": 0, "cv": 2, "params": {"n_estimators": 20}, "device": "cpu"}
     runs._run(run_id, str(export_dir), req)
     return run_id
@@ -158,6 +159,7 @@ def test_training_run_is_logged_and_linked(database, file_store, tree_export):  
     assert listed["mlflow_url"] == run["mlflow_url"]
     logged = file_store.get_run(run["mlflow_run_id"])
     assert logged.data.tags["rainforest.run_id"] == str(run_id)
+    assert logged.data.tags["rainforest.user"] == "Ana <ana@example.com>"
     assert logged.data.params["estimator.n_estimators"] == "20" and logged.data.params["cv"] == "2"
     assert logged.data.metrics["test.column_a.roc_auc"] == run["metrics"]["test"]["column_a"]["roc_auc"]
     assert {a.path for a in file_store.list_artifacts(run["mlflow_run_id"], "model")} == {

@@ -164,14 +164,16 @@ def error_message(exc: BaseException) -> str:
 
 
 def log_model_run(run_id: int, report: dict, user: str | None = None) -> dict[str, str | None]:
-    """Log a meta.model_runs row. Returns what to store: the MLflow ids, or `mlflow_error` for the report.
+    """Log a meta.model_runs row, tagged with the user who started it unless `user` is given. Returns what to store: the MLflow ids, or `mlflow_error` for the report.
     Never raises."""
     from ..db import fetch_one
 
     try:
         run = fetch_one(
-            """SELECT r.id, r.dataset_id, r.export_id, r.model, r.created_at, r.finished_at, d.name AS dataset_name
-               FROM meta.model_runs r JOIN meta.datasets d ON d.id = r.dataset_id WHERE r.id = %s""",
+            """SELECT r.id, r.dataset_id, r.export_id, r.model, r.created_at, r.finished_at, d.name AS dataset_name,
+                      u.name || coalesce(' <' || u.email || '>', '') AS user_label
+               FROM meta.model_runs r JOIN meta.datasets d ON d.id = r.dataset_id
+               LEFT JOIN meta.users u ON u.id = r.created_by WHERE r.id = %s""",
             (run_id,),
         )
         if run is None:
@@ -179,7 +181,8 @@ def log_model_run(run_id: int, report: dict, user: str | None = None) -> dict[st
         if run["finished_at"] is None:
             run["finished_at"] = datetime.now().astimezone()
         model_dir = Path(report["model_dir"]) if report.get("model_dir") else None
-        experiment_id, mlflow_run_id = log_run(run, run["dataset_name"], report, model_dir, user)
+        experiment_id, mlflow_run_id = log_run(run, run["dataset_name"], report, model_dir,
+                                               user or run.pop("user_label"))
         return {"mlflow_experiment_id": experiment_id, "mlflow_run_id": mlflow_run_id, "mlflow_error": None}
     except Exception as exc:  # noqa: BLE001
         log.warning("MLflow logging for model run %s failed: %s", run_id, exc)

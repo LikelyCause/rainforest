@@ -28,14 +28,14 @@ Developer docs: [docs/architecture.md](docs/architecture.md) (how the pieces fit
 ## Quick start
 
 ```bash
-cp .env.example .env          # then set RAINFOREST_ADMIN_PASSWORD in it (required)
+cp .env.example .env
 docker compose up -d --build
 open http://localhost:8080
 ```
 
-Sign in as `admin` (or your `RAINFOREST_ADMIN_USER`) with that password. Until `RAINFOREST_ADMIN_PASSWORD` is set
-(the `.env.example` placeholder doesn't count), the API answers only `/health` and every other request gets a `503`
-saying to set it.
+Out of the box sign-in is in *pick* mode: the sign-in page lists the team and you choose who you are, starting with
+the built-in lead **Admin**. That's for one person, dev and demos; it doesn't authenticate anyone. A team sets up OIDC
+sign-in, see [Sign-in](#sign-in) (`make up-keycloak` runs a ready-made Keycloak to try it).
 
 1. **Datasets** → upload a CSV / Parquet file, or use **Generate sample ▾** (1k–2M rows, 30–400 fields, at most
    60M cells, with `column_a` / `column_b` targets that are binary + 3-class, both binary or both multiclass). On an empty install,
@@ -67,7 +67,73 @@ saying to set it.
    split is starred.
 
 The top bar shows the workflow steps **Review · Bulk edit · Explore · Export & train** and the **Model** switch
-(*Trees* · *Linear* · *Neural*).
+(*Trees* · *Linear* · *Neural*), and on the right **Team**, who you're signed in as with your role, and *Sign out*.
+
+## Sign-in
+
+Everyone signs in as a user, and everything they change is recorded against them (decision history, bulk edits,
+uploads, exports, model runs, Explore analyses). A user is a **lead** or a **member**:
+
+| | Member | Lead |
+|---|---|---|
+| Upload, review, bulk edit, Explore, export, train | ✓ | ✓ |
+| Delete datasets | | ✓ |
+| Manage users on the **Team** page | | ✓ (pick mode: add, rename, set role, deactivate; OIDC: deactivate / reactivate) |
+
+`RAINFOREST_AUTH_MODE` chooses how people sign in:
+
+* **`oidc`** (team deployments). Standard OpenID Connect against your identity provider: authorization-code flow
+  with PKCE, run by the API. The sign-in page shows *Sign in with <provider>*. A user is created the first time they
+  sign in, and their name, email and role are refreshed from the ID token every time. The role comes from the
+  token's groups claim: `RAINFOREST_LEAD_GROUP` (default `rainforest-lead`) makes a lead, `RAINFOREST_MEMBER_GROUP`
+  (default `rainforest-member`) a member. Someone in neither group gets a *No access* page. *Sign out* also ends the
+  provider's session. Register Rainforest at the provider as a confidential client with the redirect URI
+  `<Rainforest URL>/api/auth/oidc/callback` (and `<Rainforest URL>/login` as a post-logout redirect URI), and
+  configure a groups claim in the ID token.
+* **`pick`** (the default; dev, demos, a single person or a trusted single-team network). The sign-in page lists the
+  active users and choosing one signs you in as them; the page says plainly that this doesn't authenticate. Leads
+  manage the list on the Team page. The first start creates one lead, *Admin*.
+
+Deactivating a user, or changing their role, signs them out everywhere at once. The last active lead can't be
+demoted or deactivated. Users are never deleted, so their history keeps its names; matching is by the provider's
+subject id, never by email. Work recorded before users existed is attributed to *Admin*.
+
+### Keycloak
+
+`make up-keycloak` starts everything plus [Keycloak](https://www.keycloak.org/) on `:8081` as a reference identity
+provider, and switches the API to OIDC against it. Keycloak keeps its own `keycloak` database in the existing
+Postgres and imports the `rainforest` realm on first start (`keycloak/realm-rainforest.json`): the confidential client
+`rainforest`, the groups `rainforest-lead` and `rainforest-member` mapped into the ID token's `groups` claim, and these
+users:
+
+| User | Password | Group |
+|---|---|---|
+| `lead1` | `lead1-dev-password` | rainforest-lead |
+| `ds1` | `ds1-dev-password` | rainforest-member |
+| `ds2` | `ds2-dev-password` | rainforest-member |
+| `guest1` | `guest1-dev-password` | none (shows the *No access* page) |
+
+Keycloak's own admin console is at `http://localhost:8081/admin` (`admin` / `KEYCLOAK_ADMIN_PASSWORD`, default
+`admin`).
+
+**This is a development setup, not a production one:** Keycloak runs in `start-dev` mode over plain HTTP, the
+client secret (`rainforest-dev-secret`) and passwords above are public, and the realm allows HTTP from anywhere.
+For real use, run Keycloak (or any OIDC provider) in production mode behind TLS, and set the `RAINFOREST_OIDC_*`
+settings yourself.
+
+Tokens name their issuer by the URL browsers use, so Keycloak runs with `KC_HOSTNAME` set to that URL and the API
+checks tokens against the same issuer. The API container can't reach `localhost:8081`, though, so it reads discovery
+from `http://keycloak:8080` (`RAINFOREST_OIDC_DISCOVERY_URL`), and Keycloak's dynamic backchannel
+(`KC_HOSTNAME_BACKCHANNEL_DYNAMIC`) answers it with token and key URLs on that internal name while the issuer and
+the browser-facing URLs stay external. To use it from other machines, give both URLs as they see them:
+
+```bash
+make up-keycloak KEYCLOAK_URL=http://rainforest.lan:8081 RAINFOREST_URL=http://rainforest.lan:8080
+```
+
+The redirect URIs are written into the realm on its first import only; after changing `RAINFOREST_URL`, edit the
+client in Keycloak's admin console (or `docker compose down`, drop the `keycloak` database and start again).
+`make up` afterwards goes back to the settings in `.env`.
 
 ### Keyboard shortcuts (Review)
 
@@ -335,9 +401,10 @@ WHERE dataset_id = 1 AND split = 'test' AND metric IN ('roc_auc', 'roc_auc_ovr_m
 | `meta.fields` | inferred type, confidence and reasons, typed statistics, `leakage_flag`, `stats` / `charts` / per-family `suggestion` JSONB |
 | `meta.field_decisions` | shared decision per field (keep / drop / target, type, notes, reviewed) |
 | `meta.field_settings` | preprocessing per field **per model family** |
-| `meta.decision_history` | append-only audit log of every change (with family and, for bulk edits, `batch_id`) |
+| `meta.decision_history` | append-only audit log of every change (with family, `user_id` and, for bulk edits, `batch_id`) |
 | `meta.bulk_batches` | each applied bulk edit: summary and a pre-change snapshot used by undo |
 | `meta.field_correlations` | pairwise associations (one row per unordered pair) |
+| `meta.users` | users: name, email, role (`lead` / `member`), active, OIDC subject, last seen |
 | `meta.exports`, `meta.model_runs` | export jobs; training runs with metrics and report |
 | `meta.analyses` | Explore jobs (map, tests, importance): params, data version, status, result JSONB |
 | `meta.v_fields`, `meta.v_field_settings`, `meta.v_correlations`, `meta.v_model_metrics` | query-friendly views |
@@ -359,8 +426,17 @@ Compose settings, read from `.env` (see `.env.example`):
 | `API_WORKERS` / `JOB_WORKERS` | 2 / 2 | uvicorn workers / background job threads per worker |
 | `JOB_SLOTS` | 2 | background jobs running at once across all workers; each uses `cpu_count // JOB_SLOTS` threads |
 | `LOG_LEVEL` | info | API log level |
-| `RAINFOREST_ADMIN_USER` | admin | sign-in user name |
-| `RAINFOREST_ADMIN_PASSWORD` | – (**required**) | sign-in password; without it the API refuses everything but `/health` |
+| `RAINFOREST_AUTH_MODE` | `pick` | `oidc` for team deployments; `pick` lists users to choose from and doesn't authenticate (see [Sign-in](#sign-in)) |
+| `RAINFOREST_OIDC_ISSUER` | – | the provider's issuer URL, exactly as it appears in its tokens (e.g. `https://sso.example.com/realms/rainforest`). Required in `oidc` mode |
+| `RAINFOREST_OIDC_CLIENT_ID`, `RAINFOREST_OIDC_CLIENT_SECRET` | – | the confidential client registered for Rainforest. Required in `oidc` mode |
+| `RAINFOREST_OIDC_REDIRECT_URL` | from the request | `<Rainforest URL>/api/auth/oidc/callback`; set it when Rainforest sits behind a proxy |
+| `RAINFOREST_OIDC_DISCOVERY_URL` | issuer + `/.well-known/openid-configuration` | where the API reads discovery, when it can't reach the issuer URL itself (the Keycloak profile) |
+| `RAINFOREST_OIDC_SCOPES` | `openid profile email` | requested scopes |
+| `RAINFOREST_OIDC_GROUPS_CLAIM` | `groups` | ID token claim with the user's groups (Keycloak's full group paths like `/rainforest-lead` also work) |
+| `RAINFOREST_OIDC_PROVIDER_NAME` | `SSO` | the name on the *Sign in with …* button |
+| `RAINFOREST_LEAD_GROUP`, `RAINFOREST_MEMBER_GROUP` | `rainforest-lead`, `rainforest-member` | groups that make a lead or a member |
+| `KEYCLOAK_URL`, `RAINFOREST_URL` | `http://localhost:8081`, `http://localhost:8080` | Keycloak profile only: the URLs browsers use for Keycloak and Rainforest |
+| `KEYCLOAK_PORT`, `KEYCLOAK_ADMIN_PASSWORD` | 8081, admin | Keycloak profile only: published port and admin console password |
 | `RAINFOREST_SESSION_SECRET` | generated | key that signs session cookies; if empty, one is generated on first start and kept in the data volume (`/data/session_secret`) |
 | `RAINFOREST_ALLOWED_HOSTS` | `*` | comma-separated hostnames / IPs the API answers to (`*.example.com` allowed). Set this to the names and addresses you use, e.g. `rainforest.lan,192.168.1.20`; `localhost` is always accepted |
 | `MLFLOW_TRACKING_URI` | `http://mlflow:5000/mlflow` | where the API logs model runs; empty turns MLflow logging off (see [MLflow](#mlflow)) |
@@ -387,7 +463,7 @@ Tuning settings for the API (`api/app/config.py`), also read from `.env`:
 ```bash
 # API (needs Postgres: `docker compose up -d db`)
 cd api && python -m venv .venv && . .venv/bin/activate && pip install -r requirements-dev.txt
-RAINFOREST_ADMIN_PASSWORD=dev DATABASE_URL=postgresql://rainforest:rainforest@localhost:5432/rainforest DATA_DIR=./data \
+DATABASE_URL=postgresql://rainforest:rainforest@localhost:5432/rainforest DATA_DIR=./data \
   uvicorn app.main:app --reload
 
 # UI (proxies /api to :8000; set API_URL to point elsewhere)
@@ -398,10 +474,12 @@ npm run typecheck && npm test
 make sample-csv
 ```
 
-**Tests** live in `api/tests`. Most need no database, including the sign-in and request-check tests in
-`test_auth.py`. The API tests in `test_explore.py`, `test_sql_console.py`, `test_data_correctness.py` and
-`test_api_cleanup.py`, and the job tests in `test_jobs.py`, run against an empty Postgres and skip unless
-`RAINFOREST_TEST_DATABASE_URL` is set; the API tests sign in through the `admin_login` fixture in `conftest.py`.
+**Tests** live in `api/tests`. Most need no database, including the pick-mode sign-in and request-check tests in
+`test_auth.py` and the OIDC redirect and ID-token checks in `test_oidc.py` (against an in-process provider,
+`tests/oidc_provider.py`). The API tests in `test_explore.py`, `test_sql_console.py`, `test_data_correctness.py`,
+`test_api_cleanup.py`, `test_users.py` and the OIDC sign-in flows in `test_oidc.py`, and the job tests in
+`test_jobs.py`, run against an empty Postgres and skip unless `RAINFOREST_TEST_DATABASE_URL` is set; the API tests
+sign in with the `login_as(client, role)` fixture in `conftest.py`.
 `test_mlflow.py` logs to a temporary file store, so it needs no server; its database-backed tests follow the same
 rule, and one more test runs against a real tracking server when `MLFLOW_TEST_URI` is set (CI runs one).
 The UI's tests run with `cd ui && npm test` (Vitest, no browser needed).
@@ -429,13 +507,19 @@ service (so nothing skips), the UI typecheck, tests and build, and `docker compo
 * **Security:** the UI port (`UI_PORT`, 8080) listens on every interface so you can reach it over the LAN; `api` and
   `db` bind to localhost, and `mlflow` publishes no port. Every API route except `/health` and sign-in needs the
   session cookie, file downloads included, and so does the MLflow UI at `/mlflow/`.
-  * One admin user from `RAINFOREST_ADMIN_USER` / `RAINFOREST_ADMIN_PASSWORD`. The session cookie is signed, `HttpOnly`,
-    `SameSite=Strict`, lasts 7 days, and is `Secure` when the request came over HTTPS. Changing the user or password
-    signs everyone out.
-  * After 10 failed sign-ins from one address within 15 minutes, that address gets `429` until the window passes.
-    The count is kept per API worker.
+  * Use `RAINFOREST_AUTH_MODE=oidc` for anything but a single person or a trusted network: pick mode lets anyone who
+    reaches the UI act as any user, including a lead.
+  * The session cookie holds only the user id and their session version, signed (HMAC) with the session secret. It
+    is `HttpOnly`, `SameSite=Strict`, lasts 7 days, and is `Secure` when the request came over HTTPS. Every request
+    checks the user is still active and the version current, so deactivation and role changes apply at once;
+    rotating `RAINFOREST_SESSION_SECRET` signs everyone out.
+  * OIDC: PKCE (S256), `state` and `nonce` on every sign-in. The state travels in a short-lived signed cookie
+    (`SameSite=Lax`, which the provider's redirect back needs, scoped to `/api/auth/oidc`); the PKCE verifier and
+    nonce are derived from it with the server's secret, so nothing else is stored. ID tokens are checked against
+    the provider's published keys (asymmetric algorithms only), issuer, audience, expiry and nonce. Provider tokens
+    are never stored or sent to the browser.
   * Requests that change data must be same-origin (`Origin` / `Referer` match the host; `http://localhost:5173` is also
     accepted for `npm run dev`) and carry an `application/json` body (`multipart/form-data` for uploads), which
     blocks cross-site form posts. Set `RAINFOREST_ALLOWED_HOSTS` as well, so a DNS-rebound name is refused outright.
-  * On plain HTTP the password and cookie cross the network unencrypted. Anywhere beyond a trusted LAN, put the UI
+  * On plain HTTP the session cookie crosses the network unencrypted. Anywhere beyond a trusted LAN, put the UI
     behind a TLS proxy that sets `X-Forwarded-Proto`.

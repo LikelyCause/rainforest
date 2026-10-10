@@ -39,6 +39,8 @@ const FAMILY_SHORT: Record<string, string> = { tree: "Trees", linear: "Linear", 
 /** The one vocabulary for model families in labels, badges and the top-bar switch. */
 export const familyShort = (f: string) => FAMILY_SHORT[f] ?? f;
 
+export const roleLabel = (r: string) => (r === "lead" ? "Lead" : r === "member" ? "Member" : r);
+
 const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 export function fmtAgo(s: string | null): string {
   if (!s) return "—";

@@ -11,6 +11,8 @@ from app.modeling.train import train
 from app.routers import runs
 from app.schemas import RunRequest
 
+USER = {"id": 1, "name": "Admin", "email": None, "role": "lead"}
+
 SMI_OUT = "NVIDIA GeForce RTX 5060 Ti, 16311, 580.95.05\n"
 
 
@@ -151,7 +153,7 @@ def fake_export(monkeypatch):
 def test_start_run_cuda_without_gpu_is_409(monkeypatch, fake_export):
     monkeypatch.setattr(gpu.shutil, "which", lambda name: None)
     with pytest.raises(HTTPException) as e:
-        runs.start_run(1, RunRequest(model="xgboost", device="cuda"))
+        runs.start_run(1, RunRequest(model="xgboost", device="cuda"), USER)
     assert e.value.status_code == 409 and "No GPU" in e.value.detail
 
 
@@ -159,11 +161,11 @@ def test_start_run_cuda_with_unusable_gpu_explains(monkeypatch, fake_export):
     fake_smi(monkeypatch)
     monkeypatch.setattr(gpu, "xgboost_cuda_build", lambda: False)
     with pytest.raises(HTTPException) as e:
-        runs.start_run(1, RunRequest(model="xgboost", device="cuda"))
+        runs.start_run(1, RunRequest(model="xgboost", device="cuda"), USER)
     assert e.value.status_code == 409 and "CPU build" in e.value.detail
 
 
 def test_start_run_cuda_for_cpu_only_model_is_422(fake_export):
     with pytest.raises(HTTPException) as e:
-        runs.start_run(1, RunRequest(model="lightgbm", device="cuda"))
+        runs.start_run(1, RunRequest(model="lightgbm", device="cuda"), USER)
     assert e.value.status_code == 422

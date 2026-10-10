@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from contextlib import asynccontextmanager
 
@@ -10,7 +11,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 from . import auth, db, gpu, jobs, processing
 from .config import get_settings
-from .routers import datasets, explore, exports, fields, query, runs
+from .routers import datasets, explore, exports, fields, query, runs, users
 from .semantics import option_catalog
 
 logging.basicConfig(
@@ -26,8 +27,13 @@ async def lifespan(app: FastAPI):
     for d in (s.uploads_dir, s.datasets_dir, s.exports_dir, s.models_dir):
         d.mkdir(parents=True, exist_ok=True)
     auth.session_secret()
-    if not auth.admin_password():
-        log.warning(auth.NO_PASSWORD)
+    if problem := auth.config_problem():
+        log.warning(problem)
+    elif s.auth_mode == "pick":
+        log.warning("Sign-in mode is 'pick': anyone who can reach the UI can sign in as any user. "
+                    "Use RAINFOREST_AUTH_MODE=oidc for team deployments.")
+    if os.environ.get("RAINFOREST_ADMIN_PASSWORD"):
+        log.warning("RAINFOREST_ADMIN_PASSWORD is no longer used; see README › Sign-in (RAINFOREST_AUTH_MODE).")
     db.bootstrap()
     jobs.start()
     processing.sweep_uploads()
@@ -68,6 +74,7 @@ app.include_router(query.router)
 app.include_router(exports.router)
 app.include_router(runs.router)
 app.include_router(explore.router)
+app.include_router(users.router)
 
 
 @app.get("/health", tags=["meta"])

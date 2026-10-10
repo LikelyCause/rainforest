@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from .. import gpu, jobs
+from ..auth import CurrentUser
 from ..db import execute, fetch_all, fetch_one, jsonb
 from ..modeling import mlflow_log
 from ..modeling.registry import MODELS, catalog, compatibility, param_problems
@@ -23,7 +24,7 @@ MLFLOW_URL = """CASE WHEN mlflow_run_id IS NOT NULL
                    THEN '/mlflow/#/experiments/' || mlflow_experiment_id || '/runs/' || mlflow_run_id END AS mlflow_url"""
 RUN_COLS = f"""id, export_id, dataset_id, model, family, status, status_message, error, config, metrics,
               report - 'top_features' AS report, created_at, updated_at, finished_at, mlflow_experiment_id,
-              mlflow_run_id, {MLFLOW_URL}"""
+              mlflow_run_id, {MLFLOW_URL}, created_by"""
 
 
 @router.get("/models")
@@ -61,7 +62,7 @@ def models_for_export(export_id: int) -> list[dict]:
 
 
 @router.post("/exports/{export_id}/runs", status_code=202)
-def start_run(export_id: int, req: RunRequest) -> dict:
+def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
     exp, manifest = _export_manifest(export_id)
     spec = MODELS.get(req.model)
     if spec is None:
@@ -81,9 +82,10 @@ def start_run(export_id: int, req: RunRequest) -> dict:
     if req.order and sorted(req.order) != sorted(manifest["targets"]):
         raise HTTPException(422, f"order must be a permutation of {manifest['targets']}")
     run = fetch_one(
-        f"""INSERT INTO meta.model_runs (export_id, dataset_id, model, family, status, status_message, config, owner)
-            VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s) RETURNING {RUN_COLS}""",
-        (export_id, exp["dataset_id"], spec.key, spec.family, jsonb(req.model_dump()), jobs.owner_id()),
+        f"""INSERT INTO meta.model_runs (export_id, dataset_id, model, family, status, status_message, config, owner,
+                                         created_by)
+            VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s, %s) RETURNING {RUN_COLS}""",
+        (export_id, exp["dataset_id"], spec.key, spec.family, jsonb(req.model_dump()), jobs.owner_id(), user["id"]),
     )
     jobs.submit(_run, run["id"], exp["output_dir"], req.model_dump())
     return run
@@ -139,8 +141,7 @@ def _run(run_id: int, export_dir: str, req: dict) -> None:
         logged: dict = {}
         if mlflow_log.enabled():
             progress("Logging to MLflow")
-            # user: filled in once runs record who started them.
-            logged = mlflow_log.log_model_run(run_id, report, user=None)
+            logged = mlflow_log.log_model_run(run_id, report)
             if logged["mlflow_error"]:
                 report["mlflow_error"] = logged["mlflow_error"]
         execute(

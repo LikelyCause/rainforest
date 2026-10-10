@@ -231,7 +231,7 @@ DB_URL = os.environ.get("RAINFOREST_TEST_DATABASE_URL")
 
 
 @pytest.fixture(scope="module")
-def client(tmp_path_factory, admin_login):
+def client(tmp_path_factory, login_as):
     if not DB_URL:
         pytest.skip("set RAINFOREST_TEST_DATABASE_URL to run the API tests")
     from fastapi.testclient import TestClient
@@ -247,7 +247,7 @@ def client(tmp_path_factory, admin_login):
     from app.main import app
 
     with TestClient(app) as c:
-        yield admin_login(c)
+        yield login_as(c)
     db.close_pool()
     mp.undo()
     get_settings.cache_clear()
@@ -288,7 +288,7 @@ def test_api_map_is_cached_then_stale_then_recomputed(client, dataset):
     first = _analysis(client, ds, "map", target="column_a", sample=1000, perplexity=20)
     assert first["status"] in ("pending", "running", "done") and first["stale"] is False
     assert set(first) == {"id", "dataset_id", "kind", "params", "status", "progress", "status_message", "error",
-                          "result", "created_at", "finished_at", "stale"}
+                          "result", "created_at", "finished_at", "stale", "created_by"}
     done = _finished(client, first)
     assert done["status"] == "done", done["error"]
     assert len(done["result"]["points"]) == 1000 and done["result"]["target"] == "column_a"

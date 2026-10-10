@@ -103,13 +103,27 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .step .count { color: var(--text-muted); font-weight: 400; margin-left: 4px; }
 .topbar .spacer { flex: 1; }
 .model-switch { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted); }
-.user-menu { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.user-menu { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.team-link { padding: 4px 8px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+.team-link:hover { background: var(--surface-hover); text-decoration: none; }
+.team-link.active { background: var(--surface-2); color: var(--text-primary); font-weight: 600; }
 .main { flex: 1; min-height: 0; overflow: auto; position: relative; }
 .login { min-height: 100%; display: grid; place-items: center; padding: 24px 16px; }
 .login-card { width: min(360px, 100%); gap: 14px; padding: 24px; }
 .login-card button[type="submit"] { height: 36px; margin-top: 4px; }
 .login-brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; }
 .login-brand svg { width: 24px; height: 24px; }
+.login-card .sign-in { height: 36px; }
+.login-card p { margin: 0; }
+.pick-list { gap: 6px; max-height: 50vh; overflow-y: auto; }
+.pick-user { justify-content: space-between; height: 40px; text-align: left; }
+.pick-user .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.user-name { font-size: 13px; font-weight: 500; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inline-edit { width: 100%; min-width: 120px; border-color: transparent; background: transparent; }
+.inline-edit:hover:not(:disabled), .inline-edit:focus { border-color: var(--border-strong); background: var(--surface-1); }
+table.data.team td { vertical-align: middle; }
+.name-cell { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+table.data.team tr.inactive td { color: var(--text-muted); }
 .page { max-width: 1280px; margin: 0 auto; padding: 24px 16px 48px; display: flex; flex-direction: column; gap: 16px; }
 
 /* ------------------------------------------------------------------ primitives */
@@ -131,8 +145,8 @@ button, .btn {
 .btn:hover { text-decoration: none; }
 button:hover:not(:disabled), .btn:hover { background: var(--surface-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
-button.primary { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--accent-ink); font-weight: 600; }
-button.primary:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); }
+button.primary, .btn.primary { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--accent-ink); font-weight: 600; }
+button.primary:hover:not(:disabled), .btn.primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
 button.ghost { border-color: transparent; background: transparent; color: var(--text-secondary); }
 button.danger { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 600; }
 button.danger:hover:not(:disabled) { background: var(--bad); filter: brightness(0.92); }

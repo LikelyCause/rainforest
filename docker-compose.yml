@@ -43,9 +43,18 @@ services:
       JOB_WORKERS: ${JOB_WORKERS:-2}
       JOB_SLOTS: ${JOB_SLOTS:-2}
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      # Without a password the API refuses every request but /health.
-      RAINFOREST_ADMIN_USER: ${RAINFOREST_ADMIN_USER:-admin}
-      RAINFOREST_ADMIN_PASSWORD: ${RAINFOREST_ADMIN_PASSWORD:-}
+      # Sign-in (README › Sign-in): "pick" doesn't authenticate; team deployments use "oidc".
+      RAINFOREST_AUTH_MODE: ${RAINFOREST_AUTH_MODE:-pick}
+      RAINFOREST_OIDC_ISSUER: ${RAINFOREST_OIDC_ISSUER:-}
+      RAINFOREST_OIDC_DISCOVERY_URL: ${RAINFOREST_OIDC_DISCOVERY_URL:-}
+      RAINFOREST_OIDC_CLIENT_ID: ${RAINFOREST_OIDC_CLIENT_ID:-}
+      RAINFOREST_OIDC_CLIENT_SECRET: ${RAINFOREST_OIDC_CLIENT_SECRET:-}
+      RAINFOREST_OIDC_REDIRECT_URL: ${RAINFOREST_OIDC_REDIRECT_URL:-}
+      RAINFOREST_OIDC_SCOPES: ${RAINFOREST_OIDC_SCOPES:-openid profile email}
+      RAINFOREST_OIDC_GROUPS_CLAIM: ${RAINFOREST_OIDC_GROUPS_CLAIM:-groups}
+      RAINFOREST_OIDC_PROVIDER_NAME: ${RAINFOREST_OIDC_PROVIDER_NAME:-SSO}
+      RAINFOREST_LEAD_GROUP: ${RAINFOREST_LEAD_GROUP:-rainforest-lead}
+      RAINFOREST_MEMBER_GROUP: ${RAINFOREST_MEMBER_GROUP:-rainforest-member}
       RAINFOREST_SESSION_SECRET: ${RAINFOREST_SESSION_SECRET:-}
       RAINFOREST_ALLOWED_HOSTS: ${RAINFOREST_ALLOWED_HOSTS:-*}
       # Empty turns MLflow logging off. The server serves everything, its REST API too, under /mlflow.
@@ -106,6 +115,52 @@ services:
     ports:
       # All interfaces, so the UI is reachable over the LAN; sign-in protects it.
       - "${UI_PORT:-8080}:80"
+
+  # Reference identity provider (make up-keycloak). start-dev: plain HTTP, dev-only settings; not for production.
+  keycloak-db:
+    image: postgres:16-alpine
+    profiles: [keycloak]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: ${POSTGRES_USER:-rainforest}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-rainforest}
+      PGDATABASE: ${POSTGRES_DB:-rainforest}
+    # Keycloak keeps its own database in the same Postgres; created here because init scripts only run on a new volume.
+    command: ["sh", "-c", "psql -tAc \"SELECT 1 FROM pg_database WHERE datname = 'keycloak'\" | grep -q 1 || psql -c 'CREATE DATABASE keycloak'"]
+
+  keycloak:
+    build: ./keycloak
+    profiles: [keycloak]
+    restart: unless-stopped
+    command: ["start-dev", "--import-realm"]
+    depends_on:
+      keycloak-db:
+        condition: service_completed_successfully
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://db:5432/keycloak
+      KC_DB_USERNAME: ${POSTGRES_USER:-rainforest}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-rainforest}
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      # Tokens carry this URL as their issuer, so browsers and the API must both use it. The API container reaches
+      # Keycloak as http://keycloak:8080, and the dynamic backchannel answers it with token / JWKS URLs on that name.
+      KC_HOSTNAME: ${KEYCLOAK_URL:-http://localhost:8081}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+      # Fills the redirect and post-logout URIs in the realm import (first start only).
+      RAINFOREST_URL: ${RAINFOREST_URL:-http://localhost:8080}
+    ports:
+      - "${KEYCLOAK_PORT:-8081}:8080"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q UP <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
 
 volumes:
   pgdata:

@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from psycopg import sql
 
 from .. import jobs
+from ..auth import CurrentUser
 from ..config import get_settings
 from ..correlations import Assoc, screen_associations
 from ..db import connection, execute, fetch_all, fetch_one, jsonb
@@ -95,14 +96,15 @@ def correlations(field_id: int, limit: int = Query(20, ge=1, le=200), exclude_ta
 @router.get("/fields/{field_id}/history")
 def history(field_id: int) -> list[dict]:
     return fetch_all(
-        "SELECT changed_at, family, previous, current, batch_id FROM meta.decision_history WHERE field_id = %s "
-        "ORDER BY changed_at DESC LIMIT 50",
+        """SELECT h.changed_at, h.family, h.previous, h.current, h.batch_id, h.user_id, u.name AS user_name
+             FROM meta.decision_history h LEFT JOIN meta.users u ON u.id = h.user_id
+            WHERE h.field_id = %s ORDER BY h.changed_at DESC LIMIT 50""",
         (field_id,),
     )
 
 
 @router.put("/fields/{field_id}/decision")
-def save_decision(field_id: int, body: DecisionIn) -> dict:
+def save_decision(field_id: int, body: DecisionIn, user: CurrentUser) -> dict:
     f = _field(field_id)
     fam = _family(f, body.family)
     d = body.model_dump(exclude={"family"})
@@ -135,13 +137,13 @@ def save_decision(field_id: int, body: DecisionIn) -> dict:
                                     suggest(d["semantic_type"], stats, False, other), "suggested")
         row = _merged(conn, field_id, fam)
         conn.execute(
-            """INSERT INTO meta.decision_history (field_id, dataset_id, family, previous, current)
-               VALUES (%s, %s, %s, %s, %s)""",
-            (field_id, f["dataset_id"], fam, jsonb(_jsonable(prev)), jsonb(_jsonable(row))),
+            """INSERT INTO meta.decision_history (field_id, dataset_id, family, previous, current, user_id)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            (field_id, f["dataset_id"], fam, jsonb(_jsonable(prev)), jsonb(_jsonable(row)), user["id"]),
         )
         screen = False
         if (prev["action"] == "target") != (d["action"] == "target"):
-            _sync_targets(conn, f["dataset_id"])
+            _sync_targets(conn, f["dataset_id"], user_id=user["id"])
             screen = d["action"] == "target" and has_screen_fields(conn, f["dataset_id"])
     if screen:
         jobs.submit(screen_targets, f["dataset_id"], [field_id])
@@ -165,7 +167,7 @@ def _remember_datetime_format(conn, f: dict) -> None:
 
 
 @router.post("/datasets/{dataset_id}/decisions/bulk")
-def bulk_decisions(dataset_id: int, body: BulkDecisionIn) -> dict:
+def bulk_decisions(dataset_id: int, body: BulkDecisionIn, user: CurrentUser) -> dict:
     fam = _active_family(dataset_id)
     with connection() as conn:
         if body.filters is not None:
@@ -205,20 +207,20 @@ def bulk_decisions(dataset_id: int, body: BulkDecisionIn) -> dict:
             )
             for family, sugg in c["settings"].items():
                 upsert_settings(conn, dataset_id, c["field_id"], family, sugg, "suggested")
-        _write_history(conn, dataset_id, fam, batch_id, prev, _merged_many(conn, changed_ids, fam))
+        _write_history(conn, dataset_id, fam, batch_id, prev, _merged_many(conn, changed_ids, fam), user["id"])
         conn.execute(
-            "INSERT INTO meta.bulk_batches (id, dataset_id, summary, snapshot) VALUES (%s, %s, %s, %s)",
+            "INSERT INTO meta.bulk_batches (id, dataset_id, summary, snapshot, user_id) VALUES (%s, %s, %s, %s, %s)",
             (batch_id, dataset_id,
              jsonb({**{k: v for k, v in result.items() if k != "changes"},
                     "request": body.model_dump(exclude={"dry_run"})}),
-             jsonb(snapshot)),
+             jsonb(snapshot), user["id"]),
         )
-        _sync_targets(conn, dataset_id)
+        _sync_targets(conn, dataset_id, user_id=user["id"])
     return {"batch_id": str(batch_id), "dry_run": False, **result}
 
 
 @router.post("/datasets/{dataset_id}/decisions/bulk/{batch_id}/undo")
-def undo_bulk(dataset_id: int, batch_id: str) -> dict:
+def undo_bulk(dataset_id: int, batch_id: str, user: CurrentUser) -> dict:
     try:
         bid = uuid.UUID(batch_id)
     except ValueError:
@@ -266,9 +268,9 @@ def undo_bulk(dataset_id: int, batch_id: str) -> dict:
             )
         # The undo gets its own batch id so its history rows are distinguishable from the original batch.
         undo_id = uuid.uuid4()
-        _write_history(conn, dataset_id, fam, undo_id, prev, _merged_many(conn, ids, fam))
+        _write_history(conn, dataset_id, fam, undo_id, prev, _merged_many(conn, ids, fam), user["id"])
         conn.execute("UPDATE meta.bulk_batches SET undone_at = now() WHERE id = %s", (bid,))
-        _sync_targets(conn, dataset_id)
+        _sync_targets(conn, dataset_id, user_id=user["id"])
     return {"restored": len(ids), "batch_id": str(undo_id)}
 
 
@@ -353,18 +355,20 @@ def _snapshot(conn, field_ids: list[int]) -> dict:
     return {str(r["field_id"]): {"decision": r["decision"], "settings": r["settings"]} for r in rows}
 
 
-def _write_history(conn, dataset_id: int, family: str, batch_id: uuid.UUID | None, prev: dict, cur: dict) -> None:
+def _write_history(conn, dataset_id: int, family: str, batch_id: uuid.UUID | None, prev: dict, cur: dict,
+                   user_id: int | None) -> None:
+    """`user_id` is None only for changes a background job makes on its own (knock-on target state)."""
     with conn.cursor() as c:
         c.executemany(
-            """INSERT INTO meta.decision_history (field_id, dataset_id, family, previous, current, batch_id)
-               VALUES (%s, %s, %s, %s, %s, %s)""",
-            [(fid, dataset_id, family, jsonb(_jsonable(prev.get(fid))), jsonb(_jsonable(row)), batch_id)
+            """INSERT INTO meta.decision_history (field_id, dataset_id, family, previous, current, batch_id, user_id)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+            [(fid, dataset_id, family, jsonb(_jsonable(prev.get(fid))), jsonb(_jsonable(row)), batch_id, user_id)
              for fid, row in cur.items()],
         )
 
 
 def _sync_targets(conn, dataset_id: int, before: dict[int, dict] | None = None,
-                  order: list[str] | None = None) -> None:
+                  order: list[str] | None = None, user_id: int | None = None) -> None:
     """Make is_target, target_columns and every target-derived value follow the decisions.
 
     Knock-on decision changes (leak drops appearing or clearing) get history rows; pass `before` (taken
@@ -395,7 +399,7 @@ def _sync_targets(conn, dataset_id: int, before: dict[int, dict] | None = None,
     after = _merged_many(conn, ids, fam)
     changed = {fid: row for fid, row in after.items() if _decision_key(row) != _decision_key(before.get(fid))}
     if changed:
-        _write_history(conn, dataset_id, fam, None, before, changed)
+        _write_history(conn, dataset_id, fam, None, before, changed, user_id)
 
 
 def target_order(preferred: list[str], targets: list[str]) -> list[str]:
@@ -450,7 +454,7 @@ def screen_targets(dataset_id: int, target_ids: list[int]) -> None:
                 (f"The leak screen for the new target(s) could not run: {exc}", dataset_id))
 
 
-def set_targets(conn, dataset_id: int, names: list[str]) -> tuple[list[dict], list[int]]:
+def set_targets(conn, dataset_id: int, names: list[str], user_id: int) -> tuple[list[dict], list[int]]:
     """Make exactly `names` the targets (in that order). Returns the target fields whose associations were
     never computed because their profiled type has no association sample (text, identifier), and the ids of
     fields that just became targets."""
@@ -497,7 +501,7 @@ def set_targets(conn, dataset_id: int, names: list[str]) -> tuple[list[dict], li
         for family in suggested_families.get(r["id"], []):
             upsert_settings(conn, dataset_id, r["id"], family,
                             suggest(r["semantic_type"], stats, False, family), "suggested")
-    _sync_targets(conn, dataset_id, before=before, order=names)
+    _sync_targets(conn, dataset_id, before=before, order=names, user_id=user_id)
     candidates = [by_name[n] for n in names if by_name[n]["inferred_type"] in UNCORRELATED_TYPES]
     if not candidates:
         return [], added

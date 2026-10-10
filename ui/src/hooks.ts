@@ -5,6 +5,9 @@ import type { Dataset } from "./types";
 
 export const PROCESSING = new Set(["pending", "ingesting", "profiling", "correlating"]);
 
+/** The signed-in user; RequireAuth has loaded it before any page renders. */
+export const useMe = () => useQuery({ queryKey: ["me"], queryFn: api.me, staleTime: Infinity, retry: false });
+
 export const useOptions = () => useQuery({ queryKey: ["options"], queryFn: api.options, staleTime: Infinity });
 
 export const useDataset = (id: number, enabled = true) =>

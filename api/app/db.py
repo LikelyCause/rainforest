@@ -147,6 +147,9 @@ def bootstrap() -> None:
         conn.execute("SELECT pg_advisory_lock(%s)", (_SCHEMA_LOCK_KEY,))
         try:
             applied = apply_migrations(conn)
+            # Someone has to be able to sign in (pick mode) and manage users on a fresh or emptied install.
+            conn.execute("INSERT INTO meta.users (name, role) SELECT 'Admin', 'lead' "
+                         "WHERE NOT EXISTS (SELECT 1 FROM meta.users)")
             role = sql.Identifier(s.readonly_role)
             exists = conn.execute(
                 "SELECT 1 FROM pg_roles WHERE rolname = %s", (s.readonly_role,)

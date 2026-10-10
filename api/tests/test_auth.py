@@ -1,5 +1,5 @@
-"""Sign-in, the session cookie, and the request checks (host, origin, content type). No database needed:
-the app is driven without its startup hook, and only routes that don't touch Postgres are called."""
+"""Pick-mode sign-in, the session cookie, the request checks (host, origin, content type) and role gates. No database
+needed: the app is driven without its startup hook, and the user store is an in-memory fake."""
 import json
 import os
 import stat
@@ -12,19 +12,49 @@ from app import auth
 from app.config import get_settings
 from app.main import app
 
-from .conftest import ADMIN
+
+class FakeUsers:
+    def __init__(self):
+        self.rows = {
+            1: {"id": 1, "name": "Admin", "email": None, "role": "lead", "active": True, "session_version": 1},
+            2: {"id": 2, "name": "Dana", "email": "dana@example.com", "role": "member", "active": True,
+                "session_version": 1},
+        }
+
+    def session_user(self, user_id, version):
+        u = self.rows.get(user_id)
+        if u and u["active"] and u["session_version"] == version:
+            return {k: u[k] for k in ("id", "name", "email", "role")}
+        return None
+
+    def get(self, user_id):
+        return self.rows.get(user_id)
+
+    def pickable(self):
+        return [{k: u[k] for k in ("id", "name", "role")} for u in self.rows.values() if u["active"]]
+
+    def touch(self, user_id):
+        pass
 
 
 @pytest.fixture(autouse=True)
-def env(tmp_path, monkeypatch, admin_login):
+def env(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    monkeypatch.delenv("RAINFOREST_SESSION_SECRET", raising=False)
-    monkeypatch.delenv("RAINFOREST_ALLOWED_HOSTS", raising=False)
+    monkeypatch.setenv("RAINFOREST_AUTH_MODE", "pick")
+    for name in ("RAINFOREST_SESSION_SECRET", "RAINFOREST_ALLOWED_HOSTS", "RAINFOREST_OIDC_ISSUER",
+                 "RAINFOREST_OIDC_CLIENT_ID", "RAINFOREST_OIDC_CLIENT_SECRET"):
+        monkeypatch.delenv(name, raising=False)
     get_settings.cache_clear()
-    auth.limiter.clear()
     yield monkeypatch
     get_settings.cache_clear()
-    auth.limiter.clear()
+
+
+@pytest.fixture(autouse=True)
+def store(monkeypatch):
+    fake = FakeUsers()
+    for name in ("session_user", "get", "pickable", "touch"):
+        monkeypatch.setattr(f"app.users.{name}", getattr(fake, name))
+    return fake
 
 
 @pytest.fixture
@@ -32,12 +62,13 @@ def client():
     return TestClient(app)  # no `with`: skips the lifespan, which needs Postgres
 
 
-def _login(client, **kw):
-    return client.post("/api/auth/login", json={**ADMIN, **kw})
+def _pick(client, user_id=1, **kw):
+    return client.post("/api/auth/pick", json={"user_id": user_id}, **kw)
 
 
 def test_protected_routes_need_a_session(client):
     for method, path in [("GET", "/api/options"), ("GET", "/api/datasets"), ("GET", "/api/auth/me"),
+                         ("GET", "/api/users"), ("GET", "/api/auth/check"),
                          ("GET", "/api/exports/1/files/data"), ("GET", "/api/runs/1/files/model"),
                          ("POST", "/api/sql"), ("DELETE", "/api/datasets/1"), ("GET", "/docs")]:
         r = client.request(method, path)
@@ -47,57 +78,89 @@ def test_protected_routes_need_a_session(client):
     assert r.status_code == 401
 
 
-def test_login_me_logout(client):
-    assert _login(client, password="wrong").status_code == 401
-    assert _login(client, username="root").status_code == 401
-    r = _login(client)
-    assert r.status_code == 200 and r.json() == {"user": "admin"}
+def test_pick_me_logout(client):
+    cfg = client.get("/api/auth/config").json()
+    assert cfg["mode"] == "pick" and cfg["problem"] is None
+    assert client.get("/api/auth/users").json() == [{"id": 1, "name": "Admin", "role": "lead"},
+                                                    {"id": 2, "name": "Dana", "role": "member"}]
+    assert _pick(client, 99).status_code == 404
+    r = _pick(client, 2)
+    assert r.status_code == 200 and r.json()["name"] == "Dana"
     cookie = r.headers["set-cookie"]
     assert cookie.startswith(f"{auth.COOKIE}=") and "HttpOnly" in cookie and "SameSite=strict" in cookie
     assert "Max-Age=604800" in cookie and "Path=/" in cookie and "Secure" not in cookie
-    assert client.get("/api/auth/me").json() == {"user": "admin"}
+    assert client.get("/api/auth/me").json() == {"id": 2, "name": "Dana", "email": "dana@example.com",
+                                                 "role": "member", "mode": "pick"}
     assert client.get("/api/options").status_code == 200
+    assert client.get("/api/auth/check").status_code == 204
 
     r = client.post("/api/auth/logout")
-    assert r.status_code == 204 and "Max-Age=0" in r.headers["set-cookie"]
+    assert r.status_code == 200 and r.json() == {"logout_url": None} and "Max-Age=0" in r.headers["set-cookie"]
     assert client.get("/api/auth/me").status_code == 401
-
-
-def test_check_for_nginx_auth_request(client):
     assert client.get("/api/auth/check").status_code == 401
-    _login(client)
-    r = client.get("/api/auth/check")
-    assert r.status_code == 204 and r.content == b""
+
+
+def test_deactivated_users_cant_pick_or_keep_their_session(client, store):
+    _pick(client, 2)
+    store.rows[2]["active"] = False
+    assert client.get("/api/auth/me").status_code == 401
+    assert _pick(client, 2).status_code == 404
+    assert [u["id"] for u in client.get("/api/auth/users").json()] == [1]
+
+
+def test_session_version_bump_ends_sessions(client, store):
+    _pick(client, 2)
+    store.rows[2]["session_version"] = 2  # what a role change or deactivation does
+    assert client.get("/api/auth/me").status_code == 401
+    _pick(client, 2)
+    assert client.get("/api/auth/me").status_code == 200
 
 
 def test_cookie_is_secure_behind_https(client):
-    r = client.post("/api/auth/login", json=ADMIN, headers={"X-Forwarded-Proto": "https"})
-    assert "Secure" in r.headers["set-cookie"]
+    assert "Secure" in _pick(client, headers={"X-Forwarded-Proto": "https"}).headers["set-cookie"]
 
 
-def test_forged_expired_and_stale_sessions_are_refused(client, env):
-    token = _login(client).cookies[auth.COOKIE]
+def test_forged_expired_and_foreign_tokens_are_refused(client, env):
+    token = _pick(client).cookies[auth.COOKIE]
     payload, sig = token.rsplit(".", 1)
-    for bad in (f"{payload}.{sig[:-2]}xx", f"{payload}x.{sig}", "nonsense", auth.make_token(now=time.time() - 8 * 86400)):
+    state = auth._seal("oidc-state", {"u": 1, "v": 1, "exp": int(time.time()) + 60})
+    for bad in (f"{payload}.{sig[:-2]}xx", f"{payload}x.{sig}", "nonsense", state,
+                auth.make_token(1, 1, now=time.time() - 8 * 86400)):
         assert TestClient(app, cookies={auth.COOKIE: bad}).get("/api/options").status_code == 401, bad
     assert TestClient(app, cookies={auth.COOKIE: token}).get("/api/options").status_code == 200
-    env.setenv("RAINFOREST_ADMIN_PASSWORD", "rotated")
+    env.setenv("RAINFOREST_SESSION_SECRET", "rotated")
     get_settings.cache_clear()
-    assert client.get("/api/options").status_code == 401, "changing the password ends existing sessions"
+    assert client.get("/api/options").status_code == 401, "rotating the secret ends existing sessions"
 
 
-@pytest.mark.parametrize("password", [None, "", auth.PLACEHOLDER_PASSWORD])
-def test_no_password_refuses_everything_but_health(client, env, monkeypatch, password):
-    if password is None:
-        env.delenv("RAINFOREST_ADMIN_PASSWORD")
-    else:
-        env.setenv("RAINFOREST_ADMIN_PASSWORD", password)
+def test_lead_only_routes(client):
+    _pick(client, 2)
+    r = client.delete("/api/datasets/1")
+    assert r.status_code == 403 and "lead" in r.json()["detail"]
+    for method, path, body in [("POST", "/api/users", {"name": "X"}), ("PATCH", "/api/users/1", {"name": "X"})]:
+        assert client.request(method, path, json=body).status_code == 403, path
+
+
+def test_pick_endpoints_are_off_in_oidc_mode(client, env):
+    env.setenv("RAINFOREST_AUTH_MODE", "oidc")
+    env.setenv("RAINFOREST_OIDC_ISSUER", "https://idp.example")
+    env.setenv("RAINFOREST_OIDC_CLIENT_ID", "rainforest")
+    env.setenv("RAINFOREST_OIDC_CLIENT_SECRET", "s")
+    get_settings.cache_clear()
+    assert client.get("/api/auth/users").status_code == 404
+    assert _pick(client).status_code == 404
+
+
+def test_unconfigured_oidc_refuses_everything_but_health_and_config(client, env, monkeypatch):
+    env.setenv("RAINFOREST_AUTH_MODE", "oidc")
     get_settings.cache_clear()
     monkeypatch.setattr("app.main.db.fetch_one", lambda *a, **k: {"ok": 1})
     assert client.get("/health").json() == {"status": "ok"}
-    for r in (client.get("/api/options"), client.get("/api/auth/me"), _login(client, password=password or "")):
+    cfg = client.get("/api/auth/config").json()
+    assert cfg["mode"] == "oidc" and "RAINFOREST_OIDC_ISSUER" in cfg["problem"]
+    for r in (client.get("/api/options"), client.get("/api/auth/me"), client.get("/api/auth/oidc/login")):
         assert r.status_code == 503
-        assert "RAINFOREST_ADMIN_PASSWORD" in r.json()["detail"]
+        assert "RAINFOREST_OIDC_ISSUER" in r.json()["detail"]
 
 
 def test_session_secret_is_generated_once_and_private(tmp_path, env):
@@ -112,39 +175,37 @@ def test_session_secret_is_generated_once_and_private(tmp_path, env):
     assert auth.session_secret() == b"from-the-environment"
 
 
-def test_rate_limit_per_address(client):
-    for _ in range(auth.LOGIN_MAX_FAILURES):
-        assert _login(client, password="nope").status_code == 401
-    blocked = _login(client)
-    assert blocked.status_code == 429 and int(blocked.headers["retry-after"]) > 0
-    other = client.post("/api/auth/login", json=ADMIN, headers={"X-Forwarded-For": "203.0.113.9"})
-    assert other.status_code == 200
-
-
 def test_cross_origin_writes_are_refused(client):
     for headers in ({"Origin": "http://evil.example"}, {"Origin": "null"}, {"Referer": "http://evil.example/page"},
                     {"Origin": "http://testserver:9999"}):
-        r = client.post("/api/auth/login", json=ADMIN, headers=headers)
-        assert r.status_code == 403, headers
+        assert _pick(client, headers=headers).status_code == 403, headers
     for headers in ({"Origin": "http://testserver"}, {"Referer": "http://testserver/d/1/review"},
                     {"Origin": "http://localhost:5173"}, {},
                     {"Host": "10.0.0.5:8080", "Origin": "http://10.0.0.5:8080"},
                     {"Host": "rf.example.com", "Origin": "https://rf.example.com"}):
-        assert client.post("/api/auth/login", json=ADMIN, headers=headers).status_code == 200, headers
+        assert _pick(client, headers=headers).status_code == 200, headers
+
+
+def test_auth_check_for_nginx(client):
+    """auth_request forwards the original method and headers but no body; the origin check still applies."""
+    _pick(client)
+    for method in ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"):
+        r = client.request(method, "/api/auth/check", headers={"Content-Length": "120", "Origin": "http://testserver"})
+        assert r.status_code == 204, method
+    assert client.post("/api/auth/check", headers={"Origin": "http://evil.example"}).status_code == 403
 
 
 def test_bodies_must_be_json_or_multipart_for_upload(client):
-    _login(client)
-    body = json.dumps(ADMIN)
+    _pick(client)
+    body = json.dumps({"user_id": 1})
     for ctype in ("text/plain", "application/x-www-form-urlencoded", None):
         headers = {"Content-Type": ctype} if ctype else {}
-        r = client.post("/api/auth/login", content=body, headers=headers)
-        assert r.status_code == 415, ctype
+        assert client.post("/api/auth/pick", content=body, headers=headers).status_code == 415, ctype
     r = client.post("/api/sql", content=json.dumps({"sql": "SELECT 1"}), headers={"Content-Type": "text/plain"})
     assert r.status_code == 415
     r = client.post("/api/datasets/upload", json={"file": "x"})
     assert r.status_code == 415 and "multipart" in r.json()["detail"]
-    assert client.post("/api/auth/login", content=body,
+    assert client.post("/api/auth/pick", content=body,
                        headers={"Content-Type": "application/json; charset=utf-8"}).status_code == 200
 
 
@@ -157,3 +218,11 @@ def test_allowed_hosts(client, env, monkeypatch):
     for host in ("rf.example.com", "rf.example.com:8080", "box.lan", "localhost:8000", "127.0.0.1"):
         assert client.get("/api/options", headers={"Host": host}).status_code == 401, host
     assert client.get("/api/options", headers={"Host": "evil.example"}).status_code == 400
+
+
+@pytest.mark.parametrize("value, expected", [
+    (None, "/"), ("/d/1/review", "/d/1/review"), ("//evil.example", "/"), ("https://evil.example", "/"),
+    ("/\\evil.example", "/"), ("/login?next=/x", "/"), ("relative", "/"),
+])
+def test_safe_next(value, expected):
+    assert auth.safe_next(value) == expected

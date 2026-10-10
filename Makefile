@@ -1,4 +1,4 @@
-.PHONY: up up-gpu gpu-check down logs ps train models mlflow-backfill test test-db psql sample-csv clean
+.PHONY: up up-gpu up-keycloak gpu-check down logs ps train models mlflow-backfill test test-db psql sample-csv clean
 
 # Tagged on MLflow runs (baked into the API image).
 GIT_SHA ?= $(shell git rev-parse HEAD 2>/dev/null)
@@ -9,6 +9,18 @@ up:            ## build and start everything (UI on :8080, MLflow at :8080/mlflo
 
 up-gpu:        ## same, with the CUDA XGBoost build and the host's NVIDIA GPU (see README › GPU)
 	docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+
+# The Keycloak reference setup (README › Keycloak). Both URLs must be what browsers use to reach each service.
+KEYCLOAK_URL ?= http://localhost:8081
+RAINFOREST_URL ?= http://localhost:8080
+up-keycloak:   ## start everything plus Keycloak, with OIDC sign-in (dev-only Keycloak; see README)
+	KEYCLOAK_URL=$(KEYCLOAK_URL) RAINFOREST_URL=$(RAINFOREST_URL) \
+	RAINFOREST_AUTH_MODE=oidc RAINFOREST_OIDC_PROVIDER_NAME=Keycloak \
+	RAINFOREST_OIDC_ISSUER=$(KEYCLOAK_URL)/realms/rainforest \
+	RAINFOREST_OIDC_DISCOVERY_URL=http://keycloak:8080/realms/rainforest/.well-known/openid-configuration \
+	RAINFOREST_OIDC_CLIENT_ID=rainforest RAINFOREST_OIDC_CLIENT_SECRET=rainforest-dev-secret \
+	RAINFOREST_OIDC_REDIRECT_URL=$(RAINFOREST_URL)/api/auth/oidc/callback \
+	docker compose --profile keycloak up -d --build
 
 gpu-check:     ## what the running API sees: GPU name, memory, driver, and whether XGBoost can use it
 	docker compose exec api python -c "import json; from app.gpu import detect; print(json.dumps(detect(), indent=2))"

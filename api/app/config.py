@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -38,9 +39,19 @@ class Settings(BaseSettings):
     sql_max_rows: int = 2_000
     sql_pool_max: int = 4
 
-    # Sign-in. With no admin password the API serves only /health and refuses everything else.
-    admin_user: str = Field("admin", validation_alias="RAINFOREST_ADMIN_USER")
-    admin_password: str = Field("", validation_alias="RAINFOREST_ADMIN_PASSWORD")
+    # Sign-in: "oidc" for team deployments, "pick" (choose a user, no authentication) for dev and demos.
+    auth_mode: Literal["pick", "oidc"] = Field("pick", validation_alias="RAINFOREST_AUTH_MODE")
+    oidc_issuer: str = Field("", validation_alias="RAINFOREST_OIDC_ISSUER")
+    # Where the API itself fetches discovery, when the issuer URL isn't reachable from its container.
+    oidc_discovery_url: str = Field("", validation_alias="RAINFOREST_OIDC_DISCOVERY_URL")
+    oidc_client_id: str = Field("", validation_alias="RAINFOREST_OIDC_CLIENT_ID")
+    oidc_client_secret: str = Field("", validation_alias="RAINFOREST_OIDC_CLIENT_SECRET")
+    oidc_redirect_url: str = Field("", validation_alias="RAINFOREST_OIDC_REDIRECT_URL")
+    oidc_scopes: str = Field("openid profile email", validation_alias="RAINFOREST_OIDC_SCOPES")
+    oidc_groups_claim: str = Field("groups", validation_alias="RAINFOREST_OIDC_GROUPS_CLAIM")
+    oidc_provider_name: str = Field("SSO", validation_alias="RAINFOREST_OIDC_PROVIDER_NAME")
+    lead_group: str = Field("rainforest-lead", validation_alias="RAINFOREST_LEAD_GROUP")
+    member_group: str = Field("rainforest-member", validation_alias="RAINFOREST_MEMBER_GROUP")
     session_secret: str = Field("", validation_alias="RAINFOREST_SESSION_SECRET")
     allowed_hosts: str = Field("*", validation_alias="RAINFOREST_ALLOWED_HOSTS")
 

@@ -137,3 +137,16 @@ class CorrelationQuery(BaseModel):
     @property
     def add_ids(self) -> list[int]:
         return list(dict.fromkeys(int(v) for v in (self.add or "").split(",") if v.strip()))
+
+
+class UserIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    email: str | None = Field(None, max_length=320)
+    role: Literal["lead", "member"] = "member"
+
+
+class UserPatch(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=200)
+    email: str | None = Field(None, max_length=320)
+    role: Literal["lead", "member"] | None = None
+    active: bool | None = None

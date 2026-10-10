@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, Route, Routes, useMatch, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useDataset, useFields, useOptions } from "./hooks";
+import { useDataset, useFields, useMe, useOptions } from "./hooks";
 import { ApiError, api, setUnauthorizedHandler } from "./api";
 import { Logo } from "./components/Logo";
 import { DatasetsPage } from "./pages/DatasetsPage";
 import { LoginPage } from "./pages/LoginPage";
+import { ForbiddenPage } from "./pages/ForbiddenPage";
+import { TeamPage } from "./pages/TeamPage";
 import { ReviewPage } from "./pages/ReviewPage";
 import { BulkEditPage } from "./pages/BulkEditPage";
 import { ExportPage } from "./pages/ExportPage";
 import { ExplorePage } from "./pages/ExplorePage";
 import { DatasetLayout } from "./components/DatasetLayout";
 import { ErrorAlert, ReviewMeter } from "./components/ui";
-import { familyShort } from "./format";
+import { familyShort, roleLabel } from "./format";
 import { ToastRegion, showError, toast } from "./toast";
 import type { Dataset, ExportJob, ModelRun } from "./types";
 
@@ -162,18 +164,27 @@ function TopBar() {
 function UserMenu() {
   const nav = useNavigate();
   const qc = useQueryClient();
-  const me = useQuery({ queryKey: ["me"], queryFn: api.me, staleTime: Infinity });
+  const me = useMe();
   const out = useMutation({
     mutationFn: api.logout,
-    onSuccess: () => {
+    onSuccess: ({ logout_url }) => {
       qc.clear();
-      nav("/login", { replace: true });
+      // OIDC: end the provider's session too, or the next sign-in would skip its login page.
+      if (logout_url) window.location.assign(logout_url);
+      else nav("/login", { replace: true });
     },
     onError: (err) => showError("Couldn't sign out", err),
   });
+  const u = me.data;
   return (
     <div className="user-menu">
-      {me.data && <span className="muted small-text">{me.data.user}</span>}
+      {u && (
+        <>
+          <NavLink to="/team" className="team-link">Team</NavLink>
+          <span className="user-name" title={u.email ?? undefined}>{u.name}</span>
+          <span className={`badge${u.role === "lead" ? " accent" : ""}`}>{roleLabel(u.role)}</span>
+        </>
+      )}
       <button type="button" className="ghost small" disabled={out.isPending} onClick={() => out.mutate()}>Sign out</button>
     </div>
   );
@@ -181,7 +192,7 @@ function UserMenu() {
 
 /** Renders the app once the session checks out; a 401 has already sent the user to /login. */
 function RequireAuth() {
-  const me = useQuery({ queryKey: ["me"], queryFn: api.me, staleTime: Infinity, retry: false });
+  const me = useMe();
   if (me.isPending) return null;
   if (me.error) {
     if (me.error instanceof ApiError && me.error.status === 401) return null;
@@ -213,8 +224,10 @@ export default function App() {
     <div className="app">
       <Routes>
         <Route path="/login" element={<main className="main"><LoginPage /></main>} />
+        <Route path="/forbidden" element={<main className="main"><ForbiddenPage /></main>} />
         <Route element={<RequireAuth />}>
           <Route path="/" element={<DatasetsPage />} />
+          <Route path="/team" element={<TeamPage />} />
           <Route path="/d/:datasetId" element={<DatasetLayout />}>
             <Route index element={<Navigate to="review" replace />} />
             <Route path="review/:fieldId?" element={<ReviewPage />} />

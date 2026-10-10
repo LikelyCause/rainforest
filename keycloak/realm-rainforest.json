@@ -1,0 +1,91 @@
+{
+  "realm": "rainforest",
+  "displayName": "Rainforest",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "groups": [
+    { "name": "rainforest-lead" },
+    { "name": "rainforest-member" }
+  ],
+  "clients": [
+    {
+      "clientId": "rainforest",
+      "name": "Rainforest",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "rainforest-dev-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "redirectUris": ["${RAINFOREST_URL}/api/auth/oidc/callback"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "${RAINFOREST_URL}/login"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "lead1",
+      "enabled": true,
+      "email": "lead1@example.com",
+      "emailVerified": true,
+      "firstName": "Lee",
+      "lastName": "Lead",
+      "credentials": [{ "type": "password", "value": "lead1-dev-password", "temporary": false }],
+      "groups": ["/rainforest-lead"]
+    },
+    {
+      "username": "ds1",
+      "enabled": true,
+      "email": "ds1@example.com",
+      "emailVerified": true,
+      "firstName": "Dana",
+      "lastName": "Scientist",
+      "credentials": [{ "type": "password", "value": "ds1-dev-password", "temporary": false }],
+      "groups": ["/rainforest-member"]
+    },
+    {
+      "username": "ds2",
+      "enabled": true,
+      "email": "ds2@example.com",
+      "emailVerified": true,
+      "firstName": "Sam",
+      "lastName": "Scientist",
+      "credentials": [{ "type": "password", "value": "ds2-dev-password", "temporary": false }],
+      "groups": ["/rainforest-member"]
+    },
+    {
+      "username": "guest1",
+      "enabled": true,
+      "email": "guest1@example.com",
+      "emailVerified": true,
+      "firstName": "Gale",
+      "lastName": "Guest",
+      "credentials": [{ "type": "password", "value": "guest1-dev-password", "temporary": false }],
+      "groups": []
+    }
+  ]
+}
