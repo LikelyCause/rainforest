@@ -192,3 +192,17 @@ def test_bulk_in_an_experiment_reaches_every_field_whatever_its_version_reopened
     r = lead.post(f"/api/datasets/{ds['id']}/decisions/bulk?view=experiment:{x['id']}",
                   json={"filters": [], "action": "drop", "dry_run": True})
     assert r.status_code == 200 and r.json()["matched"] == len(fields(lead, ds)), r.json()
+
+
+def test_explore_studies_an_experiments_own_targets(people):
+    a = people["a"]
+    ds, rid = finalized_trees(people["lead"])
+    x = experiment(a, ds, rid, "explore c")
+    adjust(a, ds, x, "y", action="keep")
+    adjust(a, ds, x, "c", action="target")
+    r = a.post(f"/api/datasets/{ds['id']}/analyses", json={
+        "kind": "importance", "view": f"experiment:{x['id']}", "params": {"target": "c", "sample": 1000}})
+    assert r.status_code == 200, r.text
+    r = a.post(f"/api/datasets/{ds['id']}/analyses", json={
+        "kind": "importance", "view": f"experiment:{x['id']}", "params": {"target": "y", "sample": 1000}})
+    assert r.status_code == 422

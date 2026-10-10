@@ -268,7 +268,7 @@ def list_for(conn, dataset_id: int, user: dict) -> list[dict]:
     best = best_by_experiment(conn, [r["id"] for r in rows])
     out, snapshots = [], {}
     for r in rows:
-        adj = adjustments(conn, r, snapshots) if r["archived_at"] is None else dict(NO_ADJUSTMENTS)
+        adj = adjustments(conn, r, snapshots)
         out.append({**r, "best": best.get(r["id"]), "adjusted_count": adj["count"],
                     "targets_changed": adj["targets_changed"], "can_adjust": can_adjust(r, user)})
     return out

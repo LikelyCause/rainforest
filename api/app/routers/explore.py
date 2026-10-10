@@ -11,7 +11,7 @@ from .. import experiments, jobs
 from psycopg import sql
 
 from ..analysis.runner import ROW_COLS, data_version, find_or_create, public, run_analysis
-from ..assessment import Source, key_owner, source_for
+from ..assessment import Source, from_key, key_owner, source_for
 from ..auth import CurrentUser
 from ..db import connection, fetch_all
 from ..schemas import AnalysisRequest, CorrelationQuery
@@ -39,12 +39,14 @@ def _export_visible(conn, data: str, user: dict) -> bool:
 def _validate_source(conn, dataset_id: int, params: dict, user: dict) -> None:
     target = params["target"]
     if params["data"] == "raw":
+        # The target must be one in the decisions the analysis reads (an experiment may have its own).
+        dec = from_key(conn, dataset_id, params.get("decisions") or "team").decisions()
         if target is not None and conn.execute(
-            """SELECT 1 FROM meta.fields f JOIN meta.field_decisions d ON d.field_id = f.id
-                WHERE f.dataset_id = %s AND f.name = %s AND d.action = 'target'""",
+            sql.SQL("""SELECT 1 FROM meta.fields f JOIN {} d ON d.field_id = f.id
+                        WHERE f.dataset_id = %s AND f.name = %s AND d.action = 'target'""").format(dec),
             (dataset_id, target),
         ).fetchone() is None:
-            raise HTTPException(422, f"{target!r} is not a target of this dataset")
+            raise HTTPException(422, f"{target!r} is not a target in these decisions")
         return
     exp = conn.execute(
         "SELECT status, summary FROM meta.exports WHERE id = %s AND dataset_id = %s",

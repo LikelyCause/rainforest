@@ -2,6 +2,7 @@ import { useMemo, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api";
+import { useFields } from "../../hooks";
 import { Empty, ErrorAlert } from "../ui";
 import { fmtAgo, fmtInt } from "../../format";
 import type { Analysis, AnalysisKind, AnalysisParams, Dataset, NotEnoughReason, Skipped } from "../../types";
@@ -20,15 +21,18 @@ const isActive = (s?: string) => s === "pending" || s === "running";
 /** Toolbar state shared by every view; all of it lives in the URL. */
 export function useExploreState(ds: Dataset) {
   const [params, setParams] = useSearchParams();
-  const { data, isRaw, kept, target, sample } = parseExploreParams(params, ds.target_columns);
   const view = decisionsView(params);
+  // The targets of the decisions in use: an experiment or another baseline may have its own.
+  const viewFields = useFields(ds.id, view !== null, view);
+  const targets = view ? (viewFields.data ?? []).filter((f) => f.action === "target").map((f) => f.name) : ds.target_columns;
+  const { data, isRaw, kept, target, sample } = parseExploreParams(params, targets);
   const base: AnalysisParams = useMemo(() => ({ data, kept, target, sample }), [data, kept, target, sample]);
   const set = (patch: Record<string, string | null>) => {
     const next = new URLSearchParams(params);
     for (const [k, v] of Object.entries(patch)) v === null ? next.delete(k) : next.set(k, v);
     setParams(next, { replace: true });
   };
-  return { params, data, isRaw, kept, target, sample, view, base, set, get: (k: string) => params.get(k) };
+  return { params, data, isRaw, kept, target, sample, view, targets, base, set, get: (k: string) => params.get(k) };
 }
 export type ExploreState = ReturnType<typeof useExploreState>;
 

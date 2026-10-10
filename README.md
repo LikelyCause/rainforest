@@ -266,8 +266,8 @@ opens in team review and a lead confirms it by finalizing.
 experiment's adjusted copy of it), never from the decisions being worked on, so a finalized version always exports
 the same way while another is in progress; an assessor can also export their own assessment, privately, while they
 assess. Explore is shared: raw-data analyses use the team decision of the baseline in progress, except that while
-assessing, *Kept only* uses your own choices; its *Decisions* picker switches to a finalized baseline or an adjusted
-experiment. Results are cached per decision source so they never mix people's choices.
+assessing, *Kept only* uses your own choices; its *Decisions* picker switches to a finalized baseline or a team
+experiment's copy. Results are cached per decision source so they never mix people's choices.
 
 ## Experiments
 
@@ -375,9 +375,9 @@ Four views over one dataset, sharing a toolbar whose state lives in the URL:
 
 * **Data:** *Raw fields* (with a *Kept only* toggle) or a finished export (its train split, features as encoded).
 * **Decisions** (raw fields): whose keep / drop and types the views use: the current baseline as it stands (your own
-  choices for *Kept only* while you assess it), any finalized baseline, or a team experiment's adjusted copy
+  choices for *Kept only* while you assess it), any finalized baseline, or a team experiment's copy, adjusted or not
   (`?decisions=` in the URL).
-* **Target:** one of the dataset's targets. Without one, the views that need it say so and link to the target picker.
+* **Target:** one of the targets of the decisions in use (an experiment may have its own). Without one, the views that need it say so and link to the target picker.
 * **Sample:** 1k / 5k (default) / 10k / 20k rows, seeded, stratified on a categorical target. Rows with no target
   value are left out.
 
@@ -534,12 +534,15 @@ the sign-in page (and back) if it isn't. The server has no published port of its
   `rainforest.dataset_id` tag, so renaming a dataset keeps its experiment), and one MLflow run per model run, named
   `run <id> · <model label>` (e.g. `run 12 · LightGBM`).
 * **Params:** `model`, `order`, `cv`, `seed`, `device`, `chain_method`, `export_family`, `n_train`, `n_features`, and
-  every effective estimator parameter as `estimator.<name>` (defaults, your overrides and the device settings), and
-  `prep.adjusted_fields` (how many fields the experiment adjusted from its baseline).
+  every effective estimator parameter as `estimator.<name>` (defaults, your overrides and the device settings),
+  `prep.adjusted_fields` (how many fields the experiment adjusted from its baseline), and the export's split:
+  `prep.valid_size`, `prep.test_size`, `prep.split_seed`.
 * **Metrics:** each scalar metric per split and target as `<split>.<target>.<metric>` (e.g. `test.column_a.roc_auc`),
   plus `fit_seconds`. Characters MLflow doesn't allow in a key become `_`.
 * **Artifacts:** `report.json` and `model/classifier_chain.joblib`, the same files the API serves for the run, and
-  `adjustments.json` (the baseline and the experiment's adjustments, field by field). The server stores them on the
+  `adjustments.json` (the baseline and the experiment's adjustments, field by field), and
+  `preparation/manifest.json` (the export's manifest: every field's type and settings, the targets and the split), so
+  the run records the full preparation behind it. The server stores them on the
   `mlartifacts` volume and proxies uploads and downloads, so clients only talk HTTP to it.
 * **Tags:** `rainforest.dataset_id`, `rainforest.dataset_name`, `rainforest.export_id`, `rainforest.recipe_id`
   and `rainforest.recipe_version` (the baseline version the export was built from), `rainforest.baseline` (its label,

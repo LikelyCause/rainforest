@@ -153,6 +153,9 @@ def log_run(run: dict, dataset_name: str, report: dict, model_dir: Path | None, 
     try:
         step_ts = _ms(run.get("finished_at")) or _ms(datetime.now())
         prep = {"prep.adjusted_fields": run["adjustments"].get("count", 0)} if run.get("adjustments") else {}
+        cfg = run.get("export_config") or {}
+        prep |= {f"prep.{k}": cfg[c] for k, c in (("valid_size", "valid_size"), ("test_size", "test_size"),
+                                                  ("split_seed", "seed")) if cfg.get(c) is not None}
         params = [Param(k, str(v)) for k, v in {**run_params(report), **prep}.items()]
         metrics = [Metric(k, v, step_ts, 0) for k, v in run_metrics(report).items()]
         for i in range(0, max(len(params), len(metrics)), 100):
@@ -161,6 +164,10 @@ def log_run(run: dict, dataset_name: str, report: dict, model_dir: Path | None, 
             for name, artifact_path in ((REPORT_FILE, None), (MODEL_FILE, "model")):
                 if (Path(model_dir) / name).exists():
                     client.log_artifact(mlflow_run_id, str(Path(model_dir) / name), artifact_path)
+        manifest = Path(run["export_dir"]) / "manifest.json" if run.get("export_dir") else None
+        if manifest is not None and manifest.exists():
+            # Every field's preparation (type, imputation, transform, scaling, encoding), the split and the targets.
+            client.log_artifact(mlflow_run_id, str(manifest), "preparation")
         if run.get("adjustments"):
             # How the experiment changed its baseline, field by field: the preparation behind these results.
             client.log_dict(mlflow_run_id, {"baseline": run.get("baseline"), **run["adjustments"]}, "adjustments.json")
@@ -188,7 +195,8 @@ def log_model_run(run_id: int, report: dict, user: str | None = None) -> dict[st
             """SELECT r.id, r.dataset_id, r.export_id, r.model, r.created_at, r.finished_at, d.name AS dataset_name,
                       u.name || coalesce(' <' || u.email || '>', '') AS user_label,
                       e.recipe_id, rc.version AS recipe_version, r.experiment_id, x.name AS experiment_name,
-                      e.config -> 'baseline' AS baseline, e.config -> 'adjustments' AS adjustments
+                      e.config -> 'baseline' AS baseline, e.config -> 'adjustments' AS adjustments,
+                      e.config AS export_config, e.output_dir AS export_dir
                FROM meta.model_runs r JOIN meta.datasets d ON d.id = r.dataset_id
                LEFT JOIN meta.exports e ON e.id = r.export_id
                LEFT JOIN meta.recipes rc ON rc.id = e.recipe_id

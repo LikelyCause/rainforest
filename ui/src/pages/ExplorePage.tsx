@@ -73,18 +73,18 @@ function Toolbar({ ds, st, sampled }: { ds: Dataset; st: ExploreState; sampled: 
       </label>
       {st.isRaw && <DecisionsPicker ds={ds} st={st} />}
       {st.isRaw && (
-        <label className="check small-text" title={mine ? "Only the fields you kept in your assessment; otherwise every field except targets"
+        <label className="check small-text" title={mine && !st.view ? "Only the fields you kept in your assessment; otherwise every field except targets"
           : "Only fields marked keep; otherwise every field except targets"}>
           <input type="checkbox" checked={st.kept} onChange={(e) => st.set({ kept: e.target.checked ? "1" : null })} />
           {mine && !st.view ? "Kept only (your choices)" : "Kept only"}
         </label>
       )}
-      {ds.target_columns.length > 0 && (
+      {st.targets.length > 0 && (
         <label className="row" style={{ gap: 6 }}>
           <span className="secondary small-text">Target</span>
-          {ds.target_columns.length === 1 ? <code className="target-code">◎ {st.target}</code> : (
-            <select value={st.target ?? ""} onChange={(e) => st.set({ target: e.target.value === ds.target_columns[0] ? null : e.target.value })}>
-              {ds.target_columns.map((t) => <option key={t} value={t}>{t}</option>)}
+          {st.targets.length === 1 ? <code className="target-code">◎ {st.target}</code> : (
+            <select value={st.target ?? ""} onChange={(e) => st.set({ target: e.target.value === st.targets[0] ? null : e.target.value })}>
+              {st.targets.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           )}
         </label>
@@ -120,6 +120,8 @@ function DecisionsPicker({ ds, st }: { ds: Dataset; st: ExploreState }) {
           <option key={v.id} value={`baseline:${v.id}`}>{v.label}</option>
         ))}
         {adjusted.map((x) => <option key={x.id} value={`experiment:${x.id}`}>Experiment: {x.name}</option>)}
+        {st.view && lines.data && xs.data && !finalized.some((v) => `baseline:${v.id}` === st.view)
+          && !adjusted.some((x) => `experiment:${x.id}` === st.view) && <option value={st.view}>Unavailable ({st.view})</option>}
       </select>
     </label>
   );

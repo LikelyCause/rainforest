@@ -267,7 +267,9 @@ that path reads `field_decisions` / `field_settings`. The preview checks leakage
 (`leakage.leak_names`), names targets with no stored associations, and for a team experiment warns when its targets
 differ from its baseline's. MLflow runs are tagged with the export's baseline (id, version, label, family), its
 experiment and its adjustments (`rainforest.adjusted`, `rainforest.targets_changed`; the param
-`prep.adjusted_fields` and the artifact `adjustments.json`), read from `exports.config`.
+`prep.adjusted_fields` and the artifact `adjustments.json`), read from `exports.config`, and carry the export's
+`manifest.json` (artifact `preparation/manifest.json`) and split settings (`prep.valid_size`, `prep.test_size`,
+`prep.split_seed`), so each run records the full preparation behind it.
 
 ## Experiments
 
@@ -288,8 +290,9 @@ the experiment's targets), and `revert` deletes the copy's rows for some or all 
 owner of a non-default, unarchived team experiment writes the copy (`adjust_denied`); a default Team experiment and a
 personal one export from the baseline's snapshot and the assessment respectively. A field an experiment makes a target
 gets the leak screen against text and high-cardinality fields (`fields.target_associations_job`), which adds shared
-associations without touching the baseline's target state. Writes to the copy hold the experiment's row `FOR SHARE`
-and an export takes it `FOR UPDATE`, so an export is exactly the copy that was checked.
+associations without touching the baseline's target state. Writes to the copy take the experiment's row
+`FOR NO KEY UPDATE` (so saves to one experiment run one at a time) and an export takes it `FOR UPDATE`, so an export
+is exactly the copy that was checked.
 
 **Visibility** is one rule: an experiment is visible to a user unless it is personal, its version is `assessing`, and
 the user isn't its assessor. Phases only move forward, so once visible it stays so. The API applies it in SQL

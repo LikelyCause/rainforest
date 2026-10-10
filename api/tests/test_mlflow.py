@@ -94,6 +94,18 @@ def test_logs_the_baseline_and_the_experiments_adjustments(file_store, tmp_path)
     assert "adjustments.json" in {a.path for a in file_store.list_artifacts(run_id)}
 
 
+def test_logs_the_preparation_behind_a_run(file_store, tmp_path):
+    export_dir = tmp_path / "export"
+    export_dir.mkdir()
+    (export_dir / "manifest.json").write_text(json.dumps({"fields": [{"name": "x", "imputation": "median"}]}))
+    row = {**_run_row(), "export_dir": str(export_dir),
+           "export_config": {"valid_size": 0.2, "test_size": 0.1, "seed": 7}}
+    _, run_id = mlflow_log.log_run(row, "Churn", REPORT, _model_dir(tmp_path), user="ana")
+    p = file_store.get_run(run_id).data.params
+    assert (p["prep.valid_size"], p["prep.test_size"], p["prep.split_seed"]) == ("0.2", "0.1", "7")
+    assert [a.path for a in file_store.list_artifacts(run_id, "preparation")] == ["preparation/manifest.json"]
+
+
 def test_one_experiment_per_dataset_even_after_a_rename(file_store, tmp_path):
     d = _model_dir(tmp_path)
     first, _ = mlflow_log.log_run(_run_row(1), "Churn", REPORT, d)
