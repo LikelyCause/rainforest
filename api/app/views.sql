@@ -1,26 +1,33 @@
 -- Views are dropped and recreated on every startup (after migrations), so they can change freely.
 DROP VIEW IF EXISTS meta.v_fields;
+DROP VIEW IF EXISTS meta.v_field_profiles;
 DROP VIEW IF EXISTS meta.v_field_settings;
 DROP VIEW IF EXISTS meta.v_correlations;
 DROP VIEW IF EXISTS meta.v_model_metrics;
 
--- Flat view of every field, its shared decision and the settings for the dataset's active model family.
-CREATE VIEW meta.v_fields AS
+-- Every field with its profile and the suggestion for the dataset's active model family, without anyone's decision.
+CREATE VIEW meta.v_field_profiles AS
 SELECT
     f.dataset_id, d.name AS dataset_name, d.model_family, f.id AS field_id, f.ordinal, f.name, f.db_column,
     f.physical_dtype, f.inferred_type, f.inference_confidence, f.is_target, f.leakage_flag,
     f.row_count, f.null_count, f.null_pct, f.n_unique, f.unique_pct, f.mean, f.std, f.min_value, f.max_value,
     f.median, f.skewness, f.kurtosis, f.zeros_pct, f.outlier_pct, f.top_value, f.top_value_pct, f.avg_length,
     f.max_target_assoc,
-    dc.action, dc.semantic_type, dc.reviewed, dc.source AS decision_source, dc.notes, dc.updated_at AS decided_at,
-    s.imputation, s.transform, s.scaling, s.encoding, s.add_missing_indicator, s.params,
-    s.source AS settings_source,
     f.suggestion -> d.model_family ->> 'action' AS suggested_action,
     f.suggestion -> d.model_family ->> 'semantic_type' AS suggested_type
 FROM meta.fields f
-JOIN meta.datasets d ON d.id = f.dataset_id
-LEFT JOIN meta.field_decisions dc ON dc.field_id = f.id
-LEFT JOIN meta.field_settings s ON s.field_id = f.id AND s.family = d.model_family;
+JOIN meta.datasets d ON d.id = f.dataset_id;
+
+-- Flat view of every field, the team decision and the settings for the dataset's active model family.
+CREATE VIEW meta.v_fields AS
+SELECT
+    p.*,
+    dc.action, dc.semantic_type, dc.reviewed, dc.source AS decision_source, dc.notes, dc.updated_at AS decided_at,
+    s.imputation, s.transform, s.scaling, s.encoding, s.add_missing_indicator, s.params,
+    s.source AS settings_source
+FROM meta.v_field_profiles p
+LEFT JOIN meta.field_decisions dc ON dc.field_id = p.field_id
+LEFT JOIN meta.field_settings s ON s.field_id = p.field_id AND s.family = p.model_family;
 
 -- Settings for every family side by side.
 CREATE VIEW meta.v_field_settings AS

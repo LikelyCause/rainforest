@@ -22,6 +22,8 @@ log = logging.getLogger(__name__)
 _pool: ConnectionPool | None = None
 _ro_pool: ConnectionPool | None = None
 _SCHEMA_LOCK_KEY = 7_311_204  # arbitrary advisory-lock id for schema bootstrap
+# Hold people's own assessments (or say who assesses what) while they are blind: never readable from the console.
+PRIVATE_TABLES = ("dataset_assessors", "assessments", "assessment_settings", "assessment_batches", "review_comments")
 
 
 def get_pool() -> ConnectionPool:
@@ -142,11 +144,14 @@ def apply_migrations(conn: psycopg.Connection) -> list[str]:
 
 def bootstrap() -> None:
     """Migrate the schema and (re)configure the read-only role. Safe to run from several workers."""
+    from . import recipes
+
     s = get_settings()
     with connection() as conn:
         conn.execute("SELECT pg_advisory_lock(%s)", (_SCHEMA_LOCK_KEY,))
         try:
             applied = apply_migrations(conn)
+            recipes.backfill_snapshots(conn)
             # Someone has to be able to sign in (pick mode) and manage users on a fresh or emptied install.
             conn.execute("INSERT INTO meta.users (name, role) SELECT 'Admin', 'lead' "
                          "WHERE NOT EXISTS (SELECT 1 FROM meta.users)")
@@ -172,6 +177,9 @@ def bootstrap() -> None:
             conn.execute(
                 sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA meta, raw GRANT SELECT ON TABLES TO {}").format(role)
             )
+            # The two grants above cover these too (raw tables appear at runtime, so the default stays).
+            conn.execute(sql.SQL("REVOKE ALL ON {} FROM {}").format(
+                sql.SQL(", ").join(sql.Identifier("meta", t) for t in PRIVATE_TABLES), role))
             conn.commit()
         finally:
             conn.execute("SELECT pg_advisory_unlock(%s)", (_SCHEMA_LOCK_KEY,))

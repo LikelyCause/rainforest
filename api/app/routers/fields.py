@@ -9,6 +9,8 @@ from fastapi import APIRouter, HTTPException, Query
 from psycopg import sql
 
 from .. import jobs
+from ..assessment import Source, lock_decisions, source_for, write_decision, write_settings
+from ..assessment import restore as restore_assessment
 from ..auth import CurrentUser
 from ..config import get_settings
 from ..correlations import Assoc, screen_associations
@@ -47,29 +49,34 @@ def _family(f: dict, family: str | None) -> str:
     return fam
 
 
-_MERGED_SQL = """SELECT d.field_id, d.dataset_id, d.action, d.semantic_type, d.notes, d.reviewed, d.source,
+def _merged_sql(src: Source | None) -> sql.Composable:
+    """Shared decision joined to one family's settings, from `src` (the team's decision when None)."""
+    return sql.SQL(
+        """SELECT d.field_id, d.dataset_id, d.action, d.semantic_type, d.notes, d.reviewed, d.source,
                   d.updated_at, s.family, s.imputation, s.impute_value, s.add_missing_indicator, s.transform,
                   s.scaling, s.encoding, s.params, s.source AS settings_source
-             FROM meta.field_decisions d
-             JOIN meta.field_settings s ON s.field_id = d.field_id AND s.family = %s"""
+             FROM {} d
+             JOIN {} s ON s.field_id = d.field_id AND s.family = %s"""
+    ).format(src.decisions() if src else sql.SQL("meta.field_decisions"),
+             src.settings() if src else sql.SQL("meta.field_settings"))
 
 
-def _merged(conn, field_id: int, family: str) -> dict:
+def _merged(conn, field_id: int, family: str, src: Source | None = None) -> dict:
     """Shared decision + this family's settings, as one flat object."""
-    return conn.execute(_MERGED_SQL + " WHERE d.field_id = %s", (family, field_id)).fetchone()
+    return conn.execute(_merged_sql(src) + sql.SQL(" WHERE d.field_id = %s"), (family, field_id)).fetchone()
 
 
-def _merged_many(conn, field_ids: list[int], family: str) -> dict[int, dict]:
-    rows = conn.execute(_MERGED_SQL + " WHERE d.field_id = ANY(%s)", (family, field_ids)).fetchall()
+def _merged_many(conn, field_ids: list[int], family: str, src: Source | None = None) -> dict[int, dict]:
+    rows = conn.execute(_merged_sql(src) + sql.SQL(" WHERE d.field_id = ANY(%s)"), (family, field_ids)).fetchall()
     return {r["field_id"]: r for r in rows}
 
 
 @router.get("/fields/{field_id}")
-def get_field(field_id: int, family: str | None = None) -> dict:
+def get_field(field_id: int, user: CurrentUser, family: str | None = None) -> dict:
     f = _field(field_id)
     fam = _family(f, family)
     with connection() as conn:
-        decision = _merged(conn, field_id, fam)
+        decision = _merged(conn, field_id, fam, source_for(conn, f["dataset_id"], user))
     targets = fetch_all(
         """SELECT other_field_id AS field_id, other_field_name AS name, method, value, strength
              FROM meta.v_correlations WHERE field_id = %s AND other_is_target ORDER BY other_field_name""",
@@ -112,30 +119,32 @@ def save_decision(field_id: int, body: DecisionIn, user: CurrentUser) -> dict:
     if errors:
         raise HTTPException(422, {"message": "Invalid decision", "errors": errors})
     with connection() as conn:
-        conn.execute("SELECT 1 FROM meta.field_decisions WHERE field_id = %s FOR UPDATE", (field_id,))
-        prev = _merged(conn, field_id, fam)
+        src = source_for(conn, f["dataset_id"], user, lock="share")
+        src.require_write()
+        lock_decisions(conn, src, [field_id])
+        prev = _merged(conn, field_id, fam, src)
+        if prev is None:
+            raise HTTPException(409, "This field has no decision to change")
         # Provenance follows real changes: confirming or annotating a suggestion leaves it a suggestion.
         decided = prev["action"] != d["action"] or prev["semantic_type"] != d["semantic_type"]
-        conn.execute(
-            f"""UPDATE meta.field_decisions
-                   SET {", ".join(f"{c} = %({c})s" for c in SHARED_COLS)},
-                       source = CASE WHEN %(decided)s THEN 'user' ELSE source END, updated_at = now()
-                 WHERE field_id = %(field_id)s""",
-            {**d, "field_id": field_id, "decided": decided},
-        )
+        write_decision(conn, src, field_id, d, decided)
         settings = settings_of(d)
-        upsert_settings(conn, f["dataset_id"], field_id, fam, settings,
-                        prev["settings_source"] if _same_settings(prev, settings) else "user")
-        if d["semantic_type"] == "datetime" and not (f["stats"] or {}).get("datetime_format"):
-            _remember_datetime_format(conn, f)
+        write_settings(conn, src, f["dataset_id"], field_id, fam, settings,
+                       prev["settings_source"] if _same_settings(prev, settings) else "user")
         if prev["semantic_type"] != d["semantic_type"]:
             # Other families' settings were chosen for the old type; re-derive them for the new one.
             stats = {k: f[k] for k in STAT_KEYS}
             for other in FAMILIES:
                 if other != fam:
-                    upsert_settings(conn, f["dataset_id"], field_id, other,
-                                    suggest(d["semantic_type"], stats, False, other), "suggested")
-        row = _merged(conn, field_id, fam)
+                    write_settings(conn, src, f["dataset_id"], field_id, other,
+                                   suggest(d["semantic_type"], stats, False, other), "suggested")
+        row = _merged(conn, field_id, fam, src)
+        if src.personal:
+            # Only the team decision has history, target state and a stored date format: an assessor's choices
+            # stay theirs until review.
+            return row
+        if d["semantic_type"] == "datetime" and not (f["stats"] or {}).get("datetime_format"):
+            _remember_datetime_format(conn, f)
         conn.execute(
             """INSERT INTO meta.decision_history (field_id, dataset_id, family, previous, current, user_id)
                VALUES (%s, %s, %s, %s, %s, %s)""",
@@ -170,22 +179,29 @@ def _remember_datetime_format(conn, f: dict) -> None:
 def bulk_decisions(dataset_id: int, body: BulkDecisionIn, user: CurrentUser) -> dict:
     fam = _active_family(dataset_id)
     with connection() as conn:
+        src = source_for(conn, dataset_id, user, lock="share")
+        src.require_write()
         if body.filters is not None:
-            target = sql.SQL("d.field_id IN (SELECT field_id FROM meta.v_fields WHERE {})").format(
-                fields_where(dataset_id, body.filters))
+            target = sql.SQL("d.field_id IN (SELECT field_id FROM {} WHERE {})").format(
+                src.fields_view(), fields_where(dataset_id, body.filters))
         else:
             target = sql.SQL("d.field_id = ANY({})").format(sql.Literal(body.field_ids))
-        # Resolve and lock in one statement so the set can't drift between preview and write.
+        # Resolve and lock in one statement so the set can't drift between preview and write. An assessor's rows
+        # are only theirs to change, so they are locked right after.
         rows = conn.execute(
-            sql.SQL("""SELECT d.field_id, f.name, d.action, d.semantic_type, d.reviewed, f.suggestion
-                         FROM meta.field_decisions d JOIN meta.fields f ON f.id = d.field_id
+            sql.SQL("""SELECT d.field_id, f.name, d.action, d.semantic_type, d.reviewed, d.notes, f.suggestion
+                         FROM {} d JOIN meta.fields f ON f.id = d.field_id
                         WHERE d.dataset_id = {} AND {} AND NOT d.field_id = ANY({})
-                        ORDER BY f.ordinal FOR UPDATE OF d""").format(
-                sql.Literal(dataset_id), target, sql.Literal(body.excluded_ids)),
+                        ORDER BY f.ordinal {}""").format(
+                src.decisions(), sql.Literal(dataset_id), target, sql.Literal(body.excluded_ids),
+                sql.SQL("" if src.personal else "FOR UPDATE OF d")),
         ).fetchall()
         ids = [r["field_id"] for r in rows]
+        if src.personal:
+            lock_decisions(conn, src, ids)
         settings: dict[int, dict[str, dict]] = {}
-        for srow in conn.execute("SELECT * FROM meta.field_settings WHERE field_id = ANY(%s)", (ids,)).fetchall():
+        for srow in conn.execute(sql.SQL("SELECT * FROM {} s WHERE field_id = ANY(%s)").format(src.settings()),
+                                 (ids,)).fetchall():
             settings.setdefault(srow["field_id"], {})[srow["family"]] = srow
         planned = plan_bulk(rows, settings, body)
         result = summarize_bulk(len(rows), planned)
@@ -195,25 +211,27 @@ def bulk_decisions(dataset_id: int, body: BulkDecisionIn, user: CurrentUser) -> 
 
         batch_id = uuid.uuid4()
         changed_ids = [c["field_id"] for c in planned]
-        snapshot = _snapshot(conn, changed_ids)
-        prev = _merged_many(conn, changed_ids, fam)
+        snapshot = _snapshot(conn, src, changed_ids)
+        prev = _merged_many(conn, changed_ids, fam, src)
+        notes = {r["field_id"]: r["notes"] for r in rows}
         for c in planned:
             decided = any(c["after"][k] != c["before"][k] for k in ("action", "semantic_type"))
-            conn.execute(
-                """UPDATE meta.field_decisions SET action = %s, semantic_type = %s, reviewed = %s,
-                          source = CASE WHEN %s THEN 'user' ELSE source END, updated_at = now()
-                    WHERE field_id = %s""",
-                (c["after"]["action"], c["after"]["semantic_type"], c["after"]["reviewed"], decided, c["field_id"]),
-            )
+            write_decision(conn, src, c["field_id"], {**c["after"], "notes": notes[c["field_id"]]}, decided)
             for family, sugg in c["settings"].items():
-                upsert_settings(conn, dataset_id, c["field_id"], family, sugg, "suggested")
+                write_settings(conn, src, dataset_id, c["field_id"], family, sugg, "suggested")
+        summary = jsonb({**{k: v for k, v in result.items() if k != "changes"},
+                         "request": body.model_dump(exclude={"dry_run"})})
+        if src.personal:
+            conn.execute(
+                """INSERT INTO meta.assessment_batches (id, recipe_id, user_id, summary, snapshot)
+                   VALUES (%s, %s, %s, %s, %s)""",
+                (batch_id, src.recipe["id"], src.user_id, summary, jsonb(snapshot)),
+            )
+            return {"batch_id": str(batch_id), "dry_run": False, **result}
         _write_history(conn, dataset_id, fam, batch_id, prev, _merged_many(conn, changed_ids, fam), user["id"])
         conn.execute(
             "INSERT INTO meta.bulk_batches (id, dataset_id, summary, snapshot, user_id) VALUES (%s, %s, %s, %s, %s)",
-            (batch_id, dataset_id,
-             jsonb({**{k: v for k, v in result.items() if k != "changes"},
-                    "request": body.model_dump(exclude={"dry_run"})}),
-             jsonb(snapshot), user["id"]),
+            (batch_id, dataset_id, summary, jsonb(snapshot), user["id"]),
         )
         _sync_targets(conn, dataset_id, user_id=user["id"])
     return {"batch_id": str(batch_id), "dry_run": False, **result}
@@ -227,15 +245,31 @@ def undo_bulk(dataset_id: int, batch_id: str, user: CurrentUser) -> dict:
         raise HTTPException(404, "Bulk batch not found") from None
     fam = _active_family(dataset_id)
     with connection() as conn:
-        batch = conn.execute(
-            "SELECT snapshot, undone_at FROM meta.bulk_batches WHERE id = %s AND dataset_id = %s FOR UPDATE",
-            (bid, dataset_id),
-        ).fetchone()
+        src = source_for(conn, dataset_id, user, lock="share")
+        if src.personal:
+            batch = conn.execute(
+                """SELECT snapshot, undone_at FROM meta.assessment_batches
+                    WHERE id = %s AND recipe_id = %s AND user_id = %s FOR UPDATE""",
+                (bid, src.recipe["id"], src.user_id),
+            ).fetchone()
+        else:
+            batch = conn.execute(
+                "SELECT snapshot, undone_at FROM meta.bulk_batches WHERE id = %s AND dataset_id = %s FOR UPDATE",
+                (bid, dataset_id),
+            ).fetchone()
         if batch is None:
             raise HTTPException(404, "Bulk batch not found")
+        src.require_write()
         if batch["undone_at"] is not None:
             raise HTTPException(409, "This bulk change was already undone")
         snapshot: dict = batch["snapshot"]
+        if src.personal:
+            ids = sorted(int(k) for k in snapshot)
+            lock_decisions(conn, src, ids)
+            for fid in ids:
+                restore_assessment(conn, src, fid, snapshot[str(fid)])
+            conn.execute("UPDATE meta.assessment_batches SET undone_at = now() WHERE id = %s", (bid,))
+            return {"restored": len(ids), "batch_id": None}
         # Fields deleted since (dataset reprocessed) can't be restored; skip them.
         ids = [r["field_id"] for r in conn.execute(
             """SELECT field_id FROM meta.field_decisions WHERE dataset_id = %s AND field_id = ANY(%s)
@@ -344,12 +378,12 @@ def _active_family(dataset_id: int) -> str:
     return ds["model_family"]
 
 
-def _snapshot(conn, field_ids: list[int]) -> dict:
+def _snapshot(conn, src: Source, field_ids: list[int]) -> dict:
     rows = conn.execute(
-        """SELECT d.field_id, to_jsonb(d) AS decision,
-                  coalesce((SELECT jsonb_agg(to_jsonb(s) ORDER BY s.family) FROM meta.field_settings s
-                             WHERE s.field_id = d.field_id), '[]') AS settings
-             FROM meta.field_decisions d WHERE d.field_id = ANY(%s)""",
+        sql.SQL("""SELECT d.field_id, to_jsonb(d) AS decision,
+                          coalesce((SELECT jsonb_agg(to_jsonb(s) ORDER BY s.family) FROM {} s
+                                     WHERE s.field_id = d.field_id), '[]') AS settings
+                     FROM {} d WHERE d.field_id = ANY(%s)""").format(src.settings(), src.decisions()),
         (field_ids,),
     ).fetchall()
     return {str(r["field_id"]): {"decision": r["decision"], "settings": r["settings"]} for r in rows}

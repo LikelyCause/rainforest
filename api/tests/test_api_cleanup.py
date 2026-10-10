@@ -6,6 +6,8 @@ import time
 import numpy as np
 import pytest
 
+from .conftest import set_phase
+
 DB_URL = os.environ.get("RAINFOREST_TEST_DATABASE_URL")
 
 
@@ -119,6 +121,7 @@ def _numbers_csv(n=600, seed=0) -> str:
 
 def test_source_is_user_only_for_real_changes(client):
     ds = upload(client, _numbers_csv(), targets="y")
+    set_phase(ds["id"], "review")
     try:
         fid = fields_of(client, ds)["x"]["id"]
 
@@ -143,6 +146,7 @@ def test_source_is_user_only_for_real_changes(client):
 
 def test_preview_blocks_a_single_row_class_and_explains_one_target(client):
     ds = upload(client, _numbers_csv() + "0.5,0.5,typo\n", targets="y")
+    set_phase(ds["id"], "finalized")
     try:
         p = client.get(f"/api/datasets/{ds['id']}/export-preview").json()
         assert any("'typo'" in b and "single row" in b for b in p["blocking"])
@@ -162,6 +166,7 @@ def test_retyping_to_datetime_stores_the_columns_format(client):
     codes = 1_650_000_000 + np.arange(n) * 3600
     csv = "seen,event_code,y\n" + "".join(f"{a},{b},{'ab'[i % 2]}\n" for i, (a, b) in enumerate(zip(days, codes)))
     ds = upload(client, csv, targets="y")
+    set_phase(ds["id"], "review")
     try:
         f = fields_of(client, ds)
         assert f["seen"]["inferred_type"] != "datetime" and f["event_code"]["inferred_type"] == "identifier"
@@ -225,6 +230,7 @@ def test_choosing_a_target_later_screens_high_cardinality_fields(client):
 
 def test_making_a_field_the_target_in_review_screens_it_too(client):
     ds = upload(client, _leaky_csv(seed=2))
+    set_phase(ds["id"], "review")
     try:
         y = fields_of(client, ds)["y"]
         cur = client.get(f"/api/fields/{y['id']}").json()["decision"]

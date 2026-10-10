@@ -16,6 +16,8 @@ from app.analysis.prep import AnalysisError, NotEnough, prepare_export, prepare_
 from app.routers.explore import cluster_order
 from app.schemas import AnalysisParams
 
+from .conftest import set_phase
+
 
 def _frame(n: int = 1500, seed: int = 1, rare: int = 0) -> pl.DataFrame:
     rng = np.random.default_rng(seed)
@@ -268,6 +270,7 @@ def dataset(client):
     ds = client.post("/api/datasets/sample", json={"rows": 2000, "fields": 30, "target_kind": "binary"}).json()
     ds = _wait(client, f"/api/datasets/{ds['id']}", lambda d: d["status"] in ("ready", "failed"))
     assert ds["status"] == "ready", ds
+    set_phase(ds["id"], "review")
     yield ds
     client.delete(f"/api/datasets/{ds['id']}")
 
@@ -383,6 +386,7 @@ def test_api_export_and_run_are_owned_and_thread_capped(client, dataset):
     from app import jobs
     from app.db import fetch_one
 
+    set_phase(dataset["id"], "finalized")
     exp = client.post(f"/api/datasets/{dataset['id']}/exports", json={})
     assert exp.status_code == 202, exp.text
     exp = _wait(client, f"/api/exports/{exp.json()['id']}", lambda e: e["status"] in ("done", "failed"))

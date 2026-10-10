@@ -8,7 +8,10 @@ from scipy.cluster.hierarchy import leaves_list, linkage, optimal_leaf_ordering
 from scipy.spatial.distance import squareform
 
 from .. import jobs
+from psycopg import sql
+
 from ..analysis.runner import ROW_COLS, data_version, find_or_create, public, run_analysis
+from ..assessment import Source, key_owner, source_for
 from ..auth import CurrentUser
 from ..db import connection, fetch_all
 from ..schemas import AnalysisRequest, CorrelationQuery
@@ -49,12 +52,21 @@ def _validate_source(conn, dataset_id: int, params: dict) -> None:
         raise HTTPException(422, f"{target!r} is not a target of this export")
 
 
+def decision_source(conn, dataset_id: int, user: dict, kept: bool) -> Source:
+    """Explore reads the team decision, except that "Kept only" while assessing uses the viewer's own choices."""
+    src = source_for(conn, dataset_id, user)
+    return src if kept and src.personal else Source(src.recipe)
+
+
 @router.post("/datasets/{dataset_id}/analyses")
 def request_analysis(dataset_id: int, req: AnalysisRequest, user: CurrentUser) -> dict:
     """The cached result for these params if current, else the job computing it (started if needed)."""
     params = req.params.normalised(req.kind)
     with connection() as conn:
         _ready_dataset(conn, dataset_id, lock=True)  # serialises concurrent requests for one dataset
+        if params["data"] == "raw":
+            # Part of the cache key, so results computed from different people's choices never mix.
+            params["decisions"] = decision_source(conn, dataset_id, user, params["kept"]).key
         _validate_source(conn, dataset_id, params)
         row, created = find_or_create(conn, dataset_id, req.kind, params, req.recompute, user["id"])
     if created:
@@ -63,25 +75,27 @@ def request_analysis(dataset_id: int, req: AnalysisRequest, user: CurrentUser) -
 
 
 @router.get("/analyses/{analysis_id}")
-def get_analysis(analysis_id: int) -> dict:
+def get_analysis(analysis_id: int, user: CurrentUser) -> dict:
     with connection() as conn:
         row = conn.execute(f"SELECT {ROW_COLS} FROM meta.analyses WHERE id = %s", (analysis_id,)).fetchone()
-        if row is None:
+        owner = key_owner(row["params"].get("decisions")) if row else None
+        if row is None or (owner is not None and owner != user["id"]):
             raise HTTPException(404, "Analysis not found")
-        current = data_version(conn, row["dataset_id"], row["params"]["data"]) if row["status"] == "done" else None
+        current = data_version(conn, row["dataset_id"], row["params"]) if row["status"] == "done" else None
     return public(row, current)
 
 
 @router.get("/datasets/{dataset_id}/explore/correlations")
-def correlations(dataset_id: int, q: Annotated[CorrelationQuery, Query()]) -> dict:
+def correlations(dataset_id: int, q: Annotated[CorrelationQuery, Query()], user: CurrentUser) -> dict:
     """Stored associations for a capped, clustered set of fields: the target's strongest partners, or the
     fields with the strongest associations overall."""
     with connection() as conn:
         _ready_dataset(conn, dataset_id)
+        dec = decision_source(conn, dataset_id, user, q.kept).decisions()
     fields = fetch_all(
-        """SELECT f.id, f.name, d.semantic_type AS type, d.action
-             FROM meta.fields f JOIN meta.field_decisions d ON d.field_id = f.id
-            WHERE f.dataset_id = %s ORDER BY f.ordinal""",
+        sql.SQL("""SELECT f.id, f.name, d.semantic_type AS type, d.action
+                     FROM meta.fields f JOIN {} d ON d.field_id = f.id
+                    WHERE f.dataset_id = %s ORDER BY f.ordinal""").format(dec),
         (dataset_id,),
     )
     by_id = {f["id"]: f for f in fields}
@@ -94,8 +108,8 @@ def correlations(dataset_id: int, q: Annotated[CorrelationQuery, Query()]) -> di
     target_id = target["id"] if target is not None else None
     # A field's score is its strongest association with the target, or with any eligible field.
     ranked = [r["id"] for r in fetch_all(
-        """WITH eligible AS (
-               SELECT f.id FROM meta.fields f JOIN meta.field_decisions d ON d.field_id = f.id
+        sql.SQL("""WITH eligible AS (
+               SELECT f.id FROM meta.fields f JOIN {} d ON d.field_id = f.id
                 WHERE f.dataset_id = %(ds)s
                   AND (d.action = 'keep' OR (NOT %(kept)s AND d.action <> 'target') OR f.id = %(target)s)),
            sides AS (
@@ -105,7 +119,7 @@ def correlations(dataset_id: int, q: Annotated[CorrelationQuery, Query()]) -> di
            SELECT me AS id, max(strength) AS score FROM sides
             WHERE me IN (SELECT id FROM eligible) AND other IN (SELECT id FROM eligible) AND strength <> 'NaN'
               AND (%(target)s::bigint IS NULL OR other = %(target)s)
-            GROUP BY me ORDER BY score DESC, me LIMIT %(n)s""",
+            GROUP BY me ORDER BY score DESC, me LIMIT %(n)s""").format(dec),
         {"ds": dataset_id, "kept": q.kept, "target": target_id, "n": q.limit},
     )]
     chosen = [target_id] if target_id is not None else []

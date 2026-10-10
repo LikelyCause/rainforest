@@ -10,10 +10,10 @@ import polars as pl
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from .. import jobs
+from .. import jobs, recipes
 from ..auth import CurrentUser
 from ..config import get_settings
-from ..db import execute, fetch_all, fetch_one, jsonb
+from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..schemas import ExportRequest
 from ..semantics import FAMILIES, NON_FEATURE_TYPES, validate_decision
 from ..transform import FieldSpec, check_target_classes, run_export
@@ -26,6 +26,25 @@ FILES = {
     "preprocessor": ("preprocessor.joblib", "application/octet-stream"),
     "manifest": ("manifest.json", "application/json"),
 }
+
+
+PHASE_WAIT = {"assessing": "is being assessed", "review": "is in team review"}
+
+
+def source_problem(recipe: dict) -> str | None:
+    """Why a team export can't be built from this recipe version yet."""
+    if recipe["phase"] == "finalized":
+        return None
+    return (f"{recipes.label(recipe)} {PHASE_WAIT[recipe['phase']]}. Team exports open once a lead finalizes it.")
+
+
+def export_source(conn, dataset_id: int, source: str) -> dict:
+    """The recipe version an export is built from. `source` "recipe" is the dataset's current version, which must be
+    finalized; the team decision then equals its snapshot."""
+    recipe = recipes.current(conn, dataset_id, lock="share")
+    if (problem := source_problem(recipe)) is not None:
+        raise HTTPException(409, problem)
+    return recipe
 
 
 @router.get("/datasets/{dataset_id}/export-preview")
@@ -77,7 +96,11 @@ def preview(dataset_id: int, family: str | None = None) -> dict:
             ORDER BY e.created_at DESC, e.id DESC LIMIT 1""",
         (dataset_id, fam),
     )
+    with connection() as conn:
+        recipe = recipes.current(conn, dataset_id)
     blocking = [m for m, bad in [("No target selected", not targets), ("No features kept", not keep)] if bad]
+    if (problem := source_problem(recipe)) is not None:
+        blocking.insert(0, problem)
     if targets and (lone := _lone_class_problem(ds["parquet_path"], targets)):
         blocking.append(lone)
     if invalid:
@@ -85,6 +108,7 @@ def preview(dataset_id: int, family: str | None = None) -> dict:
                         f"{', '.join(invalid[:8])}{'…' if len(invalid) > 8 else ''}")
     return {
         "family": fam,
+        "recipe": {k: recipe[k] for k in ("id", "version", "phase")},
         "kept": len(keep),
         "dropped": sum(1 for r in rows if r["action"] == "drop"),
         "targets": targets,
@@ -116,16 +140,23 @@ def start_export(dataset_id: int, req: ExportRequest, user: CurrentUser) -> dict
         raise HTTPException(404, "Dataset not found")
     if ds["status"] != "ready":
         raise HTTPException(409, "Dataset is not ready")
+    with connection() as conn:
+        export_source(conn, dataset_id, req.source)
     pv = preview(dataset_id, req.model_family)
     if pv["blocking"]:
         raise HTTPException(422, {"message": "Cannot export", "errors": pv["blocking"]})
     if req.valid_size + req.test_size >= 0.9:
         raise HTTPException(422, "valid_size + test_size must be < 0.9")
-    exp = fetch_one(
-        """INSERT INTO meta.exports (dataset_id, status, status_message, model_family, config, owner, created_by)
-           VALUES (%s, 'pending', 'Queued', %s, %s, %s, %s) RETURNING *""",
-        (dataset_id, pv["family"], jsonb(req.model_dump(exclude={"model_family"})), jobs.owner_id(), user["id"]),
-    )
+    with connection() as conn:
+        recipe = export_source(conn, dataset_id, req.source)
+        config = {**req.model_dump(exclude={"model_family"}), "recipe_id": recipe["id"],
+                  "recipe_version": recipe["version"]}
+        exp = conn.execute(
+            """INSERT INTO meta.exports (dataset_id, status, status_message, model_family, config, owner, created_by,
+                                         recipe_id)
+               VALUES (%s, 'pending', 'Queued', %s, %s, %s, %s, %s) RETURNING *""",
+            (dataset_id, pv["family"], jsonb(config), jobs.owner_id(), user["id"], recipe["id"]),
+        ).fetchone()
     jobs.submit(_run, exp["id"])
     return exp
 

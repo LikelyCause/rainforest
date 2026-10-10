@@ -76,6 +76,7 @@ class SqlRequest(BaseModel):
 
 class ExportRequest(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
+    source: Literal["recipe"] = Field("recipe", description="Build from the dataset's current, finalized recipe")
     model_family: str | None = Field(None, description="Prepare features for this family (default: dataset's)")
     valid_size: float = Field(0.15, ge=0, lt=0.5)
     test_size: float = Field(0.15, ge=0, lt=0.5)
@@ -137,6 +138,18 @@ class CorrelationQuery(BaseModel):
     @property
     def add_ids(self) -> list[int]:
         return list(dict.fromkeys(int(v) for v in (self.add or "").split(",") if v.strip()))
+
+
+class AssessorIn(BaseModel):
+    user_id: int
+
+
+class CommentIn(BaseModel):
+    body: str = Field(min_length=1, max_length=4000, pattern=r"\S")
+
+
+class FinalizeIn(BaseModel):
+    accept_open: bool = Field(False, description="Finalize with disagreements left open, as their team decision stands")
 
 
 class UserIn(BaseModel):

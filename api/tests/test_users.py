@@ -7,6 +7,8 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from .conftest import set_phase
+
 DB_URL = os.environ.get("RAINFOREST_TEST_DATABASE_URL")
 
 
@@ -128,50 +130,54 @@ def _wait(fn, timeout=120.0):
     return out
 
 
-def test_writes_record_the_acting_user(app_, lead, member):
+def test_writes_record_the_acting_user(app_, lead, member, login_as):
     from app.db import fetch_all, fetch_one
 
-    uid = member.user["id"]
-    ds = member.post("/api/datasets/upload", files={"file": ("u.csv", _csv(), "text/csv")},
+    # Team decisions in review are a lead's to set, so the writer here is a second lead.
+    writer = login_as(TestClient(app_), "lead", name="Writer lead")
+    uid = writer.user["id"]
+    ds = writer.post("/api/datasets/upload", files={"file": ("u.csv", _csv(), "text/csv")},
                      data={"targets": "y"}).json()
-    ds = _wait(lambda: (d := member.get(f"/api/datasets/{ds['id']}").json())["status"] in ("ready", "failed") and d)
+    ds = _wait(lambda: (d := writer.get(f"/api/datasets/{ds['id']}").json())["status"] in ("ready", "failed") and d)
     assert ds["status"] == "ready" and ds["created_by"] == uid
+    set_phase(ds["id"], "review")
     try:
-        fields = {f["name"]: f for f in member.get(f"/api/datasets/{ds['id']}/fields").json()}
+        fields = {f["name"]: f for f in writer.get(f"/api/datasets/{ds['id']}/fields").json()}
         fid = fields["x"]["id"]
-        cur = member.get(f"/api/fields/{fid}").json()["decision"]
+        cur = writer.get(f"/api/fields/{fid}").json()["decision"]
         keys = ("action", "semantic_type", "imputation", "impute_value", "add_missing_indicator", "transform",
                 "scaling", "encoding", "params", "notes", "reviewed")
-        assert member.put(f"/api/fields/{fid}/decision",
+        assert writer.put(f"/api/fields/{fid}/decision",
                           json={**{k: cur[k] for k in keys}, "action": "drop"}).status_code == 200
-        hist = member.get(f"/api/fields/{fid}/history").json()
-        assert hist[0]["user_id"] == uid and hist[0]["user_name"] == member.user["name"]
+        hist = writer.get(f"/api/fields/{fid}/history").json()
+        assert hist[0]["user_id"] == uid and hist[0]["user_name"] == writer.user["name"]
 
-        bulk = member.post(f"/api/datasets/{ds['id']}/decisions/bulk",
+        bulk = writer.post(f"/api/datasets/{ds['id']}/decisions/bulk",
                            json={"field_ids": [fields["z"]["id"]], "reviewed": True}).json()
         batch = fetch_one("SELECT user_id FROM meta.bulk_batches WHERE id = %s", (bulk["batch_id"],))
         assert batch["user_id"] == uid
-        assert member.post(f"/api/datasets/{ds['id']}/decisions/bulk/{bulk['batch_id']}/undo").status_code == 200
-        assert member.patch(f"/api/datasets/{ds['id']}", json={"target_columns": ["y", "c"]}).status_code == 200
+        assert writer.post(f"/api/datasets/{ds['id']}/decisions/bulk/{bulk['batch_id']}/undo").status_code == 200
+        assert writer.patch(f"/api/datasets/{ds['id']}", json={"target_columns": ["y", "c"]}).status_code == 200
         users = {r["user_id"] for r in fetch_all(
             "SELECT DISTINCT user_id FROM meta.decision_history WHERE dataset_id = %s", (ds["id"],))}
         assert users == {uid}, "single saves, bulk, undo and target changes are all attributed"
-        assert member.patch(f"/api/datasets/{ds['id']}", json={"target_columns": ["y"]}).status_code == 200
+        assert writer.patch(f"/api/datasets/{ds['id']}", json={"target_columns": ["y"]}).status_code == 200
 
-        an = member.post(f"/api/datasets/{ds['id']}/analyses",
+        an = writer.post(f"/api/datasets/{ds['id']}/analyses",
                          json={"kind": "importance", "params": {"target": "y", "sample": 1000}}).json()
         assert an["created_by"] == uid
 
-        exp = member.post(f"/api/datasets/{ds['id']}/exports", json={}).json()
+        set_phase(ds["id"], "finalized")
+        exp = writer.post(f"/api/datasets/{ds['id']}/exports", json={}).json()
         assert exp["created_by"] == uid
-        assert _wait(lambda: (x := member.get(f"/api/exports/{exp['id']}").json())["status"] in ("done", "failed")
+        assert _wait(lambda: (x := writer.get(f"/api/exports/{exp['id']}").json())["status"] in ("done", "failed")
                      and x)["status"] == "done"
-        run = member.post(f"/api/exports/{exp['id']}/runs", json={"model": "random_forest", "cv": 0,
+        run = writer.post(f"/api/exports/{exp['id']}/runs", json={"model": "random_forest", "cv": 0,
                                                                    "params": {"n_estimators": 5}}).json()
         assert run["created_by"] == uid
-        assert _wait(lambda: (x := member.get(f"/api/runs/{run['id']}").json())["status"] in ("done", "failed")
+        assert _wait(lambda: (x := writer.get(f"/api/runs/{run['id']}").json())["status"] in ("done", "failed")
                      and x)["status"] == "done"
-        assert _wait(lambda: (x := member.get(f"/api/analyses/{an['id']}").json())["status"] in ("done", "failed")
+        assert _wait(lambda: (x := writer.get(f"/api/analyses/{an['id']}").json())["status"] in ("done", "failed")
                      and x)["status"] == "done"
 
         r = member.delete(f"/api/datasets/{ds['id']}")

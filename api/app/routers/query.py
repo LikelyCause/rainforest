@@ -11,8 +11,10 @@ from fastapi import APIRouter, HTTPException
 from psycopg import sql
 from psycopg_pool import PoolTimeout
 
+from ..assessment import source_for
+from ..auth import CurrentUser
 from ..config import get_settings
-from ..db import fetch_all, get_readonly_pool
+from ..db import connection, get_readonly_pool
 from ..schemas import FieldFilter, FieldQuery, SqlRequest
 
 router = APIRouter(prefix="/api", tags=["query"])
@@ -62,20 +64,23 @@ SQL_EXAMPLES = [
 
 
 @router.post("/datasets/{dataset_id}/fields/query")
-def query_fields(dataset_id: int, q: FieldQuery) -> list[dict]:
+def query_fields(dataset_id: int, q: FieldQuery, user: CurrentUser) -> list[dict]:
     if q.order_by not in QUERYABLE:
         raise HTTPException(422, f"Cannot order by {q.order_by!r}")
-    query = sql.SQL("SELECT * FROM meta.v_fields WHERE {} ORDER BY {} {} NULLS LAST LIMIT {}").format(
-        fields_where(dataset_id, q.filters),
-        sql.Identifier(q.order_by),
-        sql.SQL("DESC" if q.descending else "ASC"),
-        sql.Literal(q.limit),
-    )
-    return fetch_all(query)
+    with connection() as conn:
+        query = sql.SQL("SELECT * FROM {} WHERE {} ORDER BY {} {} NULLS LAST LIMIT {}").format(
+            source_for(conn, dataset_id, user).fields_view(),
+            fields_where(dataset_id, q.filters),
+            sql.Identifier(q.order_by),
+            sql.SQL("DESC" if q.descending else "ASC"),
+            sql.Literal(q.limit),
+        )
+        return conn.execute(query).fetchall()
 
 
 def fields_where(dataset_id: int, filters: list[FieldFilter]) -> sql.Composable:
-    """WHERE clause over meta.v_fields for a structured filter; shared by the query and bulk endpoints."""
+    """WHERE clause over meta.v_fields (or a source's version of it) for a structured filter; shared by the query
+    and bulk endpoints."""
     clauses = [sql.SQL("dataset_id = {}").format(sql.Literal(dataset_id))]
     for f in filters:
         kind = QUERYABLE.get(f.column)
