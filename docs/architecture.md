@@ -46,6 +46,7 @@ add things. For endpoints see [api.md](api.md); for usage see the [README](../RE
 | `pages/` | `LoginPage`, `DatasetsPage`, `ReviewPage`, `BulkEditPage`, `ExplorePage`, `ExportPage`. |
 | `components/` | `DatasetLayout` (gates dataset pages on status), `FieldList`, `FieldDetailView`, `DecisionPanel`, `RunDetail`, `Chart`; `components/explore/` holds the four Explore views, their shared state (`state.tsx`) and chart options (`options.ts`). |
 | `signals.ts`, `format.ts`, `theme.ts`, `charts.ts`, `toast.tsx` | Field signal thresholds, formatting and labels, chart theming, toasts. |
+| `decision.ts`, `finder.ts`, `runs.ts`, `components/explore/params.ts` | Pure logic behind the pages: retyping a draft and encoder-param checks, Bulk edit's presets and URL state, run ranking, Explore's URL state. |
 
 Routes: `/login`, `/` (datasets), `/d/:id/review/:fieldId?`, `/d/:id/bulk`, `/d/:id/explore/:view?`, `/d/:id/export`.
 
