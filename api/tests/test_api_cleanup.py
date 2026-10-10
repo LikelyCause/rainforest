@@ -144,14 +144,13 @@ def test_source_is_user_only_for_real_changes(client):
         client.delete(f"/api/datasets/{ds['id']}")
 
 
-def test_preview_blocks_a_single_row_class_and_explains_one_target(client):
+def test_preview_blocks_a_single_row_class_and_accepts_one_target(client):
     ds = upload(client, _numbers_csv() + "0.5,0.5,typo\n", targets="y")
     set_phase(ds["id"], "finalized")
     try:
         p = client.get(f"/api/datasets/{ds['id']}/export-preview").json()
         assert any("'typo'" in b and "single row" in b for b in p["blocking"])
-        assert any("single classifier" in w for w in p["warnings"])
-        assert not any("expects two" in w for w in p["warnings"])
+        assert not any("single classifier" in w or "expects two" in w for w in p["warnings"])  # one target is fine
         r = client.post(f"/api/datasets/{ds['id']}/exports", json={})
         assert r.status_code == 422 and "typo" in r.text
     finally:
