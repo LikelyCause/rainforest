@@ -1,5 +1,5 @@
-# GPU training: `make up-gpu`, or
-#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+# GPU training: COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml in .env, then `make up` (or `make up-gpu`
+# for one run).
 # Needs an NVIDIA driver (580+ for the default CUDA 13 build) and nvidia-container-toolkit on the host.
 services:
   api:

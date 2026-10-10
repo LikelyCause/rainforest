@@ -260,7 +260,7 @@ function FirstRun({ onBrowse, onDemo, busy }: { onBrowse: () => void; onDemo: ()
         </div>
       </div>
       <p className="muted" style={{ gridColumn: "1 / -1", margin: 0 }}>
-        <b className="secondary">1</b> Review each field (<kbd>J</kbd>/<kbd>K</kbd>, <kbd>X</kbd>, <kbd>↵</kbd>) → <b className="secondary">2</b> Export → <b className="secondary">3</b> Train
+        <b className="secondary">1</b> Review each field (<kbd>J</kbd>/<kbd>K</kbd>, <kbd>X</kbd>, <kbd>↵</kbd>) → <b className="secondary">2</b> Export and train in an experiment
       </p>
     </section>
   );

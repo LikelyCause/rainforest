@@ -49,7 +49,7 @@ export function DatasetLayout() {
         <h1>{d.name}</h1>
         <div className="meter"><span style={{ width: `${Math.max(d.progress, 0.02) * 100}%` }} /></div>
         <span className="secondary">{d.status_message ?? "Processing…"}</span>
-        <span className="muted small-text">Review, Bulk edit and Export open when profiling finishes.</span>
+        <span className="muted small-text">Review, Bulk edit, Explore and Experiments open when profiling finishes.</span>
       </div>
     );
   }

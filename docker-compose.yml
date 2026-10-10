@@ -116,7 +116,8 @@ services:
       # All interfaces, so the UI is reachable over the LAN; sign-in protects it.
       - "${UI_PORT:-8080}:80"
 
-  # Reference identity provider (make up-keycloak). start-dev: plain HTTP, dev-only settings; not for production.
+  # Reference identity provider, in the keycloak profile (COMPOSE_PROFILES=keycloak or make up-keycloak).
+  # start-dev: plain HTTP, dev-only settings; not for production.
   keycloak-db:
     image: postgres:16-alpine
     profiles: [keycloak]

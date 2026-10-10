@@ -1,7 +1,7 @@
 """Create the backend database if it is missing, then exec `mlflow server` with the given arguments.
 
-Runs on every start, so it covers a fresh Postgres volume and one created before MLflow was added
-(docker-entrypoint-initdb.d scripts only run on an empty volume).
+Runs on every start, so it covers a fresh Postgres volume and an existing one (docker-entrypoint-initdb.d
+scripts only run on an empty volume).
 """
 import os
 import sys
