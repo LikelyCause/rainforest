@@ -5,6 +5,7 @@ import { api } from "../api";
 import { useAccess, useMe, useOptions, useTeam } from "../hooks";
 import { useDatasetContext } from "../components/DatasetLayout";
 import { DecisionPanel } from "../components/DecisionPanel";
+import { ReuseCard } from "../components/ReuseCard";
 import { Empty, ErrorAlert, StatusGlyph } from "../components/ui";
 import { familyShort, fmtAgo, fmtDate, fmtInt } from "../format";
 import { differing, finalizeQuestion, nextOpen, PHASE_LABEL, spread } from "../team";
@@ -12,10 +13,11 @@ import { showError, toast } from "../toast";
 import type { Dataset, FieldReview, OptionCatalog, QueueItem, SettingsRow, TeamState } from "../types";
 
 /** Everything that reads the decisions or the team state goes stale when the phase or an assessment changes. */
-function useInvalidateTeam(datasetId: number) {
+export function useInvalidateTeam(datasetId: number) {
   const qc = useQueryClient();
   return () => {
-    for (const k of ["team", "reviewQueue", "dataset", "fields", "fieldQuery", "exportPreview", "corrMatrix", "analysis"]) {
+    for (const k of ["team", "reviewQueue", "dataset", "fields", "fieldQuery", "exportPreview", "corrMatrix", "analysis",
+      "versions", "recipeDiff"]) {
       qc.invalidateQueries({ queryKey: [k, datasetId] });
     }
     qc.invalidateQueries({ queryKey: ["datasets"] });
@@ -41,12 +43,25 @@ export function DatasetTeamPage() {
 }
 
 function Assessing({ ds, team }: { ds: Dataset; team: TeamState }) {
+  const me = useMe().data;
+  const r = team.recipe;
+  const canReuse = me?.role === "lead" && r.version === 1 && !r.reuse && team.assessors.length === 0;
   return (
     <div className="page">
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <h1>Team <PhaseBadge phase="assessing" version={team.recipe.version} /></h1>
-        <span className="muted small-text">Review opens by itself once every assessor has submitted.</span>
+        <h1>Team <PhaseBadge phase="assessing" version={r.version} /></h1>
+        <span className="muted small-text">Review opens by itself once every assessor has submitted. <Link to={`/d/${ds.id}/versions`}>Versions →</Link></span>
       </div>
+      {r.reopened != null && !r.reuse && (
+        <div className="alert info"><span className="grow">
+          Recipe v{r.version} reopens {r.reopened} field{r.reopened === 1 ? "" : "s"}; only those are assessed. The rest are carried over from v{r.version - 1} and locked.
+        </span></div>
+      )}
+      {canReuse && (
+        <div className="alert info"><span className="grow">Reusing the decisions of another dataset? Start from its finalized recipe before assigning anyone.</span>
+          <Link to={`/d/${ds.id}/versions`}>Start from a recipe →</Link></div>
+      )}
+      {r.reuse && <ReuseCard reuse={r.reuse} version={r.version} />}
       {team.me && <MyAssessment ds={ds} me={team.me} />}
       <Assessors ds={ds} team={team} />
     </div>
@@ -115,7 +130,8 @@ function Assessors({ ds, team }: { ds: Dataset; team: TeamState }) {
         <span className="muted small-text">Progress only: nobody's choices show before review.</span>
       </div>
       {team.assessors.length === 0 ? (
-        <span className="secondary">{lead ? "Nobody is assigned yet. Assign the people who should assess every field." : "A lead hasn't assigned anyone yet."}</span>
+        <span className="secondary">{lead ? `Nobody is assigned yet. Assign the people who should assess ${team.recipe.reopened != null ? "the reopened fields" : "every field"}.`
+          : "A lead hasn't assigned anyone yet."}</span>
       ) : (
         <table className="data team">
           <thead><tr><th>Assessor</th><th>Progress</th><th>Status</th>{lead && <th aria-label="Actions" />}</tr></thead>
@@ -177,6 +193,8 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
   });
   const summary = queue.data?.summary ?? team.review;
   const finalized = team.recipe.phase === "finalized";
+  // A version nobody assesses: nothing reopened (the lead edits directly), or a reused recipe that carried everything.
+  const direct = team.assessors.length === 0;
   const askFinalize = () => {
     const question = finalizeQuestion(summary?.open ?? 0, team.recipe.version);
     if (question ? window.confirm(question) : window.confirm(`Finalize recipe v${team.recipe.version}? Its decisions will be frozen.`)) {
@@ -197,10 +215,17 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
               {summary.adopted} adopted · {summary.disagreements} disagreement{summary.disagreements === 1 ? "" : "s"} · <b>{summary.open} open</b>
             </span>
           )}
+          {!finalized && direct && (
+            <span className="small-text secondary">
+              {team.recipe.reuse ? "Every field was carried over from the reused recipe; finalize to confirm it."
+                : "Nothing was reopened: change the team decision in Review or Bulk edit, then finalize."}
+            </span>
+          )}
           {finalized ? (
             <span className="small-text secondary">
               Finalized {fmtAgo(team.recipe.finalized_at)}{team.recipe.finalized_by_name ? ` by ${team.recipe.finalized_by_name}` : ""}.{" "}
-              <Link to={`/d/${ds.id}/export`}>Export →</Link>
+              <Link to={`/d/${ds.id}/export`}>Export →</Link>{" "}
+              <Link to={`/d/${ds.id}/versions`}>{me?.role === "lead" ? "Start a new version →" : "Versions →"}</Link>
             </span>
           ) : me?.role === "lead" ? (
             <button type="button" className={summary?.open ? "" : "primary"} disabled={finalize.isPending} onClick={askFinalize}>
@@ -230,9 +255,13 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
         <ErrorAlert error={queue.error} />
         {item && catalog ? (
           <Comparison item={item} family={ds.model_family} catalog={catalog} canComment={!finalized} />
-        ) : queue.data && items.length > 0 ? null : (
+        ) : queue.data && items.length > 0 ? null : team.recipe.reuse ? (
+          <ReuseCard reuse={team.recipe.reuse} version={team.recipe.version} />
+        ) : (
           queue.data && <Empty title={finalized ? "Finalized" : "Nothing to settle"}>
-            {finalized ? "This recipe version is frozen." : "Finalize when you're ready; every field took the assessors' shared choice."}
+            {finalized ? "This recipe version is frozen. A change is a new version, started on the Versions page."
+              : direct ? "Nobody assessed this version. Change the team decision in Review or Bulk edit, then finalize."
+              : "Finalize when you're ready; every field took the assessors' shared choice."}
           </Empty>
         )}
       </section>

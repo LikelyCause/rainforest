@@ -434,6 +434,9 @@ READS = {
     "team": lambda c, d, f, x: c.get(f"/api/datasets/{d}/team"),
     "review queue": lambda c, d, f, x: c.get(f"/api/datasets/{d}/review"),
     "field review": lambda c, d, f, x: c.get(f"/api/fields/{f['x']['id']}/review"),
+    "recipe versions": lambda c, d, f, x: c.get(f"/api/datasets/{d}/recipes"),
+    "recipe diff": lambda c, d, f, x: c.get(f"/api/datasets/{d}/recipes/diff?a=1&b=1"),
+    "finalized recipes": lambda c, d, f, x: c.get("/api/recipes"),
     "explore correlations kept": lambda c, d, f, x: c.get(f"/api/datasets/{d}/explore/correlations?kept=true"),
     "explore correlations": lambda c, d, f, x: c.get(f"/api/datasets/{d}/explore/correlations"),
     "explore kept-only analysis": lambda c, d, f, x: c.post(f"/api/datasets/{d}/analyses", json={
@@ -491,6 +494,8 @@ def test_no_read_path_shows_another_assessors_choices(people, blind, viewer, rea
         assert {x["name"]: x["action"] for x in body["fields"]}["w"] == "keep"
     elif read == "explore kept-only analysis":
         assert body["id"] != blind["b_analysis"]["id"]
+    elif read == "recipe diff":
+        assert body["fields"] == []
     elif read == "sql analyses":
         idx = body["columns"].index("id")
         assert blind["b_analysis"]["id"] not in [row[idx] for row in body["rows"]]
@@ -524,7 +529,10 @@ def test_existing_datasets_migrate_to_a_finalized_v1_and_keep_exporting(app_, pe
             conn.execute("DELETE FROM meta.recipes WHERE dataset_id = %s", (ds["id"],))
             old = conn.execute("""INSERT INTO meta.exports (dataset_id, status, model_family, config)
                                   VALUES (%s, 'done', 'tree', '{}') RETURNING id""", (ds["id"],)).fetchone()
-            conn.execute((MIGRATIONS_DIR / "008_team_assessment.sql").read_text())
+            # 008 and the migrations after it, which redefine some of what it creates.
+            for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
+                if path.name >= "008":
+                    conn.execute(path.read_text())
             recipes.backfill_snapshots(conn)
         rec = fetch_one("SELECT * FROM meta.recipes WHERE dataset_id = %s", (ds["id"],))
         first_lead = fetch_one("SELECT id FROM meta.users WHERE role = 'lead' ORDER BY id LIMIT 1")["id"]

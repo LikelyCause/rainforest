@@ -17,6 +17,7 @@ from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..schemas import ExportRequest
 from ..semantics import FAMILIES, NON_FEATURE_TYPES, validate_decision
 from ..transform import FieldSpec, check_target_classes, run_export
+from .fields import _same_settings
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["exports"])
@@ -28,6 +29,8 @@ FILES = {
 }
 
 
+EXPORT_SELECT = ("SELECT e.*, r.version AS recipe_version "
+                 "FROM meta.exports e LEFT JOIN meta.recipes r ON r.id = e.recipe_id")
 PHASE_WAIT = {"assessing": "is being assessed", "review": "is in team review"}
 
 
@@ -38,42 +41,60 @@ def source_problem(recipe: dict) -> str | None:
     return (f"{recipes.label(recipe)} {PHASE_WAIT[recipe['phase']]}. Team exports open once a lead finalizes it.")
 
 
-def export_source(conn, dataset_id: int, source: str) -> dict:
-    """The recipe version an export is built from. `source` "recipe" is the dataset's current version, which must be
-    finalized; the team decision then equals its snapshot."""
-    recipe = recipes.current(conn, dataset_id, lock="share")
+def export_source(conn, dataset_id: int, source: str, recipe_id: int | None = None) -> dict:
+    """The recipe version an export is built from: `recipe_id`, else the dataset's latest finalized version (with
+    none yet, the current one, which says why it can't export). Only finalized versions export, from their snapshot.
+    `source` is "recipe" (team exports); personal exports from one's own assessment will be another source."""
+    recipe = _pick_recipe(conn, dataset_id, recipe_id)
     if (problem := source_problem(recipe)) is not None:
         raise HTTPException(409, problem)
     return recipe
 
 
+def _pick_recipe(conn, dataset_id: int, recipe_id: int | None) -> dict:
+    if recipe_id is not None:
+        recipe = recipes.get(conn, recipe_id)
+        if recipe is None or recipe["dataset_id"] != dataset_id:
+            raise HTTPException(404, "Recipe not found")
+        return recipe
+    return recipes.latest_finalized(conn, dataset_id) or recipes.current(conn, dataset_id)
+
+
 @router.get("/datasets/{dataset_id}/export-preview")
-def preview(dataset_id: int, family: str | None = None) -> dict:
-    """What an export for a model family would contain right now, plus anything worth fixing first."""
+def preview(dataset_id: int, family: str | None = None, recipe_id: int | None = None) -> dict:
+    """What an export of a recipe version (default: the latest finalized) for a model family would contain, plus
+    anything worth fixing first. With no finalized version yet it shows the team decision as it stands, blocked."""
     ds = fetch_one("SELECT model_family, parquet_path FROM meta.datasets WHERE id = %s", (dataset_id,))
     if ds is None:
         raise HTTPException(404, "Dataset not found")
     fam = family or ds["model_family"]
     if fam not in FAMILIES:
         raise HTTPException(422, f"Unknown model family {fam!r}")
-    rows = fetch_all(
-        """SELECT f.name, f.inferred_type, f.leakage_flag AS leakage, d.action, d.semantic_type, d.reviewed,
-                  s.imputation, s.impute_value, s.add_missing_indicator, s.transform, s.scaling, s.encoding,
-                  s.params, s.source AS settings_source
-             FROM meta.fields f
-             JOIN meta.field_decisions d ON d.field_id = f.id
-             JOIN meta.field_settings s ON s.field_id = f.id AND s.family = %s
-            WHERE f.dataset_id = %s ORDER BY f.ordinal""",
-        (fam, dataset_id),
-    )
+    with connection() as conn:
+        recipe = _pick_recipe(conn, dataset_id, recipe_id)
+        snap = recipes.snapshot_of(conn, recipe)
+        rows = recipes.spec_rows(conn, dataset_id, snap, fam)
+        unreviewed = 0 if recipe["phase"] == "finalized" else conn.execute(
+            "SELECT count(*) AS n FROM meta.field_decisions WHERE dataset_id = %s AND NOT reviewed", (dataset_id,)
+        ).fetchone()["n"]
+        last = conn.execute(
+            """SELECT e.id, e.created_at, e.status, e.recipe_id FROM meta.exports e
+                WHERE e.dataset_id = %s AND e.model_family = %s AND e.status = 'done'
+                ORDER BY e.created_at DESC, e.id DESC LIMIT 1""",
+            (dataset_id, fam),
+        ).fetchone()
+        changed = None
+        if last is not None and last["recipe_id"] is not None:
+            # Fields whose decision or settings for this family differ from what the last export was built from.
+            changed = 0 if last["recipe_id"] == recipe["id"] else len(recipes.diff(
+                recipes.snapshot_of(conn, recipes.get(conn, last["recipe_id"])), snap, fam)["fields"])
     if not rows:
         raise HTTPException(404, "Dataset has no profiled fields")
     keep = [r for r in rows if r["action"] == "keep" and r["semantic_type"] not in NON_FEATURE_TYPES]
-    targets = [r["name"] for r in rows if r["action"] == "target"]
+    targets = recipes.snapshot_targets(snap)
     warnings: list[str] = []
-    unreviewed = [r["name"] for r in rows if not r["reviewed"]]
     if unreviewed:
-        warnings.append(f"{len(unreviewed)} field(s) not reviewed yet — their suggested settings will be used.")
+        warnings.append(f"{unreviewed} field(s) not reviewed yet — their suggested settings will be used.")
     leaks = [r["name"] for r in keep if r["leakage"]]
     if leaks:
         warnings.append(f"Kept field(s) flagged as possible target leakage: {', '.join(leaks)}")
@@ -84,20 +105,6 @@ def preview(dataset_id: int, family: str | None = None) -> dict:
     by_type: dict[str, int] = {}
     for r in keep:
         by_type[r["semantic_type"]] = by_type.get(r["semantic_type"], 0) + 1
-    last = fetch_one(
-        """SELECT e.id, e.created_at, e.status,
-                  (SELECT count(*) FROM meta.fields f
-                     JOIN meta.field_decisions d ON d.field_id = f.id
-                     LEFT JOIN meta.field_settings s ON s.field_id = f.id AND s.family = e.model_family
-                    WHERE f.dataset_id = e.dataset_id
-                      AND (d.updated_at > e.created_at OR s.updated_at > e.created_at)) AS changed
-             FROM meta.exports e
-            WHERE e.dataset_id = %s AND e.model_family = %s AND e.status = 'done'
-            ORDER BY e.created_at DESC, e.id DESC LIMIT 1""",
-        (dataset_id, fam),
-    )
-    with connection() as conn:
-        recipe = recipes.current(conn, dataset_id)
     blocking = [m for m, bad in [("No target selected", not targets), ("No features kept", not keep)] if bad]
     if (problem := source_problem(recipe)) is not None:
         blocking.insert(0, problem)
@@ -113,12 +120,12 @@ def preview(dataset_id: int, family: str | None = None) -> dict:
         "dropped": sum(1 for r in rows if r["action"] == "drop"),
         "targets": targets,
         "kept_by_type": by_type,
-        "customized": sum(1 for r in keep if r["settings_source"] == "user"),
-        "unreviewed": len(unreviewed),
+        "customized": sum(1 for r in keep if not _same_settings(r, (r["suggestion"] or {}).get(fam) or {})),
+        "unreviewed": unreviewed,
         "warnings": warnings,
         "blocking": blocking,
-        "last_export": None if last is None else {k: last[k] for k in ("id", "created_at", "status")},
-        "changed_since_export": None if last is None else last["changed"],
+        "last_export": None if last is None else {k: last[k] for k in ("id", "created_at", "status", "recipe_id")},
+        "changed_since_export": changed,
     }
 
 
@@ -141,14 +148,13 @@ def start_export(dataset_id: int, req: ExportRequest, user: CurrentUser) -> dict
     if ds["status"] != "ready":
         raise HTTPException(409, "Dataset is not ready")
     with connection() as conn:
-        export_source(conn, dataset_id, req.source)
-    pv = preview(dataset_id, req.model_family)
+        recipe = export_source(conn, dataset_id, req.source, req.recipe_id)
+    pv = preview(dataset_id, req.model_family, recipe["id"])
     if pv["blocking"]:
         raise HTTPException(422, {"message": "Cannot export", "errors": pv["blocking"]})
     if req.valid_size + req.test_size >= 0.9:
         raise HTTPException(422, "valid_size + test_size must be < 0.9")
     with connection() as conn:
-        recipe = export_source(conn, dataset_id, req.source)
         config = {**req.model_dump(exclude={"model_family"}), "recipe_id": recipe["id"],
                   "recipe_version": recipe["version"]}
         exp = conn.execute(
@@ -163,15 +169,13 @@ def start_export(dataset_id: int, req: ExportRequest, user: CurrentUser) -> dict
 
 @router.get("/datasets/{dataset_id}/exports")
 def list_exports(dataset_id: int) -> list[dict]:
-    rows = fetch_all(
-        "SELECT * FROM meta.exports WHERE dataset_id = %s ORDER BY created_at DESC", (dataset_id,)
-    )
+    rows = fetch_all(f"{EXPORT_SELECT} WHERE e.dataset_id = %s ORDER BY e.created_at DESC", (dataset_id,))
     return [_backfill_features_by_type(e) for e in rows]
 
 
 @router.get("/exports/{export_id}")
 def get_export(export_id: int) -> dict:
-    exp = fetch_one("SELECT * FROM meta.exports WHERE id = %s", (export_id,))
+    exp = fetch_one(f"{EXPORT_SELECT} WHERE e.id = %s", (export_id,))
     if exp is None:
         raise HTTPException(404, "Export not found")
     return _backfill_features_by_type(exp)
@@ -221,6 +225,22 @@ def download(export_id: int, kind: str) -> FileResponse:
     return FileResponse(path, media_type=media, filename=f"export{export_id}_{fname}")
 
 
+def export_spec(conn, dataset_id: int, recipe: dict, family: str) -> tuple[list[FieldSpec], list[str]]:
+    """The kept fields' specs and the targets (in chain order) of a recipe version, from its snapshot."""
+    snap = recipes.snapshot_of(conn, recipe)
+    specs = [
+        FieldSpec(
+            name=r["name"], semantic_type=r["semantic_type"], imputation=r["imputation"],
+            impute_value=r["impute_value"], add_missing_indicator=bool(r["add_missing_indicator"]),
+            transform=r["transform"], scaling=r["scaling"], encoding=r["encoding"],
+            params=r["params"] or {}, datetime_format=r["datetime_format"], decimal_comma=r["decimal_comma"],
+        )
+        for r in recipes.spec_rows(conn, dataset_id, snap, family)
+        if r["action"] == "keep"
+    ]
+    return specs, recipes.snapshot_targets(snap)
+
+
 def _run(export_id: int) -> None:
     exp = get_export(export_id)
     ds = fetch_one("SELECT * FROM meta.datasets WHERE id = %s", (exp["dataset_id"],))
@@ -241,29 +261,8 @@ def _run(export_id: int) -> None:
     try:
         progress(0.0, "Starting")
         fam = exp["model_family"]
-        rows = fetch_all(
-            """SELECT f.name, f.stats ->> 'datetime_format' AS datetime_format,
-                      coalesce((f.stats ->> 'decimal_comma')::boolean, false) AS decimal_comma,
-                      d.action, d.semantic_type, s.*
-                 FROM meta.fields f
-                 JOIN meta.field_decisions d ON d.field_id = f.id
-                 JOIN meta.field_settings s ON s.field_id = f.id AND s.family = %s
-                WHERE f.dataset_id = %s ORDER BY f.ordinal""",
-            (fam, ds["id"]),
-        )
-        specs = [
-            FieldSpec(
-                name=r["name"], semantic_type=r["semantic_type"], imputation=r["imputation"],
-                impute_value=r["impute_value"], add_missing_indicator=r["add_missing_indicator"],
-                transform=r["transform"], scaling=r["scaling"], encoding=r["encoding"],
-                params=r["params"] or {}, datetime_format=r["datetime_format"], decimal_comma=r["decimal_comma"],
-            )
-            for r in rows
-            if r["action"] == "keep"
-        ]
-        target_rows = [r["name"] for r in rows if r["action"] == "target"]
-        order = list(ds["target_columns"] or [])
-        targets = [t for t in order if t in target_rows] + [t for t in target_rows if t not in order]
+        with connection() as conn:
+            specs, targets = export_spec(conn, ds["id"], recipes.get(conn, exp["recipe_id"]), fam)
         manifest = run_export(Path(ds["parquet_path"]), specs, targets, out_dir, exp["config"], progress, family=fam)
         summary = {
             "split_counts": manifest["split_counts"],

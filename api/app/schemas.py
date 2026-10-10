@@ -76,7 +76,8 @@ class SqlRequest(BaseModel):
 
 class ExportRequest(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
-    source: Literal["recipe"] = Field("recipe", description="Build from the dataset's current, finalized recipe")
+    source: Literal["recipe"] = Field("recipe", description="Build from a finalized recipe version of the dataset")
+    recipe_id: int | None = Field(None, description="The finalized version to build from (default: the latest)")
     model_family: str | None = Field(None, description="Prepare features for this family (default: dataset's)")
     valid_size: float = Field(0.15, ge=0, lt=0.5)
     test_size: float = Field(0.15, ge=0, lt=0.5)
@@ -146,6 +147,15 @@ class AssessorIn(BaseModel):
 
 class CommentIn(BaseModel):
     body: str = Field(min_length=1, max_length=4000, pattern=r"\S")
+
+
+class NewVersionIn(BaseModel):
+    reopen: list[int] = Field(default_factory=list, max_length=5000,
+                              description="Fields to assess again; none means the lead edits the decisions directly")
+
+
+class ApplyRecipeIn(BaseModel):
+    recipe_id: int
 
 
 class FinalizeIn(BaseModel):

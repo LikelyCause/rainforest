@@ -22,16 +22,33 @@ def _assessor_ids(conn, recipe_id: int) -> list[int]:
     ).fetchall()]
 
 
+def _by_field(conn, recipe: dict) -> dict[int, list[dict]]:
+    """The assessors' choices on the fields this version works on (carried-over fields aren't assessed)."""
+    by_field = assessments_by_field(conn, recipe["id"], _assessor_ids(conn, recipe["id"]))
+    open_ = recipes.open_field_ids(conn, recipe)
+    if open_ is None:
+        return by_field
+    keep = set(open_)
+    return {fid: rows for fid, rows in by_field.items() if fid in keep}
+
+
 def _require_phase(recipe: dict, *phases: str, doing: str) -> None:
     if recipe["phase"] not in phases:
         raise HTTPException(409, f"{recipes.label(recipe)} is {recipe['phase']}; {doing} isn't possible now.")
 
 
+def _open_count(conn, recipe: dict) -> int:
+    open_ = recipes.open_field_ids(conn, recipe)
+    if open_ is not None:
+        return len(open_)
+    return conn.execute("SELECT count(*) AS n FROM meta.fields WHERE dataset_id = %s",
+                        (recipe["dataset_id"],)).fetchone()["n"]
+
+
 def _review_summary(conn, recipe: dict) -> dict:
-    by_field = assessments_by_field(conn, recipe["id"], _assessor_ids(conn, recipe["id"]))
+    by_field = _by_field(conn, recipe)
     dis = sorted(disagreements(by_field))
-    total = conn.execute("SELECT count(*) AS n FROM meta.fields WHERE dataset_id = %s",
-                         (recipe["dataset_id"],)).fetchone()["n"]
+    total = _open_count(conn, recipe)
     open_ = conn.execute(
         "SELECT count(*) AS n FROM meta.field_decisions WHERE field_id = ANY(%s) AND NOT reviewed", (dis,)
     ).fetchone()["n"]
@@ -46,9 +63,12 @@ def _team_state(conn, dataset_id: int, user: dict) -> dict:
     names = {r["id"]: r["name"] for r in conn.execute(
         "SELECT id, name FROM meta.users WHERE id = ANY(%s)", ([recipe["created_by"], recipe["finalized_by"]],)
     ).fetchall()}
+    open_ = recipes.open_field_ids(conn, recipe)
+    reuse = conn.execute("SELECT reuse FROM meta.recipes WHERE id = %s", (recipe["id"],)).fetchone()["reuse"]
     return {
         "recipe": {**recipe, "created_by_name": names.get(recipe["created_by"]),
-                   "finalized_by_name": names.get(recipe["finalized_by"])},
+                   "finalized_by_name": names.get(recipe["finalized_by"]),
+                   "reopened": None if open_ is None else len(open_), "reuse": reuse},
         "assessors": assessors,
         "me": None if mine is None else {"submitted": mine["submitted_at"] is not None,
                                          "reviewed": mine["reviewed"], "total": mine["total"]},
@@ -82,7 +102,7 @@ def assign(dataset_id: int, body: AssessorIn, user: LeadUser) -> dict:
                ON CONFLICT DO NOTHING""",
             (recipe["id"], body.user_id, user["id"]),
         )
-        seed(conn, recipe["id"], dataset_id, body.user_id)
+        seed(conn, recipe, body.user_id)
         return _team_state(conn, dataset_id, user)
 
 
@@ -115,12 +135,13 @@ def submit(dataset_id: int, user: CurrentUser) -> dict:
         if mine is None:
             raise HTTPException(403, "You aren't assigned to assess this dataset")
         if mine["submitted_at"] is None:
+            open_ = recipes.open_field_ids(conn, recipe)
             left = conn.execute(
                 """SELECT count(*) AS n FROM meta.fields f
-                    WHERE f.dataset_id = %s AND NOT EXISTS (
-                          SELECT 1 FROM meta.assessments a WHERE a.recipe_id = %s AND a.user_id = %s
+                    WHERE f.dataset_id = %(ds)s AND (%(all)s OR f.id = ANY(%(open)s)) AND NOT EXISTS (
+                          SELECT 1 FROM meta.assessments a WHERE a.recipe_id = %(r)s AND a.user_id = %(u)s
                              AND a.field_id = f.id AND a.reviewed)""",
-                (dataset_id, recipe["id"], user["id"]),
+                {"ds": dataset_id, "r": recipe["id"], "u": user["id"], "all": open_ is None, "open": open_ or []},
             ).fetchone()["n"]
             if left:
                 raise HTTPException(409, f"Review every field before submitting ({left} left).")
@@ -162,8 +183,12 @@ def open_review(conn, recipe: dict, actor_id: int) -> list[int]:
     conn.execute("UPDATE meta.recipes SET phase = 'review' WHERE id = %s", (recipe["id"],))
     team = Source({**recipe, "phase": "review"})
     fam = _active_family(dataset_id)
-    by_field = assessments_by_field(conn, recipe["id"], _assessor_ids(conn, recipe["id"]))
-    fields = conn.execute("SELECT * FROM meta.fields WHERE dataset_id = %s ORDER BY ordinal", (dataset_id,)).fetchall()
+    by_field = _by_field(conn, recipe)
+    open_ = recipes.open_field_ids(conn, recipe)
+    keep = None if open_ is None else set(open_)
+    fields = [f for f in conn.execute("SELECT * FROM meta.fields WHERE dataset_id = %s ORDER BY ordinal",
+                                      (dataset_id,)).fetchall()
+              if keep is None or f["id"] in keep]
     before = _merged_many(conn, [f["id"] for f in fields], fam)
     for f in fields:
         stats = {k: f[k] for k in STAT_KEYS}
@@ -208,7 +233,7 @@ def review_queue(dataset_id: int, user: CurrentUser) -> dict:
     with connection() as conn:
         recipe = recipes.current(conn, dataset_id)
         _require_phase(recipe, "review", "finalized", doing="team review")
-        by_field = assessments_by_field(conn, recipe["id"], _assessor_ids(conn, recipe["id"]))
+        by_field = _by_field(conn, recipe)
         dis = sorted(disagreements(by_field))
         rows = conn.execute(
             """SELECT f.id, f.name, f.ordinal, f.inferred_type, d.action, d.semantic_type, d.reviewed,
@@ -235,7 +260,7 @@ def field_review(field_id: int, user: CurrentUser) -> dict:
     with connection() as conn:
         recipe = recipes.current(conn, f["dataset_id"])
         _require_phase(recipe, "review", "finalized", doing="team review")
-        rows = assessments_by_field(conn, recipe["id"], _assessor_ids(conn, recipe["id"])).get(field_id, [])
+        rows = _by_field(conn, recipe).get(field_id, [])
         return {
             "disagreement": field_id in disagreements({field_id: rows}),
             "assessments": [{k: a[k] for k in ("user_id", "user_name", "action", "semantic_type", "notes", "settings")}

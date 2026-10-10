@@ -26,7 +26,7 @@ export function accessOf(ds: Pick<Dataset, "phase" | "recipe_version">, me: Pick
       ? { source: "team", canEdit: true, note: "Team review: changes here set the team decision." }
       : { source: "team", canEdit: false, note: "Team review: a lead sets the team decision. You can comment on the Team page." };
   }
-  if (ds.phase === "finalized") return { source: "team", canEdit: false, note: `The ${v} is finalized; its decisions are frozen.` };
+  if (ds.phase === "finalized") return { source: "team", canEdit: false, note: `The ${v} is finalized; its decisions are frozen. A lead can start a new version on the Versions page.` };
   return { source: "team", canEdit: true, note: "" };
 }
 

@@ -124,6 +124,7 @@ def process_dataset(dataset_id: int, upload_path: str | None, fmt: str) -> None:
         with connection() as conn:
             upsert_correlations(conn, dataset_id, [(field_ids[a.i], field_ids[a.j], a) for a in screened])
             refresh_target_state(conn, dataset_id)
+        _apply_pending_recipe(dataset_id)
 
         st.set("ready", 1.0, "Ready", force=True)
         execute("UPDATE meta.datasets SET profiled_at = now() WHERE id = %s", (dataset_id,))
@@ -138,6 +139,32 @@ def process_dataset(dataset_id: int, upload_path: str | None, fmt: str) -> None:
     finally:
         if upload_path is not None:
             Path(upload_path).unlink(missing_ok=True)
+
+
+def _apply_pending_recipe(dataset_id: int) -> None:
+    """A dataset uploaded to start from a recipe gets it before it is ready, so nobody assesses it first. A recipe
+    that can no longer be used leaves a warning; the dataset then starts from the suggestions."""
+    from fastapi import HTTPException
+
+    from . import recipes, reuse
+    from .routers.datasets import queue_target_work
+
+    try:
+        with connection() as conn:
+            recipe = recipes.current(conn, dataset_id, lock="update")
+            pending = conn.execute(
+                "SELECT 1 FROM meta.recipes WHERE id = %s AND parent_id IS NOT NULL AND reuse IS NULL", (recipe["id"],)
+            ).fetchone()
+            if pending is None:
+                return
+            source = reuse.check_source(conn, recipe["parent_id"])
+            _, added, uncorrelated = reuse.apply(conn, recipe, source, recipe["created_by"])
+            start = queue_target_work(conn, dataset_id, uncorrelated, added, inline=True)
+        start()
+    except HTTPException as exc:
+        execute("UPDATE meta.recipes SET parent_id = NULL WHERE dataset_id = %s AND version = 1", (dataset_id,))
+        execute("UPDATE meta.datasets SET warnings = array_append(warnings, %s) WHERE id = %s",
+                (f"Could not start from the recipe: {exc.detail}", dataset_id))
 
 
 def _persist_profiles(dataset_id: int, profiles: list[profiling.FieldProfile], db_cols: list[str]) -> list[int]:
