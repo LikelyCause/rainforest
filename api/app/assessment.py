@@ -120,6 +120,20 @@ def key_owner(key: str | None) -> int | None:
     return int(key.rsplit(":", 1)[1])
 
 
+def personal_snapshot(conn, recipe: dict, user_id: int) -> dict:
+    """One assessor's assessment of a version, shaped like a recipe snapshot: their choices on the fields the version
+    works on, and the team's carried-over (locked) values for the rest."""
+    team = recipes.snapshot(conn, recipe["dataset_id"])
+    mine = recipes.snapshot(conn, recipe["dataset_id"], Source(recipe, user_id))
+    open_ = recipes.open_field_ids(conn, recipe)
+    if open_ is None:
+        names = set(mine["fields"])
+    else:
+        names = {r["name"] for r in conn.execute("SELECT name FROM meta.fields WHERE id = ANY(%s)", (open_,))}
+    fields = {n: (mine["fields"][n] if n in names and n in mine["fields"] else f) for n, f in team["fields"].items()}
+    return {**team, "fields": fields}
+
+
 # ------------------------------------------------------------------------------------------------- writes
 def write_decision(conn, src: Source, field_id: int, d: dict, decided: bool) -> None:
     """Shared columns of one field's decision; `decided` marks it a real change (source becomes 'user')."""

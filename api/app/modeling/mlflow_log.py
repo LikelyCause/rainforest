@@ -87,6 +87,8 @@ def run_tags(run: dict, dataset_name: str, report: dict, user: str | None) -> di
         "rainforest.export_id": run["export_id"],
         "rainforest.recipe_id": run.get("recipe_id"),
         "rainforest.recipe_version": run.get("recipe_version"),
+        "rainforest.experiment_id": run.get("experiment_id"),
+        "rainforest.experiment_name": run.get("experiment_name"),
         "rainforest.run_id": run["id"],
         "rainforest.model": report.get("model") or run.get("model"),
         "rainforest.model_family": report.get("export_family"),
@@ -127,8 +129,8 @@ def log_run(run: dict, dataset_name: str, report: dict, model_dir: Path | None, 
     a half-logged MLflow run so a retry (or the backfill) doesn't leave a duplicate behind.
 
     `run` is the meta.model_runs row (id, dataset_id, export_id, model, created_at, finished_at), with the export's
-    recipe_id and recipe_version when known; `report` is the
-    training report including `metrics`.
+    recipe_id and recipe_version and the experiment_id and experiment_name when known; `report` is the training
+    report including `metrics`.
     """
     from mlflow import MlflowClient
     from mlflow.entities import Metric, Param
@@ -175,10 +177,11 @@ def log_model_run(run_id: int, report: dict, user: str | None = None) -> dict[st
         run = fetch_one(
             """SELECT r.id, r.dataset_id, r.export_id, r.model, r.created_at, r.finished_at, d.name AS dataset_name,
                       u.name || coalesce(' <' || u.email || '>', '') AS user_label,
-                      e.recipe_id, rc.version AS recipe_version
+                      e.recipe_id, rc.version AS recipe_version, r.experiment_id, x.name AS experiment_name
                FROM meta.model_runs r JOIN meta.datasets d ON d.id = r.dataset_id
                LEFT JOIN meta.exports e ON e.id = r.export_id
                LEFT JOIN meta.recipes rc ON rc.id = e.recipe_id
+               LEFT JOIN meta.experiments x ON x.id = r.experiment_id
                LEFT JOIN meta.users u ON u.id = r.created_by WHERE r.id = %s""",
             (run_id,),
         )

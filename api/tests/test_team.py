@@ -382,7 +382,9 @@ SECRET_VALUE = "987654.321"
 @pytest.fixture(scope="module")
 def blind(people):
     """A dataset being assessed by A and B, where B has made choices nobody else may see: a note, a constant fill
-    value, dropping w and retyping z, by single saves and a bulk edit, and a "Kept only" Explore result."""
+    value, dropping w and retyping z, by single saves and a bulk edit, and a "Kept only" Explore result; and a
+    personal experiment on that assessment (named with the secret), with an export, a run and an Explore result on
+    the export."""
     lead, a, b = people["lead"], people["a"], people["b"]
     ds = _upload(lead)
     _assign(lead, ds, a, b)
@@ -398,7 +400,21 @@ def blind(people):
     assert an["params"]["decisions"].startswith("assessment:")
     # A has made a (different) choice of their own, so A reads their assessment rather than the team's.
     assert _save(a, f["c"]["id"], notes="A's own note", reviewed=True).status_code == 200
-    yield {"ds": ds, "fields": f, "b_analysis": an, "b_batch": r.json()["batch_id"]}
+    x = b.post(f"/api/datasets/{ds['id']}/experiments", json={
+        "name": f"B's {SECRET_NOTE}", "source": f"assessment:{ds['recipe_id']}:{b.user['id']}"}).json()
+    exp = b.post(f"/api/datasets/{ds['id']}/exports", json={"experiment_id": x["id"]}).json()
+    exp = _wait(lambda: (e := b.get(f"/api/exports/{exp['id']}").json())["status"] in ("done", "failed") and e)
+    assert exp["status"] == "done", exp["error"]
+    run = b.post(f"/api/exports/{exp['id']}/runs", json={"model": "lightgbm", "cv": 0, "params": {"n_estimators": 5}}
+                 ).json()
+    run = _wait(lambda: (e := b.get(f"/api/runs/{run['id']}").json())["status"] in ("done", "failed") and e)
+    assert run["status"] == "done", run["error"]
+    xan = b.post(f"/api/datasets/{ds['id']}/analyses",
+                 json={"kind": "importance", "params": {"data": f"export:{exp['id']}", "target": "y", "sample": 1000}}
+                 ).json()
+    assert "id" in xan, xan
+    yield {"ds": ds, "fields": f, "b_analysis": an, "b_batch": r.json()["batch_id"], "b_xp": x["id"],
+           "b_export": exp["id"], "b_run": run["id"], "b_export_analysis": xan["id"]}
     lead.delete(f"/api/datasets/{ds['id']}")
 
 
@@ -454,11 +470,40 @@ READS = {
     "sql bulk batches": lambda c, d, f, x: _sql(c, "SELECT * FROM meta.bulk_batches"),
     "sql analyses": lambda c, d, f, x: _sql(c, "SELECT * FROM meta.analyses"),
     "sql recipes": lambda c, d, f, x: _sql(c, "SELECT * FROM meta.recipes"),
+    # B's personal experiment, its export and run, and anything built on them.
+    "experiments": lambda c, d, f, x: c.get(f"/api/datasets/{d}/experiments"),
+    "experiment": lambda c, d, f, x: c.get(f"/api/experiments/{x['b_xp']}"),
+    "rename experiment": lambda c, d, f, x: c.patch(f"/api/experiments/{x['b_xp']}", json={"notes": "mine"}),
+    "exports of experiment": lambda c, d, f, x: c.get(f"/api/datasets/{d}/exports?experiment_id={x['b_xp']}"),
+    "export": lambda c, d, f, x: c.get(f"/api/exports/{x['b_export']}"),
+    "export data": lambda c, d, f, x: c.get(f"/api/exports/{x['b_export']}/files/data"),
+    "export pipeline": lambda c, d, f, x: c.get(f"/api/exports/{x['b_export']}/files/preprocessor"),
+    "export manifest": lambda c, d, f, x: c.get(f"/api/exports/{x['b_export']}/files/manifest"),
+    "export models": lambda c, d, f, x: c.get(f"/api/exports/{x['b_export']}/models"),
+    "export preview of experiment": lambda c, d, f, x: c.get(f"/api/datasets/{d}/export-preview?experiment_id={x['b_xp']}"),
+    "export into experiment": lambda c, d, f, x: c.post(f"/api/datasets/{d}/exports", json={"experiment_id": x["b_xp"]}),
+    "train on export": lambda c, d, f, x: c.post(f"/api/exports/{x['b_export']}/runs", json={"cv": 0}),
+    "runs": lambda c, d, f, x: c.get(f"/api/datasets/{d}/runs"),
+    "runs of experiment": lambda c, d, f, x: c.get(f"/api/datasets/{d}/runs?experiment_id={x['b_xp']}"),
+    "run": lambda c, d, f, x: c.get(f"/api/runs/{x['b_run']}"),
+    "run model": lambda c, d, f, x: c.get(f"/api/runs/{x['b_run']}/files/model"),
+    "run report": lambda c, d, f, x: c.get(f"/api/runs/{x['b_run']}/files/report"),
+    "explore on export": lambda c, d, f, x: c.post(f"/api/datasets/{d}/analyses", json={
+        "kind": "importance", "params": {"data": f"export:{x['b_export']}", "target": "y", "sample": 1000}}),
+    "another's export analysis": lambda c, d, f, x: c.get(f"/api/analyses/{x['b_export_analysis']}"),
+    "sql experiments": lambda c, d, f, x: _sql(c, f"SELECT * FROM meta.experiments WHERE dataset_id = {d}"),
+    "sql exports": lambda c, d, f, x: _sql(c, f"SELECT * FROM meta.exports WHERE dataset_id = {d}"),
+    "sql model runs": lambda c, d, f, x: _sql(c, f"SELECT * FROM meta.model_runs WHERE dataset_id = {d}"),
+    "sql model metrics": lambda c, d, f, x: _sql(c, f"SELECT * FROM meta.v_model_metrics WHERE dataset_id = {d}"),
 }
 
 
 # Reads that must be refused outright, whatever they would contain.
 REFUSED = {"undo another's batch": 404, "another's analysis": 404, "review queue": 409, "field review": 409,
+           **{name: 404 for name in ("experiment", "rename experiment", "export", "export data", "export pipeline",
+                                     "export manifest", "export models", "export preview of experiment",
+                                     "export into experiment", "train on export", "run", "run model", "run report",
+                                     "explore on export", "another's export analysis")},
            **{name: 400 for name in ("sql assessments", "sql assessment settings", "sql assessment batches",
                                      "sql assessors", "sql comments")}}
 
@@ -498,7 +543,15 @@ def test_no_read_path_shows_another_assessors_choices(people, blind, viewer, rea
         assert body["fields"] == []
     elif read == "sql analyses":
         idx = body["columns"].index("id")
-        assert blind["b_analysis"]["id"] not in [row[idx] for row in body["rows"]]
+        ids = [row[idx] for row in body["rows"]]
+        assert blind["b_analysis"]["id"] not in ids and blind["b_export_analysis"] not in ids
+    elif read == "datasets list":
+        mine = next(x for x in body if x["id"] == ds)
+        assert (mine["export_count"], mine["run_count"], mine["last_export"], mine["last_run"]) == (0, 0, None, None)
+    elif read in ("experiments", "exports of experiment", "runs", "runs of experiment"):
+        assert body == []
+    elif read.startswith("sql ") and read[4:] in ("experiments", "exports", "model runs", "model metrics"):
+        assert body["rows"] == [], read
 
 
 def test_the_console_role_has_no_access_to_private_tables(app_, people):

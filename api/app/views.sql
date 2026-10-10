@@ -53,8 +53,9 @@ FROM meta.field_correlations c
 JOIN meta.fields fa ON fa.id = c.field_a
 JOIN meta.fields fb ON fb.id = c.field_b;
 
--- One row per run x split x target x metric, for comparing models in SQL.
-CREATE VIEW meta.v_model_metrics AS
+-- One row per run x split x target x metric, for comparing models in SQL. Runs as the querying role, so the console
+-- sees only the runs model_runs' row-level security lets it see.
+CREATE VIEW meta.v_model_metrics WITH (security_invoker = true) AS
 SELECT r.dataset_id, r.export_id, r.id AS run_id, r.model, r.family, r.created_at,
        sp.key AS split, tg.key AS target, mt.key AS metric, (mt.value)::text::double precision AS value
 FROM meta.model_runs r,

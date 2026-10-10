@@ -1,0 +1,205 @@
+"""Experiments: where exports and model runs live, and who may see them.
+
+An experiment is built from a source:
+- `recipe:<recipe_id>`, a finalized recipe version (a team experiment), visible to everyone;
+- `assessment:<recipe_id>:<user_id>`, one assessor's own assessment of a version (personal). It is private to that
+  assessor while the version is `assessing`, and visible to the team from `review` onwards (phases only move
+  forward, so once visible it stays visible).
+
+Every read of experiments, exports and runs goes through `visible_ids` / `get_visible`. The SQL console's role gets
+the same rule from row-level security (migration 010). MLflow has no access control of its own, so runs of a
+private experiment are not logged to it until the version reaches review (`flush_deferred`).
+"""
+from __future__ import annotations
+
+import logging
+
+from fastapi import HTTPException
+
+from . import recipes
+from .db import fetch_all
+
+log = logging.getLogger(__name__)
+
+COLS = """x.id, x.dataset_id, x.name, x.owner, x.recipe_id, x.assessor_id, x.source, x.notes, x.created_at,
+          x.archived_at, xr.version AS recipe_version, xr.phase AS recipe_phase,
+          (x.assessor_id IS NOT NULL AND xr.phase = 'assessing') AS private,
+          (SELECT name FROM meta.users u WHERE u.id = coalesce(x.owner, x.assessor_id)) AS owner_name"""
+FROM = "meta.experiments x JOIN meta.recipes xr ON xr.id = x.recipe_id"
+# Metric that stands for a run when comparing experiments, in order of preference (validation split).
+HEADLINE_METRICS = ("roc_auc", "roc_auc_ovr_macro", "accuracy")
+
+
+def visible_ids(user_id: int) -> str:
+    """SQL for the ids of the experiments `user_id` may see, to use as `experiment_id IN (...)`."""
+    return (f"SELECT x.id FROM {FROM} WHERE x.assessor_id IS NULL OR x.assessor_id = {int(user_id)} "
+            "OR xr.phase <> 'assessing'")
+
+
+def source_key(recipe_id: int, assessor_id: int | None) -> str:
+    return f"recipe:{recipe_id}" if assessor_id is None else f"assessment:{recipe_id}:{assessor_id}"
+
+
+def parse_source(source: str) -> tuple[int, int | None]:
+    """(recipe id, assessor id or None) from a source key; 422 for anything else."""
+    parts = source.split(":")
+    try:
+        if parts[0] == "recipe" and len(parts) == 2:
+            return int(parts[1]), None
+        if parts[0] == "assessment" and len(parts) == 3:
+            return int(parts[1]), int(parts[2])
+    except ValueError:
+        pass
+    raise HTTPException(422, "source must be recipe:<recipe_id> or assessment:<recipe_id>:<user_id>")
+
+
+def get(conn, experiment_id: int) -> dict | None:
+    return conn.execute(f"SELECT {COLS} FROM {FROM} WHERE x.id = %s", (experiment_id,)).fetchone()
+
+
+def get_visible(conn, experiment_id: int, user: dict) -> dict:
+    """The experiment, or 404 when it doesn't exist or `user` may not see it (the same answer, so a private
+    experiment's existence doesn't show)."""
+    x = get(conn, experiment_id)
+    if x is None or (x["private"] and x["assessor_id"] != user["id"]):
+        raise HTTPException(404, "Experiment not found")
+    return x
+
+
+def require_writable(x: dict, user: dict) -> None:
+    """Adding exports or runs: anyone on a team experiment, only its assessor on a personal one; never archived."""
+    if x["archived_at"] is not None:
+        raise HTTPException(409, f"Experiment {x['name']!r} is archived; unarchive it to add to it.")
+    if x["assessor_id"] is not None and x["assessor_id"] != user["id"]:
+        raise HTTPException(403, "Only the assessor whose assessment it is can add to a personal experiment.")
+
+
+def require_editable(x: dict, user: dict) -> None:
+    """Renaming, notes, archiving: the owner (the assessor, for a personal one) or a lead."""
+    if user["role"] != "lead" and user["id"] not in (x["owner"], x["assessor_id"]):
+        raise HTTPException(403, "Only its owner or a lead can change this experiment.")
+
+
+def create(conn, dataset_id: int, name: str, source: str, user: dict, notes: str | None = None) -> dict:
+    recipe_id, assessor_id = parse_source(source)
+    recipe = recipes.get(conn, recipe_id)
+    if recipe is None or recipe["dataset_id"] != dataset_id:
+        raise HTTPException(404, "Recipe not found")
+    if assessor_id is None:
+        if recipe["phase"] != "finalized":
+            raise HTTPException(409, f"{recipes.label(recipe)} isn't finalized; a team experiment needs a finalized "
+                                     "version. Experiment on your own assessment instead.")
+    else:
+        if assessor_id != user["id"]:
+            raise HTTPException(403, "A personal experiment can only be built from your own assessment.")
+        if conn.execute("SELECT 1 FROM meta.assessments WHERE recipe_id = %s AND user_id = %s LIMIT 1",
+                        (recipe_id, assessor_id)).fetchone() is None:
+            raise HTTPException(403, f"You don't assess {recipes.label(recipe).lower()}.")
+    row = conn.execute(
+        """INSERT INTO meta.experiments (dataset_id, name, owner, recipe_id, assessor_id, source, notes)
+           VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+        (dataset_id, name.strip(), user["id"], recipe_id, assessor_id, source_key(recipe_id, assessor_id), notes),
+    ).fetchone()
+    return get(conn, row["id"])
+
+
+def team_for(conn, recipe: dict) -> dict:
+    """The default team experiment of a finalized version, created on first use."""
+    conn.execute("SELECT pg_advisory_xact_lock(7311207, %s)", (recipe["id"],))
+    row = conn.execute(
+        f"""SELECT {COLS} FROM {FROM} WHERE x.recipe_id = %s AND x.assessor_id IS NULL AND x.owner IS NULL
+              AND x.name = %s ORDER BY x.id LIMIT 1""",
+        (recipe["id"], team_name(recipe)),
+    ).fetchone()
+    if row is not None:
+        return row
+    made = conn.execute(
+        """INSERT INTO meta.experiments (dataset_id, name, recipe_id, source) VALUES (%s, %s, %s, %s) RETURNING id""",
+        (recipe["dataset_id"], team_name(recipe), recipe["id"], source_key(recipe["id"], None)),
+    ).fetchone()
+    return get(conn, made["id"])
+
+
+def team_name(recipe: dict) -> str:
+    return f"Team · v{recipe['version']}"
+
+
+def list_for(conn, dataset_id: int, user: dict) -> list[dict]:
+    rows = conn.execute(
+        f"""SELECT {COLS},
+                   (SELECT count(*) FROM meta.exports e WHERE e.experiment_id = x.id) AS export_count,
+                   (SELECT count(*) FROM meta.model_runs r WHERE r.experiment_id = x.id) AS run_count,
+                   (SELECT max(r.mlflow_experiment_id) FROM meta.model_runs r WHERE r.experiment_id = x.id)
+                       AS mlflow_experiment_id
+              FROM {FROM}
+             WHERE x.dataset_id = %s AND x.id IN ({visible_ids(user['id'])})
+             ORDER BY x.archived_at IS NOT NULL, x.created_at DESC, x.id DESC""",
+        (dataset_id,),
+    ).fetchall()
+    best = best_by_experiment(conn, [r["id"] for r in rows])
+    return [{**r, "best": best.get(r["id"])} for r in rows]
+
+
+def best_by_experiment(conn, ids: list[int]) -> dict[int, dict]:
+    """Per experiment, its best finished run on the validation split: the first target (in chain order) scored with
+    the most preferred metric any of its runs has."""
+    out: dict[int, dict] = {}
+    runs = conn.execute(
+        """SELECT id, experiment_id, report -> 'order' AS run_order, metrics -> 'valid' AS valid
+             FROM meta.model_runs WHERE experiment_id = ANY(%s) AND status = 'done'""",
+        (ids,),
+    ).fetchall()
+    by_exp: dict[int, list[dict]] = {}
+    for r in runs:
+        order, valid = r["run_order"] or [], r["valid"] or {}
+        scores = valid.get(order[0]) if order else None
+        if isinstance(scores, dict):
+            by_exp.setdefault(r["experiment_id"], []).append({"run_id": r["id"], "target": order[0], **scores})
+    for xid, scored in by_exp.items():
+        for metric in HEADLINE_METRICS:
+            have = [s for s in scored if isinstance(s.get(metric), (int, float))]
+            if have:
+                top = max(have, key=lambda s: s[metric])
+                out[xid] = {"metric": metric, "value": float(top[metric]), "run_id": top["run_id"],
+                            "target": top["target"]}
+                break
+    return out
+
+
+# ------------------------------------------------------------------------------------------- MLflow
+def run_is_private(conn, run_id: int) -> bool:
+    """Whether a run's experiment is private now. Locks the version's row (FOR SHARE) so the answer holds until the
+    caller commits: opening review takes it FOR UPDATE, so a run either sees review open or is flushed by it."""
+    row = conn.execute(
+        """SELECT x.assessor_id, xr.phase FROM meta.model_runs r JOIN meta.experiments x ON x.id = r.experiment_id
+             JOIN meta.recipes xr ON xr.id = x.recipe_id WHERE r.id = %s FOR SHARE OF xr""",
+        (run_id,),
+    ).fetchone()
+    return row is not None and row["assessor_id"] is not None and row["phase"] == "assessing"
+
+
+DEFERRED = ("SELECT r.id FROM meta.model_runs r JOIN meta.experiments x ON x.id = r.experiment_id "
+            "WHERE r.status = 'done' AND r.mlflow_run_id IS NULL AND r.report ? 'mlflow_pending' "
+            "AND (%(recipe)s::bigint IS NULL OR x.recipe_id = %(recipe)s)")
+
+
+def flush_deferred(recipe_id: int | None = None) -> int:
+    """Log the runs that waited for their experiment to stop being private (all such runs, or one version's).
+    Runs when review opens and at startup; mlflow_backfill skips runs still private, and records a failure on the
+    run as for any other logging failure."""
+    from .modeling import mlflow_backfill, mlflow_log
+
+    if not mlflow_log.enabled():
+        return 0
+    ids = [r["id"] for r in fetch_all(DEFERRED, {"recipe": recipe_id})]
+    if not ids:
+        return 0
+    logged, _ = mlflow_backfill.backfill(ids, say=lambda m: log.info("deferred MLflow logging: %s", m))
+    return logged
+
+
+def startup_flush() -> None:
+    try:
+        flush_deferred()
+    except Exception:  # noqa: BLE001
+        log.exception("flushing deferred MLflow runs failed")

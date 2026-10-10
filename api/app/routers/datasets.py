@@ -11,7 +11,7 @@ from psycopg import sql
 
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 
-from .. import jobs, recipes, reuse
+from .. import experiments, jobs, recipes, reuse
 from ..assessment import source_for
 from ..auth import CurrentUser, LeadUser
 from ..config import get_settings
@@ -66,6 +66,7 @@ HEADLINE_METRICS = ("roc_auc", "roc_auc_ovr_macro", "accuracy")
 
 @router.get("")
 def list_datasets(user: CurrentUser) -> list[dict]:
+    visible = experiments.visible_ids(user["id"])
     rows = fetch_all(
         f"""SELECT {SELECT_DATASET}, (a.user_id IS NOT NULL) AS assigned, a.submitted_at AS my_submitted_at,
                    (SELECT count(*) FROM meta.assessments x
@@ -77,8 +78,10 @@ def list_datasets(user: CurrentUser) -> list[dict]:
                    coalesce(c.field_count, 0) AS field_count, coalesce(c.reviewed_count, 0) AS reviewed_count,
                    coalesce(c.kept_count, 0) AS kept_count, coalesce(c.dropped_count, 0) AS dropped_count,
                    coalesce(c.target_count, 0) AS target_count,
-                   (SELECT count(*) FROM meta.exports x WHERE x.dataset_id = d.id) AS export_count,
-                   (SELECT count(*) FROM meta.model_runs x WHERE x.dataset_id = d.id) AS run_count,
+                   (SELECT count(*) FROM meta.exports x WHERE x.dataset_id = d.id
+                       AND x.experiment_id IN ({visible})) AS export_count,
+                   (SELECT count(*) FROM meta.model_runs x WHERE x.dataset_id = d.id
+                       AND x.experiment_id IN ({visible})) AS run_count,
                    e.id AS e_id, e.model_family AS e_model_family, e.status AS e_status,
                    e.created_at AS e_created_at, e.n_features AS e_n_features,
                    r.id AS r_id, r.model AS r_model, r.status AS r_status, r.report -> 'order' AS r_order,
@@ -93,8 +96,10 @@ def list_datasets(user: CurrentUser) -> list[dict]:
                                 count(*) FILTER (WHERE action = 'target') AS target_count
                            FROM meta.field_decisions GROUP BY dataset_id) c ON c.dataset_id = d.id
               LEFT JOIN LATERAL (SELECT * FROM meta.exports x WHERE x.dataset_id = d.id
+                                    AND x.experiment_id IN ({visible})
                                   ORDER BY x.created_at DESC, x.id DESC LIMIT 1) e ON true
               LEFT JOIN LATERAL (SELECT * FROM meta.model_runs x WHERE x.dataset_id = d.id
+                                    AND x.experiment_id IN ({visible})
                                   ORDER BY x.created_at DESC, x.id DESC LIMIT 1) r ON true
              ORDER BY d.created_at DESC""",
         {"user": user["id"]},

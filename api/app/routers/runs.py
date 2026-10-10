@@ -10,12 +10,13 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from .. import gpu, jobs
+from .. import experiments, gpu, jobs
 from ..auth import CurrentUser
-from ..db import execute, fetch_all, fetch_one, jsonb
+from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..modeling import mlflow_log
 from ..modeling.registry import MODELS, catalog, compatibility, param_problems
 from ..schemas import RunRequest
+from .exports import visible_export
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["models"])
@@ -24,7 +25,7 @@ MLFLOW_URL = """CASE WHEN mlflow_run_id IS NOT NULL
                    THEN '/mlflow/#/experiments/' || mlflow_experiment_id || '/runs/' || mlflow_run_id END AS mlflow_url"""
 RUN_COLS = f"""id, export_id, dataset_id, model, family, status, status_message, error, config, metrics,
               report - 'top_features' AS report, created_at, updated_at, finished_at, mlflow_experiment_id,
-              mlflow_run_id, {MLFLOW_URL}, created_by"""
+              mlflow_run_id, {MLFLOW_URL}, created_by, experiment_id"""
 
 
 @router.get("/models")
@@ -38,10 +39,8 @@ def system() -> dict:
     return {"gpu": gpu.detect()}
 
 
-def _export_manifest(export_id: int) -> tuple[dict, dict]:
-    exp = fetch_one("SELECT * FROM meta.exports WHERE id = %s", (export_id,))
-    if exp is None:
-        raise HTTPException(404, "Export not found")
+def _export_manifest(export_id: int, user: dict) -> tuple[dict, dict]:
+    exp = visible_export(export_id, user)
     if exp["status"] != "done":
         raise HTTPException(409, "Export is not finished")
     manifest = json.loads((Path(exp["output_dir"]) / "manifest.json").read_text())
@@ -49,9 +48,9 @@ def _export_manifest(export_id: int) -> tuple[dict, dict]:
 
 
 @router.get("/exports/{export_id}/models")
-def models_for_export(export_id: int) -> list[dict]:
+def models_for_export(export_id: int, user: CurrentUser) -> list[dict]:
     """Every registered model, with whether (and why not) it can train on this export."""
-    exp, manifest = _export_manifest(export_id)
+    exp, manifest = _export_manifest(export_id, user)
     out = []
     for m in catalog():
         spec = MODELS[m["key"]]
@@ -63,7 +62,9 @@ def models_for_export(export_id: int) -> list[dict]:
 
 @router.post("/exports/{export_id}/runs", status_code=202)
 def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
-    exp, manifest = _export_manifest(export_id)
+    exp, manifest = _export_manifest(export_id, user)
+    if req.experiment_id is not None and req.experiment_id != exp["experiment_id"]:
+        raise HTTPException(422, f"Export #{export_id} belongs to experiment {exp['experiment_id']}; its runs do too")
     spec = MODELS.get(req.model)
     if spec is None:
         raise HTTPException(422, f"Unknown model {req.model!r}")
@@ -81,34 +82,46 @@ def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
         raise HTTPException(422, {"message": "Invalid model parameters", "errors": problems})
     if req.order and sorted(req.order) != sorted(manifest["targets"]):
         raise HTTPException(422, f"order must be a permutation of {manifest['targets']}")
+    with connection() as conn:
+        experiments.require_writable(experiments.get_visible(conn, exp["experiment_id"], user), user)
     run = fetch_one(
         f"""INSERT INTO meta.model_runs (export_id, dataset_id, model, family, status, status_message, config, owner,
-                                         created_by)
-            VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s, %s) RETURNING {RUN_COLS}""",
-        (export_id, exp["dataset_id"], spec.key, spec.family, jsonb(req.model_dump()), jobs.owner_id(), user["id"]),
+                                         created_by, experiment_id)
+            VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s, %s, %s) RETURNING {RUN_COLS}""",
+        (export_id, exp["dataset_id"], spec.key, spec.family, jsonb(req.model_dump(exclude={"experiment_id"})),
+         jobs.owner_id(), user["id"], exp["experiment_id"]),
     )
     jobs.submit(_run, run["id"], exp["output_dir"], req.model_dump())
     return run
 
 
 @router.get("/datasets/{dataset_id}/runs")
-def list_runs(dataset_id: int) -> list[dict]:
+def list_runs(dataset_id: int, user: CurrentUser, experiment_id: int | None = None) -> list[dict]:
     return fetch_all(
-        f"SELECT {RUN_COLS} FROM meta.model_runs WHERE dataset_id = %s ORDER BY created_at DESC", (dataset_id,)
+        f"""SELECT {RUN_COLS} FROM meta.model_runs
+             WHERE dataset_id = %s AND experiment_id IN ({experiments.visible_ids(user['id'])})
+               AND (%s::bigint IS NULL OR experiment_id = %s) ORDER BY created_at DESC""",
+        (dataset_id, experiment_id, experiment_id),
     )
 
 
+def run_row(run_id: int, user_id: int | None = None) -> dict | None:
+    """One run with its MLflow link; with `user_id`, only if that user may see its experiment."""
+    visible = "" if user_id is None else f" AND experiment_id IN ({experiments.visible_ids(user_id)})"
+    return fetch_one(f"SELECT *, {MLFLOW_URL} FROM meta.model_runs WHERE id = %s{visible}", (run_id,))
+
+
 @router.get("/runs/{run_id}")
-def get_run(run_id: int) -> dict:
-    run = fetch_one(f"SELECT *, {MLFLOW_URL} FROM meta.model_runs WHERE id = %s", (run_id,))
+def get_run(run_id: int, user: CurrentUser) -> dict:
+    run = run_row(run_id, user["id"])
     if run is None:
         raise HTTPException(404, "Run not found")
     return run
 
 
 @router.get("/runs/{run_id}/files/{kind}")
-def download(run_id: int, kind: str) -> FileResponse:
-    run = get_run(run_id)
+def download(run_id: int, kind: str, user: CurrentUser) -> FileResponse:
+    run = get_run(run_id, user)
     files = {"model": ("classifier_chain.joblib", "application/octet-stream"), "report": ("report.json", "application/json")}
     if kind not in files or run["status"] != "done":
         raise HTTPException(404, "File not available")
@@ -117,6 +130,16 @@ def download(run_id: int, kind: str) -> FileResponse:
     if not path.exists():
         raise HTTPException(410, "Model files were removed")
     return FileResponse(path, media_type=media, filename=f"run{run_id}_{run['model']}_{name}")
+
+
+def _finish(conn, run_id: int, report: dict, logged: dict) -> None:
+    conn.execute(
+        """UPDATE meta.model_runs SET status = 'done', error = NULL, status_message = 'Done', metrics = %s,
+                  report = %s, mlflow_experiment_id = %s, mlflow_run_id = %s,
+                  model_dir = %s, finished_at = now(), updated_at = now() WHERE id = %s""",
+        (jsonb(report["metrics"]), jsonb({k: v for k, v in report.items() if k != "metrics"}),
+         logged.get("mlflow_experiment_id"), logged.get("mlflow_run_id"), report["model_dir"], run_id),
+    )
 
 
 def _run(run_id: int, export_dir: str, req: dict) -> None:
@@ -138,19 +161,20 @@ def _run(run_id: int, export_dir: str, req: dict) -> None:
             params = {"n_jobs": jobs.cpu_threads(), **params}
         report = train(Path(export_dir), req["model"], req.get("order"), req["seed"], params,
                        req["cv"] or None, out_dir, progress, device=req.get("device", "cpu"))
-        logged: dict = {}
         if mlflow_log.enabled():
+            with connection() as conn:
+                # MLflow has no access control, so a private experiment's run is logged once review opens.
+                if experiments.run_is_private(conn, run_id):
+                    _finish(conn, run_id, {**report, "mlflow_pending": True}, {})
+                    return
             progress("Logging to MLflow")
             logged = mlflow_log.log_model_run(run_id, report)
             if logged["mlflow_error"]:
                 report["mlflow_error"] = logged["mlflow_error"]
-        execute(
-            """UPDATE meta.model_runs SET status = 'done', error = NULL, status_message = 'Done', metrics = %s,
-                      report = %s, mlflow_experiment_id = %s, mlflow_run_id = %s,
-                      model_dir = %s, finished_at = now(), updated_at = now() WHERE id = %s""",
-            (jsonb(report["metrics"]), jsonb({k: v for k, v in report.items() if k != "metrics"}),
-             logged.get("mlflow_experiment_id"), logged.get("mlflow_run_id"), report["model_dir"], run_id),
-        )
+        else:
+            logged = {}
+        with connection() as conn:
+            _finish(conn, run_id, report, logged)
     except Exception as exc:  # noqa: BLE001
         log.exception("model run %s failed", run_id)
         execute(
