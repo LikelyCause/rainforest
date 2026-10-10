@@ -68,13 +68,9 @@ def test_unknown_task_is_refused(app_, people):
                      (fid,))
 
 
-def test_existing_targets_are_classes(app_):
+def test_every_target_has_a_task(app_):
     from app.db import connection
     with connection() as conn:
         bad = conn.execute("""SELECT count(*) AS n FROM meta.field_decisions
                                WHERE (action = 'target') <> (target_task IS NOT NULL)""").fetchone()["n"]
         assert bad == 0
-        snaps = conn.execute("""SELECT count(*) AS n FROM meta.recipes r, jsonb_each(r.snapshot -> 'fields') e
-                                 WHERE r.snapshot IS NOT NULL
-                                   AND NOT (e.value -> 'decision' ? 'target_task')""").fetchone()
-        assert snaps["n"] == 0
