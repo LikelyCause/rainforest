@@ -421,7 +421,7 @@ export function DatasetsPage() {
                       <td>
                         <div className="row" style={{ flexWrap: "nowrap" }}>
                           <StatusBadge ds={ds} />
-                          {ready && <PhaseBadge phase={ds.phase} label={ds.baseline ? baselineLabel(ds.baseline.family, ds.baseline.version, true) : null} />}
+                          {ready && <BaselineChips ds={ds} />}
                           {ds.my_assessment?.submitted && <span className="badge good" title="You submitted your assessment">✓ submitted</span>}
                           {ds.warnings.length > 0 && (
                             <span className="badge warn" title={ds.warnings.join("\n")}>⚠ {ds.warnings.length}</span>
@@ -491,5 +491,17 @@ export function DatasetsPage() {
       )}
       {deleting && <DeleteDialog ds={deleting} onClose={() => setDeleting(null)} />}
     </div>
+  );
+}
+
+/** Each baseline of a dataset, by model type: its latest version and phase. */
+function BaselineChips({ ds }: { ds: Dataset }) {
+  if (ds.baseline?.setup) return <span className="badge accent" title="A lead sets up its first baseline: model type, targets and assessors">Baseline to set up</span>;
+  return (
+    <>
+      {ds.baselines.map((b) => (
+        <PhaseBadge key={b.family} phase={b.phase} label={baselineLabel(b.family, b.version, true)} />
+      ))}
+    </>
   );
 }

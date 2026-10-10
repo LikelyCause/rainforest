@@ -326,3 +326,22 @@ def test_explore_uses_the_decisions_it_is_given(people):
     assert c.get(f"/api/analyses/{an.json()['id']}").status_code == 200
     assert c.post(f"/api/datasets/{ds['id']}/analyses", json={
         "kind": "importance", "view": "baseline:999999", "params": {"target": "y", "kept": True}}).status_code == 404
+
+
+def test_sql_views_name_the_baseline(people):
+    from app.db import connection
+
+    lead = people["lead"]
+    ds, rid = finalized_trees(lead)
+    x = experiment(lead, ds, rid, "views")
+    e = export(lead, ds, x)
+    run = lead.post(f"/api/exports/{e['id']}/runs", json={"model": "lightgbm", "cv": 0, "params": {"n_estimators": 5}})
+    from .team_helpers import wait
+    wait(lambda: lead.get(f"/api/runs/{run.json()['id']}").json()["status"] in ("done", "failed"))
+    with connection() as conn:
+        row = conn.execute("SELECT baseline_family, baseline_version FROM meta.v_fields WHERE dataset_id = %s LIMIT 1",
+                           (ds["id"],)).fetchone()
+        assert (row["baseline_family"], row["baseline_version"]) == ("tree", 1)
+        m = conn.execute("""SELECT baseline_family, baseline_version, experiment_id FROM meta.v_model_metrics
+                             WHERE dataset_id = %s LIMIT 1""", (ds["id"],)).fetchone()
+        assert (m["baseline_family"], m["baseline_version"], m["experiment_id"]) == ("tree", 1, x["id"])

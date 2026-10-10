@@ -5,10 +5,12 @@ DROP VIEW IF EXISTS meta.v_field_settings;
 DROP VIEW IF EXISTS meta.v_correlations;
 DROP VIEW IF EXISTS meta.v_model_metrics;
 
--- Every field with its profile and the suggestion for the dataset's active model family, without anyone's decision.
+-- Every field with its profile and the suggestion for the current baseline's model family, without anyone's
+-- decision; baseline_family / baseline_version name that baseline (the one in progress, else the latest started).
 CREATE VIEW meta.v_field_profiles AS
 SELECT
-    f.dataset_id, d.name AS dataset_name, d.model_family, f.id AS field_id, f.ordinal, f.name, f.db_column,
+    f.dataset_id, d.name AS dataset_name, d.model_family, rc.family AS baseline_family, rc.version AS baseline_version,
+    f.id AS field_id, f.ordinal, f.name, f.db_column,
     f.physical_dtype, f.inferred_type, f.inference_confidence, f.is_target, f.leakage_flag,
     f.row_count, f.null_count, f.null_pct, f.n_unique, f.unique_pct, f.mean, f.std, f.min_value, f.max_value,
     f.median, f.skewness, f.kurtosis, f.zeros_pct, f.outlier_pct, f.top_value, f.top_value_pct, f.avg_length,
@@ -16,9 +18,10 @@ SELECT
     f.suggestion -> d.model_family ->> 'action' AS suggested_action,
     f.suggestion -> d.model_family ->> 'semantic_type' AS suggested_type
 FROM meta.fields f
-JOIN meta.datasets d ON d.id = f.dataset_id;
+JOIN meta.datasets d ON d.id = f.dataset_id
+LEFT JOIN LATERAL (SELECT family, version FROM meta.recipes WHERE dataset_id = d.id ORDER BY id DESC LIMIT 1) rc ON true;
 
--- Flat view of every field, the team decision and the settings for the dataset's active model family.
+-- Flat view of every field, the team decision of the baseline in progress and its model family's settings.
 CREATE VIEW meta.v_fields AS
 SELECT
     p.*,
@@ -56,10 +59,13 @@ JOIN meta.fields fb ON fb.id = c.field_b;
 -- One row per run x split x target x metric, for comparing models in SQL. Runs as the querying role, so the console
 -- sees only the runs model_runs' row-level security lets it see.
 CREATE VIEW meta.v_model_metrics WITH (security_invoker = true) AS
-SELECT r.dataset_id, r.export_id, r.id AS run_id, r.model, r.family, r.created_at,
+SELECT r.dataset_id, r.export_id, r.experiment_id, r.id AS run_id, r.model, r.family, r.created_at,
+       rc.family AS baseline_family, rc.version AS baseline_version,
        sp.key AS split, tg.key AS target, mt.key AS metric, (mt.value)::text::double precision AS value
-FROM meta.model_runs r,
-     jsonb_each(r.metrics) sp,
-     jsonb_each(sp.value) tg,
-     jsonb_each(tg.value) mt
+FROM meta.model_runs r
+LEFT JOIN meta.exports e ON e.id = r.export_id
+LEFT JOIN meta.recipes rc ON rc.id = e.recipe_id
+CROSS JOIN LATERAL jsonb_each(r.metrics) sp
+CROSS JOIN LATERAL jsonb_each(sp.value) tg
+CROSS JOIN LATERAL jsonb_each(tg.value) mt
 WHERE r.status = 'done' AND jsonb_typeof(mt.value) = 'number';
