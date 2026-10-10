@@ -5,7 +5,7 @@ import { api } from "../api";
 import { useFields } from "../hooks";
 import { ErrorAlert } from "../components/ui";
 import { RunDetail } from "../components/RunDetail";
-import { familyShort, fmtAgo, fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
+import { familyShort, fmtAgo, fmtDate, fmtInt, fmtMetric, fmtNum, fmtPct } from "../format";
 import { toast } from "../toast";
 import { bestRuns, metricFor, type RunMetric } from "../runs";
 import { sourceLabel } from "../experiments";
@@ -360,8 +360,8 @@ function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: 
     const isBest = best[`${t}:${m}`] === r.id;
     return (
       <td className="num" style={isBest ? { fontWeight: 700 } : undefined}
-        title={isBest ? `Best on the validation split (${fmtNum(metricFor(r, "valid", t, m), 3)})` : undefined}>
-        {fmtNum(v, 3)}{isBest ? " ★" : ""}
+        title={isBest ? `Best on the validation split (${fmtMetric(metricFor(r, "valid", t, m))})` : undefined}>
+        {fmtMetric(v)}{isBest ? " ★" : ""}
       </td>
     );
   };
@@ -370,7 +370,7 @@ function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: 
     <table className="data runs">
       <thead>
         <tr className="group-head">
-          <td colSpan={7 + targets.length * 2}>
+          <td colSpan={6 + targets.length * 2}>
             Export #{e.id} · {familyShort(e.model_family)}{e.recipe_version != null ? ` · recipe v${e.recipe_version}` : ""}{sc ? ` · ${fmtInt(sc.train)} / ${fmtInt(sc.valid)} / ${fmtInt(sc.test)}` : ""}
           </td>
         </tr>
@@ -378,7 +378,7 @@ function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: 
           <th>Model</th><th>Chain order</th><th>Status</th>
           {targets.map((t) => <th key={"a" + t} className="num">{t} AUC</th>)}
           {targets.map((t) => <th key={"f" + t} className="num">{t} F1 (macro)</th>)}
-          <th className="num">Fit</th><th>Device</th><th>MLflow</th><th />
+          <th className="num">Fit</th><th>Device</th><th>MLflow</th>
         </tr>
       </thead>
       <tbody>
@@ -400,10 +400,9 @@ function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: 
               <td className="num">{r.report?.fit_seconds !== undefined ? `${fmtNum(r.report.fit_seconds, 2)}s` : "—"}</td>
               <td>{(r.report?.device ?? r.config?.device) === "cuda" ? <span className="badge accent">GPU</span> : <span className="muted small-text">CPU</span>}</td>
               <td><MlflowCell r={r} /></td>
-              <td>{r.status === "done" && <a href={`/api/runs/${r.id}/files/model`} onClick={(ev) => ev.stopPropagation()}>model</a>}</td>
             </tr>
             {open === r.id && (
-              <tr className="run-detail"><td colSpan={7 + targets.length * 2}><RunDetail run={r} targets={order} /></td></tr>
+              <tr className="run-detail"><td colSpan={6 + targets.length * 2}><RunDetail run={r} targets={order} /></td></tr>
             )}
           </Fragment>
         );
