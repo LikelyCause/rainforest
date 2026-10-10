@@ -204,11 +204,11 @@ class ExperimentPatch(BaseModel):
 class UserIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     email: str | None = Field(None, max_length=320)
-    role: Literal["lead", "member"] = "member"
+    role: Literal["lead", "member", "viewer"] = "member"
 
 
 class UserPatch(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=200)
     email: str | None = Field(None, max_length=320)
-    role: Literal["lead", "member"] | None = None
+    role: Literal["lead", "member", "viewer"] | None = None
     active: bool | None = None

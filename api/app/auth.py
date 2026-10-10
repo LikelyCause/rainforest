@@ -311,7 +311,7 @@ def pick(body: PickIn, request: Request, response: Response) -> dict:
         raise HTTPException(404, "No active user with that id")
     users.touch(user["id"])
     _sign_in(response, request, user)
-    return {k: user[k] for k in ("id", "name", "email", "role")} | {"mode": "pick"}
+    return {k: user.get(k) for k in ("id", "name", "email", "role", "key", "avatar_url")} | {"mode": "pick"}
 
 
 # OIDC mode ---------------------------------------------------------------------------------------

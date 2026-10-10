@@ -41,6 +41,8 @@ class Settings(BaseSettings):
 
     # Sign-in: "oidc" for team deployments, "pick" (choose a user, no authentication) for dev and demos.
     auth_mode: Literal["pick", "oidc"] = Field("pick", validation_alias="RAINFOREST_AUTH_MODE")
+    # Pick mode's accounts, "key[#id]:Name:role;…" (roles lead, member, viewer). When set, it is the whole list.
+    users: str = Field("", validation_alias="RAINFOREST_USERS")
     oidc_issuer: str = Field("", validation_alias="RAINFOREST_OIDC_ISSUER")
     # Where the API itself fetches discovery, when the issuer URL isn't reachable from its container.
     oidc_discovery_url: str = Field("", validation_alias="RAINFOREST_OIDC_DISCOVERY_URL")

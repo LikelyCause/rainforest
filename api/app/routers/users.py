@@ -17,8 +17,13 @@ def list_users(_: CurrentUser) -> list[dict]:
     return users.list_all()
 
 
+ENV_MANAGED = "Accounts come from RAINFOREST_USERS in .env; change them there and restart."
+
+
 @router.post("", status_code=201)
 def create_user(body: UserIn, _: LeadUser) -> dict:
+    if users.managed_by_env():
+        raise HTTPException(409, ENV_MANAGED)
     if get_settings().auth_mode == "oidc":
         raise HTTPException(409, "Users come from the identity provider; they are added when they first sign in.")
     return users.create(body.name.strip(), (body.email or "").strip() or None, body.role)
@@ -31,6 +36,8 @@ def update_user(user_id: int, body: UserPatch, _: LeadUser) -> dict:
         changes["name"] = changes["name"].strip()
     if "email" in changes:
         changes["email"] = (changes["email"] or "").strip() or None
+    if users.managed_by_env():
+        raise HTTPException(409, ENV_MANAGED)
     if get_settings().auth_mode == "oidc" and set(changes) - {"active"}:
         raise HTTPException(409, "Names, emails and roles come from the identity provider; "
                                  "here a user can only be deactivated or reactivated.")

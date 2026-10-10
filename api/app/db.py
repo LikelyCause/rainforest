@@ -144,9 +144,14 @@ def apply_migrations(conn: psycopg.Connection) -> list[str]:
 
 def bootstrap() -> None:
     """Migrate the schema and (re)configure the read-only role. Safe to run from several workers."""
-    from . import experiments, recipes
+    from . import experiments, recipes, users
 
     s = get_settings()
+    if s.auth_mode == "pick" and s.users.strip():
+        try:
+            users.parse_accounts(s.users)  # before any write, so a bad list changes nothing
+        except ValueError as exc:
+            raise SystemExit(f"RAINFOREST_USERS: {exc}") from None
     with connection() as conn:
         conn.execute("SELECT pg_advisory_lock(%s)", (_SCHEMA_LOCK_KEY,))
         try:
@@ -154,9 +159,14 @@ def bootstrap() -> None:
             recipes.backfill_snapshots(conn)
             conn.execute("SELECT meta.import_orphan_experiments()")
             experiments.backfill_copies(conn)
-            # Someone has to be able to sign in (pick mode) and manage users on a fresh or emptied install.
-            conn.execute("INSERT INTO meta.users (name, role) SELECT 'Admin', 'lead' "
-                         "WHERE NOT EXISTS (SELECT 1 FROM meta.users)")
+            if s.auth_mode == "pick" and s.users.strip():
+                done = users.sync_accounts(conn, users.parse_accounts(s.users))
+                if any(done.values()):
+                    log.info("accounts from RAINFOREST_USERS: %s", done)
+            else:
+                # Someone has to be able to sign in (pick mode) and manage users on a fresh or emptied install.
+                conn.execute("INSERT INTO meta.users (name, role) SELECT 'Admin', 'lead' "
+                             "WHERE NOT EXISTS (SELECT 1 FROM meta.users)")
             role = sql.Identifier(s.readonly_role)
             exists = conn.execute(
                 "SELECT 1 FROM pg_roles WHERE rolname = %s", (s.readonly_role,)
