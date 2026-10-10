@@ -39,7 +39,16 @@ jobs:
           cache-dependency-path: api/requirements*.txt
       - run: sudo apt-get install -y --no-install-recommends libgomp1
       - run: pip install -r requirements-dev.txt
+      - name: Start an MLflow tracking server
+        run: |
+          docker run -d --name mlflow -p 5000:5000 ghcr.io/mlflow/mlflow:v3.17.0 mlflow server \
+            --host 0.0.0.0 --port 5000 --backend-store-uri sqlite:////tmp/mlflow.db \
+            --serve-artifacts --artifacts-destination /tmp/mlartifacts --static-prefix /mlflow
+          for i in $(seq 60); do curl -fs http://localhost:5000/mlflow/health && exit 0; sleep 2; done
+          docker logs mlflow; exit 1
       - run: pytest -q -rs
+        env:
+          MLFLOW_TEST_URI: http://localhost:5000/mlflow
 
   ui:
     name: UI typecheck, tests and build

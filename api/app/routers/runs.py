@@ -13,14 +13,18 @@ from fastapi.responses import FileResponse
 from .. import gpu, jobs
 from ..auth import CurrentUser
 from ..db import execute, fetch_all, fetch_one, jsonb
+from ..modeling import mlflow_log
 from ..modeling.registry import MODELS, catalog, compatibility, param_problems
 from ..schemas import RunRequest
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["models"])
 
-RUN_COLS = """id, export_id, dataset_id, model, family, status, status_message, error, config, metrics,
-              report - 'top_features' AS report, created_at, updated_at, finished_at, created_by"""
+MLFLOW_URL = """CASE WHEN mlflow_run_id IS NOT NULL
+                   THEN '/mlflow/#/experiments/' || mlflow_experiment_id || '/runs/' || mlflow_run_id END AS mlflow_url"""
+RUN_COLS = f"""id, export_id, dataset_id, model, family, status, status_message, error, config, metrics,
+              report - 'top_features' AS report, created_at, updated_at, finished_at, mlflow_experiment_id,
+              mlflow_run_id, {MLFLOW_URL}, created_by"""
 
 
 @router.get("/models")
@@ -96,7 +100,7 @@ def list_runs(dataset_id: int) -> list[dict]:
 
 @router.get("/runs/{run_id}")
 def get_run(run_id: int) -> dict:
-    run = fetch_one("SELECT * FROM meta.model_runs WHERE id = %s", (run_id,))
+    run = fetch_one(f"SELECT *, {MLFLOW_URL} FROM meta.model_runs WHERE id = %s", (run_id,))
     if run is None:
         raise HTTPException(404, "Run not found")
     return run
@@ -134,12 +138,18 @@ def _run(run_id: int, export_dir: str, req: dict) -> None:
             params = {"n_jobs": jobs.cpu_threads(), **params}
         report = train(Path(export_dir), req["model"], req.get("order"), req["seed"], params,
                        req["cv"] or None, out_dir, progress, device=req.get("device", "cpu"))
+        logged: dict = {}
+        if mlflow_log.enabled():
+            progress("Logging to MLflow")
+            logged = mlflow_log.log_model_run(run_id, report)
+            if logged["mlflow_error"]:
+                report["mlflow_error"] = logged["mlflow_error"]
         execute(
             """UPDATE meta.model_runs SET status = 'done', error = NULL, status_message = 'Done', metrics = %s,
-                      report = %s,
+                      report = %s, mlflow_experiment_id = %s, mlflow_run_id = %s,
                       model_dir = %s, finished_at = now(), updated_at = now() WHERE id = %s""",
             (jsonb(report["metrics"]), jsonb({k: v for k, v in report.items() if k != "metrics"}),
-             report["model_dir"], run_id),
+             logged.get("mlflow_experiment_id"), logged.get("mlflow_run_id"), report["model_dir"], run_id),
         )
     except Exception as exc:  # noqa: BLE001
         log.exception("model run %s failed", run_id)

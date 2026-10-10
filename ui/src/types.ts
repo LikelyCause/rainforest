@@ -287,7 +287,11 @@ export interface ModelRun {
     model_label?: string;
     n_features?: number;
     evaluation?: Record<string, Record<string, TargetEvaluation>>; // split -> target
+    mlflow_error?: string;
   };
+  mlflow_run_id: string | null;
+  /** The run in the MLflow UI (served at /mlflow/); null when it wasn't logged. */
+  mlflow_url: string | null;
   created_at: string;
   finished_at: string | null;
 }

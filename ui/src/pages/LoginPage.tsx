@@ -1,6 +1,6 @@
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, oidcLoginUrl, safeNext } from "../api";
+import { api, isServerPath, oidcLoginUrl, safeNext } from "../api";
 import { Logo } from "../components/Logo";
 import { ErrorAlert } from "../components/ui";
 import { roleLabel } from "../format";
@@ -22,7 +22,9 @@ function PickUser({ next }: { next: string }) {
     onSuccess: () => {
       // Drop everything fetched (and failed) while signed out.
       qc.clear();
-      nav(next, { replace: true });
+      // /mlflow/ is served by nginx, not the app, so it needs a full page load.
+      if (isServerPath(next)) window.location.assign(next);
+      else nav(next, { replace: true });
     },
   });
   return (

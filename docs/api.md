@@ -32,7 +32,7 @@ The session cookie is `HttpOnly`, `SameSite=Strict`, lasts 7 days and is `Secure
 |---|---|---|---|
 | GET | `/api/auth/config` | *Open.* What the sign-in page needs: `mode` (`pick`, `oidc`), `provider_name`, `lead_group`, `member_group`, and `problem` (why OIDC can't work yet, else null). | |
 | GET | `/api/auth/me` | The signed-in user: `id`, `name`, `email`, `role` (`lead`, `member`), `mode`. | |
-| GET, HEAD, POST, PUT, PATCH, DELETE | `/api/auth/check` | `204` when the session is valid, `401` otherwise, for nginx `auth_request` (no body needed; a cross-origin unsafe method still gets `403`). | |
+| GET, HEAD, POST, PUT, PATCH, DELETE | `/api/auth/check` | `204` when the session is valid, `401` otherwise, for nginx `auth_request` on `/mlflow/` (no body needed; a cross-origin unsafe method still gets `403`). | |
 | POST | `/api/auth/logout` | *Open.* Clear the session cookie. Returns `{logout_url}`: in `oidc` mode the provider's end-session URL (with `client_id` and `post_logout_redirect_uri` = `<origin>/login`) for the browser to visit next, else null. | |
 | GET | `/api/auth/users` | *Open, pick mode* (`404` otherwise). Active users for the picker: `id`, `name`, `role` only. | |
 | POST | `/api/auth/pick` | *Open, pick mode* (`404` otherwise). Sign in as an active user (`404` for an unknown or deactivated one); returns it as `/me` does. | body: `user_id` |
@@ -97,8 +97,8 @@ The session cookie is `HttpOnly`, `SameSite=Strict`, lasts 7 days and is `Secure
 | GET | `/api/system` | Training hardware: `gpu` is `null`, or `{available, name, memory_mb, driver, count, reason}`. Detected once per worker, in the background at startup (a request during detection waits for it). | |
 | GET | `/api/exports/{export_id}/models` | Every model with whether it can train on this export, and why not. | |
 | POST | `/api/exports/{export_id}/runs` | Train a `ClassifierChain` on a finished export. `202`. | `model` (default `lightgbm`), `order` (permutation of the export's targets), `cv` (0 chains the ground truth, or 2–10; default 5), `seed`, `params` (overrides of the model's defaults; `422` for a name the model doesn't have or a value its own checks reject), `device` (`cpu` default, or `cuda`: `422` if the model can't, `409` if no usable GPU) |
-| GET | `/api/datasets/{dataset_id}/runs` | The dataset's runs, newest first, with metrics and report (without top features). | |
-| GET | `/api/runs/{run_id}` | One run, full report. | |
+| GET | `/api/datasets/{dataset_id}/runs` | The dataset's runs, newest first, with metrics and report (without top features). Each has `mlflow_experiment_id`, `mlflow_run_id` and `mlflow_url` (`/mlflow/#/experiments/<id>/runs/<id>`), all `null` when the run wasn't logged; `report.mlflow_error` says why when logging failed. | |
+| GET | `/api/runs/{run_id}` | One run, full report, with the same MLflow fields. | |
 | GET | `/api/runs/{run_id}/files/{kind}` | Download a finished run's file. | `kind`: `model` (`classifier_chain.joblib`), `report` (`report.json`) |
 
 ## Explore (`routers/explore.py`)

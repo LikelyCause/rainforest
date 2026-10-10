@@ -141,6 +141,11 @@ export function RunDetail({ run, targets }: { run: ModelRun; targets: string[] }
           ))}
         </div>
       </div>
+      {run.mlflow_url ? (
+        <span className="small-text"><a href={run.mlflow_url} target="_blank" rel="noopener">Open this run in MLflow ↗</a></span>
+      ) : run.report?.mlflow_error ? (
+        <div className="alert warn">Not logged to MLflow: {run.report.mlflow_error} (log it later with make mlflow-backfill)</div>
+      ) : null}
       {metrics ? (
         <div className="grid-2">
           {targets.filter((t) => metrics[t]).map((t) => (

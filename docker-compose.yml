@@ -30,6 +30,7 @@ services:
       context: ./api
       args:
         EXTRA_PIP: ${API_EXTRA_PIP:-}
+        GIT_SHA: ${GIT_SHA:-}
     restart: unless-stopped
     depends_on:
       db:
@@ -56,6 +57,8 @@ services:
       RAINFOREST_MEMBER_GROUP: ${RAINFOREST_MEMBER_GROUP:-rainforest-member}
       RAINFOREST_SESSION_SECRET: ${RAINFOREST_SESSION_SECRET:-}
       RAINFOREST_ALLOWED_HOSTS: ${RAINFOREST_ALLOWED_HOSTS:-*}
+      # Empty turns MLflow logging off. The server serves everything, its REST API too, under /mlflow.
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI-http://mlflow:5000/mlflow}
       # Tuning (README › Configuration); the defaults match api/app/config.py.
       PROFILE_SAMPLE_ROWS: ${PROFILE_SAMPLE_ROWS:-500000}
       CORR_SAMPLE_ROWS: ${CORR_SAMPLE_ROWS:-100000}
@@ -78,6 +81,30 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+
+  mlflow:
+    build: ./mlflow
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Its own database in the db service, created on start if missing.
+      MLFLOW_BACKEND_STORE_URI: postgresql://${POSTGRES_USER:-rainforest}:${POSTGRES_PASSWORD:-rainforest}@db:5432/mlflow
+    # No host port: the API logs to it directly, browsers reach it through the UI's nginx at /mlflow/.
+    command: >
+      --host 0.0.0.0 --port 5000 --workers 2
+      --serve-artifacts --artifacts-destination /mlartifacts
+      --static-prefix /mlflow
+      --allowed-hosts mlflow,mlflow:5000
+    volumes:
+      - mlartifacts:/mlartifacts
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/mlflow/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   ui:
     build: ./ui
@@ -138,3 +165,4 @@ services:
 volumes:
   pgdata:
   appdata:
+  mlartifacts:

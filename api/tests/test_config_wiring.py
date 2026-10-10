@@ -8,9 +8,9 @@ import yaml
 from app.config import Settings
 
 COMPOSE = Path(__file__).resolve().parents[2] / "docker-compose.yml"
-NOT_PASSED = {"readonly_role"}  # fixed by design
+NOT_PASSED = {"readonly_role", "git_sha"}  # fixed by design; baked into the image at build time
 # Compose computes these differently from the API's local-development defaults.
-OWN_DEFAULTS = {"database_url", "data_dir", "readonly_password", "session_secret"}
+OWN_DEFAULTS = {"database_url", "data_dir", "readonly_password", "session_secret", "mlflow_tracking_uri"}
 
 
 @pytest.fixture(scope="module")

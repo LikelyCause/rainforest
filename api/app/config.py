@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     session_secret: str = Field("", validation_alias="RAINFOREST_SESSION_SECRET")
     allowed_hosts: str = Field("*", validation_alias="RAINFOREST_ALLOWED_HOSTS")
 
+    # Empty: training runs are not logged to MLflow.
+    mlflow_tracking_uri: str = ""
+    git_sha: str = ""
+
     @property
     def uploads_dir(self) -> Path:
         return self.data_dir / "uploads"

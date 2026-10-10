@@ -23,6 +23,9 @@ ARG EXTRA_PIP=""
 RUN if [ -n "$EXTRA_PIP" ]; then pip install $EXTRA_PIP; fi
 
 COPY app ./app
+# Tagged on MLflow runs; `make up` passes the checkout's commit.
+ARG GIT_SHA=""
+ENV GIT_SHA=$GIT_SHA
 
 RUN useradd --create-home --uid 10001 appuser \
  && mkdir -p /data \

@@ -18,6 +18,10 @@ export function safeNext(next: string | null): string {
 
 /** OIDC sign-in starts at the API, which redirects on to the provider. */
 export const oidcLoginUrl = (next: string) => `/api/auth/oidc/login?next=${encodeURIComponent(next)}`;
+/** Paths nginx serves itself rather than the single-page app, so reaching one needs a full page load. */
+export function isServerPath(path: string): boolean {
+  return path === "/mlflow" || path.startsWith("/mlflow/");
+}
 
 let unauthorizedHandler = (next: string) => window.location.assign(`/login?next=${encodeURIComponent(next)}`);
 
