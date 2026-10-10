@@ -75,7 +75,7 @@ def test_login_redirect_carries_pkce_state_and_nonce(oidc_env):
 def test_config_names_the_provider(oidc_env):
     cfg = TestClient(app).get("/api/auth/config").json()
     assert cfg == {"mode": "oidc", "provider_name": "Keycloak", "lead_group": "rainforest-lead",
-                   "member_group": "rainforest-member", "problem": None}
+                   "member_group": "rainforest-member", "problem": None, "accounts_from_env": False}
 
 
 def test_callback_refuses_a_missing_or_mismatched_state(oidc_env, provider):
