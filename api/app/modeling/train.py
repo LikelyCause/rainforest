@@ -1,4 +1,4 @@
-"""Train a classifier inside an sklearn ClassifierChain on an exported, model-ready dataset.
+"""Train a chain of models, one per target, on an exported, model-ready dataset.
 
     python -m app.modeling.train --export-id 3                       # LightGBM (default)
     python -m app.modeling.train --export-id 3 --model xgboost --order column_b,column_a
@@ -16,6 +16,10 @@ upstream predictions instead of the ground truth it will never see at inference 
 * any target multiclass -> chain_method="predict"       (the predicted class code is passed
   down; sklearn's chain stores one column per target, so a k-class probability vector
   can't be chained)
+
+When any target is predicted as a number, the run uses `TargetChain` instead: a classifier or a regressor per
+target, chaining P(class 1) for a binary target, the predicted class for a multiclass one and the predicted value
+for a number. Runs with only class targets keep ClassifierChain, so their results are unchanged.
 
 Models come from `registry.MODELS`; which ones may train on an export depends on the
 model family the export was prepared for (see `registry.compatibility`).
@@ -47,7 +51,7 @@ from sklearn.multioutput import ClassifierChain
 
 from ..gpu import effective_device
 from .registry import (DEFAULT_MODEL, MODELS, ModelSpec, catalog, compatibility, device_params, get_model,
-                       importances, order_problem, param_problems)
+                       importances, order_problem, param_problems, regression_problem, regressor_params)
 
 log = logging.getLogger("train")
 
@@ -75,6 +79,65 @@ class NaNTolerantClassifierChain(ClassifierChain):
     def predict_proba(self, X):
         with config_context(assume_finite=True):
             return super().predict_proba(X)
+
+
+class TargetChain:
+    """A chain whose targets may be classes or numbers: one classifier or regressor per target, in `order`. Each
+    later model sees the features plus the earlier targets' outputs, out-of-fold with `cv` folds (the ground truth
+    when cv is None)."""
+
+    chain_method_ = "per_target"
+
+    def __init__(self, classifier, regressor, kinds: list[str], order: list[int], cv: int | None = 5,
+                 handles_nan: bool = False):
+        self.classifier, self.regressor, self.kinds = classifier, regressor, kinds
+        self.order, self.cv, self.handles_nan = order, cv, handles_nan
+
+    @staticmethod
+    def _output(est, X: np.ndarray, kind: str) -> np.ndarray:
+        return est.predict_proba(X)[:, 1] if kind == "binary" else est.predict(X)
+
+    def fit(self, X: np.ndarray, Y: np.ndarray) -> "TargetChain":
+        from sklearn.base import clone
+        from sklearn.model_selection import cross_val_predict
+
+        feats = np.zeros((X.shape[0], len(self.order)))
+        self.estimators_ = []
+        with config_context(assume_finite=self.handles_nan):
+            for pos, t in enumerate(self.order):
+                kind = self.kinds[t]
+                y = Y[:, t] if kind == "regression" else Y[:, t].astype(np.int64)
+                X_aug = np.hstack((X, feats[:, :pos]))
+                base = self.regressor if kind == "regression" else self.classifier
+                self.estimators_.append(clone(base).fit(X_aug, y))
+                if pos == len(self.order) - 1:
+                    break
+                if self.cv is None:
+                    feats[:, pos] = y
+                else:
+                    out = cross_val_predict(clone(base), X_aug, y, cv=self.cv,
+                                            method="predict_proba" if kind == "binary" else "predict")
+                    feats[:, pos] = out[:, 1] if kind == "binary" else out
+        self.order_ = list(self.order)
+        return self
+
+    def predict_all(self, X: np.ndarray, n_classes: list[int]) -> list[np.ndarray]:
+        """Per target, in target order: the class-probability matrix (column j = encoded class j) or the values."""
+        feats = np.zeros((X.shape[0], len(self.order_)))
+        out: list[np.ndarray | None] = [None] * len(self.order_)
+        with config_context(assume_finite=self.handles_nan):
+            for pos, est in enumerate(self.estimators_):
+                t = self.order_[pos]
+                X_aug = np.hstack((X, feats[:, :pos]))
+                if self.kinds[t] == "regression":
+                    out[t] = est.predict(X_aug).astype(float)
+                else:
+                    p = est.predict_proba(X_aug)
+                    full = np.zeros((p.shape[0], n_classes[t]))
+                    full[:, np.asarray(est.classes_, dtype=int)] = p
+                    out[t] = full
+                feats[:, pos] = self._output(est, X_aug, self.kinds[t])
+        return out  # type: ignore[return-value]
 
 
 def load_export(export_dir: Path) -> tuple[dict, pl.DataFrame]:
@@ -195,6 +258,35 @@ def evaluate(y_true: np.ndarray, proba: np.ndarray, labels: list[str] | None = N
     return out, details
 
 
+SCATTER_MAX_POINTS = 1000
+RESIDUAL_BINS = 30
+
+
+def _sig(values: np.ndarray) -> list[float]:
+    return [float(f"{v:.6g}") for v in values]
+
+
+def evaluate_regression(y: np.ndarray, pred: np.ndarray, seed: int = 42) -> tuple[dict[str, float], dict[str, Any]]:
+    """Score a numeric target: RMSE, MAE, R² (when the actual values vary) and MAPE (when none is 0). Details hold up
+    to SCATTER_MAX_POINTS sampled (actual, predicted) pairs and a histogram of the errors (predicted - actual)."""
+    err = pred - y
+    out = {"rmse": float(np.sqrt(np.mean(err ** 2))), "mae": float(np.mean(np.abs(err)))}
+    if y.size >= 2 and np.var(y) > 0:
+        out["r2"] = float(1 - np.sum(err ** 2) / np.sum((y - y.mean()) ** 2))
+    if not np.any(y == 0):
+        out["mape"] = float(np.mean(np.abs(err) / np.abs(y)))
+    idx = np.arange(y.size)
+    if y.size > SCATTER_MAX_POINTS:
+        idx = np.sort(np.random.default_rng(seed).choice(y.size, SCATTER_MAX_POINTS, replace=False))
+    counts, edges = np.histogram(err, bins=RESIDUAL_BINS)
+    details = {
+        "kind": "regression", "n": int(y.size),
+        "scatter": {"actual": _sig(y[idx]), "predicted": _sig(pred[idx])},
+        "residuals": {"edges": _sig(edges), "counts": counts.astype(int).tolist()},
+    }
+    return out, details
+
+
 def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] | None = None, seed: int = 42,
           params: dict | None = None, cv: int | None = 5, out_dir: Path | None = None,
           progress: Callable[[str], None] | None = None, device: str = "cpu") -> dict[str, Any]:
@@ -218,26 +310,39 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
     targets: list[str] = [t for t in manifest["targets"] if t in order_names]
     order = [targets.index(t) for t in order_names]
     kinds = [manifest["target_kinds"][t] for t in targets]
+    numeric = [k == "regression" for k in kinds]
+    if problem := regression_problem(spec, kinds):
+        raise ValueError(problem)
     say = progress or (lambda msg: log.info(msg))
 
     def xy(split: str) -> tuple[np.ndarray, np.ndarray]:
         part = df.filter(pl.col(split_col) == split)
-        return part.select(feats).to_numpy().astype(np.float32), part.select(targets).to_numpy().astype(np.int64)
+        return part.select(feats).to_numpy().astype(np.float32), part.select(targets).to_numpy().astype(np.float64)
 
     X_tr, Y_tr = xy("train")
-    n_classes = [len(manifest["target_classes"][t]) for t in targets]
+    n_classes = [0 if num else len(manifest["target_classes"][t]) for t, num in zip(targets, numeric)]
     missing_from_train: dict[str, list[str]] = {}
     for i, t in enumerate(targets):
-        seen = set(np.unique(Y_tr[:, i]).tolist())
+        if numeric[i]:
+            if np.unique(Y_tr[:, i]).size < 2:
+                raise ValueError(f"Target {t!r} has a single value in the training split; there is nothing to predict.")
+            continue
+        seen = set(np.unique(Y_tr[:, i]).astype(int).tolist())
         if len(seen) < 2:
             raise ValueError(f"Target {t!r} has only one class in the training split; a classifier needs at least two.")
         if absent := [c for k, c in enumerate(manifest["target_classes"][t]) if k not in seen]:
             missing_from_train[t] = absent
     say(f"Fitting {spec.label} chain {' → '.join(order_names)} on {X_tr.shape[0]:,} rows × {X_tr.shape[1]:,} features"
         + (" on the GPU" if device == "cuda" else ""))
-    chain = build_chain(spec, kinds, order, seed, params, cv)
+    if any(numeric):
+        merged = {**spec.default_params, **(params or {})}
+        chain = TargetChain(spec.build(merged, seed),
+                            spec.build_regressor({**spec.regressor_defaults, **regressor_params(spec, merged)}, seed),
+                            kinds, order, cv, spec.handles_nan)
+    else:
+        chain = build_chain(spec, kinds, order, seed, params, cv)
     t0 = time.time()
-    chain.fit(X_tr, Y_tr)
+    chain.fit(X_tr, Y_tr if any(numeric) else Y_tr.astype(np.int64))
     fit_seconds = time.time() - t0
     if device == "cuda":
         # XGBoost quietly drops to the CPU when it can't reach the GPU; don't report that as a GPU run.
@@ -252,12 +357,20 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
         X, Y = xy(split)
         if len(X) == 0:
             continue
+        metrics[split], details[split] = {}, {}
+        if isinstance(chain, TargetChain):
+            outs = chain.predict_all(X, n_classes)
+            for i, t in enumerate(targets):
+                metrics[split][t], details[split][t] = (
+                    evaluate_regression(Y[:, i], outs[i], seed) if numeric[i]
+                    else evaluate(Y[:, i].astype(int), outs[i], manifest["target_classes"].get(t)))
+            continue
         with config_context(assume_finite=spec.handles_nan):
             probas = chain_predict_proba(chain, X, n_classes)
             predicted = chain.predict(X).astype(int)
-        metrics[split], details[split] = {}, {}
         for i, t in enumerate(targets):
-            metrics[split][t], details[split][t] = evaluate(Y[:, i], probas[i], manifest["target_classes"].get(t))
+            metrics[split][t], details[split][t] = evaluate(Y[:, i].astype(int), probas[i],
+                                                            manifest["target_classes"].get(t))
         # Sanity check: the manual walk must agree with sklearn's own chain prediction
         if not np.array_equal(np.column_stack([p.argmax(1) for p in probas]), predicted):
             raise RuntimeError("chain_predict_proba diverged from ClassifierChain.predict")
@@ -285,6 +398,9 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
         "export_family": export_family,
         "order": order_names,
         "chain_method": chain.chain_method_,
+        "chain_kind": "target_chain" if any(numeric) else "classifier_chain",
+        "target_tasks": {t: (manifest.get("target_tasks") or {}).get(t, "classes") for t in targets},
+        "target_kinds": dict(zip(targets, kinds)),
         "cv": cv,
         "seed": seed,
         "target_classes": manifest["target_classes"],
@@ -347,6 +463,10 @@ def main() -> None:
                      indent=2))
     for split, by_target in report["evaluation"].items():
         for target, d in by_target.items():
+            if d.get("kind") == "regression":
+                m = report["metrics"][split][target]
+                print(f"\n{split} · {target} — RMSE {m['rmse']:.4g}, MAE {m['mae']:.4g}, R² {m.get('r2', float('nan')):.4f}")
+                continue
             print(f"\n{split} · {target} — confusion matrix (rows = actual, columns = predicted)")
             print(format_confusion(d["labels"], d["confusion_matrix"]))
 

@@ -1,4 +1,4 @@
-"""Train ClassifierChain models on finished exports and compare the runs."""
+"""Train target chains on finished exports and compare the runs."""
 from __future__ import annotations
 
 import json
@@ -14,7 +14,8 @@ from .. import experiments, gpu, jobs
 from ..auth import CurrentUser
 from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..modeling import mlflow_log
-from ..modeling.registry import MODELS, PLANNED, catalog, compatibility, order_problem, param_problems
+from ..modeling.registry import (MODELS, PLANNED, catalog, compatibility, order_problem, param_problems,
+                                regression_problem)
 from ..schemas import RunRequest
 from .exports import visible_export
 
@@ -86,6 +87,9 @@ def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
     if problems := param_problems(spec, req.params):
         raise HTTPException(422, {"message": "Invalid model parameters", "errors": problems})
     if req.order is not None and (problem := order_problem(req.order, manifest["targets"])):
+        raise HTTPException(422, problem)
+    kinds = [(manifest.get("target_kinds") or {}).get(t) for t in (req.order or manifest["targets"])]
+    if problem := regression_problem(spec, kinds):
         raise HTTPException(422, problem)
     with connection() as conn:
         experiments.require_writable(experiments.get_visible(conn, exp["experiment_id"], user), user)
