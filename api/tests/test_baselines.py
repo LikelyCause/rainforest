@@ -185,3 +185,30 @@ def test_dataset_shows_its_baselines_and_refuses_family_switch(people):
     assert row["baseline"]["label"] == "Linear baseline v1" and row["baseline"]["setup"] is False
     assert {b["family"]: (b["version"], b["phase"], b["latest_finalized_id"] is not None)
             for b in row["baselines"]} == {"tree": (1, "finalized", True), "linear": (1, "assessing", False)}
+
+
+def test_exports_take_the_baselines_family_and_name_it(people):
+    lead = people["lead"]
+    ds = upload(lead)
+    start(lead, ds, "linear", [lead])
+    submit_and_finalize(lead, ds)
+    pv = lead.get(f"/api/datasets/{ds['id']}/export-preview").json()
+    assert pv["family"] == "linear" and pv["recipe"]["label"] == "Linear baseline v1"
+    assert lead.get(f"/api/datasets/{ds['id']}/export-preview?family=tree").status_code == 422
+    r = lead.post(f"/api/datasets/{ds['id']}/exports", json={})
+    assert r.status_code == 202, r.text
+    assert r.json()["model_family"] == "linear" and r.json()["experiment_name"] == "Team · Linear v1"
+    xs = lead.get(f"/api/datasets/{ds['id']}/experiments").json()
+    team = next(x for x in xs if x["name"] == "Team · Linear v1")
+    assert team["is_default"] and team["recipe_family"] == "linear"
+
+
+def test_leak_names_follow_the_target_set(people):
+    from app.db import connection
+    from app.leakage import leak_names
+
+    csv = "x,cc,c,y\n" + "".join(f"{i % 7},{'PQR'[i % 3]},{'pqr'[i % 3]},{'ab'[(i // 3) % 2]}\n" for i in range(600))
+    ds = upload(people["lead"], csv)
+    with connection() as conn:
+        assert "cc" in leak_names(conn, ds["id"], ["c"])
+        assert "cc" not in leak_names(conn, ds["id"], ["y"])

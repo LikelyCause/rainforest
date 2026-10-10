@@ -179,7 +179,7 @@ def test_team_exports_default_to_the_versions_team_experiment(people):
         recipe = lead.post(f"/api/datasets/{ds['id']}/finalize", json={"accept_open": True}).json()["recipe"]
         e1, _ = _export(c, ds)
         e2, _ = _export(a, ds)
-        assert e1["experiment_id"] == e2["experiment_id"] and e1["experiment_name"] == "Team · v1"
+        assert e1["experiment_id"] == e2["experiment_id"] and e1["experiment_name"] == "Team · Trees v1"
         xs = c.get(f"/api/datasets/{ds['id']}/experiments").json()
         team = next(x for x in xs if x["id"] == e1["experiment_id"])
         assert team["source"] == f"recipe:{recipe['id']}" and team["owner"] is None and not team["private"]

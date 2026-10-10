@@ -22,7 +22,8 @@ from .db import fetch_all
 log = logging.getLogger(__name__)
 
 COLS = """x.id, x.dataset_id, x.name, x.owner, x.recipe_id, x.assessor_id, x.source, x.notes, x.created_at,
-          x.archived_at, xr.version AS recipe_version, xr.phase AS recipe_phase,
+          x.archived_at, x.is_default, xr.family AS recipe_family, xr.version AS recipe_version,
+          xr.phase AS recipe_phase,
           (x.assessor_id IS NOT NULL AND xr.phase = 'assessing') AS private,
           (SELECT name FROM meta.users u WHERE u.id = coalesce(x.owner, x.assessor_id)) AS owner_name"""
 FROM = "meta.experiments x JOIN meta.recipes xr ON xr.id = x.recipe_id"
@@ -107,21 +108,21 @@ def team_for(conn, recipe: dict) -> dict:
     """The default team experiment of a finalized version, created on first use."""
     conn.execute("SELECT pg_advisory_xact_lock(7311207, %s)", (recipe["id"],))
     row = conn.execute(
-        f"""SELECT {COLS} FROM {FROM} WHERE x.recipe_id = %s AND x.assessor_id IS NULL AND x.owner IS NULL
-              AND x.name = %s ORDER BY x.id LIMIT 1""",
-        (recipe["id"], team_name(recipe)),
+        f"SELECT {COLS} FROM {FROM} WHERE x.recipe_id = %s AND x.is_default ORDER BY x.id LIMIT 1",
+        (recipe["id"],),
     ).fetchone()
     if row is not None:
         return row
     made = conn.execute(
-        """INSERT INTO meta.experiments (dataset_id, name, recipe_id, source) VALUES (%s, %s, %s, %s) RETURNING id""",
+        """INSERT INTO meta.experiments (dataset_id, name, recipe_id, source, is_default)
+           VALUES (%s, %s, %s, %s, true) RETURNING id""",
         (recipe["dataset_id"], team_name(recipe), recipe["id"], source_key(recipe["id"], None)),
     ).fetchone()
     return get(conn, made["id"])
 
 
 def team_name(recipe: dict) -> str:
-    return f"Team · v{recipe['version']}"
+    return f"Team · {recipes.FAMILY_LABEL[recipe['family']]} v{recipe['version']}"
 
 
 def list_for(conn, dataset_id: int, user: dict) -> list[dict]:

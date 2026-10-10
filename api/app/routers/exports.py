@@ -15,6 +15,7 @@ from ..assessment import personal_snapshot
 from ..auth import CurrentUser
 from ..config import get_settings
 from ..db import connection, execute, fetch_all, fetch_one, jsonb
+from ..leakage import leak_names
 from ..schemas import ExportRequest
 from ..semantics import FAMILIES, NON_FEATURE_TYPES, validate_decision
 from ..transform import FieldSpec, check_target_classes, run_export
@@ -62,7 +63,9 @@ def _pick_recipe(conn, dataset_id: int, recipe_id: int | None) -> dict:
         if recipe is None or recipe["dataset_id"] != dataset_id:
             raise HTTPException(404, "Recipe not found")
         return recipe
-    return recipes.latest_finalized(conn, dataset_id) or recipes.current(conn, dataset_id)
+    family = conn.execute("SELECT model_family FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()
+    return (recipes.latest_finalized(conn, dataset_id, family and family["model_family"])
+            or recipes.latest_finalized(conn, dataset_id) or recipes.current(conn, dataset_id))
 
 
 def _experiment(conn, dataset_id: int, experiment_id: int, user: dict, recipe_id: int | None) -> dict:
@@ -106,16 +109,20 @@ def _unreviewed(conn, recipe: dict, x: dict | None) -> int:
 def preview(dataset_id: int, user: CurrentUser, family: str | None = None, recipe_id: int | None = None,
             experiment_id: int | None = None) -> dict:
     """What an export would contain, plus anything worth fixing first: of an experiment's source when given, else
-    of a recipe version (default: the latest finalized; with none yet, the team decision as it stands, blocked)."""
-    ds = fetch_one("SELECT model_family, parquet_path FROM meta.datasets WHERE id = %s", (dataset_id,))
+    of a baseline version (default: the latest finalized of the current baseline's model type, else of any; with
+    none yet, the team decision as it stands, blocked). The model family is the baseline's."""
+    ds = fetch_one("SELECT parquet_path FROM meta.datasets WHERE id = %s", (dataset_id,))
     if ds is None:
         raise HTTPException(404, "Dataset not found")
-    fam = family or ds["model_family"]
-    if fam not in FAMILIES:
-        raise HTTPException(422, f"Unknown model family {fam!r}")
     with connection() as conn:
         recipe, snap, x = _plan(conn, dataset_id, user, recipe_id, experiment_id)
+        fam = recipe["family"]
+        if family is not None and family != fam:
+            raise HTTPException(422, f"{recipes.label(recipe)} prepares data for {FAMILIES[fam]['label'].lower()}, "
+                                     f"not {family!r}")
         rows = recipes.spec_rows(conn, dataset_id, snap, fam)
+        targets = recipes.snapshot_targets(snap)
+        leaking = leak_names(conn, dataset_id, targets)
         unreviewed = _unreviewed(conn, recipe, x)
         last = conn.execute(
             f"""SELECT e.id, e.created_at, e.status, e.recipe_id, e.snapshot FROM meta.exports e
@@ -133,11 +140,10 @@ def preview(dataset_id: int, user: CurrentUser, family: str | None = None, recip
     if not rows:
         raise HTTPException(404, "Dataset has no profiled fields")
     keep = [r for r in rows if r["action"] == "keep" and r["semantic_type"] not in NON_FEATURE_TYPES]
-    targets = recipes.snapshot_targets(snap)
     warnings: list[str] = []
     if unreviewed:
         warnings.append(f"{unreviewed} field(s) not reviewed yet — their suggested settings will be used.")
-    leaks = [r["name"] for r in keep if r["leakage"]]
+    leaks = [r["name"] for r in keep if r["name"] in leaking]
     if leaks:
         warnings.append(f"Kept field(s) flagged as possible target leakage: {', '.join(leaks)}")
     invalid = [r["name"] for r in keep if validate_decision({**r, "action": "keep"}, fam)]
@@ -155,7 +161,7 @@ def preview(dataset_id: int, user: CurrentUser, family: str | None = None, recip
                         f"{', '.join(invalid[:8])}{'…' if len(invalid) > 8 else ''}")
     return {
         "family": fam,
-        "recipe": {k: recipe[k] for k in ("id", "version", "phase")},
+        "recipe": {**{k: recipe[k] for k in ("id", "family", "version", "phase")}, "label": recipes.label(recipe)},
         "source": "assessment" if personal else "recipe",
         "experiment_id": None if x is None else x["id"],
         "kept": len(keep),

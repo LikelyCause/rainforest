@@ -126,9 +126,9 @@ def test_source_is_user_only_for_real_changes(client):
         fid = fields_of(client, ds)["x"]["id"]
 
         def save(**patch):
-            cur = client.get(f"/api/fields/{fid}?family=linear").json()["decision"]
+            cur = client.get(f"/api/fields/{fid}?family=tree").json()["decision"]
             r = client.put(f"/api/fields/{fid}/decision",
-                           json={**{k: cur[k] for k in SAVED_KEYS}, "family": "linear", **patch})
+                           json={**{k: cur[k] for k in SAVED_KEYS}, "family": "tree", **patch})
             assert r.status_code == 200, r.text
             return r.json()
 
@@ -138,7 +138,7 @@ def test_source_is_user_only_for_real_changes(client):
         assert (d["source"], d["settings_source"]) == ("suggested", "user")
         d = save(action="drop")
         assert (d["source"], d["settings_source"]) == ("user", "user")
-        preview = client.get(f"/api/datasets/{ds['id']}/export-preview?family=linear").json()
+        preview = client.get(f"/api/datasets/{ds['id']}/export-preview?family=tree").json()
         assert preview["customized"] == 0  # dropped fields aren't counted
     finally:
         client.delete(f"/api/datasets/{ds['id']}")
