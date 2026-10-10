@@ -7,7 +7,8 @@ add things. For endpoints see [api.md](api.md); for usage see the [README](../RE
 
 | Service | Code | Role |
 |---|---|---|
-| `ui` | `ui/` | React 18 + TypeScript, Vite, TanStack Query, ECharts. Built to static files and served by nginx (`ui/nginx.conf`), which proxies `/api/` to the API. |
+| `ui` | `ui/` | React 18 + TypeScript, Vite, TanStack Query, ECharts. Built to static files and served by nginx (`ui/nginx.conf`), which proxies `/api/` to the API and `/mlflow/` to MLflow (behind `auth_request`). |
+| `mlflow` | `mlflow/` | MLflow 3.17 tracking server (the official image plus psycopg). Backend store: database `mlflow` in `db`, created by `mlflow/start.py` on every start if missing. Artifacts on the `mlartifacts` volume, served through the server (`--serve-artifacts`). Everything, REST API included, is under `--static-prefix /mlflow`. No published port. |
 | `api` | `api/app/` | FastAPI on uvicorn (`API_WORKERS` processes). Owns the schema, runs every background job in-process. |
 | `db` | Postgres 16 | `meta.*` holds metadata, decisions, jobs and results; `raw.ds_<id>` holds each dataset as a typed table. |
 | `/data` volume | `appdata` | `uploads/` (transient), `datasets/<id>/raw.parquet`, `exports/<id>/`, `models/run<id>_<model>_<ts>/`. |
@@ -29,6 +30,7 @@ add things. For endpoints see [api.md](api.md); for usage see the [README](../RE
 | `transform.py` | Export: split, fit preprocessing on train rows, chunked transform, manifest. |
 | `parquet_rows.py` | `read_rows`: selected rows of a Parquet file, read a few column chunks at a time (export fit sample, Explore samples). |
 | `modeling/registry.py`, `modeling/train.py` | Model catalog, compatibility and device params; `ClassifierChain` training, evaluation, CLI. |
+| `modeling/mlflow_log.py`, `modeling/mlflow_backfill.py` | Logging a finished model run to MLflow (experiment per dataset, params, metrics, tags, artifacts), and the CLI that logs runs that have no MLflow run yet. |
 | `gpu.py` | NVIDIA GPU detection (`nvidia-smi` plus an XGBoost CUDA test fit in a subprocess), started in a background thread at startup and cached per process. |
 | `analysis/prep.py`, `analysis/compute.py`, `analysis/runner.py` | Explore jobs: sampling and typing, the numeric work, caching and job lifecycle. |
 | `routers/*.py` | HTTP endpoints, one module per area (datasets, fields, query, exports, runs, explore). |
@@ -108,8 +110,18 @@ the UI polls (`pending → running → done | failed`, with `progress` and `stat
    `transform.run_export` and writes `exports/<id>/{model_ready.parquet, preprocessor.joblib, manifest.json}`.
 8. **Training.** `POST /api/exports/{id}/runs` checks model compatibility and the requested device (see `gpu.py`) and submits `runs._run`, which calls
    `modeling.train.train` and writes `models/run<id>_…/{classifier_chain.joblib, report.json}`; metrics and the
-   report go to `meta.model_runs`.
-9. **Explore.** See [Analyses](#analyses-explore-jobs).
+   report go to `meta.model_runs`. With `MLFLOW_TRACKING_URI` set, `mlflow_log.log_model_run` then logs the run
+   before it is marked done (status message *Logging to MLflow*). It never raises: a failure, bounded by short HTTP
+   timeouts and two retries, deletes any half-logged MLflow run and lands in the report as `mlflow_error`; success
+   stores `mlflow_experiment_id` and `mlflow_run_id`, from which the runs endpoints derive `mlflow_url`.
+9. **MLflow UI.** nginx sends each `/mlflow/` request through `auth_request` to `GET /api/auth/check` (always as a
+   `GET`, without the body), which the middleware answers `401` without a valid session and the route `204`. A `401`
+   becomes a relative redirect to `/login?next=/mlflow/`, and the login page does a full page load for that path
+   (`isServerPath` in `api.ts`) since it is outside the single-page app. Toward MLflow, nginx sends `Host: mlflow`
+   (its `--allowed-hosts`) and drops `Origin`, as MLflow's own cross-origin check only knows localhost; cross-site
+   requests can't get through anyway, because the `SameSite=Strict` cookie is what `auth_request` checks. MLflow is
+   resolved per request, so nginx starts while it is down.
+10. **Explore.** See [Analyses](#analyses-explore-jobs).
 
 ## Background jobs
 
@@ -171,6 +183,7 @@ recreated from that file. Bootstrap also (re)creates the `rainforest_ro` role an
 | `003_analyses.sql` | `meta.analyses` |
 | `004_job_owner.sql` | `owner` on `meta.datasets`, `exports`, `model_runs` and `analyses` |
 | `005_upload_path.sql` | `upload_path` on `meta.datasets` |
+| `006_mlflow_run_id.sql` | `mlflow_experiment_id`, `mlflow_run_id` on `meta.model_runs` |
 
 Child tables reference `meta.datasets` with `ON DELETE CASCADE`; `DELETE /api/datasets/{id}` removes the rows and then
 the dataset's Parquet copy, raw table, export and model directories.
@@ -210,10 +223,12 @@ bodies in `schemas.py`, and list it in [api.md](api.md).
 the session-scoped `admin_login` fixture, which sets the admin credentials and signs a `TestClient` in. `test_auth.py`
 drives the app without its startup hook, so it needs no database. The API tests in `test_explore.py`,
 `test_sql_console.py`, `test_data_correctness.py` and `test_api_cleanup.py` start the app against
-`RAINFOREST_TEST_DATABASE_URL` and skip without it. `make test` runs the suite locally, `make test-db` runs it
-against a throwaway `postgres:16` container.
+`RAINFOREST_TEST_DATABASE_URL` and skip without it. `test_mlflow.py` logs to a temporary MLflow file store
+(always runs), drives `runs._run` and the backfill against the database (skips without it), and has one test against a
+real tracking server that runs when `MLFLOW_TEST_URI` is set. `make test` runs the suite locally, `make test-db` runs
+it against a throwaway `postgres:16` container.
 
 `ui` uses Vitest (`npm test`) for the pure logic: field signals, formatting, the save queue (with the API mocked),
 retype rules, the Bulk edit and Explore URL state, error parsing and run ranking. Tests sit next to the code as
 `*.test.ts`. CI (`.github/workflows/ci.yml`, on pushes to `main` and pull requests) runs the API tests with a
-Postgres service, the UI typecheck, tests and build, and `docker compose build`.
+Postgres service and an MLflow server container, the UI typecheck, tests and build, and `docker compose build`.

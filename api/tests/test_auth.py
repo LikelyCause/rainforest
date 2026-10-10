@@ -63,6 +63,13 @@ def test_login_me_logout(client):
     assert client.get("/api/auth/me").status_code == 401
 
 
+def test_check_for_nginx_auth_request(client):
+    assert client.get("/api/auth/check").status_code == 401
+    _login(client)
+    r = client.get("/api/auth/check")
+    assert r.status_code == 204 and r.content == b""
+
+
 def test_cookie_is_secure_behind_https(client):
     r = client.post("/api/auth/login", json=ADMIN, headers={"X-Forwarded-Proto": "https"})
     assert "Secure" in r.headers["set-cookie"]

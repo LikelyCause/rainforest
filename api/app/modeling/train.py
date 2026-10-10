@@ -262,6 +262,7 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
         "order": order_names,
         "chain_method": chain.chain_method_,
         "cv": cv,
+        "seed": seed,
         "target_classes": manifest["target_classes"],
         "missing_from_train": missing_from_train,
         "n_train": int(len(X_tr)),

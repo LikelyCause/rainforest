@@ -287,3 +287,9 @@ def logout(request: Request) -> Response:
 @router.get("/me")
 def me() -> dict:
     return {"user": get_settings().admin_user}
+
+
+@router.get("/check", status_code=204)
+def check() -> Response:
+    """nginx auth_request for /mlflow/. The middleware has already answered 401 without a valid session."""
+    return Response(status_code=204)

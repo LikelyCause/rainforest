@@ -274,6 +274,38 @@ being recorded as a GPU run. Going back to the CPU image is `make up`.
 
 Not included: GPU-accelerated Explore (RAPIDS cuML for UMAP and clustering) is a possible later phase.
 
+## MLflow
+
+Every model run trained from the UI or API is also logged to an [MLflow](https://mlflow.org) tracking server, which
+Compose runs as the `mlflow` service (MLflow 3.17). Its UI is at **`http://localhost:8080/mlflow/`**, behind the
+Rainforest sign-in: nginx asks the API whether the session cookie is valid before every request, and sends you to
+the sign-in page (and back) if it isn't. The server has no published port of its own.
+
+* **Layout:** one MLflow experiment per dataset, named `rainforest/<dataset id>-<dataset name>` (found again by its
+  `rainforest.dataset_id` tag, so renaming a dataset keeps its experiment), and one MLflow run per model run, named
+  `run <id> · <model>`.
+* **Params:** `model`, `order`, `cv`, `seed`, `device`, `chain_method`, `export_family`, `n_train`, `n_features`, and
+  every effective estimator parameter as `estimator.<name>` (defaults, your overrides and the device settings).
+* **Metrics:** each scalar metric per split and target as `<split>.<target>.<metric>` (e.g. `test.column_a.roc_auc`),
+  plus `fit_seconds`. Characters MLflow doesn't allow in a key become `_`.
+* **Artifacts:** `report.json` and `model/classifier_chain.joblib`, the same files *Files* offers on the run. The
+  server stores them on the `mlartifacts` volume and proxies uploads and downloads, so clients only talk HTTP to it.
+* **Tags:** `rainforest.dataset_id`, `rainforest.dataset_name`, `rainforest.export_id`, `rainforest.run_id`,
+  `rainforest.model`, `rainforest.model_family`, and `rainforest.git_sha` when the image was built with `GIT_SHA`
+  (`make up` passes the checkout's commit).
+* **Links:** the runs table has an *MLflow ↗* link per logged run, and the run's detail links to it too.
+  `meta.model_runs` stores `mlflow_experiment_id` and `mlflow_run_id`, and the API returns `mlflow_url`.
+* **When MLflow is down** the run still finishes; logging gives up after a short timeout (15 s per request, two
+  retries) and the run records the reason as `mlflow_error` in its report. The runs table shows *not logged* with the
+  reason, and nothing is lost: `make mlflow-backfill` logs every finished run without an MLflow run, including runs
+  trained before MLflow was set up. It never runs on its own.
+* **Turning it off:** set `MLFLOW_TRACKING_URI=` (empty) in `.env`. Runs are then not logged and show no link. The
+  `mlflow` service still starts; stop it with `docker compose stop mlflow` if you don't want it.
+* **Storage:** the tracking data lives in a database named `mlflow` in the same Postgres. The `mlflow` service
+  creates it on start if it is missing, so it works on an existing `pgdata` volume as well as a new one.
+
+CLI runs (`make train`) aren't model runs in `meta.model_runs`, so they aren't logged to MLflow either.
+
 ## Querying
 
 Connect any SQL client to `localhost:5432` (user and password from `.env`), or use the SQL tab in Bulk edit.
@@ -331,6 +363,8 @@ Compose settings, read from `.env` (see `.env.example`):
 | `RAINFOREST_ADMIN_PASSWORD` | – (**required**) | sign-in password; without it the API refuses everything but `/health` |
 | `RAINFOREST_SESSION_SECRET` | generated | key that signs session cookies; if empty, one is generated on first start and kept in the data volume (`/data/session_secret`) |
 | `RAINFOREST_ALLOWED_HOSTS` | `*` | comma-separated hostnames / IPs the API answers to (`*.example.com` allowed). Set this to the names and addresses you use, e.g. `rainforest.lan,192.168.1.20`; `localhost` is always accepted |
+| `MLFLOW_TRACKING_URI` | `http://mlflow:5000/mlflow` | where the API logs model runs; empty turns MLflow logging off (see [MLflow](#mlflow)) |
+| `GIT_SHA` | – | commit tagged on MLflow runs, baked into the API image; `make up` sets it from the checkout |
 | `API_EXTRA_PIP` | – | extra packages baked into the API image (e.g. `catboost`) |
 | `XGBOOST_GPU_PKG` | `xgboost==3.4.1` | the CUDA XGBoost package for the GPU image (`xgboost-cu12==3.4.1` for 570–579 drivers) |
 
@@ -368,6 +402,8 @@ make sample-csv
 `test_auth.py`. The API tests in `test_explore.py`, `test_sql_console.py`, `test_data_correctness.py` and
 `test_api_cleanup.py`, and the job tests in `test_jobs.py`, run against an empty Postgres and skip unless
 `RAINFOREST_TEST_DATABASE_URL` is set; the API tests sign in through the `admin_login` fixture in `conftest.py`.
+`test_mlflow.py` logs to a temporary file store, so it needs no server; its database-backed tests follow the same
+rule, and one more test runs against a real tracking server when `MLFLOW_TEST_URI` is set (CI runs one).
 The UI's tests run with `cd ui && npm test` (Vitest, no browser needed).
 
 ```bash
@@ -391,8 +427,8 @@ service (so nothing skips), the UI typecheck, tests and build, and `docker compo
 * **Samples:** text-field and chart statistics come from a sample, and the UI labels them as such. If you change a
   field's type, the stored statistics still describe the inferred type (the UI says so). The export uses your type.
 * **Security:** the UI port (`UI_PORT`, 8080) listens on every interface so you can reach it over the LAN; `api` and
-  `db` bind to localhost. Every API route except `/health` and sign-in needs the session cookie, file downloads
-  included.
+  `db` bind to localhost, and `mlflow` publishes no port. Every API route except `/health` and sign-in needs the
+  session cookie, file downloads included, and so does the MLflow UI at `/mlflow/`.
   * One admin user from `RAINFOREST_ADMIN_USER` / `RAINFOREST_ADMIN_PASSWORD`. The session cookie is signed, `HttpOnly`,
     `SameSite=Strict`, lasts 7 days, and is `Secure` when the request came over HTTPS. Changing the user or password
     signs everyone out.

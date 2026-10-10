@@ -28,6 +28,7 @@ Long-running work returns `202` with a row to poll; its `status` is `pending`, `
 | POST | `/api/auth/login` | Check the admin credentials and set the session cookie (`HttpOnly`, `SameSite=Strict`, 7 days, `Secure` over HTTPS). Returns `{user}`. `401` for wrong credentials; `429` with `Retry-After` after 10 failures from one address in 15 minutes. | body: `username`, `password` |
 | POST | `/api/auth/logout` | Clear the session cookie. `204`. | |
 | GET | `/api/auth/me` | The signed-in user, `{user}`. | |
+| GET | `/api/auth/check` | `204` with a valid session (`401` otherwise, from the middleware). nginx's `auth_request` for `/mlflow/`. | |
 
 ## Datasets (`routers/datasets.py`)
 
@@ -79,8 +80,8 @@ Long-running work returns `202` with a row to poll; its `status` is `pending`, `
 | GET | `/api/system` | Training hardware: `gpu` is `null`, or `{available, name, memory_mb, driver, count, reason}`. Detected once per worker, in the background at startup (a request during detection waits for it). | |
 | GET | `/api/exports/{export_id}/models` | Every model with whether it can train on this export, and why not. | |
 | POST | `/api/exports/{export_id}/runs` | Train a `ClassifierChain` on a finished export. `202`. | `model` (default `lightgbm`), `order` (permutation of the export's targets), `cv` (0 chains the ground truth, or 2–10; default 5), `seed`, `params` (overrides of the model's defaults; `422` for a name the model doesn't have or a value its own checks reject), `device` (`cpu` default, or `cuda`: `422` if the model can't, `409` if no usable GPU) |
-| GET | `/api/datasets/{dataset_id}/runs` | The dataset's runs, newest first, with metrics and report (without top features). | |
-| GET | `/api/runs/{run_id}` | One run, full report. | |
+| GET | `/api/datasets/{dataset_id}/runs` | The dataset's runs, newest first, with metrics and report (without top features). Each has `mlflow_experiment_id`, `mlflow_run_id` and `mlflow_url` (`/mlflow/#/experiments/<id>/runs/<id>`), all `null` when the run wasn't logged; `report.mlflow_error` says why when logging failed. | |
+| GET | `/api/runs/{run_id}` | One run, full report, with the same MLflow fields. | |
 | GET | `/api/runs/{run_id}/files/{kind}` | Download a finished run's file. | `kind`: `model` (`classifier_chain.joblib`), `report` (`report.json`) |
 
 ## Explore (`routers/explore.py`)

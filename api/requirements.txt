@@ -16,6 +16,8 @@ joblib==1.4.2
 # jobs.py limits native thread pools per job with it (also a scikit-learn dependency).
 threadpoolctl==3.7.0
 umap-learn==0.5.7
+# Client only; the tracking server is the mlflow service (keep the versions together).
+mlflow-skinny==3.17.0
 # CPU build (5 MB). The GPU image swaps in the CUDA build; see the Dockerfile's GPU arg.
 xgboost-cpu==3.4.1; sys_platform == "linux" or sys_platform == "win32"
 xgboost==3.4.1; sys_platform == "darwin"

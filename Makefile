@@ -1,6 +1,10 @@
-.PHONY: up up-gpu gpu-check down logs ps train models test test-db psql sample-csv clean
+.PHONY: up up-gpu gpu-check down logs ps train models mlflow-backfill test test-db psql sample-csv clean
 
-up:            ## build and start everything (UI on :8080)
+# Tagged on MLflow runs (baked into the API image).
+GIT_SHA ?= $(shell git rev-parse HEAD 2>/dev/null)
+export GIT_SHA
+
+up:            ## build and start everything (UI on :8080, MLflow at :8080/mlflow/)
 	docker compose up -d --build
 
 up-gpu:        ## same, with the CUDA XGBoost build and the host's NVIDIA GPU (see README › GPU)
@@ -25,6 +29,9 @@ train:         ## make train EXPORT=1 [MODEL=lightgbm|xgboost|hist_gradient_boos
 
 models:        ## list registered models and whether they're installed
 	docker compose exec api python -m app.modeling.train --list-models
+
+mlflow-backfill: ## log finished runs that have no MLflow run yet (trained before MLflow, or while it was down)
+	docker compose exec api python -m app.modeling.mlflow_backfill
 
 psql:          ## psql as the database owner; the db container's own POSTGRES_* values come from .env
 	docker compose exec db sh -c 'psql -U "$$POSTGRES_USER" "$$POSTGRES_DB"'

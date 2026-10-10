@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, safeNext } from "../api";
+import { api, isServerPath, safeNext } from "../api";
 import { Logo } from "../components/Logo";
 import { ErrorAlert } from "../components/ui";
 
@@ -16,7 +16,9 @@ export function LoginPage() {
     onSuccess: () => {
       // Drop everything fetched (and failed) while signed out.
       qc.clear();
-      nav(safeNext(params.get("next")), { replace: true });
+      const next = safeNext(params.get("next"));
+      if (isServerPath(next)) window.location.assign(next);
+      else nav(next, { replace: true });
     },
   });
   const submit = (e: FormEvent) => {
