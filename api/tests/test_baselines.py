@@ -95,7 +95,7 @@ def test_start_validates_its_input(people):
     ds = upload(lead)
     base = {"family": "tree", "start": "scratch", "targets": ["y"], "assessors": [lead.user["id"]]}
     for patch, code in (({"family": "svm"}, 422), ({"assessors": []}, 422), ({"assessors": [999999]}, 422),
-                        ({"targets": []}, 422), ({"targets": ["z"]}, 422), ({"targets": ["nope"]}, 422),
+                        ({"targets": []}, 422), ({"targets": ["nope"]}, 422),
                         ({"start": "baseline", "source_recipe_id": 999999}, 404),
                         ({"start": "baseline"}, 422)):
         r = lead.post(f"/api/datasets/{ds['id']}/baselines", json={**base, **patch})

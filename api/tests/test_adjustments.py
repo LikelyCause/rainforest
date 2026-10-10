@@ -126,7 +126,7 @@ def test_experiment_targets_are_validated(people):
     lead = people["lead"]
     ds, rid = finalized_trees(lead)
     x = experiment(lead, ds, rid, "targets")
-    adjust(lead, ds, x, "x", expect=422, action="target")  # continuous: not a class label
+    adjust(lead, ds, x, "x", expect=422, action="target", target_task="classes")  # continuous: a number, not classes
     adjust(lead, ds, x, "y", action="keep")
     pv = lead.get(f"/api/datasets/{ds['id']}/export-preview?experiment_id={x['id']}").json()
     assert "No target selected" in pv["blocking"]

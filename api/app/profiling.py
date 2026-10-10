@@ -612,10 +612,14 @@ def profile_column(
     n_unique = int(s.drop_nulls().n_unique()) if n_nonnull else 0
 
     t, conf, reasons, hints = infer_type(s, name, n_unique, n_nonnull)
-    if is_target and target_problem("categorical", n_unique):
+    if is_target and t in ("identifier", "datetime") and s.dtype.is_numeric():
+        reasons = [f"target column; numbers that look {'like a key' if t == 'identifier' else 'like dates'}, "
+                   "treated as a number", *reasons]
+        t = "numeric_continuous"
+    if is_target and t not in NUMERIC and target_problem("categorical", n_unique):
         reasons = [f"named as a target but can't be a target: {target_problem('categorical', n_unique)}", *reasons]
         is_target = False
-    if is_target and t not in ("binary", "categorical"):
+    if is_target and t not in NUMERIC and t not in ("binary", "categorical"):
         reasons = [f"target column; values look {t}, treated as class labels", *reasons]
         t = "binary" if n_unique == 2 else "categorical"
 

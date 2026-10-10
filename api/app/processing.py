@@ -103,7 +103,8 @@ def process_dataset(dataset_id: int, upload_path: str | None, fmt: str) -> None:
         execute("UPDATE meta.datasets SET row_count = %s WHERE id = %s", (n_rows, dataset_id))
         rejected = [p.name for p in profiles if p.name in targets and not p.is_target]
         if rejected:
-            warnings.append(f"Not used as target(s), too many distinct values: {', '.join(rejected)}")
+            warnings.append(f"Not used as target(s): {', '.join(rejected)} (text, identifiers and dates can't be "
+                            "targets, nor labels with more than 100 values)")
             execute("UPDATE meta.datasets SET target_columns = %s, warnings = %s WHERE id = %s",
                     ([t for t in targets if t not in rejected], warnings, dataset_id))
 

@@ -49,9 +49,11 @@ def test_numeric_profile_has_exact_counts_and_charts():
     assert p.corr_numeric is not None and p.corr_numeric.shape == (10_000,)
 
 
-def test_target_is_forced_to_class_labels():
+def test_numeric_target_keeps_its_type_and_text_target_becomes_labels():
     p = profile_column(pl.Series("column_b", [0, 1, 2] * 300), 0, True, None, None, 50)
-    assert p.is_target and p.inferred_type == "categorical"
+    assert p.is_target and p.inferred_type == "numeric_discrete"
+    s = profile_column(pl.Series("tier", ["gold", "silver", "bronze free text"] * 300), 0, True, None, None, 50)
+    assert s.is_target and s.inferred_type in ("categorical", "binary")
 
 
 def test_profile_sample_dataset(sample_parquet):
