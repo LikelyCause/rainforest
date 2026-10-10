@@ -177,6 +177,22 @@ def test_retyping_to_datetime_stores_the_columns_format(client):
         client.delete(f"/api/datasets/{ds['id']}")
 
 
+def test_a_job_that_runs_again_drops_its_old_error(client):
+    from app.db import fetch_one
+    from app.routers import exports
+
+    ds = upload(client, _numbers_csv(), targets="y")
+    try:
+        row = fetch_one("""INSERT INTO meta.exports (dataset_id, status, error, model_family, config)
+                           VALUES (%s, 'failed', 'Interrupted by an API restart.', 'tree', '{"seed": 1}')
+                           RETURNING id""", (ds["id"],))
+        exports._run(row["id"])
+        done = client.get(f"/api/exports/{row['id']}").json()
+        assert done["status"] == "done" and done["error"] is None
+    finally:
+        client.delete(f"/api/datasets/{ds['id']}")
+
+
 def _leaky_csv(n=20_000, levels=300, seed=0) -> str:
     rng = np.random.default_rng(seed)
     lv = rng.integers(0, levels, n)

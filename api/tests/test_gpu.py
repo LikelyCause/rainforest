@@ -39,6 +39,14 @@ def test_no_nvidia_smi_means_no_gpu(monkeypatch):
     assert runs.system() == {"gpu": None}
 
 
+def test_warm_up_detects_in_the_background_once(monkeypatch):
+    calls = []
+    monkeypatch.setattr(gpu, "_nvidia_smi", lambda: calls.append(1))
+    gpu.warm_up().join(timeout=10)
+    assert gpu._probed and calls == [1]
+    assert gpu.detect() is None and calls == [1]  # served from the cache
+
+
 def test_failing_nvidia_smi_means_no_gpu(monkeypatch):
     fake_smi(monkeypatch, exc=subprocess.CalledProcessError(9, "nvidia-smi"))
     assert gpu.detect() is None

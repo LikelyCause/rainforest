@@ -260,9 +260,9 @@ make gpu-check   # what the API sees: name, memory, driver, and whether XGBoost 
 
 `docker-compose.gpu.yml` builds the API with `GPU=1` and reserves the host's GPUs for it. `GET /api/system` reports
 `{"gpu": null}` when no GPU is visible, or the GPU with `available: false` and a `reason` when XGBoost can't use it
-(CPU build, driver too old). The API detects this once per worker with a one-tree test fit, because XGBoost
-otherwise falls back to the CPU silently. A GPU run that falls back anyway fails rather than being recorded as a GPU
-run. Going back to the CPU image is `make up`.
+(CPU build, driver too old). Each API worker detects this once, in the background as it starts, with a one-tree
+test fit, because XGBoost otherwise falls back to the CPU silently. A GPU run that falls back anyway fails rather than
+being recorded as a GPU run. Going back to the CPU image is `make up`.
 
 Not included: GPU-accelerated Explore (RAPIDS cuML for UMAP and clustering) is a possible later phase.
 

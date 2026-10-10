@@ -201,7 +201,8 @@ def _run(export_id: int) -> None:
             return
         last[0] = now
         execute(
-            "UPDATE meta.exports SET status='running', progress=%s, status_message=%s, updated_at=now() WHERE id=%s",
+            "UPDATE meta.exports SET status='running', error=NULL, progress=%s, status_message=%s, updated_at=now() "
+            "WHERE id=%s",
             (round(frac, 4), msg, export_id),
         )
 
@@ -246,7 +247,8 @@ def _run(export_id: int) -> None:
                              + ("" if fam == "tree" else f" --model {'logistic_regression' if fam == 'linear' else 'mlp'}"),
         }
         execute(
-            """UPDATE meta.exports SET status='done', progress=1, status_message='Done', output_dir=%s,
+            """UPDATE meta.exports SET status='done', error=NULL, progress=1, status_message='Done',
+                      output_dir=%s,
                       n_rows=%s, n_features=%s, summary=%s, finished_at=now(), updated_at=now() WHERE id=%s""",
             (str(out_dir), manifest["rows_written"], manifest["n_features"], jsonb(summary), export_id),
         )

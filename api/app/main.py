@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import logging
+import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-from . import auth, db, jobs, processing
+from . import auth, db, gpu, jobs, processing
 from .config import get_settings
 from .routers import datasets, explore, exports, fields, query, runs
 from .semantics import option_catalog
@@ -30,13 +31,27 @@ async def lifespan(app: FastAPI):
     db.bootstrap()
     jobs.start()
     processing.sweep_uploads()
+    gpu.warm_up()
     yield
     jobs.shutdown()
     db.close_pool()
 
 
+class JsonGZip(GZipMiddleware):
+    """Gzip API responses but not file downloads: Parquet and joblib are already compressed, and compressing
+    them on the fly costs CPU and drops Content-Length, so the browser can't show download progress."""
+
+    DOWNLOADS = re.compile(r"^/api/(exports|runs)/\d+/files/")
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "http" and self.DOWNLOADS.match(scope["path"]):
+            await self.app(scope, receive, send)
+        else:
+            await super().__call__(scope, receive, send)
+
+
 app = FastAPI(title="Rainforest API", version="1.0.0", lifespan=lifespan)
-app.add_middleware(GZipMiddleware, minimum_size=2048)
+app.add_middleware(JsonGZip, minimum_size=2048, compresslevel=5)
 app.add_middleware(auth.SecurityMiddleware)
 # The UI is served same-origin through nginx; CORS only matters for `npm run dev` on :5173.
 app.add_middleware(

@@ -13,6 +13,8 @@ scipy==1.15.1
 scikit-learn==1.6.1
 lightgbm==4.6.0
 joblib==1.4.2
+# jobs.py limits native thread pools per job with it (also a scikit-learn dependency).
+threadpoolctl==3.7.0
 umap-learn==0.5.7
 # CPU build (5 MB). The GPU image swaps in the CUDA build; see the Dockerfile's GPU arg.
 xgboost-cpu==3.4.1; sys_platform == "linux" or sys_platform == "win32"

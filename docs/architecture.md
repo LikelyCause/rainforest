@@ -16,7 +16,7 @@ add things. For endpoints see [api.md](api.md); for usage see the [README](../RE
 
 | Module | Responsibility |
 |---|---|
-| `main.py` | App, middleware, router registration, `/health`, `/api/options`. Startup loads the session secret, then runs `db.bootstrap()` and `jobs.start()`. |
+| `main.py` | App, middleware (gzip for API responses, not file downloads), router registration, `/health`, `/api/options`. Startup loads the session secret, runs `db.bootstrap()` and `jobs.start()`, removes orphaned uploads and starts GPU detection. |
 | `auth.py` | Sign-in (`/api/auth/*`), the signed session cookie, the session secret, the login rate limiter, and `SecurityMiddleware`. |
 | `config.py` | `Settings` (pydantic-settings, read from the environment). |
 | `db.py` | Connection pools (the app's, and a small one for the console's read-only role), query helpers, migrations, read-only role setup. |
@@ -29,7 +29,7 @@ add things. For endpoints see [api.md](api.md); for usage see the [README](../RE
 | `transform.py` | Export: split, fit preprocessing on train rows, chunked transform, manifest. |
 | `parquet_rows.py` | `read_rows`: selected rows of a Parquet file, read a few column chunks at a time (export fit sample, Explore samples). |
 | `modeling/registry.py`, `modeling/train.py` | Model catalog, compatibility and device params; `ClassifierChain` training, evaluation, CLI. |
-| `gpu.py` | NVIDIA GPU detection (`nvidia-smi` plus an XGBoost CUDA test fit in a subprocess), cached per process. |
+| `gpu.py` | NVIDIA GPU detection (`nvidia-smi` plus an XGBoost CUDA test fit in a subprocess), started in a background thread at startup and cached per process. |
 | `analysis/prep.py`, `analysis/compute.py`, `analysis/runner.py` | Explore jobs: sampling and typing, the numeric work, caching and job lifecycle. |
 | `routers/*.py` | HTTP endpoints, one module per area (datasets, fields, query, exports, runs, explore). |
 | `sample_data.py` | Synthetic dataset generator (also a CLI: `python -m app.sample_data`). |

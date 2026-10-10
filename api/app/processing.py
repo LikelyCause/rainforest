@@ -41,7 +41,8 @@ class _Status:
             return
         self._last = now
         execute(
-            """UPDATE meta.datasets SET status = %s, progress = %s, status_message = %s, updated_at = now()
+            """UPDATE meta.datasets SET status = %s, progress = %s, status_message = %s, error = NULL,
+                      updated_at = now()
                WHERE id = %s""",
             (status, round(progress, 4), message, self.dataset_id),
         )

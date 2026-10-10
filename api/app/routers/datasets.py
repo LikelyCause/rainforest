@@ -163,7 +163,7 @@ def _generate_and_process(dataset_id: int, req: dict) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     try:
         execute(
-            "UPDATE meta.datasets SET status='ingesting', status_message='Generating sample data', "
+            "UPDATE meta.datasets SET status='ingesting', error=NULL, status_message='Generating sample data', "
             "updated_at=now() WHERE id=%s",
             (dataset_id,),
         )
@@ -213,7 +213,7 @@ def update_dataset(dataset_id: int, body: DatasetPatch) -> dict:
             )
             if uncorrelated:
                 conn.execute(
-                    """UPDATE meta.datasets SET status = 'correlating', progress = 0, owner = %s,
+                    """UPDATE meta.datasets SET status = 'correlating', progress = 0, error = NULL, owner = %s,
                               status_message = 'Queued: associations for new target(s)' WHERE id = %s""",
                     (jobs.owner_id(), dataset_id),
                 )

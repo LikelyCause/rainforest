@@ -111,6 +111,14 @@ def detect(refresh: bool = False) -> dict[str, Any] | None:
         return info
 
 
+def warm_up() -> threading.Thread:
+    """Run detection in the background at startup; the probe's test fit can take seconds, and the first
+    /api/system call would otherwise wait for it (it still waits, on the lock, if detection hasn't finished)."""
+    t = threading.Thread(target=detect, name="gpu-detect", daemon=True)
+    t.start()
+    return t
+
+
 def gpu_available() -> bool:
     info = detect()
     return bool(info and info["available"])
