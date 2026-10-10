@@ -68,7 +68,7 @@ export function ReviewPage() {
 
   const family = ds.model_family;
   const access = useAccess(ds);
-  // Where finishing leads: an assessor submits on the Team page; everyone else goes on to Export.
+  // Where finishing leads: an assessor submits on the Team page; everyone else goes on to Experiments.
   const finishTo = access.source === "mine" ? `/d/${datasetId}/team` : `/d/${datasetId}/experiments`;
   const fields = useFields(datasetId);
   const options = useOptions();
@@ -369,7 +369,7 @@ function FinishCard({ finish, scope, datasetId, workingSet, finishTo, onFirstUnr
       ))}
       <div className="row">
         <Link className="btn primary" to={finishTo} style={{ background: "var(--accent-fill)", color: "var(--accent-ink)", borderColor: "var(--accent-fill)" }}>
-          {finishTo.endsWith("/team") ? "Submit your assessment" : "Continue to Export"} → <kbd>↵</kbd>
+          {finishTo.endsWith("/team") ? "Submit your assessment" : "Continue to Experiments"} → <kbd>↵</kbd>
         </Link>
         <button type="button" onClick={onStay}>Back to the field</button>
       </div>
