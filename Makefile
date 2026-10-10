@@ -26,8 +26,8 @@ train:         ## make train EXPORT=1 [MODEL=lightgbm|xgboost|hist_gradient_boos
 models:        ## list registered models and whether they're installed
 	docker compose exec api python -m app.modeling.train --list-models
 
-psql:
-	docker compose exec db psql -U $${POSTGRES_USER:-rainforest} $${POSTGRES_DB:-rainforest}
+psql:          ## psql as the database owner; the db container's own POSTGRES_* values come from .env
+	docker compose exec db sh -c 'psql -U "$$POSTGRES_USER" "$$POSTGRES_DB"'
 
 sample-csv:    ## write a 200k-row sample CSV to ./sample.csv for testing uploads
 	docker compose exec api python -m app.sample_data --rows 200000 --out /data/sample.csv

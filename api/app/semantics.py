@@ -9,6 +9,7 @@ for the tree family at all, and missing values are left for the model to route n
 """
 from __future__ import annotations
 
+import math
 from copy import deepcopy
 from typing import Any
 
@@ -157,6 +158,12 @@ DEFAULT_PARAMS: dict[str, dict[str, Any]] = {
     "ordinal": {"min_frequency": 0.001},
     "tfidf_svd": {"svd_components": 32, "max_features": 20000, "min_df": 3},
 }
+# encoding -> param -> (type, min, max); min_frequency is a share of rows.
+PARAM_RULES: dict[str, dict[str, tuple[type, float, float]]] = {
+    "onehot": {"max_categories": (int, 2, 1000), "min_frequency": (float, 0, 0.99)},
+    "ordinal": {"min_frequency": (float, 0, 0.99)},
+    "tfidf_svd": {"svd_components": (int, 1, 256), "max_features": (int, 10, 1_000_000), "min_df": (int, 1, 10_000)},
+}
 
 
 def check_family(family: str) -> str:
@@ -189,6 +196,8 @@ def option_catalog() -> dict[str, Any]:
         "labels": {"imputation": IMPUTATIONS, "transform": TRANSFORMS, "scaling": SCALINGS, "encoding": ENCODINGS},
         "allowed": {f: {t: allowed(t, f) for t in SEMANTIC_TYPES} for f in FAMILIES},
         "default_params": DEFAULT_PARAMS,
+        "param_rules": {enc: {k: {"integer": kind is int, "min": lo, "max": hi} for k, (kind, lo, hi) in rules.items()}
+                        for enc, rules in PARAM_RULES.items()},
         "non_feature_types": sorted(NON_FEATURE_TYPES),
         "target_rule": {"types": list(TARGET_TYPES), "max_levels": MAX_TARGET_LEVELS},
     }
@@ -218,9 +227,32 @@ def validate_decision(d: dict[str, Any], family: str = DEFAULT_FAMILY, n_unique:
             errors.append(f"{dim}={v!r} is not valid for {t} with {family} models (allowed: {', '.join(a[dim])})")
     if d.get("imputation") == "constant" and t in NUMERIC:
         try:
-            float(d.get("impute_value") or "")
+            fill = float(d.get("impute_value") or "")
         except ValueError:
             errors.append("numeric constant imputation needs a numeric impute_value")
+        else:
+            if not math.isfinite(fill):
+                errors.append(f"impute_value must be a finite number (got {d.get('impute_value')!r})")
+    errors += param_errors(d.get("encoding"), d.get("params") or {})
+    return errors
+
+
+def param_errors(encoding: str | None, params: dict[str, Any]) -> list[str]:
+    """Type and range problems in the encoder parameters the export reads for `encoding`.
+
+    Keys the encoding doesn't use are ignored: they can be left over from a previous encoding choice.
+    """
+    errors = []
+    for key, (kind, lo, hi) in PARAM_RULES.get(encoding or "", {}).items():
+        if key not in params or params[key] is None:
+            continue
+        v = params[key]
+        ok = isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+        if ok and kind is int:
+            ok = float(v).is_integer()
+        if not ok or not lo <= v <= hi:
+            what = "an integer" if kind is int else "a number"
+            errors.append(f"params.{key} must be {what} from {lo} to {hi} for {encoding} (got {v!r})")
     return errors
 
 

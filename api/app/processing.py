@@ -13,8 +13,8 @@ from psycopg import sql
 
 from . import ingest, profiling
 from .config import get_settings
-from .correlations import compute_associations
-from .db import connection, execute, fetch_one, jsonb
+from .correlations import Assoc, compute_associations, screen_associations
+from .db import connection, execute, fetch_all, fetch_one, json_safe, jsonb
 from .semantics import suggest_all
 
 log = logging.getLogger(__name__)
@@ -41,7 +41,8 @@ class _Status:
             return
         self._last = now
         execute(
-            """UPDATE meta.datasets SET status = %s, progress = %s, status_message = %s, updated_at = now()
+            """UPDATE meta.datasets SET status = %s, progress = %s, status_message = %s, error = NULL,
+                      updated_at = now()
                WHERE id = %s""",
             (status, round(progress, 4), message, self.dataset_id),
         )
@@ -50,12 +51,12 @@ class _Status:
 def process_dataset(dataset_id: int, upload_path: str | None, fmt: str) -> None:
     s = get_settings()
     st = _Status(dataset_id)
-    ds = fetch_one("SELECT * FROM meta.datasets WHERE id = %s", (dataset_id,))
-    if ds is None:
-        return
-    targets: list[str] = list(ds["target_columns"] or [])
-    parquet_path = s.datasets_dir / str(dataset_id) / "raw.parquet"
     try:
+        ds = fetch_one("SELECT * FROM meta.datasets WHERE id = %s", (dataset_id,))
+        if ds is None:  # deleted while queued
+            return
+        targets: list[str] = list(ds["target_columns"] or [])
+        parquet_path = s.datasets_dir / str(dataset_id) / "raw.parquet"
         # ---- 1. ingest ------------------------------------------------------------
         st.set("ingesting", 0.01, "Converting to Parquet", force=True)
         warnings: list[str] = []
@@ -71,7 +72,7 @@ def process_dataset(dataset_id: int, upload_path: str | None, fmt: str) -> None:
             warnings.append(f"Target column(s) not found in file: {', '.join(missing_targets)}")
 
         st.set("ingesting", 0.05, "Loading raw table into Postgres", force=True)
-        raw_table = ingest.load_raw_table(
+        raw_table, load_warnings = ingest.load_raw_table(
             dataset_id,
             parquet_path,
             db_cols,
@@ -80,6 +81,7 @@ def process_dataset(dataset_id: int, upload_path: str | None, fmt: str) -> None:
                 "ingesting", 0.05 + 0.30 * done / max(total, 1), f"Loading raw table: {done:,} / {total:,} rows"
             ),
         )
+        warnings += load_warnings
         execute(
             """UPDATE meta.datasets SET parquet_path = %s, raw_table = %s, column_count = %s,
                       warnings = %s, updated_at = now() WHERE id = %s""",
@@ -115,7 +117,12 @@ def process_dataset(dataset_id: int, upload_path: str | None, fmt: str) -> None:
             progress=lambda f: st.set("correlating", 0.75 + 0.2 * f, f"Computing associations ({f:.0%})"),
         )
         _persist_correlations(dataset_id, field_ids, assocs)
+        screened = screen_associations(
+            [(i, p.screen_codes) for i, p in enumerate(profiles) if p.is_target],
+            [(i, p.screen_codes) for i, p in enumerate(profiles) if p.screen_codes is not None and not p.is_target],
+        )
         with connection() as conn:
+            upsert_correlations(conn, dataset_id, [(field_ids[a.i], field_ids[a.j], a) for a in screened])
             refresh_target_state(conn, dataset_id)
 
         st.set("ready", 1.0, "Ready", force=True)
@@ -148,7 +155,7 @@ def _persist_profiles(dataset_id: int, profiles: list[profiling.FieldProfile], d
             by_family = suggest_all(p.inferred_type, p.summary, p.is_target)
             row = [
                 dataset_id, p.ordinal, p.name, db_col, p.physical_dtype, p.inferred_type, p.confidence,
-                p.reasons, p.is_target, *[p.summary.get(c) for c in SUMMARY_COLS],
+                p.reasons, p.is_target, *[json_safe(p.summary.get(c)) for c in SUMMARY_COLS],
                 jsonb(p.stats), jsonb(p.charts), jsonb(by_family),
             ]
             fid = conn.execute(insert, row).fetchone()["id"]
@@ -200,6 +207,18 @@ def _persist_correlations(dataset_id: int, field_ids: list[int], assocs) -> None
                 copy.write_row((dataset_id, fa, fb, a.method, a.value, abs(a.value), a.n_obs))
 
 
+def upsert_correlations(conn, dataset_id: int, pairs: list[tuple[int, int, Assoc]]) -> None:
+    """Write (field id, field id, association) rows, replacing an existing value for the same pair."""
+    with conn.cursor() as cur:
+        cur.executemany(
+            """INSERT INTO meta.field_correlations (dataset_id, field_a, field_b, method, value, strength, n_obs)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (field_a, field_b) DO UPDATE SET method = EXCLUDED.method, value = EXCLUDED.value,
+                  strength = EXCLUDED.strength, n_obs = EXCLUDED.n_obs""",
+            [(dataset_id, *sorted((fa, fb)), a.method, a.value, abs(a.value), a.n_obs) for fa, fb, a in pairs],
+        )
+
+
 def target_suggestion(t: str, stats: dict, is_target: bool, max_target_assoc: float | None) -> tuple[dict, bool]:
     """Per-family suggestion and leakage flag; fields almost perfectly associated with a target are probably leaks."""
     by_family = suggest_all(t, stats, is_target)
@@ -215,7 +234,8 @@ def target_suggestion(t: str, stats: dict, is_target: bool, max_target_assoc: fl
 
 def refresh_target_state(conn, dataset_id: int) -> None:
     """Re-derive everything that depends on which fields are targets: max_target_assoc (non-targets only),
-    suggestions, leakage flags, and the action of decisions nobody has touched (source = 'suggested').
+    suggestions, leakage flags, and the action of decisions nobody has touched (still the suggestion, not yet
+    reviewed).
 
     Call after fields.is_target changes or new correlations land. Rows only change when their value does,
     so updated_at stays meaningful for "changed since export".
@@ -256,9 +276,34 @@ def refresh_target_state(conn, dataset_id: int) -> None:
              FROM (SELECT f.id, coalesce(f.suggestion -> ds.model_family ->> 'action', 'keep') AS action
                      FROM meta.fields f JOIN meta.datasets ds ON ds.id = f.dataset_id
                     WHERE f.dataset_id = %s) s
-            WHERE d.field_id = s.id AND d.source = 'suggested' AND d.action IS DISTINCT FROM s.action""",
+            WHERE d.field_id = s.id AND d.source = 'suggested' AND NOT d.reviewed
+              AND d.action IS DISTINCT FROM s.action""",
         (dataset_id,),
     )
+
+
+def sweep_uploads(min_age_s: float = 600) -> list[Path]:
+    """Remove uploads that no queued or ingesting dataset is waiting for (a crash mid-ingest leaves them behind).
+
+    Files younger than `min_age_s` are left alone: an upload is streamed to disk before its row exists.
+    """
+    uploads = get_settings().uploads_dir
+    if not uploads.is_dir():
+        return []
+    needed = {r["upload_path"] for r in fetch_all(
+        "SELECT upload_path FROM meta.datasets WHERE status IN ('pending', 'ingesting') AND upload_path IS NOT NULL")}
+    cutoff = time.time() - min_age_s
+    removed = []
+    for p in uploads.iterdir():
+        try:
+            if p.is_file() and str(p) not in needed and p.stat().st_mtime < cutoff:
+                p.unlink()
+                removed.append(p)
+        except OSError:
+            continue
+    if removed:
+        log.info("removed %d orphaned upload(s)", len(removed))
+    return removed
 
 
 def delete_dataset_files(dataset_id: int) -> None:

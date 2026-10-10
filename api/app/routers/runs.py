@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 
 from .. import gpu, jobs
 from ..db import execute, fetch_all, fetch_one, jsonb
-from ..modeling.registry import MODELS, catalog, compatibility
+from ..modeling.registry import MODELS, catalog, compatibility, param_problems
 from ..schemas import RunRequest
 
 log = logging.getLogger(__name__)
@@ -72,6 +72,8 @@ def start_run(export_id: int, req: RunRequest) -> dict:
     if req.device == "cuda" and not gpu.gpu_available():
         info = gpu.detect()
         raise HTTPException(409, f"No usable GPU: {info['reason']}" if info else "No GPU is available to the API")
+    if problems := param_problems(spec, req.params):
+        raise HTTPException(422, {"message": "Invalid model parameters", "errors": problems})
     if req.order and sorted(req.order) != sorted(manifest["targets"]):
         raise HTTPException(422, f"order must be a permutation of {manifest['targets']}")
     run = fetch_one(
@@ -117,7 +119,8 @@ def _run(run_id: int, export_dir: str, req: dict) -> None:
 
     def progress(msg: str) -> None:
         execute(
-            "UPDATE meta.model_runs SET status = 'running', status_message = %s, updated_at = now() WHERE id = %s",
+            "UPDATE meta.model_runs SET status = 'running', error = NULL, status_message = %s, updated_at = now() "
+            "WHERE id = %s",
             (msg, run_id),
         )
 
@@ -130,7 +133,8 @@ def _run(run_id: int, export_dir: str, req: dict) -> None:
         report = train(Path(export_dir), req["model"], req.get("order"), req["seed"], params,
                        req["cv"] or None, out_dir, progress, device=req.get("device", "cpu"))
         execute(
-            """UPDATE meta.model_runs SET status = 'done', status_message = 'Done', metrics = %s, report = %s,
+            """UPDATE meta.model_runs SET status = 'done', error = NULL, status_message = 'Done', metrics = %s,
+                      report = %s,
                       model_dir = %s, finished_at = now(), updated_at = now() WHERE id = %s""",
             (jsonb(report["metrics"]), jsonb({k: v for k, v in report.items() if k != "metrics"}),
              report["model_dir"], run_id),

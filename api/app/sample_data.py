@@ -227,7 +227,7 @@ def generate(n_rows: int = 50_000, n_fields: int = 150, seed: int = 42, target_k
         b = np.digitize(score_b, np.quantile(score_b, [0.4, 0.75]))
         column_b = np.array(["bronze", "silver", "gold"])[b]
 
-    flip = rng.random(n) < 0.02
+    flip = rng.random(n) < 0.005  # rare enough that the flag clears the 0.95 leak threshold with room to spare
     leak_base = a if target_kind != "multiclass" else (a >= 1).astype(int)
     cols["leaky_outcome_flag"] = np.where(flip, 1 - leak_base, leak_base)
     cols["column_a"] = column_a

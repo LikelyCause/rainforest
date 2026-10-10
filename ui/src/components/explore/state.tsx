@@ -5,20 +5,15 @@ import { api } from "../../api";
 import { Empty, ErrorAlert } from "../ui";
 import { fmtAgo, fmtInt } from "../../format";
 import type { Analysis, AnalysisKind, AnalysisParams, Dataset, NotEnoughReason, Skipped } from "../../types";
+import { parseExploreParams } from "./params";
 
-export const SAMPLES = [1000, 5000, 10000, 20000];
+export { SAMPLES } from "./params";
 const isActive = (s?: string) => s === "pending" || s === "running";
 
 /** Toolbar state shared by every view; all of it lives in the URL. */
 export function useExploreState(ds: Dataset) {
   const [params, setParams] = useSearchParams();
-  const data = params.get("data")?.startsWith("export:") ? params.get("data")! : "raw";
-  const isRaw = data === "raw";
-  const kept = isRaw && params.get("kept") === "1";
-  const t = params.get("target");
-  const target = ds.target_columns.length ? (t && ds.target_columns.includes(t) ? t : ds.target_columns[0]) : null;
-  const s = Number(params.get("sample"));
-  const sample = SAMPLES.includes(s) ? s : 5000;
+  const { data, isRaw, kept, target, sample } = parseExploreParams(params, ds.target_columns);
   const base: AnalysisParams = useMemo(() => ({ data, kept, target, sample }), [data, kept, target, sample]);
   const set = (patch: Record<string, string | null>) => {
     const next = new URLSearchParams(params);

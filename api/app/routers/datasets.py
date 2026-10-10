@@ -14,12 +14,12 @@ from ..config import get_settings
 from ..correlations import target_associations
 from ..db import connection, execute, fetch_all, fetch_one
 from ..modeling.registry import MODELS
-from ..processing import _Status, delete_dataset_files, process_dataset
+from ..processing import _Status, delete_dataset_files, process_dataset, upsert_correlations
 from ..profiling import corr_vector, sample_indices
 from ..sample_data import generate
 from ..schemas import DatasetPatch, SampleRequest
 from ..semantics import FAMILIES, NUMERIC
-from .fields import _sync_targets, set_targets
+from .fields import _sync_targets, has_screen_fields, screen_pairs, screen_targets, set_targets
 
 log = logging.getLogger(__name__)
 CORRELATED_TYPES = NUMERIC | {"datetime", "categorical", "binary"}
@@ -36,12 +36,12 @@ def _targets(raw: str | None) -> list[str]:
     return list(dict.fromkeys(t.strip() for t in raw.split(",") if t.strip()))
 
 
-def _create(name: str, filename: str | None, fmt: str, targets: list[str]) -> dict:
+def _create(name: str, filename: str | None, fmt: str, targets: list[str], upload_path: Path | None = None) -> dict:
     return fetch_one(
         f"""INSERT INTO meta.datasets (name, source_filename, file_format, target_columns, status, status_message,
-                                       owner)
-            VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s) RETURNING {DATASET_COLS}""",
-        (name, filename, fmt, targets, jobs.owner_id()),
+                                       owner, upload_path)
+            VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s) RETURNING {DATASET_COLS}""",
+        (name, filename, fmt, targets, jobs.owner_id(), None if upload_path is None else str(upload_path)),
     )
 
 
@@ -119,12 +119,20 @@ def upload(
     s = get_settings()
     s.uploads_dir.mkdir(parents=True, exist_ok=True)
     dest = s.uploads_dir / f"{uuid.uuid4().hex}{suffix}"
-    with dest.open("wb") as out:
-        shutil.copyfileobj(file.file, out, length=8 * 1024 * 1024)
+    try:
+        with dest.open("wb") as out:
+            shutil.copyfileobj(file.file, out, length=8 * 1024 * 1024)
+    except BaseException:
+        dest.unlink(missing_ok=True)
+        raise
     if dest.stat().st_size == 0:
         dest.unlink(missing_ok=True)
         raise HTTPException(400, "Uploaded file is empty")
-    ds = _create(name or Path(filename).stem, filename, fmt, _targets(targets))
+    try:
+        ds = _create(name or Path(filename).stem, filename, fmt, _targets(targets), dest)
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise
     jobs.submit(process_dataset, ds["id"], str(dest), fmt)
     return ds
 
@@ -155,7 +163,7 @@ def _generate_and_process(dataset_id: int, req: dict) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     try:
         execute(
-            "UPDATE meta.datasets SET status='ingesting', status_message='Generating sample data', "
+            "UPDATE meta.datasets SET status='ingesting', error=NULL, status_message='Generating sample data', "
             "updated_at=now() WHERE id=%s",
             (dataset_id,),
         )
@@ -187,6 +195,7 @@ def update_dataset(dataset_id: int, body: DatasetPatch) -> dict:
     if body.target_columns is not None and ds["status"] != "ready":
         raise HTTPException(409, "Targets can be changed once the dataset is ready")
     uncorrelated: list[dict] = []
+    screen: list[int] = []
     with connection() as conn:
         conn.execute(
             """UPDATE meta.datasets SET model_family = coalesce(%s, model_family), name = coalesce(%s, name),
@@ -194,7 +203,8 @@ def update_dataset(dataset_id: int, body: DatasetPatch) -> dict:
             (body.model_family, body.name, dataset_id),
         )
         if body.target_columns is not None:
-            uncorrelated = set_targets(conn, dataset_id, list(dict.fromkeys(body.target_columns)))
+            uncorrelated, added = set_targets(conn, dataset_id, list(dict.fromkeys(body.target_columns)))
+            screen = added if added and has_screen_fields(conn, dataset_id) else []
             conn.execute(
                 """UPDATE meta.datasets SET warnings = array(
                        SELECT w FROM unnest(warnings) w WHERE w NOT LIKE 'Target column(s) not found%%')
@@ -203,18 +213,21 @@ def update_dataset(dataset_id: int, body: DatasetPatch) -> dict:
             )
             if uncorrelated:
                 conn.execute(
-                    """UPDATE meta.datasets SET status = 'correlating', progress = 0, owner = %s,
+                    """UPDATE meta.datasets SET status = 'correlating', progress = 0, error = NULL, owner = %s,
                               status_message = 'Queued: associations for new target(s)' WHERE id = %s""",
                     (jobs.owner_id(), dataset_id),
                 )
     if uncorrelated:
-        jobs.submit(correlate_targets, dataset_id, [r["id"] for r in uncorrelated])
+        jobs.submit(correlate_targets, dataset_id, [r["id"] for r in uncorrelated], screen)
+    elif screen:
+        jobs.submit(screen_targets, dataset_id, screen)
     return get_dataset(dataset_id)
 
 
-def correlate_targets(dataset_id: int, target_ids: list[int]) -> None:
+def correlate_targets(dataset_id: int, target_ids: list[int], screen_ids: list[int] | None = None) -> None:
     """Associations between new targets and every other field, for targets profiled as types that never got
-    an association sample (text, identifier). Treated as class labels, as profiling treats targets."""
+    an association sample (text, identifier). Treated as class labels, as profiling treats targets.
+    `screen_ids` (new targets) also get the uncapped leak screen."""
     s = get_settings()
     st = _Status(dataset_id)
     try:
@@ -243,6 +256,7 @@ def correlate_targets(dataset_id: int, target_ids: list[int]) -> None:
                 categorical.append((k, codes))
             st.set("correlating", 0.8 * (k + 1) / len(fields), f"Reading {f['name']} ({k + 1}/{len(fields)})")
         assocs = list(target_associations(targets, numeric, categorical))
+        screened = screen_pairs(dataset_id, screen_ids) if screen_ids else []
         with connection() as conn:
             with conn.cursor() as cur:
                 cur.executemany(
@@ -252,6 +266,7 @@ def correlate_targets(dataset_id: int, target_ids: list[int]) -> None:
                     [(dataset_id, *sorted((fields[a.i]["id"], fields[a.j]["id"])), a.method, a.value, abs(a.value),
                       a.n_obs) for a in assocs],
                 )
+            upsert_correlations(conn, dataset_id, screened)
             _sync_targets(conn, dataset_id)
             conn.execute(
                 """UPDATE meta.datasets SET warnings = array(
@@ -314,39 +329,6 @@ def _run_dirs(models_dir: Path, runs: list[dict]) -> set[Path]:
             if p.parent == root:
                 out.add(p)
     return out
-
-
-@router.get("/{dataset_id}/summary")
-def summary(dataset_id: int) -> dict:
-    get_dataset(dataset_id)
-    with connection() as conn:
-        by_type = conn.execute(
-            """SELECT inferred_type AS type, count(*) AS n FROM meta.fields WHERE dataset_id = %s
-               GROUP BY 1 ORDER BY 2 DESC""",
-            (dataset_id,),
-        ).fetchall()
-        by_action = conn.execute(
-            """SELECT action, count(*) AS n, count(*) FILTER (WHERE reviewed) AS reviewed
-                 FROM meta.field_decisions WHERE dataset_id = %s GROUP BY 1""",
-            (dataset_id,),
-        ).fetchall()
-        top_target = conn.execute(
-            """SELECT field_id, field_name, other_field_name AS target, method, value, strength
-                 FROM meta.v_correlations
-                WHERE dataset_id = %s AND other_is_target AND field_id NOT IN
-                      (SELECT id FROM meta.fields WHERE dataset_id = %s AND is_target)
-                ORDER BY strength DESC LIMIT 15""",
-            (dataset_id, dataset_id),
-        ).fetchall()
-    total = sum(r["n"] for r in by_action)
-    reviewed = sum(r["reviewed"] for r in by_action)
-    return {
-        "by_type": by_type,
-        "by_action": by_action,
-        "total_fields": total,
-        "reviewed": reviewed,
-        "top_target_associations": top_target,
-    }
 
 
 @router.get("/{dataset_id}/fields")

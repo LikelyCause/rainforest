@@ -87,10 +87,16 @@ class ExportRequest(BaseModel):
 class RunRequest(BaseModel):
     model: str = "lightgbm"
     order: list[str] | None = None
-    cv: int = Field(5, ge=0, le=10)
+    cv: int = Field(5, ge=0, le=10, description="0 chains the ground truth; otherwise 2-10 folds")
     seed: int = 42
     params: dict[str, Any] = Field(default_factory=dict)
     device: Literal["cpu", "cuda"] = "cpu"
+
+    @model_validator(mode="after")
+    def _check(self) -> RunRequest:
+        if self.cv == 1:
+            raise ValueError("cv must be 0 (chain the ground truth) or 2-10 folds")
+        return self
 
 
 class AnalysisParams(BaseModel):

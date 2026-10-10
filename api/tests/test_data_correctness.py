@@ -58,6 +58,22 @@ def test_csv_type_change_after_inference_window_still_gives_valid_parquet(tmp_pa
     assert [p.name for p in dest.parent.iterdir()] == ["raw.parquet"]
 
 
+def test_rows_longer_than_the_header_are_truncated_with_a_warning(tmp_path):
+    src = tmp_path / "ragged.csv"
+    src.write_text("a,b,c\n1,2,3\n4,5\n6,7,8,9\n10,11,12\n")
+    dest = tmp_path / "ds" / "raw.parquet"
+    warnings = ingest.to_parquet(src, "csv", dest)
+    df = pl.read_parquet(dest)
+    assert df.rows() == [(1, 2, 3), (4, 5, None), (6, 7, 8), (10, 11, 12)]
+    assert any("more values than the header" in w for w in warnings)
+
+
+def test_well_formed_csv_gets_no_ragged_warning(tmp_path):
+    src = tmp_path / "ok.csv"
+    src.write_text("a,b\n1,2\n3,4\n")
+    assert ingest.to_parquet(src, "csv", tmp_path / "ds" / "raw.parquet") == []
+
+
 def test_failed_conversion_leaves_no_partial_file(tmp_path):
     src = tmp_path / "bad.parquet"
     src.write_bytes(b"not a parquet file")
@@ -160,8 +176,8 @@ def test_decimal_comma_column_is_parsed_as_decimals():
 
 def test_export_uses_the_profiled_number_format():
     s = pl.Series("w", ["1,500", "2,25"])
-    assert coercion_exprs([_spec("w", "numeric_continuous", decimal_comma=True)], None)["w"](s).to_list() == [1.5, 2.25]
-    assert coercion_exprs([_spec("w", "numeric_continuous")], None)["w"](s).to_list() == [1500.0, None]
+    assert coercion_exprs([_spec("w", "numeric_continuous", decimal_comma=True)])["w"](s).to_list() == [1.5, 2.25]
+    assert coercion_exprs([_spec("w", "numeric_continuous")])["w"](s).to_list() == [1500.0, None]
 
 
 # ------------------------------------------------------------------------------------------- #19 dates
@@ -195,6 +211,34 @@ def test_numbers_retyped_to_datetime_are_parsed_by_range():
 
 
 # ------------------------------------------------------------------------------------------- #11 names
+def test_a_stored_epoch_unit_reads_every_chunk_the_same_way():
+    from app.profiling import column_datetime_format
+
+    whole = pl.Series("t", [5_000_000_000, 1_600_000_000_000])  # ms; the first alone looks like seconds
+    fmt = column_datetime_format(whole)
+    assert fmt == "epoch_ms"
+    first_chunk = parse_datetime(whole.head(1), fmt)
+    assert first_chunk.dt.year().to_list() == [1970]  # 5e9 ms, not 5e9 s (year 2128)
+    assert column_datetime_format(pl.Series("d", ["01/02/2023", "25/12/2023"])) == "%d/%m/%Y"
+
+
+@pytest.mark.parametrize("scale,unit", [(1, "seconds"), (1000, "milliseconds")])
+def test_unique_epoch_integers_are_dates_not_identifiers(scale, unit):
+    start = int(dt.datetime(2021, 3, 1, tzinfo=dt.timezone.utc).timestamp())
+    values = [(start + i * 3600) * scale for i in range(2000)]
+    t, conf, reasons, _ = _infer(values, "created")
+    assert t == "datetime" and unit in reasons[0]
+    p = _profile(values, "created")
+    assert p.inferred_type == "datetime" and p.stats["min"].startswith("2021-03-01")
+    assert p.summary["null_count"] == 0
+
+
+def test_epoch_like_values_under_a_key_name_stay_identifiers():
+    values = list(range(1_600_000_000, 1_600_002_000))
+    assert _infer(values, "event_id")[0] == "identifier"
+    assert _infer([v % 7 for v in values], "bucket")[0] != "datetime"
+
+
 def test_safe_feature_names_reserve_targets_and_internal_columns():
     assert safe_feature_names(["column_a", "x", "column_a"], reserved=["column_a", "__row_id"]) == [
         "column_a_2", "x", "column_a_3"]

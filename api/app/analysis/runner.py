@@ -96,7 +96,8 @@ def _prune(conn, dataset_id: int, kind: str, version: str) -> None:
 def _progress(analysis_id: int):
     def check(frac: float, msg: str) -> None:
         row = fetch_one(
-            """UPDATE meta.analyses SET status = 'running', progress = %s, status_message = %s, updated_at = now()
+            """UPDATE meta.analyses SET status = 'running', error = NULL, progress = %s, status_message = %s,
+                      updated_at = now()
                 WHERE id = %s AND status IN ('pending', 'running') RETURNING id""",
             (round(frac, 4), msg, analysis_id),
         )
@@ -146,7 +147,8 @@ def run_analysis(analysis_id: int) -> None:
         else:
             result = compute.run_importance(prepared, check)
         execute(
-            """UPDATE meta.analyses SET status = 'done', progress = 1, status_message = 'Done', result = %s,
+            """UPDATE meta.analyses SET status = 'done', error = NULL, progress = 1, status_message = 'Done',
+                      result = %s,
                       finished_at = now(), updated_at = now()
                 WHERE id = %s AND status = 'running'""",
             (jsonb(result), analysis_id),

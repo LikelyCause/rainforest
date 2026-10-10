@@ -1,9 +1,9 @@
 """Turn reviewed field decisions into a fitted sklearn preprocessing pipeline + model-ready Parquet.
 
 Pipeline per field (only `action == keep`):
-    numeric      : [clip | signed-log1p] -> [SimpleImputer] -> [scaler]   (+ optional missing indicator)
+    numeric      : [SimpleImputer] -> [clip | signed-log1p] -> [scaler]   (+ optional missing indicator)
     categorical  : SimpleImputer -> OneHot | Ordinal | Frequency
-    binary       : SimpleImputer -> Ordinal (0/1)
+    binary       : 0/1 (+ missing indicator when missing values get their own label)
     text         : TF-IDF -> TruncatedSVD   |   length / word-count stats
     datetime     : date parts + epoch days -> [SimpleImputer]
 
@@ -113,6 +113,46 @@ class FrequencyEncoder(TransformerMixin, BaseEstimator):
         return np.asarray([f"{n}_freq" for n in names], dtype=object)
 
 
+class BinaryEncoder(TransformerMixin, BaseEstimator):
+    """Two-level column -> 0/1 (1 = the later level in natural order, as targets are encoded).
+
+    Missing and unseen values become the most frequent level (`fill="most_frequent"`), the level named by
+    `fill`, or otherwise 0 plus a `__isna` indicator column, so missing never sits between the two levels.
+    """
+
+    def __init__(self, fill: str | None = "most_frequent"):
+        self.fill = fill
+
+    def fit(self, X, y=None):
+        s = pd.Series(np.asarray(X, dtype=object).ravel())
+        counts = s[s.notna()].astype(str).value_counts()
+        top = counts.index[:2].tolist() or ["0"]
+        self.levels_ = sorted(top, key=_natural_key)
+        self.n_features_in_ = 1
+        self.feature_names_in_ = np.asarray([str(getattr(X, "columns", ["x0"])[0])], dtype=object)
+        if self.fill == "most_frequent":
+            self.fill_code_, self.indicator_ = float(self.levels_.index(top[0])), False
+        elif self.fill in self.levels_:
+            self.fill_code_, self.indicator_ = float(self.levels_.index(self.fill)), False
+        else:
+            self.fill_code_, self.indicator_ = 0.0, True
+        return self
+
+    def transform(self, X):
+        s = pd.Series(np.asarray(X, dtype=object).ravel())
+        txt = s.where(s.isna(), s.astype(str))
+        known = txt.isin(self.levels_).to_numpy()
+        value = np.where(known, (txt == self.levels_[-1]).to_numpy(), self.fill_code_).astype(np.float64)
+        if len(self.levels_) == 1:
+            value = np.where(known, 0.0, self.fill_code_)
+        return np.column_stack([value, ~known]).astype(np.float64) if self.indicator_ else value[:, None]
+
+    def get_feature_names_out(self, input_features=None):
+        name = (input_features if input_features is not None else self.feature_names_in_)[0]
+        return np.asarray([f"{name}_{self.levels_[-1]}", *([f"{name}__isna"] if self.indicator_ else [])],
+                          dtype=object)
+
+
 class TextFeatures(TransformerMixin, BaseEstimator):
     """Single text column -> TF-IDF -> SVD components (and/or simple length statistics)."""
 
@@ -143,7 +183,10 @@ class TextFeatures(TransformerMixin, BaseEstimator):
                 self.vectorizer_, self.svd_ = None, None
                 self.n_out_ = 0
                 return self
-            k = max(1, min(self.svd_components, tf.shape[1] - 1))
+            if tf.shape[1] < 2:  # SVD needs two terms; a single term is its own feature
+                self.svd_, self.n_out_ = None, tf.shape[1]
+                return self
+            k = min(self.svd_components, tf.shape[1] - 1)
             self.svd_ = TruncatedSVD(n_components=k, random_state=self.random_state).fit(tf)
             self.n_out_ = k
         else:
@@ -155,7 +198,8 @@ class TextFeatures(TransformerMixin, BaseEstimator):
         if self.mode == "tfidf_svd":
             if self.vectorizer_ is None:
                 return np.zeros((len(docs), 0), dtype=np.float32)
-            return self.svd_.transform(self.vectorizer_.transform(docs)).astype(np.float32)
+            tf = self.vectorizer_.transform(docs)
+            return (tf.toarray() if self.svd_ is None else self.svd_.transform(tf)).astype(np.float32)
         s = pd.Series(docs)
         return np.column_stack([s.str.len().to_numpy(float), s.str.split().str.len().fillna(0).to_numpy(float)])
 
@@ -219,30 +263,32 @@ SCALERS = {
 
 def _numeric_pipeline(f: FieldSpec) -> Pipeline | str:
     steps: list[tuple[str, Any]] = []
-    if f.transform == "clip":
-        steps.append(("clip", Winsorizer()))
-    elif f.transform == "log1p":
-        steps.append(("log1p", SignedLog1p()))
+    # Fill first, so a constant fill value is in the field's own units, not log or clipped ones.
     if f.imputation != "none":
         kw: dict[str, Any] = {"strategy": f.imputation, "keep_empty_features": True}
         if f.imputation == "constant":
             kw["fill_value"] = float(f.impute_value or 0)
         steps.append(("impute", SimpleImputer(**kw)))
+    if f.transform == "clip":
+        steps.append(("clip", Winsorizer()))
+    elif f.transform == "log1p":
+        steps.append(("log1p", SignedLog1p()))
     if f.scaling in SCALERS:
         steps.append(("scale", SCALERS[f.scaling]()))
     return Pipeline(steps) if steps else "passthrough"
 
 
-def _categorical_pipeline(f: FieldSpec) -> Pipeline:
+def _categorical_pipeline(f: FieldSpec) -> Pipeline | BinaryEncoder:
+    if f.semantic_type == "binary" or f.encoding == "binary":
+        return BinaryEncoder("most_frequent" if f.imputation == "most_frequent" else f.impute_value)
     if f.imputation == "most_frequent":
         imputer = SimpleImputer(strategy="most_frequent", keep_empty_features=True)
     else:
         imputer = SimpleImputer(strategy="constant", fill_value=f.impute_value or "__missing__",
                                 keep_empty_features=True)
     p = {**DEFAULT_PARAMS.get(f.encoding, {}), **(f.params or {})}
-    if f.semantic_type == "binary" or f.encoding == "binary":
-        enc: Any = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1, dtype=np.float32)
-    elif f.encoding == "onehot":
+    enc: Any
+    if f.encoding == "onehot":
         enc = OneHotEncoder(handle_unknown="infrequent_if_exist", sparse_output=False, dtype=np.float32,
                             max_categories=int(p.get("max_categories", 30)),
                             min_frequency=float(p.get("min_frequency", 0.01)))
@@ -257,7 +303,8 @@ def _categorical_pipeline(f: FieldSpec) -> Pipeline:
 def build_preprocessor(specs: list[FieldSpec], seed: int = 0) -> ColumnTransformer:
     transformers: list[tuple[str, Any, Any]] = []
     sources: dict[str, str] = {}  # transformer name -> source field
-    used: set[str] = set()
+    # A step may not share a name with a ColumnTransformer argument (a field called "remainder").
+    used: set[str] = set(ColumnTransformer([]).get_params(deep=False))
 
     def tname(field: str, suffix: str = "") -> str:
         # sklearn forbids "__" in step names; it is also the output-name separator.
@@ -312,7 +359,7 @@ class NumericCoercer:
         return null_infinite(raw)
 
 
-def coercion_exprs(specs: list[FieldSpec], schema: pl.Schema) -> dict[str, Callable[[pl.Series], pl.Series]]:
+def coercion_exprs(specs: list[FieldSpec]) -> dict[str, Callable[[pl.Series], pl.Series]]:
     """Deterministic, fit-free casting of raw columns into what the preprocessor expects."""
     out: dict[str, Callable[[pl.Series], pl.Series]] = {}
     for f in specs:
@@ -350,7 +397,7 @@ def readable_feature_names(pre: ColumnTransformer) -> list[str]:
         field = pre.rainforest_sources_.get(tname, tname)
         if rest.startswith("missingindicator_"):
             out.append(f"{field}__isna")
-        elif rest.startswith(field):
+        elif rest == field or rest.startswith(field + "_"):
             out.append(rest)
         else:
             out.append(f"{field}__{rest}")
@@ -388,6 +435,8 @@ def estimated_width(specs: list[FieldSpec]) -> int:
             n += len(DatetimeParts.PARTS)
         elif f.semantic_type == "categorical" and f.encoding == "onehot":
             n += int(p.get("max_categories", 30))
+        elif f.semantic_type == "binary":
+            n += 2
         else:
             n += 1
     return max(n, 1)
@@ -523,7 +572,6 @@ def run_export(
     if clash := {ROW_ID, SPLIT_COL} & set(targets):
         raise ValueError(f"Target name(s) {', '.join(sorted(clash))} are reserved for the export's own columns.")
 
-    schema = pl.read_parquet_schema(parquet_path)
     n_rows = pl.scan_parquet(parquet_path).select(pl.len()).collect().item()
 
     # 1. targets + split ------------------------------------------------------------
@@ -544,9 +592,9 @@ def run_export(
     fit_idx = np.sort(rng.choice(train_idx, size=min(fit_rows, fit_cap, train_idx.size), replace=False))
     feature_cols = [f.name for f in specs]
     pre = build_preprocessor(specs, seed)
-    pre.fit(to_pandas_frame(read_rows(parquet_path, feature_cols, fit_idx), specs, coercion_exprs(specs, schema),
+    pre.fit(to_pandas_frame(read_rows(parquet_path, feature_cols, fit_idx), specs, coercion_exprs(specs),
                             consume=True))
-    coercers = coercion_exprs(specs, schema)  # fresh, so inf counts cover the written rows only
+    coercers = coercion_exprs(specs)  # fresh, so inf counts cover the written rows only
     raw_names = readable_feature_names(pre)
     feat_names = safe_feature_names(raw_names, reserved=[ROW_ID, SPLIT_COL, *targets])
     feature_source = _feature_sources(pre, feat_names)

@@ -65,6 +65,8 @@ class FieldProfile:
     # Correlation inputs on the shared row sample (not persisted)
     corr_numeric: np.ndarray | None = field(default=None, repr=False)
     corr_codes: np.ndarray | None = field(default=None, repr=False)
+    # Uncapped codes for the leak screen: targets, text, and categoricals with more than corr_max_levels levels.
+    screen_codes: np.ndarray | None = field(default=None, repr=False)
 
 
 # --------------------------------------------------------------------------- helpers
@@ -153,15 +155,35 @@ def _yyyymmdd_rate(s: pl.Series) -> float:
     return txt.str.strptime(pl.Datetime("us"), YYYYMMDD, strict=False).drop_nulls().len() / nn.len()
 
 
+EPOCH_TO_US = {"epoch_s": 1e6, "epoch_ms": 1e3, "epoch_us": 1.0, "epoch_ns": 1e-3}
+
+
+def _numeric_datetime_format(s: pl.Series) -> str:
+    """YYYYMMDD, or the epoch unit (s, ms, us, ns) that the values' magnitude implies."""
+    if _yyyymmdd_rate(s) >= 0.99:
+        return YYYYMMDD
+    biggest = null_infinite(s.cast(pl.Float64).fill_nan(None)).abs().max() or 0
+    return next((u for u, top in (("epoch_s", 1e11), ("epoch_ms", 1e14), ("epoch_us", 1e17)) if biggest < top),
+                "epoch_ns")
+
+
 def _numeric_to_datetime(s: pl.Series, fmt: str | None) -> pl.Series:
-    """YYYYMMDD integers, else epoch timestamps whose unit (s, ms, us, ns) follows from their magnitude."""
-    if fmt == YYYYMMDD or (fmt is None and _yyyymmdd_rate(s) >= 0.99):
+    """YYYYMMDD integers or epoch timestamps; without `fmt` it is judged from this series alone."""
+    fmt = fmt if fmt == YYYYMMDD or fmt in EPOCH_TO_US else _numeric_datetime_format(s)
+    if fmt == YYYYMMDD:
         ints = s.cast(pl.Float64).fill_nan(None).round(0).cast(pl.Int64, strict=False)
         return ints.cast(pl.String).str.strptime(pl.Datetime("us"), YYYYMMDD, strict=False)
     x = null_infinite(s.cast(pl.Float64).fill_nan(None))
-    biggest = x.abs().max() or 0
-    to_us = 1e6 if biggest < 1e11 else 1e3 if biggest < 1e14 else 1.0 if biggest < 1e17 else 1e-3
-    return pl.from_epoch((x * to_us).round(0).cast(pl.Int64), time_unit="us").alias(s.name)
+    return pl.from_epoch((x * EPOCH_TO_US[fmt]).round(0).cast(pl.Int64), time_unit="us").alias(s.name)
+
+
+def column_datetime_format(s: pl.Series) -> str | None:
+    """The format to read a whole column as dates with, so every export chunk parses it the same way."""
+    if s.dtype == pl.String:
+        return detect_datetime_format(s.str.strip_chars())[0]
+    if s.dtype.is_numeric():
+        return _numeric_datetime_format(s)
+    return None
 
 
 def parse_datetime(s: pl.Series, fmt: str | None) -> pl.Series:
@@ -245,12 +267,31 @@ def infer_type(
     if dt.is_numeric() and _looks_yyyymmdd(s, name):
         hints["datetime_format"] = YYYYMMDD
         return "datetime", 0.85, ["integers that read as YYYYMMDD dates"], hints
+    if dt.is_numeric() and n_unique >= 20 and (unit := _epoch_unit(s, name)):
+        return "datetime", 0.7, [f"integers in the range of Unix timestamps in {unit} (2000–2100)"], hints
     if dt.is_numeric():
         t, c, r = _infer_numeric(s.drop_nulls(), name, dt, n_unique, n_nonnull)
         return t, c, r, hints
     if dt == pl.String:
         return _infer_string(s, name, n_unique, n_nonnull)
     return "categorical", 0.4, [f"unrecognised dtype {dt}; treating as categorical"], hints
+
+
+# Epoch values for 2000-01-01 .. 2100-01-01 per unit, the magnitudes _numeric_to_datetime reads them in.
+EPOCH_RANGES = {"seconds": (946_684_800, 4_102_444_800), "milliseconds": (946_684_800e3, 4_102_444_800e3),
+                "microseconds": (946_684_800e6, 4_102_444_800e6), "nanoseconds": (946_684_800e9, 4_102_444_800e9)}
+
+
+def _epoch_unit(s: pl.Series, name: str) -> str | None:
+    """The unit when every value is a whole number inside one unit's 2000–2100 epoch range (and the name
+    isn't key-like), else None."""
+    if ID_NAME_RE.search(name):
+        return None
+    x = s.drop_nulls().cast(pl.Float64)
+    lo, hi = x.min(), x.max()
+    if lo is None or not bool((x == x.round(0)).all()):
+        return None
+    return next((u for u, (a, b) in EPOCH_RANGES.items() if a <= lo and hi <= b), None)
 
 
 def _looks_yyyymmdd(s: pl.Series, name: str) -> bool:
@@ -513,8 +554,19 @@ def _codes(s: pl.Series, max_levels: int) -> np.ndarray:
     top = as_str.drop_nulls().value_counts(sort=True).head(max_levels)[as_str.name].to_list()
     mapping = {v: i for i, v in enumerate(top)}
     other, missing = len(top), len(top) + 1
-    mapped = as_str.replace_strict(mapping, default=other, return_dtype=pl.Int32)
-    return mapped.fill_null(missing).to_numpy().astype(np.int32)
+    # replace_strict sends nulls to `default` too, so missing has to be set before it.
+    mapped = pl.select(pl.when(as_str.is_null()).then(missing)
+                       .otherwise(as_str.replace_strict(mapping, default=other, return_dtype=pl.Int32)))
+    return mapped.to_series().to_numpy().astype(np.int32)
+
+
+def screen_codes(s: pl.Series, corr_idx: np.ndarray | None) -> np.ndarray:
+    """A code per distinct value on the association sample, with no level cap (null is a value too)."""
+    if s.dtype.is_float():
+        s = s.fill_nan(None)
+    if corr_idx is not None:
+        s = s.gather(corr_idx)
+    return s.cast(pl.String).fill_null("\0null").rank("dense").to_numpy().astype(np.int32)
 
 
 def _failed_examples(raw: pl.Series, parsed: pl.Series, k: int = 5) -> list[str]:
@@ -651,7 +703,13 @@ def profile_column(
         charts=charts,
         corr_numeric=corr_numeric,
         corr_codes=corr_codes,
+        screen_codes=screen_codes(s, corr_idx) if needs_screen(t, n_unique, is_target, corr_max_levels) else None,
     )
+
+
+def needs_screen(t: str, n_unique: int, is_target: bool, corr_max_levels: int) -> bool:
+    """Fields the capped associations can't vouch for: free text, and categoricals past the level cap."""
+    return is_target or t == "text" or (t in ("categorical", "binary") and n_unique > corr_max_levels)
 
 
 def profile_parquet(

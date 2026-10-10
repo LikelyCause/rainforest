@@ -53,12 +53,18 @@ saying to set it.
 3. **Bulk edit** → find fields with presets (*Unreviewed*, *Missing > 20%*, *Skewed numerics*, *Target-associated*,
    *High-card categoricals*, *Text*, *Possible leaks*, *Edited by you*) or your own filters, then **Accept
    suggestions**, **Keep**, **Drop** or **Mark reviewed**. Each bulk action shows a preview of what will change before
-   you apply it, and can be undone from the toast. *Review these N →* (`R`) opens the matching fields as a working
-   set in Review. The **SQL** tab is a read-only console with examples.
+   you apply it, and can be undone from the toast. The table shows the first 500 matches; bulk actions apply to every
+   match except the rows you untick, and the bar says so. *Accept suggestions* leaves preprocessing settings you
+   customised alone unless it changes the field's type. *Review these N →* (`R`) opens the shown fields as a
+   working set in Review. The **SQL** tab is a read-only console with examples.
+   A field counts as *edited by you* once you change its keep / drop or type, and its settings as *customised* once
+   they differ from what was suggested; confirming or annotating a suggestion leaves it a suggestion. Decisions still
+   at the suggestion and not yet reviewed follow target changes (a new leak flag drops them).
 4. **Explore** → correlations heatmap, a 2-D map of rows, per-field statistical tests against a target, and feature
    importance. See [Explore](#explore).
 5. **Export & train** → fit the preprocessing on the training split, write the model-ready Parquet, and train
-   chains with any compatible model. Runs are compared side by side, and the best result in each column is starred.
+   chains with any compatible model. Runs on an export are compared side by side, and the best on the validation
+   split is starred.
 
 The top bar shows the workflow steps **Review · Bulk edit · Explore · Export & train** and the **Model** switch
 (*Trees* · *Linear* · *Neural*).
@@ -91,10 +97,11 @@ families' settings are re-derived for the new type.
 | | **Tree ensembles** (default) | Linear models | Neural / distance |
 |---|---|---|---|
 | Models | LightGBM, XGBoost\*, histogram GBM, random forest | logistic regression | MLP |
-| Missing numerics | left as NaN; the model learns where to send them | median + "was missing" flag | median + flag |
-| Skew / outliers | nothing: splits only depend on order | signed log1p / winsorize | log1p |
-| Scaling | **not offered**: it can't change a split | standard | standard / quantile-normal |
-| Categoricals | ≤ 8 levels one-hot, ≤ 1,000 ordinal codes, else frequency | one-hot (top 30 kept), else frequency | same as linear |
+| Missing numerics | left as NaN; the model learns where to send them | median, plus a "was missing" flag from 1% missing | same as linear |
+| Skew / outliers | nothing: splits only depend on order | signed log1p when \|skew\| > 1, else winsorize above 3% outliers | same as linear |
+| Scaling | **not offered**: it can't change a split | standard | quantile-normal when \|skew\| > 1, else standard |
+| Categoricals | ≤ 8 levels one-hot, ≤ 1,000 ordinal codes, else frequency | ≤ 200 levels one-hot (top 30 kept), else frequency | same as linear |
+| Binary | 0/1; missing takes the most frequent level under 5% missing, else a "was missing" column | same | same |
 | Text | TF-IDF → 32 SVD components | same | same |
 | Dates | year, month, day, weekday, hour, day-of-year, epoch days | + median impute + scaling | same |
 
@@ -118,15 +125,24 @@ text compared with short categorical strings.
   missing. They're also reported as `stats.unparseable_count` (with examples) and `stats.inf_count`, shown as a *Read
   as missing* signal. Unparseable values cap the type confidence at 0.65.
 * Integer columns retyped to datetime are read as `YYYYMMDD` when they are valid dates, otherwise as epoch
-  timestamps whose unit (s, ms, µs, ns) follows from their magnitude.
+  timestamps whose unit (s, ms, µs, ns) follows from their magnitude. Whole numbers that all fall within one
+  unit's 2000–2100 epoch range are inferred as dates in the first place, unless the name looks like a key
+  (`…_id`, `key`, `code`).
 * An upload target with more than 100 distinct values isn't made a target; the dataset gets a warning.
 
 Fields with a ≥ 0.95 association to a target are flagged as **possible leakage** and suggested for dropping.
 
 **Associations** use a seeded 100k-row sample:
-- Spearman ρ for numeric pairs (pairwise-complete, vectorised).
-- Bias-corrected Cramér's V for categorical pairs, with missing as its own level.
+- Spearman ρ for numeric pairs, over the rows where both are present. One vectorised pass ranks each column over
+  its own values; pairs whose missing rows differ and whose first estimate is at least 0.3 are re-ranked within
+  their shared rows, so a monotone relation isn't understated when values are missing.
+- Bias-corrected Cramér's V for categorical pairs, with missing as its own level. Each categorical keeps its 50
+  most common levels (`CORR_MAX_LEVELS`) and groups the rest.
 - Correlation ratio η for numeric × categorical pairs.
+- **Leak screen:** categoricals with more levels than that, and text fields (compared by exact value), are also
+  measured against each target with every level kept. That value replaces the capped one, so a 500-level code that
+  determines the target is flagged. It runs during processing, and again in the background whenever a target is
+  added.
 
 ## Explore
 
@@ -160,7 +176,7 @@ of failing.
 
 * **Leakage-safe split:** the train / valid / test split is assigned first, stratified on the target combination
   (single-row combinations are pooled; if the combinations still can't be stratified, on one target, else not at
-  all). An export fails, naming the class, when a target has a class with a single row.
+  all). A target with a class that has a single row blocks the export, naming the class.
   Every statistic is then fitted on training rows only (up to 500k of them by default), and the full file is
   transformed in chunks.
 * **Memory:** both steps are sized by output width. A transform chunk holds at most `EXPORT_CHUNK_MB` of dense
@@ -171,10 +187,15 @@ of failing.
   `preprocessor.joblib`, and `manifest.json` (feature → source field, class mappings, model family, NaN report, and
   `inf_values`: ±inf per field, written as missing). Feature names never take a target's name or `__row_id` /
   `__split`; a clashing feature gets a numbered suffix.
+* **Encodings worth knowing:** a binary field becomes one 0/1 column named after its second level (`smoker_yes`).
+  Missing values take the most frequent level, or the level you name as the fill value; any other fill label adds a
+  `<field>__isna` column instead of a third code. Numeric fill values are applied before log1p or winsorizing, so
+  they're in the field's own units. A field retyped to date / time has its date format detected once over the whole
+  column when you save, so every chunk of the export reads it the same way.
 * **Before you export**, the page summarises what will go in (kept / dropped / targets / customised fields, kept
-  fields by type) and warns about unreviewed fields, kept leakage flags and a target count other than two. No target
-  or no kept features blocks the export. Once an export exists, it shows how many decisions changed since, with
-  *Re-export with same split*. Validation and test share, seed and the fit-row cap are adjustable.
+  fields by type) and warns about unreviewed fields, kept leakage flags and a lone target (nothing to chain). No
+  target, no kept features or a single-row target class blocks the export. Once an export exists, it shows how many
+  decisions changed since, with *Re-export with same split*. Validation and test share, seed and the fit-row cap are adjustable.
 * **Compatibility:** tree models train on any export. Linear and neural models need an export prepared for their
   family, and they're refused if the export contains NaN. The UI disables incompatible models and shows the reason.
 * **Chain:** `ClassifierChain(model, order=<targets>, cv=5)`, in the dataset's target order unless you choose another
@@ -190,8 +211,9 @@ of failing.
   macro for multiclass), precision / recall / F1 (macro and weighted, plus positive-class and specificity for binary
   targets), confusion matrices and a per-class table, plus the top importances per chain link.
 * **On the page:** each export has *Train ▾* (model and chain order), *Files ▾* (Parquet, preprocessor, manifest) and
-  *Use from code* (the CLI command and class mappings). The runs table compares test-split AUC and macro-F1 per
-  target, stars the best within each export, and expands a run into its full metrics and confusion matrices.
+  *Use from code* (the CLI command and class mappings). Runs are listed per export, with that export's targets as
+  columns, showing test-split AUC and macro-F1. The ★ marks the run that scored best on the validation split, so
+  choosing it doesn't use the test split. A run expands into its full metrics and confusion matrices.
 
 ```bash
 make train EXPORT=1                          # LightGBM
@@ -201,6 +223,10 @@ docker compose exec api python -m app.modeling.train --export-id 1 --model xgboo
 make train EXPORT=1 MODEL=xgboost DEVICE=cuda  # GPU image only
 make models                                  # what's registered / installed, and on which devices
 ```
+
+`--order` takes the export's own target names (the sample's are `column_a` and `column_b`). Runs from the CLI write
+`classifier_chain.joblib` and `report.json` under `/data/models/export<id>_<model>_<time>/` but aren't recorded in
+`meta.model_runs`, so they don't appear in the UI's runs table or `meta.v_model_metrics`.
 
 **Adding a model** means adding one `ModelSpec` to `api/app/modeling/registry.py`: key, family, NaN support,
 builder, default parameters and how to read importances. It then appears in the CLI, the API and the UI.
@@ -242,9 +268,9 @@ make gpu-check   # what the API sees: name, memory, driver, and whether XGBoost 
 
 `docker-compose.gpu.yml` builds the API with `GPU=1` and reserves the host's GPUs for it. `GET /api/system` reports
 `{"gpu": null}` when no GPU is visible, or the GPU with `available: false` and a `reason` when XGBoost can't use it
-(CPU build, driver too old). The API detects this once per worker with a one-tree test fit, because XGBoost
-otherwise falls back to the CPU silently. A GPU run that falls back anyway fails rather than being recorded as a GPU
-run. Going back to the CPU image is `make up`.
+(CPU build, driver too old). Each API worker detects this once, in the background as it starts, with a one-tree
+test fit, because XGBoost otherwise falls back to the CPU silently. A GPU run that falls back anyway fails rather than
+being recorded as a GPU run. Going back to the CPU image is `make up`.
 
 Not included: GPU-accelerated Explore (RAPIDS cuML for UMAP and clustering) is a possible later phase.
 
@@ -308,8 +334,7 @@ Compose settings, read from `.env` (see `.env.example`):
 | `API_EXTRA_PIP` | – | extra packages baked into the API image (e.g. `catboost`) |
 | `XGBOOST_GPU_PKG` | `xgboost==3.4.1` | the CUDA XGBoost package for the GPU image (`xgboost-cu12==3.4.1` for 570–579 drivers) |
 
-The API reads further settings from its environment (`api/app/config.py`). Compose doesn't pass these through from
-`.env`, so set them under the `api` service's `environment:`:
+Tuning settings for the API (`api/app/config.py`), also read from `.env`:
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -333,16 +358,17 @@ RAINFOREST_ADMIN_PASSWORD=dev DATABASE_URL=postgresql://rainforest:rainforest@lo
 
 # UI (proxies /api to :8000; set API_URL to point elsewhere)
 cd ui && npm ci && npm run dev    # http://localhost:5173
-npm run typecheck
+npm run typecheck && npm test
 
 # A sample file to test the upload path
 make sample-csv
 ```
 
 **Tests** live in `api/tests`. Most need no database, including the sign-in and request-check tests in
-`test_auth.py`. The API tests in `test_explore.py`, `test_sql_console.py` and `test_data_correctness.py`, and the job
-tests in `test_jobs.py`, run against an empty Postgres and skip unless `RAINFOREST_TEST_DATABASE_URL` is set; the API
-tests sign in through the `admin_login` fixture in `conftest.py`.
+`test_auth.py`. The API tests in `test_explore.py`, `test_sql_console.py`, `test_data_correctness.py` and
+`test_api_cleanup.py`, and the job tests in `test_jobs.py`, run against an empty Postgres and skip unless
+`RAINFOREST_TEST_DATABASE_URL` is set; the API tests sign in through the `admin_login` fixture in `conftest.py`.
+The UI's tests run with `cd ui && npm test` (Vitest, no browser needed).
 
 ```bash
 make test                         # API suite locally; DB-backed tests skip
@@ -351,7 +377,7 @@ RAINFOREST_TEST_DATABASE_URL=postgresql://user:pw@host:5432/db pytest   # from a
 ```
 
 **CI** (`.github/workflows/ci.yml`) runs on pushes to `main` and on pull requests: the API tests with a Postgres
-service (so nothing skips), the UI typecheck and build, and `docker compose build` for the images.
+service (so nothing skips), the UI typecheck, tests and build, and `docker compose build` for the images.
 
 ## Operational notes and limits
 

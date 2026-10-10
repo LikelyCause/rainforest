@@ -14,8 +14,7 @@ def test_spearman_matches_scipy_pairwise_complete():
     rho, n = spearman_matrix(X)
     mask = ~np.isnan(X[:, 1])
     expected_ab = spearmanr(a[mask], b[mask]).statistic
-    # Ranks come from each column's own non-missing values, so allow a small tolerance.
-    assert abs(rho[0, 1] - expected_ab) < 0.02
+    assert abs(rho[0, 1] - expected_ab) < 1e-9
     assert rho[0, 2] < -0.95
     assert n[0, 1] == mask.sum()
 

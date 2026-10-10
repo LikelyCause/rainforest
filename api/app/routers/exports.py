@@ -6,6 +6,7 @@ import time
 import traceback
 from pathlib import Path
 
+import polars as pl
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
@@ -14,7 +15,7 @@ from ..config import get_settings
 from ..db import execute, fetch_all, fetch_one, jsonb
 from ..schemas import ExportRequest
 from ..semantics import FAMILIES, NON_FEATURE_TYPES, validate_decision
-from ..transform import FieldSpec, run_export
+from ..transform import FieldSpec, check_target_classes, run_export
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["exports"])
@@ -29,7 +30,7 @@ FILES = {
 @router.get("/datasets/{dataset_id}/export-preview")
 def preview(dataset_id: int, family: str | None = None) -> dict:
     """What an export for a model family would contain right now, plus anything worth fixing first."""
-    ds = fetch_one("SELECT model_family FROM meta.datasets WHERE id = %s", (dataset_id,))
+    ds = fetch_one("SELECT model_family, parquet_path FROM meta.datasets WHERE id = %s", (dataset_id,))
     if ds is None:
         raise HTTPException(404, "Dataset not found")
     fam = family or ds["model_family"]
@@ -56,8 +57,9 @@ def preview(dataset_id: int, family: str | None = None) -> dict:
     leaks = [r["name"] for r in keep if r["leakage"]]
     if leaks:
         warnings.append(f"Kept field(s) flagged as possible target leakage: {', '.join(leaks)}")
-    if len(targets) != 2:
-        warnings.append(f"{len(targets)} target(s) selected; the ClassifierChain expects two (column_a, column_b).")
+    if len(targets) == 1:
+        warnings.append("One target selected: the ClassifierChain is a single classifier, with no earlier "
+                        "prediction to chain.")
     invalid = [r["name"] for r in keep if validate_decision({**r, "action": "keep"}, fam)]
     by_type: dict[str, int] = {}
     for r in keep:
@@ -75,6 +77,8 @@ def preview(dataset_id: int, family: str | None = None) -> dict:
         (dataset_id, fam),
     )
     blocking = [m for m, bad in [("No target selected", not targets), ("No features kept", not keep)] if bad]
+    if targets and (lone := _lone_class_problem(ds["parquet_path"], targets)):
+        blocking.append(lone)
     if invalid:
         blocking.append(f"{len(invalid)} field(s) have settings that aren't valid for {FAMILIES[fam]['label'].lower()}: "
                         f"{', '.join(invalid[:8])}{'…' if len(invalid) > 8 else ''}")
@@ -91,6 +95,17 @@ def preview(dataset_id: int, family: str | None = None) -> dict:
         "last_export": None if last is None else {k: last[k] for k in ("id", "created_at", "status")},
         "changed_since_export": None if last is None else last["changed"],
     }
+
+
+def _lone_class_problem(parquet_path: str | None, targets: list[str]) -> str | None:
+    """The export's own single-row-class check, run on the target columns now rather than after queueing."""
+    if not parquet_path or not Path(parquet_path).exists():
+        return None
+    try:
+        check_target_classes(pl.read_parquet(parquet_path, columns=targets).to_pandas())
+    except ValueError as exc:
+        return str(exc)
+    return None
 
 
 @router.post("/datasets/{dataset_id}/exports", status_code=202)
@@ -186,7 +201,8 @@ def _run(export_id: int) -> None:
             return
         last[0] = now
         execute(
-            "UPDATE meta.exports SET status='running', progress=%s, status_message=%s, updated_at=now() WHERE id=%s",
+            "UPDATE meta.exports SET status='running', error=NULL, progress=%s, status_message=%s, updated_at=now() "
+            "WHERE id=%s",
             (round(frac, 4), msg, export_id),
         )
 
@@ -231,7 +247,8 @@ def _run(export_id: int) -> None:
                              + ("" if fam == "tree" else f" --model {'logistic_regression' if fam == 'linear' else 'mlp'}"),
         }
         execute(
-            """UPDATE meta.exports SET status='done', progress=1, status_message='Done', output_dir=%s,
+            """UPDATE meta.exports SET status='done', error=NULL, progress=1, status_message='Done',
+                      output_dir=%s,
                       n_rows=%s, n_features=%s, summary=%s, finished_at=now(), updated_at=now() WHERE id=%s""",
             (str(out_dir), manifest["rows_written"], manifest["n_features"], jsonb(summary), export_id),
         )

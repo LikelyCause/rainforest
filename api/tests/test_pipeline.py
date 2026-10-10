@@ -87,6 +87,36 @@ def test_linear_model_needs_linear_export(tree_export, linear_export, tmp_path):
     assert report["metrics"]["test"]["column_a"]["roc_auc"] > 0.75
 
 
+@pytest.mark.parametrize("kind,method,auc", [("binary", "predict_proba", "roc_auc"),
+                                             ("multiclass", "predict", "roc_auc_ovr_macro")])
+def test_chain_for_each_target_kind(tmp_path, kind, method, auc):
+    from app.sample_data import generate
+
+    src = tmp_path / "raw.parquet"
+    generate(n_rows=3000, n_fields=40, seed=3, target_kind=kind).write_parquet(src)
+    profiles = profiling.profile_parquet(src, ["column_a", "column_b"], 3000, 3000, 50)[1]
+    export = _export(src, profiles, "tree", tmp_path / "export")
+    manifest = json.loads((export / "manifest.json").read_text())
+    expected = "binary" if kind == "binary" else "multiclass"
+    assert manifest["target_kinds"] == {"column_a": expected, "column_b": expected}
+    report = train(export, "lightgbm", seed=0, params={"n_estimators": 40}, cv=3, out_dir=tmp_path / "m")
+    assert report["chain_method"] == method
+    for t in ("column_a", "column_b"):
+        assert report["metrics"]["test"][t][auc] > 0.6
+
+
+def test_sample_leak_clears_the_threshold_with_a_margin(profiles):
+    from app.correlations import compute_associations
+    from app.processing import LEAKAGE_THRESHOLD
+
+    names = [p.name for p in profiles]
+    leak, target = names.index("leaky_outcome_flag"), names.index("column_a")
+    assocs = compute_associations([(i, p.corr_numeric) for i, p in enumerate(profiles) if p.corr_numeric is not None],
+                                  [(i, p.corr_codes) for i, p in enumerate(profiles) if p.corr_codes is not None])
+    (v,) = [a.value for a in assocs if {a.i, a.j} == {leak, target}]
+    assert v >= LEAKAGE_THRESHOLD + 0.02
+
+
 def test_compatibility_rules():
     assert compatibility(MODELS["lightgbm"], "linear", False) is None  # trees take any export
     assert compatibility(MODELS["mlp"], "linear", False)  # wrong family

@@ -1,6 +1,6 @@
 import type {
   Analysis, AnalysisKind, AnalysisParams, CorrMatrix, BulkRequest, BulkResult, Correlation, Dataset, DecisionInput, Decision, ExportJob, ExportPreview, FieldFilter,
-  FieldListItem, FieldResponse, ModelOption, ModelRun, OptionCatalog, SqlResult, Summary, SystemInfo, Device,
+  FieldListItem, FieldResponse, ModelOption, ModelRun, OptionCatalog, SqlResult, SystemInfo, Device,
 } from "./types";
 
 export class ApiError extends Error {
@@ -34,14 +34,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (res.status === 401 && path !== "/api/auth/login") signedOut();
   if (res.status === 204) return undefined as T;
   const body = await res.json().catch(() => null);
-  if (!res.ok) {
-    const detail = body?.detail;
-    if (typeof detail === "string") throw new ApiError(detail, res.status);
-    if (detail?.message) throw new ApiError(detail.message, res.status, detail.errors ?? (detail.detail ? [detail.detail] : []));
-    if (Array.isArray(detail)) throw new ApiError("Invalid request", res.status, detail.map((d: any) => `${d.loc?.join(".")}: ${d.msg}`));
-    throw new ApiError(`Request failed (${res.status})`, res.status);
-  }
+  if (!res.ok) throw errorFromBody(res.status, body);
   return body as T;
+}
+
+/** The API's error shapes as one ApiError: a plain detail, {message, errors | detail}, or FastAPI's 422 list. */
+export function errorFromBody(status: number, body: any, fallback = `Request failed (${status})`): ApiError {
+  const detail = body?.detail;
+  if (typeof detail === "string") return new ApiError(detail, status);
+  if (detail?.message) return new ApiError(detail.message, status, detail.errors ?? (detail.detail ? [detail.detail] : []));
+  if (Array.isArray(detail)) return new ApiError("Invalid request", status, detail.map((d: any) => `${d.loc?.join(".")}: ${d.msg}`));
+  return new ApiError(fallback, status);
 }
 
 const json = (method: string, data: unknown): RequestInit => ({ method, body: JSON.stringify(data) });
@@ -60,7 +63,6 @@ export const api = {
   createSample: (data: { rows: number; fields: number; seed: number; target_kind: string }) =>
     request<Dataset>("/api/datasets/sample", json("POST", data)),
   sampleLimits: () => request<{ max_cells: number }>("/api/datasets/sample/limits"),
-  summary: (id: number) => request<Summary>(`/api/datasets/${id}/summary`),
   fields: (id: number) => request<FieldListItem[]>(`/api/datasets/${id}/fields`),
   field: (fieldId: number, family: string) => request<FieldResponse>(`/api/fields/${fieldId}?family=${family}`),
   correlations: (fieldId: number, limit = 20) =>
@@ -113,7 +115,7 @@ export function uploadDataset(
       try { body = JSON.parse(xhr.responseText); } catch { /* non-JSON error page */ }
       if (xhr.status === 401) signedOut();
       if (xhr.status >= 200 && xhr.status < 300) resolve(body);
-      else reject(new ApiError(typeof body?.detail === "string" ? body.detail : `Upload failed (${xhr.status})`, xhr.status));
+      else reject(errorFromBody(xhr.status, body, `Upload failed (${xhr.status})`));
     };
     xhr.onerror = () => reject(new ApiError("Network error during upload", 0));
     xhr.send(form);

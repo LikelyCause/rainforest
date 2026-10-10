@@ -36,7 +36,7 @@ def _specs(profiles, family):
 def test_transform_into_matches_column_transformer(sample_parquet, profiles, family):
     specs, _ = _specs(profiles, family)
     df = pl.read_parquet(sample_parquet)
-    coercers = coercion_exprs(specs, df.schema)
+    coercers = coercion_exprs(specs)
     frame = to_pandas_frame(df, specs, coercers)
     pre = build_preprocessor(specs).fit(frame)
     expected = pre.transform(frame).astype(np.float32)

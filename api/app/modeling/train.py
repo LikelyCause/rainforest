@@ -46,7 +46,7 @@ from sklearn.multioutput import ClassifierChain
 
 from ..gpu import effective_device
 from .registry import (DEFAULT_MODEL, MODELS, ModelSpec, catalog, compatibility, device_params, get_model,
-                       importances)
+                       importances, param_problems)
 
 log = logging.getLogger("train")
 
@@ -149,13 +149,15 @@ def evaluate(y_true: np.ndarray, proba: np.ndarray, labels: list[str] | None = N
         out["recall"] = tp / (tp + fn) if tp + fn else 0.0
         out["f1"] = 2 * out["precision"] * out["recall"] / (out["precision"] + out["recall"]) if tp else 0.0
         out["specificity"] = tn / (tn + fp) if tn + fp else 0.0
-    try:
-        if k == 2:
-            out["roc_auc"] = float(roc_auc_score(y_true, proba[:, 1]))
-        else:
-            out["roc_auc_ovr_macro"] = float(roc_auc_score(y_true, proba, multi_class="ovr", average="macro"))
-    except ValueError:  # a class absent from this split
-        pass
+    # sklearn returns NaN (not an error) for AUC on a single-class split, which JSON can't carry.
+    if len(np.unique(y_true)) >= 2:
+        try:
+            if k == 2:
+                out["roc_auc"] = float(roc_auc_score(y_true, proba[:, 1]))
+            else:
+                out["roc_auc_ovr_macro"] = float(roc_auc_score(y_true, proba, multi_class="ovr", average="macro"))
+        except ValueError:  # a class absent from this split
+            pass
     p, r, f, support = precision_recall_fscore_support(y_true, pred, labels=classes, zero_division=0)
     details = {
         "labels": names,
@@ -174,6 +176,10 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
           params: dict | None = None, cv: int | None = 5, out_dir: Path | None = None,
           progress: Callable[[str], None] | None = None, device: str = "cpu") -> dict[str, Any]:
     spec = get_model(model)
+    if problems := param_problems(spec, params or {}):
+        raise ValueError("; ".join(problems))
+    if cv == 1:
+        raise ValueError("cv must be 0 (chain the ground truth) or 2 or more folds")
     params = {**(params or {}), **device_params(spec, device)}
     manifest, df = load_export(export_dir)
     export_family = manifest.get("model_family", "tree")
@@ -280,9 +286,11 @@ def main() -> None:
     g.add_argument("--export-dir", type=Path)
     g.add_argument("--list-models", action="store_true")
     ap.add_argument("--model", default=DEFAULT_MODEL, choices=list(MODELS))
-    ap.add_argument("--order", help="comma-separated target order, e.g. column_a,column_b")
+    ap.add_argument("--order", help="chain order as the export's target names, comma-separated (default: the "
+                    "order listed under \"targets\" in its manifest.json)")
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--cv", type=int, default=5, help="folds for out-of-fold chain features (0 = use truth)")
+    ap.add_argument("--cv", type=int, default=5,
+                    help="folds for out-of-fold chain features: 0 chains the ground truth, else 2 or more")
     ap.add_argument("--param", action="append", default=[], metavar="KEY=VALUE",
                     help="override a model parameter, e.g. --param n_estimators=1000 (repeatable)")
     ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"], help="cuda needs the GPU image (XGBoost only)")

@@ -1,8 +1,8 @@
-import { forwardRef, useImperativeHandle, useRef, useState, type ChangeEvent } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ChangeEvent } from "react";
 import { pendingDraft, queueSave } from "../saveQueue";
-import type { Decision, DecisionInput, Dim, FieldResponse, OptionCatalog, Suggestion } from "../types";
+import { NUMERIC, paramProblem, retype, toInput, withEncoding, type ParamRule } from "../decision";
+import type { DecisionInput, Dim, FieldResponse, OptionCatalog } from "../types";
 
-const NUMERIC = new Set(["numeric_continuous", "numeric_discrete"]);
 const DIMS: Dim[] = ["imputation", "transform", "scaling", "encoding"];
 const DIM_LABEL: Record<Dim, string> = { imputation: "Missing values", transform: "Transform", scaling: "Scaling", encoding: "Encoding" };
 const SAVE_DEBOUNCE_MS = 400;
@@ -28,51 +28,6 @@ interface Props {
   typing: boolean;
   onConfirmed: (c: Confirmed) => void;
   onShowShortcuts: () => void;
-}
-
-function toInput(d: Decision | Suggestion, family: string): DecisionInput {
-  return {
-    family,
-    action: d.action,
-    semantic_type: d.semantic_type,
-    imputation: d.imputation,
-    impute_value: d.impute_value ?? null,
-    add_missing_indicator: d.add_missing_indicator ?? false,
-    transform: d.transform,
-    scaling: d.scaling,
-    encoding: d.encoding,
-    params: d.params ?? {},
-    notes: "notes" in d ? d.notes : null,
-    reviewed: "reviewed" in d ? d.reviewed : false,
-  };
-}
-
-/** Re-type a draft: keep compatible settings, otherwise fall back to the suggestion or the first valid option. */
-function retype(d: DecisionInput, type: string, catalog: OptionCatalog, sugg: Suggestion): DecisionInput {
-  const allowed = catalog.allowed[d.family][type];
-  const handlesNan = catalog.families.find((f) => f.value === d.family)?.handles_nan ?? true;
-  const pick = (dim: Dim) => {
-    if (sugg.semantic_type === type) return sugg[dim];
-    if (allowed[dim].includes(d[dim])) return d[dim];
-    if (dim === "imputation" && NUMERIC.has(type)) return handlesNan ? "none" : "median";
-    return allowed[dim][0];
-  };
-  const encoding = pick("encoding");
-  const imputation = pick("imputation");
-  const nonFeature = catalog.non_feature_types.includes(type);
-  const fill = type === "categorical" || type === "binary" ? "__missing__" : type === "text" ? "" : imputation === "constant" ? "0" : null;
-  return {
-    ...d,
-    semantic_type: type,
-    action: d.action === "target" ? "target" : nonFeature ? "drop" : d.action,
-    imputation,
-    transform: pick("transform"),
-    scaling: pick("scaling"),
-    encoding,
-    impute_value: fill,
-    params: sugg.semantic_type === type ? sugg.params : { ...(catalog.default_params[encoding] ?? {}) },
-    add_missing_indicator: NUMERIC.has(type) ? d.add_missing_indicator : false,
-  };
 }
 
 function retypeWarning(type: string, data: FieldResponse): string | null {
@@ -165,19 +120,12 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
   const suggestedLine = (k: Dim | "semantic_type" | "action", text: string) =>
     differs(k) ? <div className="suggested">suggested: {text} {revert({ [k]: suggested[k] } as Partial<DecisionInput>)}</div> : null;
 
-  const param = (key: string, title: string, step = 1) => {
-    const value = draft.params?.[key] ?? catalog.default_params[draft.encoding]?.[key] ?? "";
-    return (
-      <div className="setting-row" key={key}>
-        <label htmlFor={`p-${key}`}>{title}</label>
-        <input id={`p-${key}`} type="number" step={step} value={value}
-          onChange={(e) => {
-            const n = e.target.value === "" ? undefined : Number(e.target.value);
-            update({ params: { ...draft.params, [key]: n !== undefined && Number.isFinite(n) ? n : undefined } });
-          }} />
-      </div>
-    );
-  };
+  const param = (key: string, title: string, step = 1) => (
+    <ParamInput key={`${draft.encoding}-${key}`} id={`p-${key}`} title={title} step={step}
+      value={draft.params?.[key] ?? catalog.default_params[draft.encoding]?.[key]}
+      rule={catalog.param_rules?.[draft.encoding]?.[key]}
+      onChange={(n) => update({ params: { ...draftRef.current.params, [key]: n } })} />
+  );
 
   const warning = retypeWarning(draft.semantic_type, data);
   const typeLabel = (v: string) => catalog.types.find((t) => t.value === v)?.label ?? v;
@@ -230,7 +178,9 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
               <div className="setting-row">
                 <label htmlFor={`d-${dim}`}>{DIM_LABEL[dim]}</label>
                 <select id={`d-${dim}`} value={draft[dim]}
-                  onChange={blurAfter((e) => update({ [dim]: e.target.value } as Partial<DecisionInput>, 0))}>
+                  onChange={blurAfter((e) => dim === "encoding"
+                    ? commit(withEncoding(draftRef.current, e.target.value, catalog), 0)
+                    : update({ [dim]: e.target.value } as Partial<DecisionInput>, 0))}>
                   {allowed[dim].map((o) => <option key={o} value={o}>{labels[dim][o] ?? o}</option>)}
                 </select>
               </div>
@@ -314,3 +264,29 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
     </aside>
   );
 });
+
+/** A number field that can be cleared and retyped: only valid values are saved, and leaving it while it's
+ * empty or out of range puts the saved value back. */
+function ParamInput({ id, title, step, value, rule, onChange }: {
+  id: string; title: string; step: number; value: number | undefined; rule: ParamRule | undefined;
+  onChange: (n: number) => void;
+}) {
+  const [text, setText] = useState(value === undefined ? "" : String(value));
+  useEffect(() => {
+    if (value !== undefined && Number(text) !== value) setText(String(value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only an outside change (revert, retype) resyncs
+  }, [value]);
+  const problem = paramProblem(text, rule);
+  return (
+    <div className="setting-row">
+      <label htmlFor={id}>{title}</label>
+      <input id={id} type="number" step={step} min={rule?.min} max={rule?.max} value={text}
+        aria-invalid={problem !== null} title={problem ?? undefined}
+        onChange={(e) => {
+          setText(e.target.value);
+          if (paramProblem(e.target.value, rule) === null) onChange(Number(e.target.value));
+        }}
+        onBlur={() => problem && setText(value === undefined ? "" : String(value))} />
+    </div>
+  );
+}
