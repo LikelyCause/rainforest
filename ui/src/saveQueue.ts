@@ -125,7 +125,10 @@ function applySaved(fieldId: number, datasetId: number, saved: Decision, view: V
   for (const k of ["exportPreview", "fieldQuery", "corrMatrix", "analysis", "team", "reviewQueue"]) {
     qc.invalidateQueries({ queryKey: [k, datasetId] });
   }
-  if (view) qc.invalidateQueries({ queryKey: ["experiment"] });
+  if (view) {
+    qc.invalidateQueries({ queryKey: ["experiment"] });
+    qc.invalidateQueries({ queryKey: ["experiments", datasetId] });
+  }
   const wasTarget = prev?.decision.action === "target";
   if (wasTarget !== (saved.action === "target")) {
     // Target set changed: associations, leakage and the dataset's target list all move (#30).

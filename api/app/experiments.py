@@ -189,13 +189,29 @@ def snapshot_for(conn, x: dict) -> dict:
                             targets=x["target_order"] or [])
 
 
-def adjustments(conn, x: dict) -> dict:
-    """How a team experiment differs from its baseline: per field, what changed; the targets when they differ."""
-    recipe = recipes.get(conn, x["recipe_id"])
-    if x["assessor_id"] is not None or recipe["phase"] != "finalized":
-        return {"fields": [], "targets": None, "count": 0, "targets_changed": False}
-    d = recipes.diff(recipes.snapshot_of(conn, recipe), snapshot_for(conn, x), recipe["family"])
-    return {**d, "count": len(d["fields"]), "targets_changed": d["targets"] is not None}
+NO_ADJUSTMENTS = {"fields": [], "targets": None, "count": 0, "targets_changed": False}
+
+
+def adjustments(conn, x: dict, snapshots: dict[int, dict] | None = None) -> dict:
+    """How a team experiment differs from its baseline: per field, what changed (notes aside); the targets when
+    they differ. `snapshots` caches baseline snapshots by recipe id across calls."""
+    if x["assessor_id"] is not None or x["is_default"]:
+        return dict(NO_ADJUSTMENTS)
+    snapshots = {} if snapshots is None else snapshots
+    if x["recipe_id"] not in snapshots:
+        recipe = recipes.get(conn, x["recipe_id"])
+        snapshots[x["recipe_id"]] = (recipe, recipes.snapshot_of(conn, recipe) if recipe["phase"] == "finalized" else None)
+    recipe, base = snapshots[x["recipe_id"]]
+    if base is None:
+        return dict(NO_ADJUSTMENTS)
+    d = recipes.diff(base, snapshot_for(conn, x), recipe["family"])
+    changed = []
+    for f in d["fields"]:
+        kept = [c for c in f["changes"] if c["key"] != "notes"]
+        if kept or f["change"] != "changed":
+            changed.append({**f, "changes": kept})
+    return {"fields": changed, "targets": d["targets"], "count": len(changed),
+            "targets_changed": d["targets"] is not None}
 
 
 def revert(conn, x: dict, field_ids: list[int] | None) -> None:
@@ -250,9 +266,9 @@ def list_for(conn, dataset_id: int, user: dict) -> list[dict]:
         (dataset_id,),
     ).fetchall()
     best = best_by_experiment(conn, [r["id"] for r in rows])
-    out = []
+    out, snapshots = [], {}
     for r in rows:
-        adj = adjustments(conn, r)
+        adj = adjustments(conn, r, snapshots) if r["archived_at"] is None else dict(NO_ADJUSTMENTS)
         out.append({**r, "best": best.get(r["id"]), "adjusted_count": adj["count"],
                     "targets_changed": adj["targets_changed"], "can_adjust": can_adjust(r, user)})
     return out

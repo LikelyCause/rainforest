@@ -181,9 +181,12 @@ def save_decision(field_id: int, body: DecisionIn, user: CurrentUser, view: str 
         row = _merged(conn, field_id, fam, src)
         if src.kind == "experiment" and (prev["action"] == "target") != (d["action"] == "target"):
             screen_after = _experiment_target_changed(conn, src, f, d["action"] == "target")
+        if src.kind == "experiment" and d["semantic_type"] == "datetime" and not (f["stats"] or {}).get("datetime_format"):
+            # The column's format is a fact about the data, not anyone's choice, so an experiment may store it.
+            _remember_datetime_format(conn, f)
         if not src.team:
-            # Only the team decision has history, target state and a stored date format: an assessor's choices
-            # stay theirs until review, and an experiment's stay in the experiment.
+            # Only the team decision has history and target state: an assessor's choices stay theirs until review,
+            # and an experiment's stay in the experiment.
             if screen_after:
                 conn.commit()
                 jobs.submit(target_associations_job, f["dataset_id"], [field_id])
@@ -252,6 +255,10 @@ def bulk_decisions(dataset_id: int, body: BulkDecisionIn, user: CurrentUser, vie
         for srow in conn.execute(sql.SQL("SELECT * FROM {} s WHERE field_id = ANY(%s)").format(src.settings()),
                                  (ids,)).fetchall():
             settings.setdefault(srow["field_id"], {})[srow["family"]] = srow
+        if src.kind in ("experiment", "baseline"):
+            # An experiment's copy holds its baseline's model type only; other types' suggestions don't apply.
+            rows = [{**r, "suggestion": {src.family: (r["suggestion"] or {}).get(src.family)}
+                     if (r["suggestion"] or {}).get(src.family) else {}} for r in rows]
         planned = plan_bulk(rows, settings, body)
         result = summarize_bulk(len(rows), planned)
         if body.dry_run or not planned:
@@ -543,7 +550,7 @@ def screen_pairs(dataset_id: int, target_ids: list[int]) -> list[tuple[int, int,
 
 def _experiment_target_changed(conn, src: Source, f: dict, became: bool) -> bool:
     """Keep an experiment's target order in step with its copy; whether the new target needs the leak screen."""
-    x = src.experiment
+    x = conn.execute("SELECT id, target_order FROM meta.experiments WHERE id = %s", (src.experiment["id"],)).fetchone()
     order = [n for n in (x.get("target_order") or []) if n != f["name"]] + ([f["name"]] if became else [])
     conn.execute("UPDATE meta.experiments SET target_order = %s WHERE id = %s", (order, x["id"]))
     return became and has_screen_fields(conn, f["dataset_id"])

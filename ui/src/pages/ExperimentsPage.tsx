@@ -286,7 +286,7 @@ function AdjustmentsCard({ ds, x }: { ds: Dataset; x: ExperimentDetail }) {
           </tbody>
         </table>
       )}
-      {x.can_adjust && a.count > 0 && (
+      {x.can_adjust && (a.count > 0 || a.targets_changed) && (
         <div className="row" style={{ justifyContent: "flex-end" }}>
           <button type="button" className="small" disabled={revert.isPending}
             onClick={() => window.confirm(`Put every field back to ${base}?`) && revert.mutate(null)}>Revert everything</button>

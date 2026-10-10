@@ -5,7 +5,7 @@ import { api } from "../api";
 import { useAccess, useFields, useOptions } from "../hooks";
 import { JoinAssessment } from "../components/JoinAssessment";
 import { ExperimentModeBar } from "../components/ExperimentModeBar";
-import { useView, viewKey } from "../view";
+import { useView, viewKey, withView } from "../view";
 import { useDatasetContext } from "../components/DatasetLayout";
 import { FieldList, type StatusFilter, type WorkingSet } from "../components/FieldList";
 import { FieldDetailView } from "../components/FieldDetailView";
@@ -67,6 +67,8 @@ export function ReviewPage() {
   const searchRef = useRef<HTMLInputElement>(null);
   const panel = useRef<DecisionPanelHandle>(null);
   const undoStack = useRef<Confirmed[]>([]);
+  // An undo replays a save into the current view, so it never crosses from one view to another.
+  const undoView = useRef<string | null>(null);
   const view = useView();
   const failed = useFailedSaves(view);
   const access = useAccess(ds, view);
@@ -172,6 +174,8 @@ export function ReviewPage() {
   }, [idx, visible, qc, view]);
 
   const onConfirmed = useCallback((c: Confirmed) => {
+    if (undoView.current !== view) undoStack.current = [];
+    undoView.current = view;
     undoStack.current = [...undoStack.current.slice(-(UNDO_DEPTH - 1)), c];
     const verb = c.after.action === "drop" ? "dropped" : c.after.action === "target" ? "target" : "kept";
     toast({
@@ -185,10 +189,10 @@ export function ReviewPage() {
       return;
     }
     next();
-  }, [next, scope, status, workingSet]);
+  }, [next, scope, status, workingSet, view]);
 
   const undo = useCallback(() => {
-    const last = undoStack.current.pop();
+    const last = undoView.current === view ? undoStack.current.pop() : undefined;
     if (!last) return toast({ message: "Nothing to undo" });
     void queueSave(last.fieldId, datasetId, last.name, last.before, 0, view);
     setPanelVersion((v) => v + 1);
@@ -307,7 +311,7 @@ export function ReviewPage() {
         )}
       </section>
       {current && options.data && !detail.isPlaceholderData && !finish ? (
-        <DecisionPanel key={`${current.field.id}:${current.family}:${panelVersion}`} ref={panel} data={current}
+        <DecisionPanel key={`${current.field.id}:${current.family}:${viewKey(view)}:${panelVersion}`} ref={panel} data={current}
           catalog={options.data} familyLabel={familyShort(current.family)} typing={typing} view={view}
           onConfirmed={onConfirmed} onShowShortcuts={() => setOverlay(true)}
           readOnly={access.canEdit ? (current.locked ?? null) : access.note}
@@ -325,6 +329,7 @@ function FinishCard({ finish, scope, datasetId, workingSet, finishTo, onFirstUnr
   onFirstUnreviewed: () => void; onStay: () => void; onClearSet: () => void; onOpen: (id: number) => void;
 }) {
   const firstTodo = scope.find((f) => !f.reviewed);
+  const finishView = useView();
   if (finish.kind === "end") {
     return (
       <div className="finish card">
@@ -343,7 +348,7 @@ function FinishCard({ finish, scope, datasetId, workingSet, finishTo, onFirstUnr
       <div className="finish card">
         <h2>{scope.length} of {scope.length} reviewed in {workingSet.label}.</h2>
         <div className="row">
-          <Link className="btn" to={`/d/${datasetId}/bulk`}>Back to Bulk edit</Link>
+          <Link className="btn" to={withView(`/d/${datasetId}/bulk`, finishView)}>Back to Bulk edit</Link>
           <button type="button" onClick={onClearSet}>Clear set</button>
         </div>
       </div>

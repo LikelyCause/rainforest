@@ -30,7 +30,8 @@ def test_owner_adjusts_through_the_experiment_view(people):
     assert save(a, f["w"]["id"], view, action="drop").status_code == 200
     assert fields(a, ds, view)["w"]["action"] == "drop"
     assert fields(b, ds, view)["w"]["action"] == "drop"  # team experiments are visible to everyone
-    assert fields(lead, ds)["w"]["action"] == "keep"  # the baseline didn't move
+    assert fields(lead, ds, f"baseline:{rid}")["w"]["action"] == "keep"  # the baseline's snapshot didn't move
+    assert fields(lead, ds)["w"]["action"] == "keep"  # nor did the working copy
     assert save(b, f["w"]["id"], view, action="keep").status_code == 403
     assert save(lead, f["w"]["id"], view, action="keep").status_code == 403  # owners only, leads included
     r = a.post(f"/api/datasets/{ds['id']}/decisions/bulk?view={view}", json={"field_ids": [f["x"]["id"]], "action": "drop"})
@@ -147,3 +148,33 @@ def test_an_experiments_leak_warnings_follow_its_targets(people):
     base = lead.get(f"/api/datasets/{ds['id']}/export-preview").json()
     mine = lead.get(f"/api/datasets/{ds['id']}/export-preview?experiment_id={x['id']}").json()
     assert not any("cc" in w for w in base["warnings"]) and any("leakage: cc" in w for w in mine["warnings"])
+
+
+def test_bulk_accept_in_a_fresh_experiment_changes_nothing(people):
+    a = people["a"]
+    ds, rid = finalized_trees(people["lead"])
+    x = experiment(a, ds, rid, "bulk")
+    r = a.post(f"/api/datasets/{ds['id']}/decisions/bulk?view=experiment:{x['id']}",
+               json={"filters": [], "accept_suggestion": True, "dry_run": True})
+    assert r.status_code == 200 and r.json()["changed"] == 0, r.json()
+
+
+def test_a_note_alone_isnt_an_adjustment(people):
+    a = people["a"]
+    ds, rid = finalized_trees(people["lead"])
+    x = experiment(a, ds, rid, "notes")
+    adjust(a, ds, x, "w", notes="just a thought")
+    assert a.get(f"/api/experiments/{x['id']}").json()["adjustments"]["count"] == 0
+
+
+def test_views_of_private_or_unfinished_sources_are_refused(people):
+    lead, a, b = people["lead"], people["a"], people["b"]
+    ds = upload(lead)
+    from .team_helpers import start
+    st = start(lead, ds, "tree", [a, b])
+    rid = st["recipe"]["id"]
+    x = a.post(f"/api/datasets/{ds['id']}/experiments", json={
+        "name": "private", "source": f"assessment:{rid}:{a.user['id']}"}).json()
+    assert a.get(f"/api/datasets/{ds['id']}/fields?view=experiment:{x['id']}").status_code == 409
+    assert b.get(f"/api/datasets/{ds['id']}/fields?view=experiment:{x['id']}").status_code == 404
+    assert lead.get(f"/api/datasets/{ds['id']}/fields?view=baseline:{rid}").status_code == 404

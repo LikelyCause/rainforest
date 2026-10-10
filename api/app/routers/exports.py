@@ -231,6 +231,7 @@ def start_export(dataset_id: int, req: ExportRequest, user: CurrentUser) -> dict
             # Holds off adjustments until the export is recorded, so it is exactly what was checked.
             x = conn.execute(f"SELECT {experiments.COLS} FROM {experiments.FROM} WHERE x.id = %s FOR UPDATE OF x",
                              (x["id"],)).fetchone()
+            experiments.require_writable(x, user)
             personal = x["assessor_id"] is not None
             if req.source is not None and (req.source == "assessment") != personal:
                 raise HTTPException(422, f"Experiment {x['name']!r} is built from "

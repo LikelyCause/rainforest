@@ -128,10 +128,11 @@ function FieldFinder({ datasetId, presetLabel, canEdit, view }: {
 
   const [pending, setPending] = useState<{ action: BulkAction; preview: BulkResult } | null>(null);
   const invalidate = () => {
-    for (const k of ["fields", "fieldQuery", "exportPreview", "corrMatrix", "analysis", "team", "reviewQueue"]) {
+    for (const k of ["fields", "fieldQuery", "exportPreview", "corrMatrix", "analysis", "team", "reviewQueue", "experiments"]) {
       qc.invalidateQueries({ queryKey: [k, datasetId] });
     }
     qc.invalidateQueries({ queryKey: ["field"] });
+    qc.invalidateQueries({ queryKey: ["experiment"] });
   };
   const request = (a: BulkAction, dry_run: boolean) =>
     api.bulk(datasetId, { ...a.body, filters: complete, excluded_ids: [...excluded], dry_run }, view);

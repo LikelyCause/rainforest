@@ -38,5 +38,9 @@ CREATE TABLE IF NOT EXISTS meta.experiment_batches (
     undone_at     TIMESTAMPTZ
 );
 
+-- Deleting a dataset's fields cascades here; these keep that from scanning every experiment's rows.
+CREATE INDEX IF NOT EXISTS experiment_decisions_field_idx ON meta.experiment_decisions (field_id);
+CREATE INDEX IF NOT EXISTS experiment_settings_field_idx ON meta.experiment_settings (field_id);
+
 -- The experiment's targets in chain order (its copy's target fields, ordered).
 ALTER TABLE meta.experiments ADD COLUMN IF NOT EXISTS target_order TEXT[];

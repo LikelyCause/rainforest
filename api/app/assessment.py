@@ -187,7 +187,8 @@ def _view_source(conn, dataset_id: int, user: dict, view: str, lock: str | None)
     if x["assessor_id"] is not None:
         raise HTTPException(409, "A personal experiment follows your assessment; change your assessment instead.")
     if lock:
-        x = conn.execute(f"SELECT {experiments.COLS} FROM {experiments.FROM} WHERE x.id = %s FOR {lock.upper()} OF x",
+        # Writers serialise on the experiment: two saves that both move its target order mustn't deadlock.
+        x = conn.execute(f"SELECT {experiments.COLS} FROM {experiments.FROM} WHERE x.id = %s FOR NO KEY UPDATE OF x",
                          (x["id"],)).fetchone()
     return Source(recipes.get(conn, x["recipe_id"]), experiment=x, denied=experiments.adjust_denied(x, user))
 
