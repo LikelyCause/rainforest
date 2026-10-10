@@ -45,6 +45,9 @@ sign-in, see [Sign-in](#sign-in) (`make up-keycloak` runs a ready-made Keycloak 
    must be binary, categorical or discrete numeric with at most 100 distinct values; other fields are disabled in the
    picker with the reason, and the API refuses them. Saving refreshes the target associations and leakage flags.
    Generated samples already have their two targets set. The row menu also renames or deletes a dataset (deleting removes its fields, exports, model runs and their files).
+   A new dataset starts as recipe v1 in **Assessing**: a lead assigns assessors (row menu → *Assessors…*, or the
+   **Team** step), each of them reviews every field blind, and the team settles the disagreements before a lead
+   finalizes. See [Team workflow](#team-workflow).
 2. **Review** → walk the fields. Each field shows its signals (missing, skew, outliers, levels, target association
    with a leakage flag), its distribution and quantile strip, top tokens or weekdays, and its strongest
    **associations** (click a bar to jump to that field). Decisions autosave. The sidebar filters by status
@@ -66,8 +69,9 @@ sign-in, see [Sign-in](#sign-in) (`make up-keycloak` runs a ready-made Keycloak 
    chains with any compatible model. Runs on an export are compared side by side, and the best on the validation
    split is starred.
 
-The top bar shows the workflow steps **Review · Bulk edit · Explore · Export & train** and the **Model** switch
-(*Trees* · *Linear* · *Neural*), and on the right **Team**, who you're signed in as with your role, and *Sign out*.
+The top bar shows the workflow steps **Review · Bulk edit · Explore · Team · Export & train** (the Team step carries
+the dataset's phase: *Assessing*, *Review* or *Finalized*) and the **Model** switch (*Trees* · *Linear* · *Neural*),
+and on the right **Team** (the user list), who you're signed in as with your role, and *Sign out*.
 
 ## Sign-in
 
@@ -76,7 +80,9 @@ uploads, exports, model runs, Explore analyses). A user is a **lead** or a **mem
 
 | | Member | Lead |
 |---|---|---|
-| Upload, review, bulk edit, Explore, export, train | ✓ | ✓ |
+| Upload, Explore, export a finalized recipe, train | ✓ | ✓ |
+| Review and bulk edit their own assessment when assigned; comment in team review | ✓ | ✓ |
+| Assign assessors, set the team decision in review, finalize | | ✓ |
 | Delete datasets | | ✓ |
 | Manage users on the **Team** page | | ✓ (pick mode: add, rename, set role, deactivate; OIDC: deactivate / reactivate) |
 
@@ -149,6 +155,36 @@ client in Keycloak's admin console (or `docker compose down`, drop the `keycloak
 | `/` | search fields |
 | `Esc` | leave a control, back to review |
 | `?` | show or hide the shortcut list |
+
+## Team workflow
+
+Every dataset has **recipes**: numbered versions of its field decisions. A version moves through three phases, shown
+on the Datasets list and in the top bar.
+
+1. **Assessing.** A lead assigns assessors on the dataset's **Team** page (also *Assessors…* in the Datasets row
+   menu). Each assessor starts from the suggestions and uses Review and Bulk edit as usual, but on their own
+   assessment: nobody else sees their choices, the lead included, and the API never returns them to anyone else
+   (field lists, field details, history, Bulk edit, the SQL console, Explore). Leads see each assessor's progress
+   (fields reviewed, submitted or not), never their choices. Everyone else can browse the fields with their
+   suggestions and use Explore, read-only. *Submit assessment* needs every field reviewed; an assessor can unsubmit
+   until review opens, and a lead can unassign someone (their choices are kept but don't count). Targets are set
+   before anyone is assigned, since every assessor starts from them.
+2. **Team review** opens by itself when the last assigned assessor submits (or a lead unassigns the last one who
+   hadn't). Fields where every assessor chose the same keep / drop / target and type are **adopted** as the team
+   decision; each model family's settings take the most common choice, and a tie takes the suggestion. The rest
+   form the **review queue** on the Team page: each assessor's choice, settings and notes side by side, with the
+   differences marked, and a comment thread. Everyone can comment; a lead sets the team decision (the same decision
+   panel as Review). Bulk edit is for leads only in this phase and changes team decisions.
+3. **Finalized.** A lead finalizes once the queue is settled, or confirms finalizing with fields left as they stand.
+   Finalizing freezes the version: its snapshot records every field's decision, its settings for every model family,
+   its inferred type and key stats, and the target order. A finalized version's decisions can't change.
+
+Team exports are built from the current recipe once it is finalized; until then Export says why it's waiting. Explore
+is shared: raw-data analyses use the team decision, except that while assessing, *Kept only* uses your own
+choices, and results are cached per decision source so they never mix people's choices.
+
+Datasets that existed before recipes became recipe v1, finalized from their decisions at the time by the first lead,
+and their exports point at it.
 
 ## Decisions: shared vs per model family
 
@@ -239,6 +275,9 @@ sample can't support an analysis (no target, too few rows or fields, a single cl
 of failing.
 
 ## Export → ClassifierChain
+
+Exports are built from the dataset's current recipe once a lead has finalized it (see [Team workflow](#team-workflow));
+each export records the recipe (`recipe_id`), and its manifest's `config` the recipe id and version.
 
 * **Leakage-safe split:** the train / valid / test split is assigned first, stratified on the target combination
   (single-row combinations are pooled; if the combinations still can't be stratified, on one target, else not at
@@ -405,10 +444,15 @@ WHERE dataset_id = 1 AND split = 'test' AND metric IN ('roc_auc', 'roc_auc_ovr_m
 | `meta.bulk_batches` | each applied bulk edit: summary and a pre-change snapshot used by undo |
 | `meta.field_correlations` | pairwise associations (one row per unordered pair) |
 | `meta.users` | users: name, email, role (`lead` / `member`), active, OIDC subject, last seen |
+| `meta.recipes` | recipe versions per dataset: phase (`assessing` / `review` / `finalized`), who finalized it, and the frozen `snapshot` |
 | `meta.exports`, `meta.model_runs` | export jobs; training runs with metrics and report |
 | `meta.analyses` | Explore jobs (map, tests, importance): params, data version, status, result JSONB |
 | `meta.v_fields`, `meta.v_field_settings`, `meta.v_correlations`, `meta.v_model_metrics` | query-friendly views |
 | `raw.ds_<id>` | the uploaded data (sanitized column names; see `meta.fields.db_column`) |
+
+Assessments are private while a dataset is assessed, so the console's role can't read `meta.assessments`,
+`meta.assessment_settings`, `meta.assessment_batches`, `meta.dataset_assessors` or `meta.review_comments`, and sees
+only the team's Explore results in `meta.analyses`.
 
 **Schema changes** go in `api/app/migrations/NNN_name.sql`. The API applies new migrations once on startup, under an
 advisory lock, and records them in `meta.schema_migrations`. Views live in `api/app/views.sql` and are recreated on

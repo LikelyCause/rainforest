@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
+import { accessOf, type Access } from "./team";
 import type { Dataset } from "./types";
 
 export const PROCESSING = new Set(["pending", "ingesting", "profiling", "correlating"]);
@@ -17,6 +18,18 @@ export const useDataset = (id: number, enabled = true) =>
     enabled,
     refetchInterval: (q) => (q.state.data && PROCESSING.has((q.state.data as Dataset).status) ? 1000 : false),
   });
+
+export const useTeam = (id: number, enabled = true) =>
+  useQuery({ queryKey: ["team", id], queryFn: () => api.team(id), enabled });
+
+/** What the viewer works on in this dataset now and whether they can change it. Read-only until the team state
+ * has loaded, so nobody briefly edits something they can't save. */
+export function useAccess(ds: Dataset): Access {
+  const me = useMe().data;
+  const team = useTeam(ds.id, ds.phase === "assessing");
+  if (!me || (ds.phase === "assessing" && !team.data)) return { source: "team", canEdit: false, note: "Loading…" };
+  return accessOf(ds, me, team.data);
+}
 
 export const useFields = (id: number, enabled = true) =>
   useQuery({ queryKey: ["fields", id], queryFn: () => api.fields(id), enabled });

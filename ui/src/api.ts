@@ -1,7 +1,7 @@
 import type {
   Analysis, AnalysisKind, AnalysisParams, CorrMatrix, BulkRequest, BulkResult, Correlation, Dataset, DecisionInput, Decision, ExportJob, ExportPreview, FieldFilter,
   FieldListItem, FieldResponse, ModelOption, ModelRun, OptionCatalog, SqlResult, SystemInfo, Device,
-  AuthConfig, Me, PickUser, Role, TeamUser,
+  AuthConfig, Me, PickUser, Role, TeamUser, TeamState, ReviewQueue, FieldReview, ReviewComment,
 } from "./types";
 
 export class ApiError extends Error {
@@ -106,6 +106,21 @@ export const api = {
   createAnalysis: (datasetId: number, data: { kind: AnalysisKind; params: AnalysisParams; recompute?: boolean }) =>
     request<Analysis>(`/api/datasets/${datasetId}/analyses`, json("POST", data)),
   analysis: (id: number) => request<Analysis>(`/api/analyses/${id}`),
+  team: (datasetId: number) => request<TeamState>(`/api/datasets/${datasetId}/team`),
+  assign: (datasetId: number, userId: number) =>
+    request<TeamState>(`/api/datasets/${datasetId}/assessors`, json("POST", { user_id: userId })),
+  unassign: (datasetId: number, userId: number) =>
+    request<TeamState>(`/api/datasets/${datasetId}/assessors/${userId}`, { method: "DELETE" }),
+  submitAssessment: (datasetId: number) =>
+    request<TeamState>(`/api/datasets/${datasetId}/assessment/submit`, { method: "POST" }),
+  unsubmitAssessment: (datasetId: number) =>
+    request<TeamState>(`/api/datasets/${datasetId}/assessment/unsubmit`, { method: "POST" }),
+  reviewQueue: (datasetId: number) => request<ReviewQueue>(`/api/datasets/${datasetId}/review`),
+  fieldReview: (fieldId: number) => request<FieldReview>(`/api/fields/${fieldId}/review`),
+  addComment: (fieldId: number, body: string) =>
+    request<ReviewComment[]>(`/api/fields/${fieldId}/comments`, json("POST", { body })),
+  finalize: (datasetId: number, acceptOpen: boolean) =>
+    request<TeamState>(`/api/datasets/${datasetId}/finalize`, json("POST", { accept_open: acceptOpen })),
   corrMatrix: (datasetId: number, q: { kept: boolean; target: string | null; limit?: number; add?: number[] }) => {
     const p = new URLSearchParams({ kept: q.kept ? "1" : "0", limit: String(q.limit ?? 60) });
     if (q.target) p.set("target", q.target);

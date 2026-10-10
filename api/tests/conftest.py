@@ -12,6 +12,23 @@ def sample_parquet(tmp_path_factory) -> Path:
     return path
 
 
+def set_phase(dataset_id: int, phase: str) -> dict:
+    """Put a dataset's current recipe straight into `phase`, skipping the team process, for tests about what
+    happens to team decisions and exports there (a finalized version is followed by a new one in `phase`)."""
+    from app import recipes
+    from app.db import connection
+
+    with connection() as conn:
+        r = recipes.current(conn, dataset_id, lock="update")
+        if r["phase"] == phase:
+            return r
+        if r["phase"] == "finalized":
+            return recipes.start_version(conn, dataset_id, None, phase)
+        if phase == "finalized":
+            return recipes.finalize(conn, r, r["created_by"])
+        return conn.execute("UPDATE meta.recipes SET phase = %s WHERE id = %s RETURNING *", (phase, r["id"])).fetchone()
+
+
 @pytest.fixture(scope="session")
 def login_as():
     """Pick-mode sign-in for API tests: `login_as(client, role="lead", name=None)` signs the TestClient in as an

@@ -1,4 +1,5 @@
 export type DatasetStatus = "pending" | "ingesting" | "profiling" | "correlating" | "ready" | "failed";
+export type Phase = "assessing" | "review" | "finalized";
 
 export interface Dataset {
   id: number;
@@ -18,6 +19,12 @@ export interface Dataset {
   updated_at: string;
   profiled_at: string | null;
   raw_table: string | null;
+  /** The current recipe version and the phase it is in. */
+  recipe_id: number | null;
+  recipe_version: number | null;
+  phase: Phase | null;
+  /** Datasets list only: the viewer's own assessment of the current version, when they are assigned. */
+  my_assessment?: { reviewed: number; submitted: boolean } | null;
   field_count?: number;
   reviewed_count?: number;
   kept_count?: number;
@@ -214,6 +221,7 @@ export interface ExportPreview {
   blocking: string[];
   last_export?: { id: number; created_at: string; status: string } | null;
   changed_since_export?: number | null;
+  recipe?: { id: number; version: number; phase: Phase };
 }
 
 export interface ExportJob {
@@ -447,4 +455,85 @@ export interface TeamUser {
   sso: boolean;
   created_at: string;
   last_seen_at: string | null;
+}
+
+export interface Recipe {
+  id: number;
+  dataset_id: number;
+  version: number;
+  phase: Phase;
+  parent_id: number | null;
+  created_by: number | null;
+  created_at: string;
+  finalized_by: number | null;
+  finalized_at: string | null;
+  schema_fingerprint: string | null;
+  created_by_name?: string | null;
+  finalized_by_name?: string | null;
+}
+
+export interface AssessorProgress {
+  user_id: number;
+  name: string;
+  assigned_at: string;
+  assigned_by: number | null;
+  submitted_at: string | null;
+  reviewed: number;
+  total: number;
+}
+
+export interface ReviewSummary {
+  fields: number;
+  adopted: number;
+  disagreements: number;
+  open: number;
+}
+
+export interface TeamState {
+  recipe: Recipe;
+  assessors: AssessorProgress[];
+  me: { submitted: boolean; reviewed: number; total: number } | null;
+  review: ReviewSummary | null;
+}
+
+export interface Assessment {
+  user_id: number;
+  user_name: string;
+  action: Action;
+  semantic_type: string;
+  notes: string | null;
+}
+
+export interface QueueItem {
+  field_id: number;
+  name: string;
+  inferred_type: string;
+  team: { action: Action; semantic_type: string };
+  resolved: boolean;
+  comments: number;
+  assessments: Assessment[];
+}
+
+export interface ReviewQueue {
+  recipe: Recipe;
+  summary: ReviewSummary;
+  queue: QueueItem[];
+}
+
+export type SettingsRow = Pick<Decision, "imputation" | "impute_value" | "add_missing_indicator" | "transform" | "scaling" | "encoding" | "params"> & {
+  source: "suggested" | "user";
+};
+
+export interface ReviewComment {
+  id: number;
+  user_id: number;
+  user_name: string;
+  body: string;
+  created_at: string;
+}
+
+export interface FieldReview {
+  disagreement: boolean;
+  assessments: (Assessment & { settings: Record<string, SettingsRow> })[];
+  comments: ReviewComment[];
 }

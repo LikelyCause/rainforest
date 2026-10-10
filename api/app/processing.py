@@ -280,6 +280,17 @@ def refresh_target_state(conn, dataset_id: int) -> None:
               AND d.action IS DISTINCT FROM s.action""",
         (dataset_id,),
     )
+    # Assessors start from the suggestions too; the ones they haven't touched keep following them.
+    conn.execute(
+        """UPDATE meta.assessments a SET action = s.action, updated_at = now()
+             FROM (SELECT f.id, coalesce(f.suggestion -> ds.model_family ->> 'action', 'keep') AS action
+                     FROM meta.fields f JOIN meta.datasets ds ON ds.id = f.dataset_id
+                    WHERE f.dataset_id = %(ds)s) s
+            WHERE a.field_id = s.id AND a.source = 'suggested' AND NOT a.reviewed
+              AND a.action IS DISTINCT FROM s.action
+              AND a.recipe_id IN (SELECT id FROM meta.recipes WHERE dataset_id = %(ds)s AND phase = 'assessing')""",
+        {"ds": dataset_id},
+    )
 
 
 def sweep_uploads(min_age_s: float = 600) -> list[Path]:

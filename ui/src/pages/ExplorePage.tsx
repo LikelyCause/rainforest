@@ -2,6 +2,7 @@ import { NavLink, Navigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import { useDatasetContext } from "../components/DatasetLayout";
+import { useAccess } from "../hooks";
 import { CorrelationsView } from "../components/explore/CorrelationsView";
 import { MapView } from "../components/explore/MapView";
 import { TestsView } from "../components/explore/TestsView";
@@ -52,6 +53,7 @@ function ViewBody({ view, ds, st }: { view: View; ds: Dataset; st: ExploreState 
 }
 
 function Toolbar({ ds, st, sampled }: { ds: Dataset; st: ExploreState; sampled: boolean }) {
+  const mine = useAccess(ds).source === "mine";
   const exports = useQuery({ queryKey: ["exports", ds.id], queryFn: () => api.exports(ds.id) });
   const done = (exports.data ?? []).filter((e) => e.status === "done");
   const unknown = !st.isRaw && !done.some((e) => `export:${e.id}` === st.data);
@@ -70,8 +72,10 @@ function Toolbar({ ds, st, sampled }: { ds: Dataset; st: ExploreState; sampled: 
         </select>
       </label>
       {st.isRaw && (
-        <label className="check small-text" title="Only fields marked keep; otherwise every field except targets">
-          <input type="checkbox" checked={st.kept} onChange={(e) => st.set({ kept: e.target.checked ? "1" : null })} /> Kept only
+        <label className="check small-text" title={mine ? "Only the fields you kept in your assessment; otherwise every field except targets"
+          : "Only fields marked keep; otherwise every field except targets"}>
+          <input type="checkbox" checked={st.kept} onChange={(e) => st.set({ kept: e.target.checked ? "1" : null })} />
+          {mine ? "Kept only (your choices)" : "Kept only"}
         </label>
       )}
       {ds.target_columns.length > 0 && (

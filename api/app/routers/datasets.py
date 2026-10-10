@@ -6,10 +6,12 @@ import uuid
 from pathlib import Path
 
 import polars as pl
+from psycopg import sql
 
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 
-from .. import jobs
+from .. import jobs, recipes
+from ..assessment import source_for
 from ..auth import CurrentUser, LeadUser
 from ..config import get_settings
 from ..correlations import target_associations
@@ -28,6 +30,9 @@ router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 
 DATASET_COLS = """id, name, source_filename, file_format, target_columns, model_family, row_count, column_count, status,
                   progress, status_message, error, warnings, created_at, updated_at, profiled_at, raw_table, created_by"""
+# A dataset `d` with its current recipe version `rc` (recipes.CURRENT_JOIN).
+SELECT_DATASET = ", ".join("d." + c.strip() for c in DATASET_COLS.split(",")) + \
+    ", rc.id AS recipe_id, rc.version AS recipe_version, rc.phase"
 
 
 def _targets(raw: str | None) -> list[str]:
@@ -39,12 +44,16 @@ def _targets(raw: str | None) -> list[str]:
 
 def _create(name: str, filename: str | None, fmt: str, targets: list[str], user_id: int,
             upload_path: Path | None = None) -> dict:
-    return fetch_one(
-        f"""INSERT INTO meta.datasets (name, source_filename, file_format, target_columns, status, status_message,
-                                       owner, upload_path, created_by)
-            VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s, %s) RETURNING {DATASET_COLS}""",
-        (name, filename, fmt, targets, jobs.owner_id(), None if upload_path is None else str(upload_path), user_id),
-    )
+    with connection() as conn:
+        ds = conn.execute(
+            """INSERT INTO meta.datasets (name, source_filename, file_format, target_columns, status, status_message,
+                                          owner, upload_path, created_by)
+               VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s, %s) RETURNING id""",
+            (name, filename, fmt, targets, jobs.owner_id(), None if upload_path is None else str(upload_path),
+             user_id),
+        ).fetchone()
+        recipes.create_first(conn, ds["id"], user_id)
+    return get_dataset(ds["id"])
 
 
 # Metric shown for a run in the dataset list, in order of preference.
@@ -52,9 +61,11 @@ HEADLINE_METRICS = ("roc_auc", "roc_auc_ovr_macro", "accuracy")
 
 
 @router.get("")
-def list_datasets() -> list[dict]:
+def list_datasets(user: CurrentUser) -> list[dict]:
     rows = fetch_all(
-        f"""SELECT {", ".join("d." + c.strip() for c in DATASET_COLS.split(","))},
+        f"""SELECT {SELECT_DATASET}, (a.user_id IS NOT NULL) AS assigned, a.submitted_at AS my_submitted_at,
+                   (SELECT count(*) FROM meta.assessments x
+                     WHERE x.recipe_id = rc.id AND x.user_id = a.user_id AND x.reviewed) AS my_reviewed,
                    coalesce(c.field_count, 0) AS field_count, coalesce(c.reviewed_count, 0) AS reviewed_count,
                    coalesce(c.kept_count, 0) AS kept_count, coalesce(c.dropped_count, 0) AS dropped_count,
                    coalesce(c.target_count, 0) AS target_count,
@@ -65,6 +76,8 @@ def list_datasets() -> list[dict]:
                    r.id AS r_id, r.model AS r_model, r.status AS r_status, r.report -> 'order' AS r_order,
                    r.report ->> 'model_label' AS r_label, r.metrics -> 'test' AS r_test
               FROM meta.datasets d
+              {recipes.CURRENT_JOIN}
+              LEFT JOIN meta.dataset_assessors a ON a.recipe_id = rc.id AND a.user_id = %(user)s
               LEFT JOIN (SELECT dataset_id, count(*) AS field_count,
                                 count(*) FILTER (WHERE reviewed) AS reviewed_count,
                                 count(*) FILTER (WHERE action = 'keep') AS kept_count,
@@ -75,13 +88,17 @@ def list_datasets() -> list[dict]:
                                   ORDER BY x.created_at DESC, x.id DESC LIMIT 1) e ON true
               LEFT JOIN LATERAL (SELECT * FROM meta.model_runs x WHERE x.dataset_id = d.id
                                   ORDER BY x.created_at DESC, x.id DESC LIMIT 1) r ON true
-             ORDER BY d.created_at DESC"""
+             ORDER BY d.created_at DESC""",
+        {"user": user["id"]},
     )
     return [_with_latest(row) for row in rows]
 
 
 def _with_latest(row: dict) -> dict:
-    out = {k: v for k, v in row.items() if not k.startswith(("e_", "r_"))}
+    out = {k: v for k, v in row.items() if not k.startswith(("e_", "r_", "my_")) and k != "assigned"}
+    # The viewer's own assessment of the current version, when they are assigned to it.
+    out["my_assessment"] = None if not row["assigned"] else {
+        "reviewed": row["my_reviewed"], "submitted": row["my_submitted_at"] is not None}
     out["last_export"] = None if row["e_id"] is None else {
         "id": row["e_id"], "model_family": row["e_model_family"], "status": row["e_status"],
         "created_at": row["e_created_at"], "n_features": row["e_n_features"],
@@ -183,7 +200,8 @@ def _generate_and_process(dataset_id: int, req: dict) -> None:
 
 @router.get("/{dataset_id}")
 def get_dataset(dataset_id: int) -> dict:
-    ds = fetch_one(f"SELECT {DATASET_COLS} FROM meta.datasets WHERE id = %s", (dataset_id,))
+    ds = fetch_one(f"SELECT {SELECT_DATASET} FROM meta.datasets d {recipes.CURRENT_JOIN} WHERE d.id = %s",
+                   (dataset_id,))
     if ds is None:
         raise HTTPException(404, "Dataset not found")
     return ds
@@ -200,6 +218,8 @@ def update_dataset(dataset_id: int, body: DatasetPatch, user: CurrentUser) -> di
     uncorrelated: list[dict] = []
     screen: list[int] = []
     with connection() as conn:
+        if body.target_columns is not None:
+            _check_targets_editable(conn, dataset_id, user)
         conn.execute(
             """UPDATE meta.datasets SET model_family = coalesce(%s, model_family), name = coalesce(%s, name),
                       updated_at = now() WHERE id = %s""",
@@ -225,6 +245,19 @@ def update_dataset(dataset_id: int, body: DatasetPatch, user: CurrentUser) -> di
     elif screen:
         jobs.submit(screen_targets, dataset_id, screen)
     return get_dataset(dataset_id)
+
+
+def _check_targets_editable(conn, dataset_id: int, user: dict) -> None:
+    """Targets are part of the team decision. They are set before anyone assesses (every assessor starts from
+    them); after that only a lead changes them, in review. A finalized version is frozen."""
+    recipe = recipes.current(conn, dataset_id, lock="update")
+    if recipe["phase"] == "assessing":
+        if conn.execute("SELECT 1 FROM meta.dataset_assessors WHERE recipe_id = %s LIMIT 1",
+                        (recipe["id"],)).fetchone():
+            raise HTTPException(409, "Targets are fixed once assessors are assigned. A lead can change them in "
+                                     "review, or unassign everyone first.")
+    else:
+        source_for(conn, dataset_id, user, recipe).require_write()
 
 
 def correlate_targets(dataset_id: int, target_ids: list[int], screen_ids: list[int] | None = None) -> None:
@@ -335,13 +368,15 @@ def _run_dirs(models_dir: Path, runs: list[dict]) -> set[Path]:
 
 
 @router.get("/{dataset_id}/fields")
-def list_fields(dataset_id: int) -> list[dict]:
-    """Lightweight rows for the review sidebar."""
-    return fetch_all(
-        """SELECT f.id, f.ordinal, f.name, f.inferred_type, f.inference_confidence, f.is_target, f.null_pct,
-                  f.n_unique, f.max_target_assoc, f.leakage_flag AS leakage,
-                  d.action, d.semantic_type, d.reviewed, d.source
-             FROM meta.fields f JOIN meta.field_decisions d ON d.field_id = f.id
-            WHERE f.dataset_id = %s ORDER BY f.ordinal""",
-        (dataset_id,),
-    )
+def list_fields(dataset_id: int, user: CurrentUser) -> list[dict]:
+    """Lightweight rows for the review sidebar, with the decisions the viewer works on (their own while assessing)."""
+    with connection() as conn:
+        src = source_for(conn, dataset_id, user)
+        return conn.execute(
+            sql.SQL("""SELECT f.id, f.ordinal, f.name, f.inferred_type, f.inference_confidence, f.is_target,
+                              f.null_pct, f.n_unique, f.max_target_assoc, f.leakage_flag AS leakage,
+                              d.action, d.semantic_type, d.reviewed, d.source
+                         FROM meta.fields f JOIN {} d ON d.field_id = f.id
+                        WHERE f.dataset_id = %s ORDER BY f.ordinal""").format(src.decisions()),
+            (dataset_id,),
+        ).fetchall()

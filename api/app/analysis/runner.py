@@ -6,8 +6,11 @@ import json
 import logging
 from pathlib import Path
 
+from psycopg import sql
+
 from .. import jobs
-from ..db import execute, fetch_all, fetch_one, jsonb
+from ..assessment import from_key
+from ..db import connection, execute, fetch_one, jsonb
 from . import compute
 from .prep import AnalysisError, NotEnough, prepare_export, prepare_raw
 
@@ -26,13 +29,14 @@ def params_key(params: dict) -> str:
     return json.dumps(params, sort_keys=True, separators=(",", ":"))
 
 
-def data_version(conn, dataset_id: int, data: str) -> str:
-    """Raw mode: a hash of every field's decision, so any write path (save, bulk, undo, targets) invalidates."""
-    if data.startswith("export:"):
-        return data
+def data_version(conn, dataset_id: int, params: dict) -> str:
+    """Raw mode: a hash of every field's decision in the params' decision source (the team's, or one assessor's),
+    so any write path (save, bulk, undo, targets) invalidates."""
+    if params["data"].startswith("export:"):
+        return params["data"]
     rows = conn.execute(
-        """SELECT field_id, action, semantic_type FROM meta.field_decisions
-            WHERE dataset_id = %s ORDER BY field_id""",
+        sql.SQL("SELECT field_id, action, semantic_type FROM {} d WHERE dataset_id = %s ORDER BY field_id").format(
+            from_key(conn, dataset_id, params.get("decisions", "team")).decisions()),
         (dataset_id,),
     ).fetchall()
     text = "\n".join(f"{r['field_id']}|{r['action']}|{r['semantic_type']}" for r in rows)
@@ -49,7 +53,7 @@ def find_or_create(conn, dataset_id: int, kind: str, params: dict, recompute: bo
                    user_id: int | None = None) -> tuple[dict, bool]:
     """(row, created). Call inside a transaction holding the dataset row lock."""
     key = params_key(params)
-    version = data_version(conn, dataset_id, params["data"])
+    version = data_version(conn, dataset_id, params)
     if not recompute:
         for status_clause, same_version in (("status = 'done'", True), ("status IN ('pending', 'running')", True),
                                             ("status = 'done'", False)):
@@ -65,8 +69,9 @@ def find_or_create(conn, dataset_id: int, kind: str, params: dict, recompute: bo
     conn.execute(
         """UPDATE meta.analyses SET status = 'failed', error = 'Superseded', status_message = 'Superseded',
                   finished_at = now(), updated_at = now()
-            WHERE dataset_id = %s AND kind = %s AND status IN ('pending', 'running')""",
-        (dataset_id, kind),
+            WHERE dataset_id = %s AND kind = %s AND status IN ('pending', 'running')
+              AND coalesce(params ->> 'decisions', 'team') = %s""",
+        (dataset_id, kind, params.get("decisions", "team")),
     )
     row = conn.execute(
         f"""INSERT INTO meta.analyses (dataset_id, kind, params, params_key, data_version, status_message, owner,
@@ -122,12 +127,15 @@ def _prepare(row: dict, ds: dict):
         except (OSError, ValueError) as exc:
             raise AnalysisError("The export's files were removed.") from exc
         return prepare_export(out_dir, manifest, p["target"], p["sample"])
-    fields = fetch_all(
-        """SELECT f.id, f.name, f.stats ->> 'datetime_format' AS datetime_format, d.action, d.semantic_type
-             FROM meta.fields f JOIN meta.field_decisions d ON d.field_id = f.id
-            WHERE f.dataset_id = %s ORDER BY f.ordinal""",
-        (row["dataset_id"],),
-    )
+    with connection() as conn:
+        dec = from_key(conn, row["dataset_id"], p.get("decisions", "team")).decisions()
+        fields = conn.execute(
+            sql.SQL("""SELECT f.id, f.name, f.stats ->> 'datetime_format' AS datetime_format, d.action,
+                              d.semantic_type
+                         FROM meta.fields f JOIN {} d ON d.field_id = f.id
+                        WHERE f.dataset_id = %s ORDER BY f.ordinal""").format(dec),
+            (row["dataset_id"],),
+        ).fetchall()
     return prepare_raw(Path(ds["parquet_path"]), fields, p["kept"], p["target"], p["sample"])
 
 

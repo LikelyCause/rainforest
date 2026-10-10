@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, Route, Routes, useMatch, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useDataset, useFields, useMe, useOptions } from "./hooks";
+import { useAccess, useDataset, useFields, useMe, useOptions } from "./hooks";
 import { ApiError, api, setUnauthorizedHandler } from "./api";
 import { Logo } from "./components/Logo";
 import { DatasetsPage } from "./pages/DatasetsPage";
@@ -12,6 +12,7 @@ import { ReviewPage } from "./pages/ReviewPage";
 import { BulkEditPage } from "./pages/BulkEditPage";
 import { ExportPage } from "./pages/ExportPage";
 import { ExplorePage } from "./pages/ExplorePage";
+import { DatasetTeamPage, PhaseBadge } from "./pages/DatasetTeamPage";
 import { DatasetLayout } from "./components/DatasetLayout";
 import { ErrorAlert, ReviewMeter } from "./components/ui";
 import { familyShort, roleLabel } from "./format";
@@ -61,6 +62,8 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
   const nav = useNavigate();
   const onReview = useMatch("/d/:datasetId/review/*");
   const onExport = useMatch("/d/:datasetId/export");
+  const onTeam = useMatch("/d/:datasetId/team");
+  const access = useAccess(ds);
   const fields = useFields(ds.id);
   const exports = useQuery({ queryKey: ["exports", ds.id], queryFn: () => api.exports(ds.id) });
   const runs = useQuery({ queryKey: ["runs", ds.id], queryFn: () => api.runs(ds.id) });
@@ -71,7 +74,7 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
   const targets = reviewed.filter((f) => f.action === "target").length;
   const running = [...(exports.data ?? []), ...(runs.data ?? [])]
     .filter((j: ExportJob | ModelRun) => j.status === "pending" || j.status === "running").length;
-  const nextTodo = all.find((f) => !f.reviewed);
+  const nextTodo = access.canEdit ? all.find((f) => !f.reviewed) : undefined;
   const step = ({ isActive }: { isActive: boolean }) => `step${isActive ? " active" : ""}`;
 
   // U jumps back into review from Bulk edit, Explore and Export, matching its meaning on the Review page.
@@ -95,6 +98,9 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
         </NavLink>
         <NavLink to={`/d/${ds.id}/bulk`} className={step}><span>Bulk edit</span></NavLink>
         <NavLink to={`/d/${ds.id}/explore`} className={step}><span>Explore</span></NavLink>
+        <NavLink to={`/d/${ds.id}/team`} className={step} title="Assessors, team review and finalizing">
+          <span>Team <PhaseBadge phase={ds.phase} /></span>
+        </NavLink>
         <NavLink to={`/d/${ds.id}/export`} className={step}>
           <span><span className="n">2</span>Export &amp; train{running > 0 && <span className="badge accent" style={{ marginLeft: 6 }} title={`${running} running`}>{running}</span>}</span>
         </NavLink>
@@ -103,9 +109,11 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
       <ModelSwitch ds={ds} />
       {!onReview && all.length > 0 && (nextTodo ? (
         <Link className="btn" to={`/d/${ds.id}/review/${nextTodo.id}`}>Next unreviewed › <kbd>U</kbd></Link>
-      ) : !onExport && (
+      ) : ds.phase === "finalized" ? !onExport && (
         <Link className="btn" to={`/d/${ds.id}/export`} style={{ background: "var(--good)", borderColor: "var(--good)", color: "#fff" }}>All reviewed → Export</Link>
-      ))}
+      ) : !onTeam && access.source === "mine" && access.canEdit ? (
+        <Link className="btn" to={`/d/${ds.id}/team`} style={{ background: "var(--good)", borderColor: "var(--good)", color: "#fff" }}>All reviewed → Submit</Link>
+      ) : null)}
     </>
   );
 }
@@ -235,6 +243,7 @@ export default function App() {
             <Route path="query" element={<Navigate to="../bulk" replace />} />
             <Route path="explore/:view?" element={<ExplorePage />} />
             <Route path="export" element={<ExportPage />} />
+            <Route path="team" element={<DatasetTeamPage />} />
           </Route>
           <Route path="*" element={<div className="empty">Page not found. <NavLink to="/">Go home</NavLink></div>} />
         </Route>

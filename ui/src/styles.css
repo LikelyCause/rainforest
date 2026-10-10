@@ -364,6 +364,7 @@ details.more[open] > summary { border-bottom: 1px solid var(--border); }
 .decision { border-left: 1px solid var(--border); background: var(--surface-1); display: flex; flex-direction: column; min-height: 0; }
 .decision-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .decision-foot { border-top: 1px solid var(--border); padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 8px; }
+fieldset.bare { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
 .decision-foot .confirm { width: 100%; height: 38px; justify-content: space-between; font-size: 14px; }
 .decision .segmented { display: flex; }
 .decision .segmented button { flex: 1; height: 32px; }
@@ -416,6 +417,25 @@ table.data tr.excluded td { opacity: 0.5; }
 .bulk-bar .grow { flex: 1; min-width: 0; }
 
 .narrow-bar { display: none; align-items: center; gap: 8px; }
+
+/* ------------------------------------------------------------------ team review */
+.team-review { display: grid; grid-template-columns: 280px minmax(0, 1fr) 320px; height: 100%; min-height: 0; }
+.queue-item { display: flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
+.queue-item:hover { background: var(--surface-hover); }
+.queue-item.active { background: var(--accent-weak); box-shadow: inset 2px 0 0 var(--accent); }
+.queue-item .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.queue-item .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+table.comparison th[scope="row"] { background: transparent; position: static; width: 140px; }
+table.comparison tr.differs td, table.comparison tr.differs th { background: var(--warn-weak); }
+.comment { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--surface-2); }
+@media (max-width: 1279px) {
+  .team-review { grid-template-columns: 240px minmax(0, 1fr); grid-auto-rows: minmax(0, auto); height: auto; }
+  .team-review > .decision { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--border); }
+}
+@media (max-width: 759px) {
+  .team-review { grid-template-columns: minmax(0, 1fr); }
+  .team-review > .sidebar { border-right: 0; border-bottom: 1px solid var(--border); max-height: 40vh; }
+}
 .drawer-scrim { display: none; }
 
 /* Below 1280 the field list becomes a drawer so the decision panel never leaves the screen (P7). */
