@@ -1,6 +1,7 @@
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, isServerPath, oidcLoginUrl, safeNext } from "../api";
+import { Avatar } from "../components/Avatar";
 import { Logo } from "../components/Logo";
 import { ErrorAlert } from "../components/ui";
 import { roleLabel } from "../format";
@@ -29,25 +30,21 @@ function PickUser({ next }: { next: string }) {
   });
   return (
     <>
-      <div className="alert warn" role="note">
-        <span aria-hidden="true">!</span>
-        <div className="grow">
-          <b>This mode doesn't authenticate.</b> Anyone who can open this page can sign in as anyone. Team deployments
-          should use OIDC sign-in.
-        </div>
-      </div>
       <ErrorAlert error={users.error} />
-      {users.isPending && <span className="skeleton" />}
-      <div className="stack pick-list" role="list" aria-label="Users">
+      {users.isPending && <span className="skeleton" style={{ width: 240, margin: "0 auto" }} />}
+      <ul className="profile-grid" aria-label="Profiles">
         {users.data?.map((u) => (
-          <button key={u.id} type="button" role="listitem" className="pick-user" disabled={pick.isPending}
-            onClick={() => pick.mutate(u.id)}>
-            <span className="grow">{u.name}</span>
-            <span className={`badge${u.role === "lead" ? " accent" : ""}`}>{roleLabel(u.role)}</span>
-          </button>
+          <li key={u.id}>
+            <button type="button" className="profile" disabled={pick.isPending} onClick={() => pick.mutate(u.id)}>
+              <Avatar user={u} />
+              <span className="profile-name">{u.name}</span>
+              <span className={`badge role-${u.role}`}>{roleLabel(u.role)}</span>
+            </button>
+          </li>
         ))}
-      </div>
+      </ul>
       <ErrorAlert error={pick.error} />
+      <p className="muted small-text profile-note">Anyone who can open this page can pick any profile.</p>
     </>
   );
 }
@@ -65,9 +62,10 @@ export function LoginPage() {
   const next = safeNext(params.get("next"));
   const failure = CALLBACK_ERRORS[params.get("error") ?? ""];
   const cfg = useQuery({ queryKey: ["authConfig"], queryFn: api.authConfig, retry: false, staleTime: Infinity });
+  const picker = cfg.data?.mode === "pick" && !cfg.data.problem;
   return (
     <div className="login">
-      <div className="card login-card stack">
+      <div className={`stack ${picker ? "picker" : "card login-card"}`}>
         <div className="login-brand"><Logo /> Rainforest</div>
         <h1>{cfg.data?.mode === "pick" ? "Who are you?" : "Sign in"}</h1>
         {failure && <ErrorAlert error={{ message: failure }} />}

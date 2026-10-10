@@ -3,7 +3,9 @@ import { Link, NavLink, Navigate, Outlet, Route, Routes, useMatch, useNavigate }
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAccess, useDataset, useExperiment, useFields, useMe } from "./hooks";
 import { ApiError, api, setUnauthorizedHandler } from "./api";
+import { Avatar } from "./components/Avatar";
 import { Logo } from "./components/Logo";
+import { PictureDialog } from "./components/PictureDialog";
 import { DatasetsPage } from "./pages/DatasetsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ForbiddenPage } from "./pages/ForbiddenPage";
@@ -158,6 +160,15 @@ function UserMenu() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const me = useMe();
+  const [open, setOpen] = useState(false);
+  const [picture, setPicture] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
   const out = useMutation({
     mutationFn: api.logout,
     onSuccess: ({ logout_url }) => {
@@ -169,16 +180,34 @@ function UserMenu() {
     onError: (err) => showError("Couldn't sign out", err),
   });
   const u = me.data;
+  if (!u) return <div className="user-menu" />;
+  const pick = u.mode === "pick";
   return (
-    <div className="user-menu">
-      {u && (
-        <>
-          <NavLink to="/team" className="team-link">Team</NavLink>
-          <span className="user-name" title={u.email ?? undefined}>{u.name}</span>
-          <span className={`badge${u.role === "lead" ? " accent" : ""}`}>{roleLabel(u.role)}</span>
-        </>
+    <div ref={ref} className="user-menu" style={{ position: "relative" }} onKeyDown={(e) => e.key === "Escape" && setOpen(false)}>
+      <NavLink to="/team" className="team-link">Team</NavLink>
+      <button type="button" className="ghost profile-button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}
+        title={u.email ?? undefined}>
+        <Avatar user={u} size={28} />
+        <span className="user-name">{u.name}</span>
+        <span className={`badge role-${u.role}`}>{roleLabel(u.role)}</span>
+      </button>
+      {open && (
+        <div className="popover profile-menu" role="menu">
+          <div className="profile-menu-head">
+            <Avatar user={u} size={44} />
+            <div className="stack" style={{ gap: 2 }}>
+              <b>{u.name}</b>
+              <span className="muted small-text">{roleLabel(u.role)}</span>
+            </div>
+          </div>
+          <button type="button" role="menuitem" className="ghost menu-item" onClick={() => { setOpen(false); setPicture(true); }}>Change picture…</button>
+          <NavLink role="menuitem" className="menu-item" to="/team" onClick={() => setOpen(false)}>Team</NavLink>
+          <button type="button" role="menuitem" className="ghost menu-item" disabled={out.isPending} onClick={() => out.mutate()}>
+            {pick ? "Switch profile" : "Sign out"}
+          </button>
+        </div>
       )}
-      <button type="button" className="ghost small" disabled={out.isPending} onClick={() => out.mutate()}>Sign out</button>
+      {picture && <PictureDialog user={u} onClose={() => setPicture(false)} />}
     </div>
   );
 }

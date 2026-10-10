@@ -282,7 +282,8 @@ def auth_config() -> dict:
     """What the sign-in page needs before anyone is signed in."""
     s = get_settings()
     return {"mode": s.auth_mode, "provider_name": s.oidc_provider_name if s.auth_mode == "oidc" else None,
-            "lead_group": s.lead_group, "member_group": s.member_group, "problem": config_problem()}
+            "lead_group": s.lead_group, "member_group": s.member_group, "problem": config_problem(),
+            "accounts_from_env": users.managed_by_env()}
 
 
 @router.get("/me")

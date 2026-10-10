@@ -555,6 +555,8 @@ export interface Me {
   email: string | null;
   role: Role;
   mode: AuthMode;
+  key?: string | null;
+  avatar_url?: string | null;
 }
 
 export interface AuthConfig {
@@ -564,12 +566,16 @@ export interface AuthConfig {
   member_group: string;
   /** Why sign-in can't work yet (OIDC settings missing), or null. */
   problem: string | null;
+  /** Accounts come from RAINFOREST_USERS: they can't be added or edited in the app. */
+  accounts_from_env?: boolean;
 }
 
 export interface PickUser {
   id: number;
   name: string;
   role: Role;
+  key: string | null;
+  avatar_url: string | null;
 }
 
 export interface TeamUser {
@@ -580,6 +586,8 @@ export interface TeamUser {
   active: boolean;
   /** Signed in through the identity provider (OIDC mode); its name, email and role come from there. */
   sso: boolean;
+  key?: string | null;
+  avatar_url?: string | null;
   created_at: string;
   last_seen_at: string | null;
 }
