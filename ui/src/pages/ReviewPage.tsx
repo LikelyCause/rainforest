@@ -79,7 +79,8 @@ export function ReviewPage() {
   const workingSet = useMemo(() => readWorkingSet(setKey), [setKey]);
   const [search, setSearch] = useSessionState(`search:${datasetId}`, "");
   const [typeList, setTypeList] = useSessionState<string[]>(`types:${datasetId}`, []);
-  const [status, setStatus] = useSessionState<StatusFilter>(`status:${datasetId}`, "todo");
+  // In an experiment or a finalized baseline every field counts as reviewed, so the list starts with all of them.
+  const [status, setStatus] = useSessionState<StatusFilter>(`status:${datasetId}:${viewKey(view)}`, view ? "all" : "todo");
   const [attention, setAttention] = useSessionState(`attention:${datasetId}`, false);
   const types = useMemo(() => new Set(typeList), [typeList]);
   // Confirmed while "To do" is showing: stays in place (faded) until the filter changes, so K still reaches it.

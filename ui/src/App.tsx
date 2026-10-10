@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, Route, Routes, useMatch, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useAccess, useDataset, useFields, useMe } from "./hooks";
+import { useAccess, useDataset, useExperiment, useFields, useMe } from "./hooks";
 import { ApiError, api, setUnauthorizedHandler } from "./api";
 import { Logo } from "./components/Logo";
 import { DatasetsPage } from "./pages/DatasetsPage";
@@ -18,13 +18,22 @@ import { DatasetLayout } from "./components/DatasetLayout";
 import { ErrorAlert, ReviewMeter } from "./components/ui";
 import { baselineLabel, familyShort, roleLabel } from "./format";
 import { ToastRegion, showError } from "./toast";
-import { useView, withView } from "./view";
+import { parseView, useView, withView } from "./view";
 import type { Dataset, ExportJob, ModelRun } from "./types";
 
 /** The baseline the dataset is working on (or last worked), linking to all of them. Replaces choosing a model type:
  * that is fixed per baseline. */
 function BaselineChip({ ds }: { ds: Dataset }) {
+  const v = parseView(useView());
+  const x = useExperiment(v?.kind === "experiment" ? v.id : null);
   const b = ds.baseline;
+  if (v?.kind === "experiment" && x.data) {
+    return (
+      <Link to={`/d/${ds.id}/experiments/${x.data.id}`} className="baseline-chip" title={`Adjusting ${x.data.name}, built from ${baselineLabel(x.data.recipe_family, x.data.recipe_version)}`}>
+        <span className="muted">Experiment</span> <b>{x.data.name} · {baselineLabel(x.data.recipe_family, x.data.recipe_version, true)}</b>
+      </Link>
+    );
+  }
   if (!b) return null;
   return (
     <Link to={`/d/${ds.id}/baselines`} className="baseline-chip" title={`${b.label}${b.setup ? " · not set up yet" : ""}. All baselines →`}>
