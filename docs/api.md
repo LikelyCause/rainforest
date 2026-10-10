@@ -19,7 +19,7 @@ Long-running work returns `202` with a row to poll; its `status` is `pending`, `
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/health` | Liveness; runs `SELECT 1`. |
-| GET | `/api/options` | Option catalog: semantic types, model families, setting labels, allowed settings per family × type, family notes, default encoder params, non-feature types, and `target_rule` (`types`, `max_levels`). |
+| GET | `/api/options` | Option catalog: semantic types, model families, setting labels, allowed settings per family × type, family notes, default encoder params, non-feature types, `param_rules` (per encoding: each parameter's `integer`, `min` and `max`) and `target_rule` (`types`, `max_levels`). |
 
 ## Sign-in (`auth.py`)
 
@@ -49,7 +49,7 @@ Long-running work returns `202` with a row to poll; its `status` is `pending`, `
 | GET | `/api/fields/{field_id}` | Field profile, the decision merged with one family's settings, that family's suggestion, and target associations. | `family` (default: the dataset's active family) |
 | GET | `/api/fields/{field_id}/correlations` | The field's strongest associations. | `limit` (1–200, default 20), `exclude_targets` |
 | GET | `/api/fields/{field_id}/history` | Last 50 decision changes. | |
-| PUT | `/api/fields/{field_id}/decision` | Save the shared decision and one family's settings; validated per family. `action: target` follows the same target rule as `PATCH …/datasets/{id}`. A type change re-derives the other families' settings. | body: `family`, `action` (`keep`, `drop`, `target`), `semantic_type`, `imputation`, `impute_value`, `add_missing_indicator`, `transform`, `scaling`, `encoding`, `params`, `notes`, `reviewed` |
+| PUT | `/api/fields/{field_id}/decision` | Save the shared decision and one family's settings; validated per family (numeric fill values must be finite, encoder params within `param_rules`). `source` becomes `user` only when keep / drop / target or the type changes, the settings' only when they differ. Retyping to datetime stores the column's detected date format. `action: target` follows the same target rule as `PATCH …/datasets/{id}`. A type change re-derives the other families' settings. | body: `family`, `action` (`keep`, `drop`, `target`), `semantic_type`, `imputation`, `impute_value`, `add_missing_indicator`, `transform`, `scaling`, `encoding`, `params`, `notes`, `reviewed` |
 | POST | `/api/datasets/{dataset_id}/decisions/bulk` | Apply one change to many fields, or preview it. Never moves a field into or out of the target role. Returns matched / changed / unchanged counts, action transitions, per-field changes and a `batch_id`. | exactly one of `field_ids` or `filters`; `excluded_ids`; at least one of `accept_suggestion`, `action` (`keep`, `drop`), `reviewed`; `dry_run` |
 | POST | `/api/datasets/{dataset_id}/decisions/bulk/{batch_id}/undo` | Restore every field a bulk batch changed (decision and all families' settings). `409` if already undone. | |
 
@@ -78,7 +78,7 @@ Long-running work returns `202` with a row to poll; its `status` is `pending`, `
 | GET | `/api/models` | Registered models: key, label, family, NaN support, installed or not, description, `devices` (`cpu`, `cuda`). | |
 | GET | `/api/system` | Training hardware: `gpu` is `null`, or `{available, name, memory_mb, driver, count, reason}`. Detected once per worker, in the background at startup (a request during detection waits for it). | |
 | GET | `/api/exports/{export_id}/models` | Every model with whether it can train on this export, and why not. | |
-| POST | `/api/exports/{export_id}/runs` | Train a `ClassifierChain` on a finished export. `202`. | `model` (default `lightgbm`), `order` (permutation of the export's targets), `cv` (0–10, default 5; 0 chains the ground truth), `seed`, `params` (overrides of the model's defaults), `device` (`cpu` default, or `cuda`: `422` if the model can't, `409` if no usable GPU) |
+| POST | `/api/exports/{export_id}/runs` | Train a `ClassifierChain` on a finished export. `202`. | `model` (default `lightgbm`), `order` (permutation of the export's targets), `cv` (0 chains the ground truth, or 2–10; default 5), `seed`, `params` (overrides of the model's defaults; `422` for a name the model doesn't have or a value its own checks reject), `device` (`cpu` default, or `cuda`: `422` if the model can't, `409` if no usable GPU) |
 | GET | `/api/datasets/{dataset_id}/runs` | The dataset's runs, newest first, with metrics and report (without top features). | |
 | GET | `/api/runs/{run_id}` | One run, full report. | |
 | GET | `/api/runs/{run_id}/files/{kind}` | Download a finished run's file. | `kind`: `model` (`classifier_chain.joblib`), `report` (`report.json`) |

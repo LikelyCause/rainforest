@@ -355,16 +355,17 @@ RAINFOREST_ADMIN_PASSWORD=dev DATABASE_URL=postgresql://rainforest:rainforest@lo
 
 # UI (proxies /api to :8000; set API_URL to point elsewhere)
 cd ui && npm ci && npm run dev    # http://localhost:5173
-npm run typecheck
+npm run typecheck && npm test
 
 # A sample file to test the upload path
 make sample-csv
 ```
 
 **Tests** live in `api/tests`. Most need no database, including the sign-in and request-check tests in
-`test_auth.py`. The API tests in `test_explore.py`, `test_sql_console.py` and `test_data_correctness.py`, and the job
-tests in `test_jobs.py`, run against an empty Postgres and skip unless `RAINFOREST_TEST_DATABASE_URL` is set; the API
-tests sign in through the `admin_login` fixture in `conftest.py`.
+`test_auth.py`. The API tests in `test_explore.py`, `test_sql_console.py`, `test_data_correctness.py` and
+`test_api_cleanup.py`, and the job tests in `test_jobs.py`, run against an empty Postgres and skip unless
+`RAINFOREST_TEST_DATABASE_URL` is set; the API tests sign in through the `admin_login` fixture in `conftest.py`.
+The UI's tests run with `cd ui && npm test` (Vitest, no browser needed).
 
 ```bash
 make test                         # API suite locally; DB-backed tests skip
@@ -373,7 +374,7 @@ RAINFOREST_TEST_DATABASE_URL=postgresql://user:pw@host:5432/db pytest   # from a
 ```
 
 **CI** (`.github/workflows/ci.yml`) runs on pushes to `main` and on pull requests: the API tests with a Postgres
-service (so nothing skips), the UI typecheck and build, and `docker compose build` for the images.
+service (so nothing skips), the UI typecheck, tests and build, and `docker compose build` for the images.
 
 ## Operational notes and limits
 

@@ -71,19 +71,25 @@ flag rely on.
 Requests are synchronous SQL against Postgres except where noted. Long work returns `202` with a row whose `status`
 the UI polls (`pending → running → done | failed`, with `progress` and `status_message`).
 
-1. **Upload / sample.** `POST /api/datasets/upload` streams the file to `uploads/`, inserts a `meta.datasets` row and
-   submits `process_dataset`. `POST /api/datasets/sample` generates the frame first, then runs the same pipeline.
+1. **Upload / sample.** `POST /api/datasets/upload` streams the file to `uploads/`, inserts a `meta.datasets` row
+   (recording `upload_path`) and submits `process_dataset`, which removes the upload when it ends however it ends.
+   Startup removes uploads older than 10 minutes that no queued or ingesting dataset needs
+   (`processing.sweep_uploads`). `POST /api/datasets/sample` generates the frame first, then runs the same pipeline.
 2. **Pipeline** (`processing.process_dataset`), with dataset `status` moving through `ingesting → profiling →
    correlating → ready`:
-   * ingest: convert to `datasets/<id>/raw.parquet`, load `raw.ds_<id>` with `COPY`;
+   * ingest: convert to `datasets/<id>/raw.parquet`, load `raw.ds_<id>` with `COPY` (strings quoted, NUL bytes
+     removed with a warning);
    * profile every column from the Parquet copy (exact counts, sampled distributions), write `meta.fields`, and seed
      `meta.field_decisions` plus one `meta.field_settings` row per family from the per-family suggestions;
-   * compute pairwise associations into `meta.field_correlations`, then `refresh_target_state` derives
-     `max_target_assoc`, leakage flags and target-dependent suggestions.
+   * compute pairwise associations into `meta.field_correlations`, replace the capped values of text and
+     high-cardinality fields against targets with the uncapped leak screen (`correlations.screen_associations`), then
+     `refresh_target_state` derives `max_target_assoc`, leakage flags and target-dependent suggestions.
 3. **Targets.** `PATCH /api/datasets/{id}` with `target_columns` calls `fields.set_targets`, which updates decisions
    and runs `_sync_targets` (keeps `is_target`, `target_columns` and target-derived state consistent, writes history
    for knock-on changes). Targets profiled as text or identifier have no association sample, so a `correlate_targets`
-   job computes theirs.
+   job computes theirs. Added targets also get the leak screen against text and high-cardinality fields: inside
+   `correlate_targets` when that job runs, otherwise as a `fields.screen_targets` job that leaves the dataset
+   `ready`. A target chosen in Review (`PUT …/decision`) gets the same job.
 4. **Review.** `GET /api/fields/{id}` returns the field, the shared decision merged with the active family's settings,
    and target associations. `PUT /api/fields/{id}/decision` validates against the family, writes the decision and
    settings, re-derives other families' settings on a type change, and appends `meta.decision_history`.
@@ -124,6 +130,7 @@ state in Postgres, so any worker can serve the polling.
 |---|---|---|
 | Dataset pipeline | `processing.process_dataset` (`datasets._generate_and_process` for samples) | `meta.datasets` |
 | New-target associations | `datasets.correlate_targets` | `meta.datasets` |
+| Leak screen for added targets | `fields.screen_targets` | `meta.field_correlations` (no status; a failure adds a dataset warning) |
 | Export | `exports._run` | `meta.exports` |
 | Model run | `runs._run` | `meta.model_runs` |
 | Explore analysis | `analysis.runner.run_analysis` | `meta.analyses` |
@@ -162,6 +169,7 @@ recreated from that file. Bootstrap also (re)creates the `rainforest_ro` role an
 | `002_bulk_batches.sql` | `meta.bulk_batches`, `decision_history.batch_id` |
 | `003_analyses.sql` | `meta.analyses` |
 | `004_job_owner.sql` | `owner` on `meta.datasets`, `exports`, `model_runs` and `analyses` |
+| `005_upload_path.sql` | `upload_path` on `meta.datasets` |
 
 Child tables reference `meta.datasets` with `ON DELETE CASCADE`; `DELETE /api/datasets/{id}` removes the rows and then
 the dataset's Parquet copy, raw table, export and model directories.
@@ -199,8 +207,12 @@ bodies in `schemas.py`, and list it in [api.md](api.md).
 
 `api/tests` uses pytest. `conftest.py` provides a generated sample Parquet (most tests are pure functions over it) and
 the session-scoped `admin_login` fixture, which sets the admin credentials and signs a `TestClient` in. `test_auth.py`
-drives the app without its startup hook, so it needs no database. The API tests in `test_explore.py` and
-`test_sql_console.py` start the app against `RAINFOREST_TEST_DATABASE_URL` and skip without it. `make test`
-runs the suite locally, `make test-db` runs it against a throwaway `postgres:16` container. CI
-(`.github/workflows/ci.yml`, on pushes to `main` and pull requests) runs the API tests with a Postgres service, the UI
-typecheck and build, and `docker compose build`.
+drives the app without its startup hook, so it needs no database. The API tests in `test_explore.py`,
+`test_sql_console.py`, `test_data_correctness.py` and `test_api_cleanup.py` start the app against
+`RAINFOREST_TEST_DATABASE_URL` and skip without it. `make test` runs the suite locally, `make test-db` runs it
+against a throwaway `postgres:16` container.
+
+`ui` uses Vitest (`npm test`) for the pure logic: field signals, formatting, the save queue (with the API mocked),
+retype rules, the Bulk edit and Explore URL state, error parsing and run ranking. Tests sit next to the code as
+`*.test.ts`. CI (`.github/workflows/ci.yml`, on pushes to `main` and pull requests) runs the API tests with a
+Postgres service, the UI typecheck, tests and build, and `docker compose build`.
