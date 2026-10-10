@@ -29,7 +29,7 @@ COLS = """x.id, x.dataset_id, x.name, x.owner, x.recipe_id, x.assessor_id, x.sou
           (SELECT name FROM meta.users u WHERE u.id = coalesce(x.owner, x.assessor_id)) AS owner_name"""
 FROM = "meta.experiments x JOIN meta.recipes xr ON xr.id = x.recipe_id"
 # Metric that stands for a run when comparing experiments, in order of preference (validation split).
-HEADLINE_METRICS = ("roc_auc", "roc_auc_ovr_macro", "accuracy")
+HEADLINE_METRICS = ("roc_auc", "roc_auc_ovr_macro", "r2", "accuracy")
 
 
 def visible_ids(user_id: int) -> str:

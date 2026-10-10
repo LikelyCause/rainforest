@@ -104,3 +104,8 @@ def test_target_associations_pair_new_targets_with_everything():
     assert set(pairs) == {(0, 1), (0, 2), (0, 3), (0, 4), (1, 4), (2, 4), (3, 4)}
     assert pairs[(0, 1)].value > 0.95 and pairs[(0, 2)].value < 0.2
     assert pairs[(0, 3)].method == "cramers_v" and pairs[(0, 1)].method == "correlation_ratio"
+
+
+def test_headline_metric_uses_r2_for_a_regression_first_target():
+    from app.routers.datasets import headline_metric
+    assert headline_metric("done", ["price"], {"price": {"rmse": 3.0, "r2": 0.7}}) == {"metric": "r2", "value": 0.7}

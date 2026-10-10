@@ -5,7 +5,7 @@ import pytest
 from app.semantics import SEMANTIC_TYPES, default_task
 
 from .team_helpers import (DB_URL, adjust, app_, experiment, export, fields, people, review_all, save,  # noqa: F401
-                           start, submit_and_finalize, upload)
+                           start, submit_and_finalize, upload, wait)
 
 pytestmark = pytest.mark.skipif(not DB_URL, reason="set RAINFOREST_TEST_DATABASE_URL to run the API tests")
 
@@ -231,3 +231,16 @@ def test_preview_blocks_bands_with_too_few_rows(app_, people):
     ds, x = _finalized_with_price(lead, target_task="bins", target_bins={"edges": [1000, 1001]})
     pv = lead.get(f"/api/datasets/{ds['id']}/export-preview?experiment_id={x['id']}").json()
     assert any("[1000, 1001)" in b for b in pv["blocking"]), pv["blocking"]
+
+
+def test_regression_run_end_to_end(app_, people):
+    lead = people["lead"]
+    ds, x = _finalized_with_price(lead)
+    e = export(lead, ds, x)
+    r = lead.post(f"/api/exports/{e['id']}/runs", json={"model": "lightgbm", "params": {"n_estimators": 30}})
+    assert r.status_code == 202, r.text
+    run = wait(lambda: (g := lead.get(f"/api/runs/{r.json()['id']}").json())["status"] in ("done", "failed") and g)
+    assert run["status"] == "done", run.get("error")
+    assert "r2" in run["metrics"]["valid"]["price"]
+    listed = lead.get(f"/api/datasets/{ds['id']}/experiments").json()
+    assert next(i for i in listed if i["id"] == x["id"])["best"]["metric"] == "r2"

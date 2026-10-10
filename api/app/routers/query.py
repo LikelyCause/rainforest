@@ -53,7 +53,7 @@ SQL_EXAMPLES = [
             "FROM meta.v_fields\nWHERE dataset_id = :dataset AND decision_source = 'user'\nORDER BY decided_at DESC"},
     {"title": "Compare model runs (test split)",
      "sql": "SELECT model, run_id, target, metric, round(value::numeric, 4) AS value\nFROM meta.v_model_metrics\n"
-            "WHERE dataset_id = :dataset AND split = 'test' AND metric IN ('roc_auc', 'roc_auc_ovr_macro', 'accuracy')\n"
+            "WHERE dataset_id = :dataset AND split = 'test' AND metric IN ('roc_auc', 'roc_auc_ovr_macro', 'accuracy', 'r2', 'rmse')\n"
             "ORDER BY target, metric, value DESC"},
     {"title": "Settings across model families",
      "sql": "SELECT name, family, imputation, transform, scaling, encoding, source\nFROM meta.v_field_settings\n"

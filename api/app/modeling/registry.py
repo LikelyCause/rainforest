@@ -1,4 +1,4 @@
-"""Model registry: every classifier that can sit inside the ClassifierChain.
+"""Model registry: every model that can sit in a target chain, as a classifier and as a regressor.
 
 Adding a model = adding one `ModelSpec` below. A spec says which family it belongs to (and so
 which exports it can train on), whether it routes NaN natively, how to build it, and how to read
@@ -27,6 +27,8 @@ class ModelSpec:
     requires: str | None = None  # optional import name
     description: str = ""
     cuda_params: dict[str, Any] | None = None  # set => the model can train on a CUDA GPU
+    build_regressor: Callable[[dict[str, Any], int], Any] | None = None  # for targets predicted as numbers
+    regressor_defaults: dict[str, Any] = field(default_factory=dict)
 
     @property
     def devices(self) -> list[str]:
@@ -44,9 +46,9 @@ def _lightgbm(params: dict[str, Any], seed: int):
 
 
 def _xgboost(params: dict[str, Any], seed: int):
-    from xgboost import XGBClassifier
+    from .xgb_compact import CompactXGBClassifier
 
-    return XGBClassifier(**params, random_state=seed)
+    return CompactXGBClassifier(**params, random_state=seed)
 
 
 def _hgb(params: dict[str, Any], seed: int):
@@ -73,6 +75,42 @@ def _mlp(params: dict[str, Any], seed: int):
     return MLPClassifier(**params, random_state=seed)
 
 
+def _lightgbm_reg(params: dict[str, Any], seed: int):
+    from lightgbm import LGBMRegressor
+
+    return LGBMRegressor(**params, random_state=seed)
+
+
+def _xgboost_reg(params: dict[str, Any], seed: int):
+    from xgboost import XGBRegressor
+
+    return XGBRegressor(**params, random_state=seed)
+
+
+def _hgb_reg(params: dict[str, Any], seed: int):
+    from sklearn.ensemble import HistGradientBoostingRegressor
+
+    return HistGradientBoostingRegressor(**params, random_state=seed)
+
+
+def _random_forest_reg(params: dict[str, Any], seed: int):
+    from sklearn.ensemble import RandomForestRegressor
+
+    return RandomForestRegressor(**params, random_state=seed)
+
+
+def _ridge(params: dict[str, Any], seed: int):
+    from sklearn.linear_model import Ridge
+
+    return Ridge(**params, random_state=seed)
+
+
+def _mlp_reg(params: dict[str, Any], seed: int):
+    from sklearn.neural_network import MLPRegressor
+
+    return MLPRegressor(**params, random_state=seed)
+
+
 MODELS: dict[str, ModelSpec] = {
     m.key: m
     for m in [
@@ -83,6 +121,7 @@ MODELS: dict[str, ModelSpec] = {
              "n_jobs": -1, "verbose": -1},
             importance="booster_gain",
             description="Leaf-wise gradient boosting. The default.",
+            build_regressor=_lightgbm_reg,
         ),
         ModelSpec(
             "xgboost", "XGBoost", "tree", True, _xgboost,
@@ -91,6 +130,7 @@ MODELS: dict[str, ModelSpec] = {
             requires="xgboost",
             description="Depth-wise gradient boosting; trains on an NVIDIA GPU in the GPU image.",
             cuda_params={"device": "cuda", "tree_method": "hist"},
+            build_regressor=_xgboost_reg,
         ),
         ModelSpec(
             "hist_gradient_boosting", "Histogram GBM (sklearn)", "tree", True, _hgb,
@@ -98,23 +138,28 @@ MODELS: dict[str, ModelSpec] = {
              "early_stopping": False},
             importance="none",
             description="scikit-learn's LightGBM-style booster; no extra dependency.",
+            build_regressor=_hgb_reg,
         ),
         ModelSpec(
             "random_forest", "Random forest", "tree", True, _random_forest,
             {"n_estimators": 400, "min_samples_leaf": 3, "max_features": "sqrt", "n_jobs": -1},
             description="Bagged trees; a robust, low-tuning baseline.",
+            build_regressor=_random_forest_reg,
         ),
         ModelSpec(
             "logistic_regression", "Logistic regression", "linear", False, _logreg,
             {"max_iter": 3000, "C": 1.0},
             importance="coef_",
-            description="Linear baseline; needs a linear-family export (scaled, imputed, one-hot).",
+            description="Linear baseline; needs a linear-family export (scaled, imputed, one-hot). Numbers use ridge "
+                        "regression.",
+            build_regressor=_ridge, regressor_defaults={"alpha": 1.0},
         ),
         ModelSpec(
             "mlp", "MLP", "neural", False, _mlp,
             {"hidden_layer_sizes": (128, 64), "alpha": 1e-4, "early_stopping": True, "max_iter": 200},
             importance="none",
             description="Small feed-forward network; needs a neural-family export.",
+            build_regressor=_mlp_reg,
         ),
     ]
 }
@@ -167,6 +212,39 @@ def param_problems(spec: ModelSpec, params: dict[str, Any]) -> list[str]:
     return []
 
 
+# Accepted by some regressors too (LGBMRegressor takes class_weight), but they describe classes.
+CLASSIFIER_ONLY = {"class_weight", "is_unbalance", "unbalance", "unbalanced_sets", "scale_pos_weight", "objective",
+                   "num_class", "num_classes", "multi_class", "C", "penalty", "l1_ratio"}
+
+
+def _classifier_only(spec: ModelSpec) -> set[str]:
+    """CLASSIFIER_ONLY plus LightGBM's aliases of those names (application, app, objective_type, loss, ...)."""
+    if spec.key != "lightgbm":
+        return CLASSIFIER_ONLY
+    try:
+        from lightgbm.basic import _ConfigAliases
+
+        return CLASSIFIER_ONLY | {a for k in CLASSIFIER_ONLY for a in _ConfigAliases.get(k)}
+    except Exception:  # noqa: BLE001 - private API, as in _lightgbm_native_params
+        return CLASSIFIER_ONLY
+
+
+def regressor_params(spec: ModelSpec, params: dict[str, Any]) -> dict[str, Any]:
+    """The run's parameters the regressor accepts, minus the ones that describe classes."""
+    if spec.build_regressor is None:
+        return {}
+    known = set(spec.build_regressor({}, 0).get_params())
+    if spec.key == "lightgbm":
+        known |= _lightgbm_native_params()
+    return {k: v for k, v in params.items() if k in known and k not in _classifier_only(spec)}
+
+
+def regression_problem(spec: ModelSpec, kinds: list[str]) -> str | None:
+    if "regression" in kinds and spec.build_regressor is None:
+        return f"{spec.label} can't predict a number yet; choose another model or predict the target as bands"
+    return None
+
+
 def compatibility(spec: ModelSpec, export_family: str, contains_nan: bool) -> str | None:
     """None if the model can train on an export, else the reason it can't."""
     if contains_nan and not spec.handles_nan:
@@ -204,7 +282,7 @@ def importances(spec: ModelSpec, est: Any, names: list[str]) -> np.ndarray | Non
         if spec.importance == "feature_importances_":
             return np.asarray(est.feature_importances_, dtype=float)
         if spec.importance == "coef_":
-            return np.abs(np.asarray(est.coef_, dtype=float)).mean(axis=0)
+            return np.abs(np.atleast_2d(np.asarray(est.coef_, dtype=float))).mean(axis=0)
     except (AttributeError, ValueError):
         return None
     return None

@@ -64,6 +64,8 @@ def run_params(report: dict) -> dict[str, str]:
     out = {k: v for k, v in out.items() if v is not None}
     for k, v in (report.get("params") or {}).items():
         out[_key("estimator", k)] = v  # None included: it is a setting too (e.g. max_depth=None)
+    for t, task in (report.get("target_tasks") or {}).items():
+        out[_key("target", t, "task")] = task
     return {_key(k): str(v)[:_PARAM_MAX] for k, v in out.items()}
 
 
