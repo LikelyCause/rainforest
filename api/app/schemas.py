@@ -184,6 +184,10 @@ class ExperimentIn(BaseModel):
     notes: str | None = Field(None, max_length=10_000)
 
 
+class RevertIn(BaseModel):
+    field_ids: list[int] | None = Field(None, max_length=5000, description="Fields to revert; null for every field")
+
+
 class ExperimentPatch(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=200, pattern=r"\S")
     notes: str | None = Field(None, max_length=10_000)

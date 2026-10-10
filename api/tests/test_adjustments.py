@@ -80,3 +80,70 @@ def test_experiment_view_shows_its_own_targets(people):
     f = fields(a, ds, view)
     assert f["c"]["is_target"] and not f["y"]["is_target"]
     assert fields(a, ds)["y"]["is_target"]
+
+
+def test_adjustments_stay_in_their_experiment_and_exports_freeze_them(people):
+    lead, a = people["lead"], people["a"]
+    ds, rid = finalized_trees(lead)
+    x1, x2 = experiment(a, ds, rid, "one"), experiment(a, ds, rid, "two")
+    adjust(a, ds, x1, "w", action="drop")
+    e = export(a, ds, x1)
+    adjust(a, ds, x1, "x", action="drop")  # after the export
+    man = a.get(f"/api/exports/{e['id']}/files/manifest").json()
+    names = {f["name"] for f in man["fields"]}
+    assert "w" not in names and "x" in names
+    assert e["config"]["adjustments"]["count"] == 1 and e["config"]["adjustments"]["fields"] == ["w"]
+    assert e["config"]["baseline"] == {"recipe_id": rid, "family": "tree", "version": 1, "label": "Trees baseline v1"}
+    info = a.get(f"/api/experiments/{x1['id']}").json()
+    assert info["adjustments"]["count"] == 2 and info["can_adjust"]
+    assert {f["name"] for f in info["adjustments"]["fields"]} == {"w", "x"}
+    assert a.get(f"/api/experiments/{x2['id']}").json()["adjustments"]["count"] == 0
+    assert not lead.get(f"/api/experiments/{x1['id']}").json()["can_adjust"]
+    row = next(r for r in a.get(f"/api/datasets/{ds['id']}/experiments").json() if r["id"] == x1["id"])
+    assert row["adjusted_count"] == 2 and row["targets_changed"] is False
+    xid = fields(a, ds)["x"]["id"]
+    r = a.post(f"/api/experiments/{x1['id']}/adjustments/revert", json={"field_ids": [xid]})
+    assert r.status_code == 200 and r.json()["adjustments"]["count"] == 1
+    assert lead.post(f"/api/experiments/{x1['id']}/adjustments/revert", json={"field_ids": None}).status_code == 403
+    r = a.post(f"/api/experiments/{x1['id']}/adjustments/revert", json={"field_ids": None})
+    assert r.status_code == 200 and r.json()["adjustments"]["count"] == 0
+
+
+def test_retype_in_experiment_resets_settings_to_valid_ones(people):
+    lead = people["lead"]
+    ds, rid = finalized_trees(lead)
+    x = experiment(lead, ds, rid, "retype")
+    view = f"experiment:{x['id']}"
+    fid = fields(lead, ds)["z"]["id"]
+    assert save(lead, fid, view, semantic_type="categorical", encoding="ordinal").status_code == 200
+    pv = lead.get(f"/api/datasets/{ds['id']}/export-preview?experiment_id={x['id']}").json()
+    assert pv["kept_by_type"].get("categorical", 0) >= 2  # c and the retyped z
+    assert not any("aren't valid" in b for b in pv["blocking"])
+
+
+def test_experiment_targets_are_validated(people):
+    lead = people["lead"]
+    ds, rid = finalized_trees(lead)
+    x = experiment(lead, ds, rid, "targets")
+    adjust(lead, ds, x, "x", expect=422, action="target")  # continuous: not a class label
+    adjust(lead, ds, x, "y", action="keep")
+    pv = lead.get(f"/api/datasets/{ds['id']}/export-preview?experiment_id={x['id']}").json()
+    assert "No target selected" in pv["blocking"]
+    adjust(lead, ds, x, "c", action="target")
+    info = lead.get(f"/api/experiments/{x['id']}").json()["adjustments"]
+    assert info["targets_changed"] and info["targets"] == {"before": ["y"], "after": ["c"]}
+    pv = lead.get(f"/api/datasets/{ds['id']}/export-preview?experiment_id={x['id']}").json()
+    assert pv["targets"] == ["c"] and any("Targets differ" in w for w in pv["warnings"])
+
+
+def test_an_experiments_leak_warnings_follow_its_targets(people):
+    from .test_baselines import LEAKY
+
+    lead = people["lead"]
+    ds, rid = finalized_trees(lead, LEAKY)
+    x = experiment(lead, ds, rid, "leaks")
+    adjust(lead, ds, x, "y", action="keep")
+    adjust(lead, ds, x, "c", action="target")
+    base = lead.get(f"/api/datasets/{ds['id']}/export-preview").json()
+    mine = lead.get(f"/api/datasets/{ds['id']}/export-preview?experiment_id={x['id']}").json()
+    assert not any("cc" in w for w in base["warnings"]) and any("leakage: cc" in w for w in mine["warnings"])

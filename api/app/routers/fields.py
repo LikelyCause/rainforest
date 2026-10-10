@@ -150,6 +150,13 @@ def save_decision(field_id: int, body: DecisionIn, user: CurrentUser, view: str 
         fam = _family(src, body.family)
         errors = validate_decision(d, fam, n_unique=f["n_unique"])
         if errors:
+            # A type change brings the new type's suggested settings when the ones sent were for the old type.
+            was = _merged(conn, field_id, fam, src)
+            if was is not None and was["semantic_type"] != d["semantic_type"]:
+                sugg = suggest(d["semantic_type"], {k: f[k] for k in STAT_KEYS}, False, fam)
+                d = {**d, **settings_of(sugg)}
+                errors = validate_decision(d, fam, n_unique=f["n_unique"])
+        if errors:
             raise HTTPException(422, {"message": "Invalid decision", "errors": errors})
         src.require_write()
         if (locked := recipes.locked_problem(conn, src.recipe, [field_id])) is not None:

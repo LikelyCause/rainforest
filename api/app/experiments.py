@@ -23,7 +23,7 @@ from .semantics import SETTING_KEYS
 log = logging.getLogger(__name__)
 
 COLS = """x.id, x.dataset_id, x.name, x.owner, x.recipe_id, x.assessor_id, x.source, x.notes, x.created_at,
-          x.archived_at, x.is_default, xr.family AS recipe_family, xr.version AS recipe_version,
+          x.archived_at, x.is_default, x.target_order, xr.family AS recipe_family, xr.version AS recipe_version,
           xr.phase AS recipe_phase,
           (x.assessor_id IS NOT NULL AND xr.phase = 'assessing') AS private,
           (SELECT name FROM meta.users u WHERE u.id = coalesce(x.owner, x.assessor_id)) AS owner_name"""
@@ -175,6 +175,52 @@ def seed_copy(conn, x: dict) -> None:
                  (recipes.snapshot_targets(snap), x["id"]))
 
 
+def snapshot_for(conn, x: dict) -> dict:
+    """What an export of this experiment is built from, shaped like a baseline snapshot: a team experiment's copy
+    of its baseline (with its adjustments), a default one's baseline itself, a personal one's assessment."""
+    from .assessment import Source, personal_snapshot
+
+    recipe = recipes.get(conn, x["recipe_id"])
+    if x["assessor_id"] is not None:
+        return personal_snapshot(conn, recipe, x["assessor_id"])
+    if x["is_default"] or recipe["phase"] != "finalized":
+        return recipes.snapshot_of(conn, recipe)
+    return recipes.snapshot(conn, x["dataset_id"], Source(recipe, experiment=x), family=recipe["family"],
+                            targets=x["target_order"] or [])
+
+
+def adjustments(conn, x: dict) -> dict:
+    """How a team experiment differs from its baseline: per field, what changed; the targets when they differ."""
+    recipe = recipes.get(conn, x["recipe_id"])
+    if x["assessor_id"] is not None or recipe["phase"] != "finalized":
+        return {"fields": [], "targets": None, "count": 0, "targets_changed": False}
+    d = recipes.diff(recipes.snapshot_of(conn, recipe), snapshot_for(conn, x), recipe["family"])
+    return {**d, "count": len(d["fields"]), "targets_changed": d["targets"] is not None}
+
+
+def revert(conn, x: dict, field_ids: list[int] | None) -> None:
+    """Put fields of a team experiment's copy (every field when None) back to its baseline."""
+    if field_ids is None:
+        conn.execute("DELETE FROM meta.experiment_decisions WHERE experiment_id = %s", (x["id"],))
+        conn.execute("DELETE FROM meta.experiment_settings WHERE experiment_id = %s", (x["id"],))
+        conn.execute("UPDATE meta.experiments SET target_order = NULL WHERE id = %s", (x["id"],))
+        seed_copy(conn, {**x, "target_order": None})
+        return
+    conn.execute("DELETE FROM meta.experiment_decisions WHERE experiment_id = %s AND field_id = ANY(%s)",
+                 (x["id"], field_ids))
+    conn.execute("DELETE FROM meta.experiment_settings WHERE experiment_id = %s AND field_id = ANY(%s)",
+                 (x["id"], field_ids))
+    seed_copy(conn, x)
+    # The order keeps the experiment's own targets as they were, then any the revert brought back.
+    targets = [r["name"] for r in conn.execute(
+        """SELECT f.name FROM meta.experiment_decisions e JOIN meta.fields f ON f.id = e.field_id
+            WHERE e.experiment_id = %s AND e.action = 'target' ORDER BY f.ordinal""", (x["id"],)).fetchall()]
+    base = recipes.snapshot_targets(recipes.snapshot_of(conn, recipes.get(conn, x["recipe_id"])))
+    order = [t for t in (x["target_order"] or []) if t in targets]
+    order += [t for t in base if t in targets and t not in order] + [t for t in targets if t not in order]
+    conn.execute("UPDATE meta.experiments SET target_order = %s WHERE id = %s", (order, x["id"]))
+
+
 def backfill_copies(conn) -> int:
     """Copies for team experiments on finalized baselines that have none (made before experiments had them)."""
     rows = conn.execute(
@@ -204,7 +250,12 @@ def list_for(conn, dataset_id: int, user: dict) -> list[dict]:
         (dataset_id,),
     ).fetchall()
     best = best_by_experiment(conn, [r["id"] for r in rows])
-    return [{**r, "best": best.get(r["id"])} for r in rows]
+    out = []
+    for r in rows:
+        adj = adjustments(conn, r)
+        out.append({**r, "best": best.get(r["id"]), "adjusted_count": adj["count"],
+                    "targets_changed": adj["targets_changed"], "can_adjust": can_adjust(r, user)})
+    return out
 
 
 def best_by_experiment(conn, ids: list[int]) -> dict[int, dict]:
