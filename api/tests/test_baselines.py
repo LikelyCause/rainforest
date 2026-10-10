@@ -244,3 +244,48 @@ def test_team_state_names_the_baseline(people):
     assert t["recipe"]["label"] == "Trees baseline v1" and t["recipe"]["setup"] is True
     t = start(lead, ds, "neural", [lead])
     assert t["recipe"]["label"] == "Neural baseline v1" and t["recipe"]["setup"] is False
+
+
+LEAKY = "x,cc,c,y\n" + "".join(f"{i % 7},{'PQR'[i % 3]},{'pqr'[i % 3]},{'ab'[(i // 3) % 2]}\n" for i in range(600))
+
+
+def test_populating_keeps_the_sources_decisions_whatever_the_last_worked_targets(people):
+    """cc leaks c. Trees v1 (target y) drops cc on purpose; Linear v1 targets c, so cc's stored suggestion becomes
+    "drop" too. Populating Neural from Trees v1 (target y again) must keep Trees' drop, not re-derive it."""
+    lead = people["lead"]
+    ds = upload(lead, LEAKY)
+    start(lead, ds, "tree", [lead])
+    assert save(lead, fields(lead, ds)["cc"]["id"], action="drop", reviewed=True).status_code == 200
+    trees = submit_and_finalize(lead, ds)["recipe"]["id"]
+    start(lead, ds, "linear", [lead], targets=["c"])
+    submit_and_finalize(lead, ds)
+    start(lead, ds, "neural", [lead], start="baseline", source=trees)
+    import time
+    time.sleep(3)  # any leak screen the start queued has run
+    assert fields(lead, ds)["cc"]["action"] == "drop"
+
+
+def test_a_new_baseline_from_scratch_has_no_parent(people):
+    lead = people["lead"]
+    ds, rid = finalized_trees(lead)
+    other, orid = finalized_trees(lead)
+    st = start(lead, ds, "linear", [lead], start="scratch", source=orid)
+    assert st["recipe"]["parent_id"] is None
+
+
+def test_personal_experiments_keep_their_versions_carried_fields(people):
+    lead = people["lead"]
+    ds = upload(lead)
+    start(lead, ds, "tree", [lead])
+    f = fields(lead, ds)
+    assert save(lead, f["w"]["id"], action="drop", reviewed=True).status_code == 200
+    submit_and_finalize(lead, ds)
+    v2 = lead.post(f"/api/datasets/{ds['id']}/recipes", json={"family": "tree", "reopen": [f["x"]["id"]]}).json()
+    lead.post(f"/api/datasets/{ds['id']}/assessors", json={"user_id": lead.user["id"]})
+    x = lead.post(f"/api/datasets/{ds['id']}/experiments", json={
+        "name": "mine", "source": f"assessment:{v2['recipe']['id']}:{lead.user['id']}"}).json()
+    submit_and_finalize(lead, ds)
+    start(lead, ds, "linear", [lead])  # the working copy now holds Linear's decisions: w kept
+    e = export(lead, ds, x)
+    man = lead.get(f"/api/exports/{e['id']}/files/manifest").json()
+    assert "w" not in {fl["name"] for fl in man["fields"]}

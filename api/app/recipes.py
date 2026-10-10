@@ -51,6 +51,7 @@ def start_version(conn, dataset_id: int, user_id: int | None, family: str, phase
     """The next version of `family`'s baseline, from its latest finalized version, whose snapshot becomes the
     working copy (every field carried over as reviewed). Returns the new row with `_target_work`, the
     (uncorrelated, added) pair from setting its targets."""
+    lock_dataset(conn, dataset_id)
     require_none_in_progress(current(conn, dataset_id, lock="update"))
     parent = latest_finalized(conn, dataset_id, family)
     if parent is None:
@@ -63,6 +64,12 @@ def start_version(conn, dataset_id: int, user_id: int | None, family: str, phase
     snap = snapshot_of(conn, parent)
     work = load_working(conn, dataset_id, snap, family, snapshot_targets(snap), user_id, reviewed=True)
     return {**row, "_target_work": work}
+
+
+def lock_dataset(conn, dataset_id: int) -> None:
+    """Serialise starting baselines and versions on one dataset, so two leads starting at once get a clear 409
+    rather than racing to insert."""
+    conn.execute("SELECT 1 FROM meta.datasets WHERE id = %s FOR UPDATE", (dataset_id,))
 
 
 def is_setup(conn, recipe: dict) -> bool:
@@ -97,7 +104,9 @@ def load_working(conn, dataset_id: int, snap: dict | None, family: str, targets:
         t = dec["semantic_type"]
         sugg = base if base["semantic_type"] == t else suggest(t, stats, False, family)
         action = "keep" if dec["action"] == "target" else dec["action"]  # the target role comes from set_targets
-        as_suggested = entry is None or (dec["action"], t) == (base["action"], base["semantic_type"])
+        # A decision from a snapshot is the team's, not a suggestion, so re-deriving suggestions for the new
+        # targets never overwrites it.
+        as_suggested = entry is None
         conn.execute(
             """UPDATE meta.field_decisions SET action = %s, semantic_type = %s, notes = %s, reviewed = %s, source = %s,
                       updated_at = now() WHERE field_id = %s""",

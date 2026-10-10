@@ -18,10 +18,11 @@ export function useInvalidateTeam(datasetId: number) {
   const qc = useQueryClient();
   return () => {
     for (const k of ["team", "reviewQueue", "dataset", "fields", "fieldQuery", "exportPreview", "corrMatrix", "analysis",
-      "versions", "recipeDiff", "experiments", "exports", "runs"]) {
+      "versions", "baselines", "recipeDiff", "experiments", "exports", "runs"]) {
       qc.invalidateQueries({ queryKey: [k, datasetId] });
     }
     qc.invalidateQueries({ queryKey: ["datasets"] });
+    qc.invalidateQueries({ queryKey: ["finalizedRecipes"] });
     qc.invalidateQueries({ queryKey: ["field"] });
     qc.invalidateQueries({ queryKey: ["fieldReview"] });
     qc.invalidateQueries({ queryKey: ["experiment"] });

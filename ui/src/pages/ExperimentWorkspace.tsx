@@ -303,7 +303,7 @@ function ExportRow({ e, onStarted, canAdd }: { e: ExportJob; onStarted: (r: Mode
         <div className="row">
           <b>Export #{e.id}</b>
           <span className="badge">{familyShort(e.model_family)}</span>
-          {e.recipe_version != null && <span className="badge" title="Built from this baseline version's snapshot">{baselineLabel(e.model_family, e.recipe_version, true)}</span>}
+          {e.recipe_version != null && <span className="badge" title="Built from this baseline version's snapshot">{baselineLabel(e.recipe_family ?? e.model_family, e.recipe_version, true)}</span>}
           {e.status === "done" ? <span className="badge good">✓ done</span>
             : e.status === "failed" ? <span className="badge bad">✕ failed</span>
             : <span className="badge accent"><span className="spinner" aria-hidden="true" /> {e.status}</span>}
@@ -404,7 +404,7 @@ function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: 
       <thead>
         <tr className="group-head">
           <td colSpan={6 + targets.length * 2}>
-            Export #{e.id} · {e.recipe_version != null ? baselineLabel(e.model_family, e.recipe_version, true) : familyShort(e.model_family)}{sc ? ` · ${fmtInt(sc.train)} / ${fmtInt(sc.valid)} / ${fmtInt(sc.test)}` : ""}
+            Export #{e.id} · {e.recipe_version != null ? baselineLabel(e.recipe_family ?? e.model_family, e.recipe_version, true) : familyShort(e.model_family)}{sc ? ` · ${fmtInt(sc.train)} / ${fmtInt(sc.valid)} / ${fmtInt(sc.test)}` : ""}
           </td>
         </tr>
         <tr>

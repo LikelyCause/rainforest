@@ -226,9 +226,10 @@ def key_owner(key: str | None) -> int | None:
 
 def personal_snapshot(conn, recipe: dict, user_id: int) -> dict:
     """One assessor's assessment of a version, shaped like a recipe snapshot: their choices on the fields the version
-    works on, and the team's carried-over (locked) values for the rest."""
-    team = recipes.snapshot(conn, recipe["dataset_id"])
-    mine = recipes.snapshot(conn, recipe["dataset_id"], Source(recipe, user_id))
+    works on, and the version's own carried-over (locked) values for the rest (its snapshot once finalized, since
+    the working tables may hold another baseline by then)."""
+    team = recipes.snapshot_of(conn, recipe)
+    mine = recipes.snapshot(conn, recipe["dataset_id"], Source(recipe, user_id), family=recipe["family"])
     open_ = recipes.open_field_ids(conn, recipe)
     if open_ is None:
         names = set(mine["fields"])

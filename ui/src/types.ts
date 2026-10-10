@@ -282,6 +282,7 @@ export interface ExportJob {
   model_family: string;
   config: Record<string, any>;
   recipe_id: number | null;
+  recipe_family?: FamilyKey | null;
   recipe_version: number | null;
   experiment_id: number;
   experiment_name: string | null;

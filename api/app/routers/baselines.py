@@ -67,6 +67,7 @@ def start_baseline(dataset_id: int, body: StartBaselineIn, user: LeadUser) -> di
                                                    (assessors,)).fetchall()}
         if bad := [str(u) for u in assessors if u not in users or not users[u]["active"]]:
             raise HTTPException(422, {"message": "Unknown or deactivated assessor(s)", "errors": bad})
+        recipes.lock_dataset(conn, dataset_id)
         cur = recipes.current(conn, dataset_id, lock="update")
         setup = recipes.is_setup(conn, cur)
         if body.start == "recipe":
@@ -79,12 +80,12 @@ def start_baseline(dataset_id: int, body: StartBaselineIn, user: LeadUser) -> di
             _, added, uncorrelated = reuse.apply(conn, cur, source, user["id"])
             recipe = recipes.get(conn, cur["id"])
         else:
-            snap = None
+            snap, parent_id = None, None
             if body.start == "baseline":
                 src = recipes.get(conn, body.source_recipe_id)
                 if src is None or src["dataset_id"] != dataset_id or src["phase"] != "finalized":
                     raise HTTPException(404, "No finalized baseline of this dataset with that id")
-                snap = recipes.snapshot_of(conn, src)
+                snap, parent_id = recipes.snapshot_of(conn, src), src["id"]
             if setup:
                 conn.execute("UPDATE meta.recipes SET family = %s WHERE id = %s", (body.family, cur["id"]))
                 recipe = recipes.get(conn, cur["id"])
@@ -93,8 +94,8 @@ def start_baseline(dataset_id: int, body: StartBaselineIn, user: LeadUser) -> di
                 recipe = conn.execute(
                     f"""INSERT INTO meta.recipes (dataset_id, family, version, phase, scope, parent_id, created_by)
                         VALUES (%s, %s, %s, 'assessing', 'all', %s, %s) RETURNING {recipes.RECIPE_COLS}""",
-                    (dataset_id, body.family, recipes.next_version(conn, dataset_id, body.family),
-                     body.source_recipe_id, user["id"]),
+                    (dataset_id, body.family, recipes.next_version(conn, dataset_id, body.family), parent_id,
+                     user["id"]),
                 ).fetchone()
             uncorrelated, added = recipes.load_working(conn, dataset_id, snap, body.family, body.targets, user["id"])
         if recipe["phase"] == "assessing":
