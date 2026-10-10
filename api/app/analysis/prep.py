@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
+from ..parquet_rows import read_rows
 from ..profiling import coerce_numeric, parse_datetime
 from ..semantics import NUMERIC
 from ..transform import ROW_ID, SPLIT_COL, _natural_key
@@ -118,17 +119,6 @@ def sample_rows(n_rows: int, k: int, y: np.ndarray | None = None, kind: str | No
     return np.sort(np.concatenate(picked))
 
 
-def _read_rows(path: Path, columns: list[str], idx: np.ndarray, extra: pl.Expr | None = None) -> pl.DataFrame:
-    lf = pl.scan_parquet(path)
-    if extra is not None:
-        lf = lf.filter(extra)
-    return (
-        lf.select(columns).with_row_index("__i")
-        .filter(pl.col("__i").is_in(pl.Series(idx, dtype=pl.UInt32)))
-        .drop("__i").collect()
-    )
-
-
 def prepare_raw(path: Path, fields: list[dict], kept: bool, target: str | None, sample: int,
                 seed: int = SEED) -> Prepared:
     """`fields`: dicts with id, name, action, semantic_type and datetime_format, in column order."""
@@ -150,7 +140,7 @@ def prepare_raw(path: Path, fields: list[dict], kept: bool, target: str | None, 
         kind, y_full, classes = target_values(
             pl.read_parquet(path, columns=[target]).to_series(), target_field["semantic_type"])
     idx = sample_rows(n_rows, sample, y_full, kind, seed)
-    df = _read_rows(path, [f["name"] for f in use], idx)
+    df = read_rows(path, [f["name"] for f in use], idx)
 
     columns: list[Column] = []
     for f in use:
@@ -183,15 +173,13 @@ def prepare_export(export_dir: Path, manifest: dict, target: str | None, sample:
     targets = list(manifest.get("targets") or [])
     if target and target not in targets:
         raise AnalysisError(f"{target!r} is not a target of this export.")
-    train = pl.col(SPLIT_COL) == "train"
-    n_rows = pl.scan_parquet(path).filter(train).select(pl.len()).collect().item()
+    train = np.flatnonzero((pl.read_parquet(path, columns=[SPLIT_COL]).to_series() == "train").to_numpy())
     y_full = None
     if target:
-        y_full = (pl.scan_parquet(path).filter(train).select(target).collect()
-                  .to_series().fill_null(-1).to_numpy().astype(np.int32))
-    idx = sample_rows(n_rows, sample, y_full, "categorical" if target else None, seed)
+        y_full = pl.read_parquet(path, columns=[target]).to_series().fill_null(-1).to_numpy().astype(np.int32)[train]
+    idx = sample_rows(train.size, sample, y_full, "categorical" if target else None, seed)
     names = [c for c in pl.read_parquet_schema(path) if c not in (ROW_ID, SPLIT_COL, *targets)]
-    df = _read_rows(path, names, idx, train)
+    df = read_rows(path, names, train[idx])
     columns, skipped = [], []
     for name in names:
         col = numeric_column(name, None, df[name].cast(pl.Float64).fill_nan(None).to_numpy())

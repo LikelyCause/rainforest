@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     data_dir: Path = Path("./data")
 
     job_workers: int = 2
+    # Jobs running at once across every API worker process; each gets cpu_count // job_slots threads.
+    job_slots: int = 2
     log_level: str = "info"
     db_pool_max: int = 10
 
@@ -23,6 +25,13 @@ class Settings(BaseSettings):
     corr_sample_rows: int = 100_000
     corr_max_levels: int = 50
     copy_batch_rows: int = 100_000
+
+    # Export memory budgets, as rows x output features x 8 bytes, for one transform chunk and for the fit
+    # sample. Peak memory runs at a few times these (string columns, encoder working sets).
+    export_chunk_mb: int = 256
+    export_fit_mb: int = 512
+    # Generated samples: rows x fields at most this (about 2 GB peak at the default).
+    sample_max_cells: int = 60_000_000
 
     # SQL console guard rails
     sql_timeout_ms: int = 15_000

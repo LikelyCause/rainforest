@@ -95,7 +95,7 @@ def test_timeout_and_session_state_do_not_leak(client):
     r = _sql(client, "SELECT set_config('statement_timeout', '0', false), pg_advisory_lock(4242)")
     assert r.status_code == 200, r.text
     after = _sql(client, "SELECT current_setting('statement_timeout') AS t, "
-                         "(SELECT count(*) FROM pg_locks WHERE locktype = 'advisory') AS locks").json()
+                         "(SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 4242) AS locks").json()
     assert after["rows"] == [["2s", 0]]
 
 

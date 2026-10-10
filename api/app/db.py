@@ -157,31 +157,3 @@ def bootstrap() -> None:
             conn.commit()
     log.info("schema ready (migrations applied this start: %s)", ", ".join(applied) or "none")
 
-
-def mark_interrupted_jobs() -> None:
-    """Jobs run in-process; anything still 'running' at startup was killed by a restart."""
-    with connection() as conn:
-        # A profiled dataset only loses the associations of targets chosen later; it stays usable.
-        conn.execute(
-            """UPDATE meta.datasets
-                  SET status = 'ready', progress = 1, status_message = 'Ready', updated_at = now(),
-                      warnings = array_append(warnings, 'Associations for the new target(s) were interrupted '
-                                              'by an API restart; choose the targets again to retry.')
-                WHERE status = 'correlating' AND profiled_at IS NOT NULL
-                  AND updated_at < now() - interval '2 minutes'"""
-        )
-        conn.execute(
-            """UPDATE meta.datasets
-                  SET status = 'failed', error = 'Interrupted by an API restart; re-upload or reprocess.',
-                      updated_at = now()
-                WHERE status IN ('pending', 'ingesting', 'profiling', 'correlating')
-                  AND updated_at < now() - interval '2 minutes'"""
-        )
-        for table in ("exports", "model_runs", "analyses"):
-            conn.execute(
-                sql.SQL(
-                    """UPDATE meta.{} SET status = 'failed', error = 'Interrupted by an API restart.',
-                              finished_at = now()
-                        WHERE status IN ('pending', 'running') AND updated_at < now() - interval '2 minutes'"""
-                ).format(sql.Identifier(table))
-            )

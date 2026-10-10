@@ -377,3 +377,65 @@ def test_api_correlations(client, dataset):
     assert client.get(f"/api/datasets/{ds}/explore/correlations", params={"add": "1,x"}).status_code == 422
     assert client.get(f"/api/datasets/{ds}/explore/correlations", params={"add": "999999"}).status_code == 422
     assert client.get("/api/datasets/999999/explore/correlations").status_code == 404
+
+
+def test_api_export_and_run_are_owned_and_thread_capped(client, dataset):
+    from app import jobs
+    from app.db import fetch_one
+
+    exp = client.post(f"/api/datasets/{dataset['id']}/exports", json={})
+    assert exp.status_code == 202, exp.text
+    exp = _wait(client, f"/api/exports/{exp.json()['id']}", lambda e: e["status"] in ("done", "failed"))
+    assert exp["status"] == "done", exp["error"]
+    run = client.post(f"/api/exports/{exp['id']}/runs", json={"cv": 2, "params": {"n_estimators": 20}}).json()
+    run = _wait(client, f"/api/runs/{run['id']}", lambda r: r["status"] in ("done", "failed"))
+    assert run["status"] == "done", run["error"]
+    assert run["report"]["params"]["n_jobs"] == jobs.cpu_threads()
+    me = jobs.owner_id()
+    assert fetch_one("SELECT owner FROM meta.exports WHERE id = %s", (exp["id"],))["owner"] == me
+    assert fetch_one("SELECT owner FROM meta.model_runs WHERE id = %s", (run["id"],))["owner"] == me
+    assert fetch_one("SELECT owner FROM meta.datasets WHERE id = %s", (dataset["id"],))["owner"] == me
+    analyses = fetch_one("SELECT bool_and(owner = %s) AS ok FROM meta.analyses WHERE dataset_id = %s",
+                         (me, dataset["id"]))
+    assert analyses["ok"] is True  # the earlier tests in this module created some
+
+
+def _reference_correlations(ds: int, target: str | None, kept: bool, limit: int, add: list[int]) -> dict:
+    """The ranking done in Python over every stored pair, as the endpoint did before it moved into SQL."""
+    from app.db import fetch_all
+
+    fields = fetch_all("""SELECT f.id, f.name, d.semantic_type AS type, d.action FROM meta.fields f
+                            JOIN meta.field_decisions d ON d.field_id = f.id WHERE f.dataset_id = %s""", (ds,))
+    by_id = {f["id"]: f for f in fields}
+    tid = next((f["id"] for f in fields if f["name"] == target), None)
+    eligible = {f["id"] for f in fields if f["action"] == "keep" or (not kept and f["action"] != "target")} | {tid}
+    pairs = fetch_all("""SELECT field_a AS a, field_b AS b, method, value, strength, n_obs AS n
+                           FROM meta.field_correlations WHERE dataset_id = %s ORDER BY field_a, field_b""", (ds,))
+    score: dict[int, float] = {}
+    for p in pairs:
+        if p["a"] in eligible and p["b"] in eligible:
+            for me, other in ((p["a"], p["b"]), (p["b"], p["a"])):
+                if tid is None or other == tid:
+                    score[me] = max(score.get(me, 0.0), p["strength"])
+    ranked = sorted((i for i in score if i != tid), key=lambda i: (-score[i], i))
+    chosen = ([tid] if tid else []) + ranked[: limit - (1 if tid else 0)]
+    chosen += [i for i in add if i not in chosen]
+    pos = {fid: k for k, fid in enumerate(chosen)}
+    strength = np.zeros((len(chosen), len(chosen)))
+    cells = [p for p in pairs if p["a"] in pos and p["b"] in pos]
+    for p in cells:
+        strength[pos[p["a"]], pos[p["b"]]] = strength[pos[p["b"]], pos[p["a"]]] = p["strength"]
+    return {"fields": [{k: by_id[i][k] for k in ("id", "name", "type", "action")} for i in chosen],
+            "order": [chosen[k] for k in cluster_order(strength)], "cells": cells}
+
+
+def test_api_correlations_match_the_python_ranking(client, dataset):
+    ds = dataset["id"]
+    some = [f["id"] for f in client.get(f"/api/datasets/{ds}/fields").json()][-2:]
+    for target, kept, limit, add in [("column_a", False, 8, []), ("column_b", True, 12, some), (None, False, 60, []),
+                                     (None, True, 5, some), ("column_a", False, 400, [])]:
+        params = {"kept": int(kept), "limit": limit, "add": ",".join(map(str, add))}
+        if target:
+            params["target"] = target
+        body = client.get(f"/api/datasets/{ds}/explore/correlations", params=params).json()
+        assert body == json.loads(json.dumps(_reference_correlations(ds, target, kept, limit, add))), (target, kept)

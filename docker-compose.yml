@@ -40,6 +40,7 @@ services:
       DATA_DIR: /data
       WEB_CONCURRENCY: ${API_WORKERS:-2}
       JOB_WORKERS: ${JOB_WORKERS:-2}
+      JOB_SLOTS: ${JOB_SLOTS:-2}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # Without a password the API refuses every request but /health.
       RAINFOREST_ADMIN_USER: ${RAINFOREST_ADMIN_USER:-admin}

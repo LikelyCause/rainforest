@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI):
     if not auth.admin_password():
         log.warning(auth.NO_PASSWORD)
     db.bootstrap()
-    db.mark_interrupted_jobs()
+    jobs.start()
     yield
     jobs.shutdown()
     db.close_pool()

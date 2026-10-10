@@ -37,8 +37,8 @@ Sign in as `admin` (or your `RAINFOREST_ADMIN_USER`) with that password. Until `
 (the `.env.example` placeholder doesn't count), the API answers only `/health` and every other request gets a `503`
 saying to set it.
 
-1. **Datasets** → upload a CSV / Parquet file, or use **Generate sample ▾** (1k–2M rows, 30–400 fields, with
-   `column_a` / `column_b` targets that are binary + 3-class, both binary or both multiclass). On an empty install,
+1. **Datasets** → upload a CSV / Parquet file, or use **Generate sample ▾** (1k–2M rows, 30–400 fields, at most
+   60M cells, with `column_a` / `column_b` targets that are binary + 3-class, both binary or both multiclass). On an empty install,
    *Open the 50k × 150 demo* does the same in one click. The upload is converted to Parquet, loaded into
    `raw.ds_<id>`, profiled and correlated, with live progress.
    Then **Choose target ▾** on the dataset's row: pick one or more columns, or *No target (unsupervised)*. A target
@@ -162,7 +162,11 @@ of failing.
   (single-row combinations are pooled; if the combinations still can't be stratified, on one target, else not at
   all). An export fails, naming the class, when a target has a class with a single row.
   Every statistic is then fitted on training rows only (up to 500k of them by default), and the full file is
-  transformed in 200k-row chunks.
+  transformed in chunks.
+* **Memory:** both steps are sized by output width. A transform chunk holds at most `EXPORT_CHUNK_MB` of dense
+  output (rows × features × 8 bytes, 256 MB by default), and the fit sample at most `EXPORT_FIT_MB` (512 MB), so a
+  wide export fits on fewer rows (the manifest records `fit_sample_rows` and `chunk_rows`). Peak memory runs at a
+  few times these budgets: a 300k-row export peaks at about 1.3–2 GB.
 * **Output:** float32 features, `__split`, `__row_id` (joins back to `raw.ds_<id>`), label-encoded targets, the fitted
   `preprocessor.joblib`, and `manifest.json` (feature → source field, class mappings, model family, NaN report, and
   `inf_values`: ±inf per field, written as missing). Feature names never take a target's name or `__row_id` /
@@ -295,6 +299,7 @@ Compose settings, read from `.env` (see `.env.example`):
 | `READONLY_PASSWORD` | rainforest_ro | password for the SQL console's `rainforest_ro` role |
 | `UI_PORT`, `API_PORT`, `DB_PORT` | 8080, 8000, 5432 | published ports (`API_PORT` and `DB_PORT` bind to 127.0.0.1) |
 | `API_WORKERS` / `JOB_WORKERS` | 2 / 2 | uvicorn workers / background job threads per worker |
+| `JOB_SLOTS` | 2 | background jobs running at once across all workers; each uses `cpu_count // JOB_SLOTS` threads |
 | `LOG_LEVEL` | info | API log level |
 | `RAINFOREST_ADMIN_USER` | admin | sign-in user name |
 | `RAINFOREST_ADMIN_PASSWORD` | – (**required**) | sign-in password; without it the API refuses everything but `/health` |
@@ -312,6 +317,8 @@ The API reads further settings from its environment (`api/app/config.py`). Compo
 | `CORR_SAMPLE_ROWS` | 100000 | rows for associations |
 | `CORR_MAX_LEVELS` | 50 | categorical levels kept for associations |
 | `COPY_BATCH_ROWS` | 100000 | rows per batch when loading `raw.ds_<id>` |
+| `EXPORT_CHUNK_MB`, `EXPORT_FIT_MB` | 256, 512 | export memory budgets (dense output per transform chunk, and for the fit sample) |
+| `SAMPLE_MAX_CELLS` | 60000000 | cap on rows × fields for generated samples (about 2 GB peak) |
 | `DB_POOL_MAX` | 10 | connections per API worker |
 | `SQL_TIMEOUT_MS`, `SQL_MAX_ROWS` | 15000, 2000 | SQL console guard rails |
 | `SQL_POOL_MAX` | 4 | read-only console connections per API worker (also the number of console queries it runs at once) |
@@ -333,9 +340,9 @@ make sample-csv
 ```
 
 **Tests** live in `api/tests`. Most need no database, including the sign-in and request-check tests in
-`test_auth.py`. The API tests in `test_explore.py`, `test_sql_console.py` and `test_data_correctness.py` run against
-an empty Postgres and skip unless `RAINFOREST_TEST_DATABASE_URL` is set; they sign in through the `admin_login`
-fixture in `conftest.py`.
+`test_auth.py`. The API tests in `test_explore.py`, `test_sql_console.py` and `test_data_correctness.py`, and the job
+tests in `test_jobs.py`, run against an empty Postgres and skip unless `RAINFOREST_TEST_DATABASE_URL` is set; the API
+tests sign in through the `admin_login` fixture in `conftest.py`.
 
 ```bash
 make test                         # API suite locally; DB-backed tests skip
@@ -349,8 +356,10 @@ service (so nothing skips), the UI typecheck and build, and `docker compose buil
 ## Operational notes and limits
 
 * **Background jobs** (ingest, target associations, export, training, Explore analyses) run in a thread pool inside
-  the API process, and their state lives in Postgres. A restart marks in-flight jobs as failed. For multi-node
-  deployments, swap `app/jobs.py` for a queue (RQ, Celery, Arq).
+  the API process, and their state lives in Postgres. At most `JOB_SLOTS` run at once across all workers; the rest
+  wait as *Queued*. Each job row records the process that runs it, and when a worker starts it fails the queued and
+  running jobs of processes that are gone, leaving its siblings' jobs alone. For multi-node deployments, swap
+  `app/jobs.py` for a queue (RQ, Celery, Arq).
 * **Disk:** uploads stream to the `/data` volume, and Postgres keeps a full typed copy (`raw.*`). Profiling, Explore
   and export read the Parquet copy. Budget roughly 2–3× the file size.
 * **Samples:** text-field and chart statistics come from a sample, and the UI labels them as such. If you change a

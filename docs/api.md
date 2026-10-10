@@ -35,7 +35,8 @@ Long-running work returns `202` with a row to poll; its `status` is `pending`, `
 |---|---|---|---|
 | GET | `/api/datasets` | All datasets, newest first, with review counts, export and run counts, the latest export and the latest run's headline test metric. | |
 | POST | `/api/datasets/upload` | Upload a file and start the pipeline. `202`. | multipart `file` (`.csv`, `.txt`, `.parquet`, `.pq`; `.tsv` is refused), optional `name`, optional `targets` (comma-separated) |
-| POST | `/api/datasets/sample` | Generate a synthetic dataset and start the pipeline. Targets are `column_a`, `column_b`. `202`. | `rows` (1,000–2,000,000, default 50,000), `fields` (30–400, default 150), `seed`, `target_kind` (`mixed`, `binary`, `multiclass`), `name` |
+| POST | `/api/datasets/sample` | Generate a synthetic dataset and start the pipeline. Targets are `column_a`, `column_b`. `422` if `rows × fields` is over `SAMPLE_MAX_CELLS`. `202`. | `rows` (1,000–2,000,000, default 50,000), `fields` (30–400, default 150), `seed`, `target_kind` (`mixed`, `binary`, `multiclass`), `name` |
+| GET | `/api/datasets/sample/limits` | `{max_cells}`: the cap on `rows × fields` for generated samples. | |
 | GET | `/api/datasets/{dataset_id}` | One dataset. | |
 | PATCH | `/api/datasets/{dataset_id}` | Rename, switch the active model family, or set the targets. Setting targets needs a `ready` dataset (`409` otherwise) and may start a job for targets with no associations yet. A target must be typed binary, categorical or discrete numeric with at most 100 distinct values (`422` naming each field otherwise). | `name`, `model_family` (`tree`, `linear`, `neural`), `target_columns` (exact list in chain order; `[]` for none) |
 | DELETE | `/api/datasets/{dataset_id}` | Delete the dataset, its fields, exports, runs, analyses and files. `409` while it, or one of its exports or runs, is still running. Returns counts removed. | |
@@ -66,7 +67,7 @@ Long-running work returns `202` with a row to poll; its `status` is `pending`, `
 | Method | Path | Purpose | Key params |
 |---|---|---|---|
 | GET | `/api/datasets/{dataset_id}/export-preview` | What an export would contain now: kept / dropped / targets / customised counts, kept fields by type, warnings, blocking issues, and decisions changed since the last finished export for that family. | `family` |
-| POST | `/api/datasets/{dataset_id}/exports` | Start an export. `409` if the dataset isn't ready, `422` if the preview has blocking issues. `202`. | `model_family`, `valid_size`, `test_size` (each < 0.5, sum < 0.9; default 0.15), `seed`, `fit_sample_rows` (default 500,000), `chunk_rows` (default 200,000) |
+| POST | `/api/datasets/{dataset_id}/exports` | Start an export. `409` if the dataset isn't ready, `422` if the preview has blocking issues. `202`. | `model_family`, `valid_size`, `test_size` (each < 0.5, sum < 0.9; default 0.15), `seed`, `fit_sample_rows` (default 500,000; lowered for wide exports to fit `EXPORT_FIT_MB`), `chunk_rows` (default 200,000; lowered to fit `EXPORT_CHUNK_MB`) |
 | GET | `/api/datasets/{dataset_id}/exports` | The dataset's exports, newest first. | |
 | GET | `/api/exports/{export_id}` | One export, with its summary (split counts, targets and classes, features by type, NaN flag, train command). | |
 | GET | `/api/exports/{export_id}/files/{kind}` | Download a finished export's file. `410` if the files were removed. | `kind`: `data` (Parquet), `preprocessor` (joblib), `manifest` (JSON) |
