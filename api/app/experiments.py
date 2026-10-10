@@ -158,15 +158,17 @@ def seed_copy(conn, x: dict) -> None:
         if entry is None:
             continue
         d = entry["decision"]
-        decisions.append((x["id"], f["id"], d["action"], d["semantic_type"], d.get("notes")))
+        decisions.append((x["id"], f["id"], d["action"], d["semantic_type"], d.get("notes"), d.get("target_task"),
+                          jsonb(d["target_bins"]) if d.get("target_bins") else None))
         s = entry["settings"].get(fam) or (f["suggestion"] or {}).get(fam) or {}
         settings.append((x["id"], f["id"], fam, s.get("imputation") or "none", s.get("impute_value"),
                          bool(s.get("add_missing_indicator")), s.get("transform") or "none",
                          s.get("scaling") or "none", s.get("encoding") or "none", jsonb(s.get("params") or {})))
     with conn.cursor() as cur:
         cur.executemany(
-            """INSERT INTO meta.experiment_decisions (experiment_id, field_id, action, semantic_type, notes)
-               VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""", decisions)
+            """INSERT INTO meta.experiment_decisions (experiment_id, field_id, action, semantic_type, notes, target_task,
+                                                     target_bins)
+               VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""", decisions)
         cur.executemany(
             """INSERT INTO meta.experiment_settings (experiment_id, field_id, family, imputation, impute_value,
                           add_missing_indicator, transform, scaling, encoding, params)

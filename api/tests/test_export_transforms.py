@@ -120,3 +120,76 @@ def test_export_reads_back(tmp_path):
     df = df.with_columns(pl.Series("y", np.random.default_rng(1).choice(["a", "b"], df.height)))
     _, out = _export(tmp_path, df, [_spec("smoker", "binary", imputation="most_frequent")], ["y"])
     assert pq.read_table(out / "model_ready.parquet").num_rows == df.height
+
+
+# ------------------------------------------------------------------------------------------- numeric targets
+def test_export_writes_regression_and_band_targets(tmp_path):
+    n = 600
+    rng = np.random.default_rng(0)
+    df = pl.DataFrame({"x": rng.normal(size=n), "price": rng.gamma(2.0, 50.0, size=n), "kind": ["a", "b"] * (n // 2)})
+    src = tmp_path / "d.parquet"
+    df.write_parquet(src)
+    specs = [_spec("x", "numeric_continuous")]
+    m = run_export(src, specs, ["price", "kind"], tmp_path / "out", {"seed": 1}, lambda *_: None,
+                   target_tasks={"price": {"task": "bins", "bins": {"k": 4}}, "kind": {"task": "classes", "bins": None}})
+    assert m["target_tasks"] == {"price": "bins", "kind": "classes"}
+    assert len(m["target_bins"]["price"]["edges"]) == 3 and m["target_classes"]["price"][0].startswith("< ")
+    out = pl.read_parquet(tmp_path / "out" / "model_ready.parquet")
+    train = out.filter(pl.col("__split") == "train")["price"].to_numpy()
+    assert set(np.unique(train)) == {0, 1, 2, 3}
+    # Edges come from training rows only: the training split's bands are near-equal.
+    counts = np.bincount(train)
+    assert counts.max() - counts.min() <= 0.05 * len(train) + 2
+
+    m2 = run_export(src, specs, ["price"], tmp_path / "out2", {"seed": 1}, lambda *_: None,
+                    target_tasks={"price": {"task": "regression", "bins": None}})
+    assert m2["target_kinds"]["price"] == "regression" and "price" not in m2["target_classes"]
+    assert m2["target_stats"]["price"]["std"] > 0
+    out2 = pl.read_parquet(tmp_path / "out2" / "model_ready.parquet")
+    assert out2.schema["price"] == pl.Float64
+    assert m2["split_info"]["stratified"] is True
+
+
+def test_export_refuses_a_single_band(tmp_path):
+    df = pl.DataFrame({"x": np.arange(300.0), "y": np.full(300, 7.0)})
+    src = tmp_path / "d.parquet"
+    df.write_parquet(src)
+    with pytest.raises(ValueError, match="one band"):
+        run_export(src, [_spec("x", "numeric_continuous")], ["y"], tmp_path / "o",
+                   {"seed": 1}, lambda *_: None, target_tasks={"y": {"task": "bins", "bins": {"k": 3}}})
+
+
+def test_export_refuses_an_empty_band(tmp_path):
+    df = pl.DataFrame({"x": np.arange(300.0), "y": np.r_[np.zeros(150), np.full(150, 100.0)]})
+    df.write_parquet(tmp_path / "d.parquet")
+    with pytest.raises(ValueError, match=r"\[10, 20\)"):
+        run_export(tmp_path / "d.parquet", [_spec("x", "numeric_continuous")], ["y"], tmp_path / "o",
+                   {"seed": 1}, lambda *_: None, target_tasks={"y": {"task": "bins", "bins": {"edges": [10, 20]}}})
+
+
+def test_numeric_target_stored_as_text_is_read_like_profiling(tmp_path):
+    df = pl.DataFrame({"x": np.arange(300.0), "price": [f"{1000 + i:,}.5" for i in range(300)]})
+    df.write_parquet(tmp_path / "d.parquet")
+    m = run_export(tmp_path / "d.parquet", [_spec("x", "numeric_continuous")], ["price"], tmp_path / "o",
+                   {"seed": 1}, lambda *_: None, target_tasks={"price": {"task": "regression", "bins": None}})
+    assert m["rows_written"] == 300 and m["target_stats"]["price"]["min"] >= 1000.5
+
+
+def test_numeric_target_with_unreadable_values_is_refused(tmp_path):
+    df = pl.DataFrame({"x": np.arange(300.0), "price": [str(i) for i in range(299)] + ["n/a?"]})
+    df.write_parquet(tmp_path / "d.parquet")
+    with pytest.raises(ValueError, match="don't read as numbers"):
+        run_export(tmp_path / "d.parquet", [_spec("x", "numeric_continuous")], ["price"], tmp_path / "o",
+                   {"seed": 1}, lambda *_: None, target_tasks={"price": {"task": "regression", "bins": None}})
+
+
+def test_prepare_export_keeps_regression_target_numeric(tmp_path):
+    from app.analysis.prep import prepare_export
+    n = 400
+    df = pl.DataFrame({"x": np.arange(n, dtype=float), "price": np.arange(n) * 2.5 + 0.3})
+    src = tmp_path / "d.parquet"
+    df.write_parquet(src)
+    m = run_export(src, [_spec("x", "numeric_continuous")], ["price"], tmp_path / "o",
+                   {"seed": 1}, lambda *_: None, target_tasks={"price": {"task": "regression", "bins": None}})
+    p = prepare_export(tmp_path / "o", m, "price", 200)
+    assert p.target_kind == "numeric" and np.any(p.y % 1 != 0)

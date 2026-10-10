@@ -10,13 +10,16 @@ import polars as pl
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from .. import experiments, jobs, recipes
+import numpy as np
+
+from .. import bands, experiments, jobs, recipes
 from ..auth import CurrentUser
 from ..config import get_settings
 from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..leakage import leak_names
 from ..schemas import ExportRequest
 from ..semantics import FAMILIES, NON_FEATURE_TYPES, validate_decision
+from ..profiling import coerce_numeric
 from ..transform import FieldSpec, check_target_classes, run_export
 from .fields import _same_settings
 
@@ -124,6 +127,7 @@ def _preview_of(conn, dataset_id: int, user: dict, recipe: dict, snap: dict, x: 
     ds = conn.execute("SELECT parquet_path FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()
     rows = recipes.spec_rows(conn, dataset_id, snap, fam)
     targets = recipes.snapshot_targets(snap)
+    tasks = target_tasks(conn, dataset_id, snap)
     leaking = leak_names(conn, dataset_id, targets)
     unchecked = [r["name"] for r in conn.execute(
         """SELECT f.name FROM meta.fields f WHERE f.dataset_id = %s AND f.name = ANY(%s)
@@ -171,8 +175,10 @@ def _preview_of(conn, dataset_id: int, user: dict, recipe: dict, snap: dict, x: 
     personal = x is not None and x["assessor_id"] is not None
     if not personal and (problem := source_problem(recipe)) is not None:
         blocking.insert(0, problem)
-    if targets and (lone := _lone_class_problem(ds["parquet_path"], targets)):
+    class_targets = [t for t in targets if tasks[t]["task"] == "classes"]
+    if lone := _lone_class_problem(ds["parquet_path"], class_targets):
         blocking.append(lone)
+    blocking += _numeric_target_problems(ds["parquet_path"], tasks)
     if invalid:
         blocking.append(f"{len(invalid)} field(s) have settings that aren't valid for {FAMILIES[fam]['label'].lower()}: "
                         f"{', '.join(invalid[:8])}{'…' if len(invalid) > 8 else ''}")
@@ -184,6 +190,7 @@ def _preview_of(conn, dataset_id: int, user: dict, recipe: dict, snap: dict, x: 
         "kept": len(keep),
         "dropped": sum(1 for r in rows if r["action"] == "drop"),
         "targets": targets,
+        "target_tasks": {t: v["task"] for t, v in tasks.items()},
         "kept_by_type": by_type,
         "customized": sum(1 for r in keep if not _same_settings(r, (r["suggestion"] or {}).get(fam) or {})),
         "unreviewed": unreviewed,
@@ -194,9 +201,43 @@ def _preview_of(conn, dataset_id: int, user: dict, recipe: dict, snap: dict, x: 
     }
 
 
+def _numeric_target_problems(parquet_path: str | None, tasks: dict[str, dict]) -> list[str]:
+    """The export's own checks on numbers and bands, run on the whole column now rather than after queueing (bands
+    with equal-sized counts are cut on the training rows then, so only chosen cut points are checked here)."""
+    numeric = [t for t, v in tasks.items() if v["task"] != "classes"]
+    if not numeric or not parquet_path or not Path(parquet_path).exists():
+        return []
+    out = []
+    raw = pl.read_parquet(parquet_path, columns=numeric)
+    for t in numeric:
+        num = coerce_numeric(raw[t], tasks[t].get("decimal_comma"))
+        given = raw[t].fill_nan(None) if raw[t].dtype.is_float() else raw[t]
+        if lost := int(given.is_not_null().sum() - num.is_not_null().sum()):
+            out.append(f"Target {t!r} has {lost:,} value(s) that don't read as numbers (or are infinite); fix them or "
+                       "predict it as classes.")
+            continue
+        vals = num.to_numpy()
+        if np.unique(vals[~np.isnan(vals)]).size < 2:
+            out.append(f"Target {t!r} has a single value; there is nothing to predict.")
+        elif tasks[t]["task"] == "bins" and "edges" in (tasks[t]["bins"] or {}):
+            if thin := bands.thin_bands(vals, [float(e) for e in tasks[t]["bins"]["edges"]]):
+                out.append(f"Target {t!r}: band(s) {', '.join(thin)} have fewer than 2 rows; move or remove cut "
+                           "points, or use fewer bands.")
+    return out
+
+
+def target_tasks(conn, dataset_id: int, snap: dict) -> dict[str, dict]:
+    """How each target of a snapshot is predicted, with how its column writes decimals (for reading it as numbers)."""
+    tasks = recipes.snapshot_target_tasks(snap)
+    comma = {r["name"]: r["decimal_comma"] for r in conn.execute(
+        """SELECT name, coalesce((stats ->> 'decimal_comma')::boolean, false) AS decimal_comma FROM meta.fields
+            WHERE dataset_id = %s AND name = ANY(%s)""", (dataset_id, list(tasks))).fetchall()}
+    return {t: {**v, "decimal_comma": comma.get(t, False)} for t, v in tasks.items()}
+
+
 def _lone_class_problem(parquet_path: str | None, targets: list[str]) -> str | None:
     """The export's own single-row-class check, run on the target columns now rather than after queueing."""
-    if not parquet_path or not Path(parquet_path).exists():
+    if not targets or not parquet_path or not Path(parquet_path).exists():
         return None
     try:
         check_target_classes(pl.read_parquet(parquet_path, columns=targets).to_pandas())
@@ -334,8 +375,8 @@ def download(export_id: int, kind: str, user: CurrentUser) -> FileResponse:
     return FileResponse(path, media_type=media, filename=f"export{export_id}_{fname}")
 
 
-def export_spec(conn, dataset_id: int, snap: dict, family: str) -> tuple[list[FieldSpec], list[str]]:
-    """The kept fields' specs and the targets (in chain order) of a snapshot."""
+def export_spec(conn, dataset_id: int, snap: dict, family: str) -> tuple[list[FieldSpec], list[str], dict[str, dict]]:
+    """The kept fields' specs, the targets (in chain order) and how each target is predicted, of a snapshot."""
     specs = [
         FieldSpec(
             name=r["name"], semantic_type=r["semantic_type"], imputation=r["imputation"],
@@ -346,7 +387,7 @@ def export_spec(conn, dataset_id: int, snap: dict, family: str) -> tuple[list[Fi
         for r in recipes.spec_rows(conn, dataset_id, snap, family)
         if r["action"] == "keep"
     ]
-    return specs, recipes.snapshot_targets(snap)
+    return specs, recipes.snapshot_targets(snap), target_tasks(conn, dataset_id, snap)
 
 
 def _run(export_id: int) -> None:
@@ -371,14 +412,16 @@ def _run(export_id: int) -> None:
         fam = exp["model_family"]
         with connection() as conn:
             snap = exp["snapshot"] or recipes.snapshot_of(conn, recipes.get(conn, exp["recipe_id"]))
-            specs, targets = export_spec(conn, ds["id"], snap, fam)
-        manifest = run_export(Path(ds["parquet_path"]), specs, targets, out_dir, exp["config"], progress, family=fam)
+            specs, targets, tasks = export_spec(conn, ds["id"], snap, fam)
+        manifest = run_export(Path(ds["parquet_path"]), specs, targets, out_dir, exp["config"], progress, family=fam,
+                              target_tasks=tasks)
         summary = {
             "split_counts": manifest["split_counts"],
             "split_info": manifest["split_info"],
             "targets": manifest["targets"],
             "target_classes": manifest["target_classes"],
             "target_kinds": manifest["target_kinds"],
+            "target_tasks": manifest["target_tasks"],
             "fit_sample_rows": manifest["fit_sample_rows"],
             "model_family": fam,
             "contains_nan": manifest["contains_nan"],

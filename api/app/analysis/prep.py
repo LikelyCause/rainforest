@@ -85,9 +85,11 @@ def categorical_column(name: str, field_id: int | None, s: pl.Series, type_: str
     return Column(name, field_id, "categorical", out, levels, type_)
 
 
-def target_values(s: pl.Series, semantic_type: str | None) -> tuple[str, np.ndarray, list[str]]:
-    """(kind, y, classes): float values with NaN for a numeric target, else codes with -1 for missing."""
-    if semantic_type in NUMERIC:
+def target_values(s: pl.Series, semantic_type: str | None,
+                  task: str | None = None) -> tuple[str, np.ndarray, list[str]]:
+    """(kind, y, classes): float values with NaN for a numeric target, else codes with -1 for missing. A target predicted
+    as classes is compared as classes whatever its type."""
+    if semantic_type in NUMERIC and task != "classes":
         num = coerce_numeric(s)
         if num.drop_nulls().n_unique() > NUMERIC_TARGET_MIN_LEVELS:
             return "numeric", num.to_numpy().astype(np.float64), []
@@ -121,7 +123,7 @@ def sample_rows(n_rows: int, k: int, y: np.ndarray | None = None, kind: str | No
 
 def prepare_raw(path: Path, fields: list[dict], kept: bool, target: str | None, sample: int,
                 seed: int = SEED) -> Prepared:
-    """`fields`: dicts with id, name, action, semantic_type and datetime_format, in column order."""
+    """`fields`: dicts with id, name, action, semantic_type, target_task and datetime_format, in column order."""
     n_rows = pl.scan_parquet(path).select(pl.len()).collect().item()
     target_field = next((f for f in fields if f["name"] == target), None) if target else None
     if target and target_field is None:
@@ -138,7 +140,8 @@ def prepare_raw(path: Path, fields: list[dict], kept: bool, target: str | None, 
     kind, y_full, classes = None, None, []
     if target_field is not None:
         kind, y_full, classes = target_values(
-            pl.read_parquet(path, columns=[target]).to_series(), target_field["semantic_type"])
+            pl.read_parquet(path, columns=[target]).to_series(), target_field["semantic_type"],
+            target_field.get("target_task"))
     idx = sample_rows(n_rows, sample, y_full, kind, seed)
     df = read_rows(path, [f["name"] for f in use], idx)
 
@@ -174,10 +177,13 @@ def prepare_export(export_dir: Path, manifest: dict, target: str | None, sample:
     if target and target not in targets:
         raise AnalysisError(f"{target!r} is not a target of this export.")
     train = np.flatnonzero((pl.read_parquet(path, columns=[SPLIT_COL]).to_series() == "train").to_numpy())
-    y_full = None
+    y_full, kind = None, None
     if target:
-        y_full = pl.read_parquet(path, columns=[target]).to_series().fill_null(-1).to_numpy().astype(np.int32)[train]
-    idx = sample_rows(train.size, sample, y_full, "categorical" if target else None, seed)
+        kind = "numeric" if (manifest.get("target_kinds") or {}).get(target) == "regression" else "categorical"
+        col = pl.read_parquet(path, columns=[target]).to_series()
+        y_full = (col.cast(pl.Float64).fill_null(np.nan).to_numpy() if kind == "numeric"
+                  else col.fill_null(-1).to_numpy().astype(np.int32))[train]
+    idx = sample_rows(train.size, sample, y_full, kind, seed)
     names = [c for c in pl.read_parquet_schema(path) if c not in (ROW_ID, SPLIT_COL, *targets)]
     df = read_rows(path, names, train[idx])
     columns, skipped = [], []
@@ -189,7 +195,7 @@ def prepare_export(export_dir: Path, manifest: dict, target: str | None, sample:
             columns.append(col)
     classes = [str(c) for c in (manifest.get("target_classes") or {}).get(target, [])] if target else []
     y = None if y_full is None else y_full[idx]
-    return Prepared(columns, skipped, target, "categorical" if target else None, y, classes)
+    return Prepared(columns, skipped, target, kind, y, classes)
 
 
 def design_matrix(columns: list[Column]) -> tuple[np.ndarray, list[str], list[int]]:

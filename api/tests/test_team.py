@@ -330,7 +330,7 @@ def test_review_adopts_agreement_queues_disagreement_and_finalize_freezes(people
         snap = rec["snapshot"]
         assert snap["target_order"] == ["y"] and set(snap["fields"]) == {"x", "z", "w", "c", "y"}
         assert snap["fields"]["x"]["decision"] == {"action": "drop", "semantic_type": "numeric_continuous",
-                                                   "notes": None}
+                                                   "notes": None, "target_task": None, "target_bins": None}
         assert set(snap["fields"]["z"]["settings"]) == {"tree"}  # a baseline keeps its own model type's settings
         assert snap["fields"]["x"]["inferred_type"] == "numeric_continuous"
         assert snap["fields"]["x"]["null_pct"] > 0.1 and snap["fields"]["c"]["n_unique"] == 3
@@ -591,7 +591,8 @@ def test_existing_datasets_migrate_to_a_finalized_v1_and_keep_exporting(app_, pe
         assert (rec["version"], rec["phase"], rec["created_by"], rec["finalized_by"]) == (1, "finalized", first_lead,
                                                                                           first_lead)
         assert rec["snapshot"]["fields"]["x"]["decision"] == {"action": "drop", "semantic_type": "numeric_continuous",
-                                                              "notes": "old note"}
+                                                              "notes": "old note", "target_task": None,
+                                                              "target_bins": None}
         assert fetch_one("SELECT recipe_id FROM meta.exports WHERE id = %s", (old["id"],))["recipe_id"] == rec["id"]
         exp = lead.post(f"/api/datasets/{ds['id']}/exports", json={})
         assert exp.status_code == 202, exp.text

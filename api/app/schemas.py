@@ -31,6 +31,9 @@ class DecisionIn(BaseModel):
     scaling: str = "none"
     encoding: str = "none"
     params: dict[str, Any] = Field(default_factory=dict)
+    target_task: Literal["classes", "regression", "bins"] | None = Field(
+        None, description="How a target is predicted; omitted keeps the stored task (or the type's default)")
+    target_bins: dict[str, Any] | None = Field(None, description='Bands: {"k": 2-20} or {"edges": [ascending numbers]}')
     notes: str | None = Field(None, max_length=4000)
     reviewed: bool = True
 

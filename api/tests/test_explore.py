@@ -443,3 +443,10 @@ def test_api_correlations_match_the_python_ranking(client, dataset):
             params["target"] = target
         body = client.get(f"/api/datasets/{ds}/explore/correlations", params=params).json()
         assert body == json.loads(json.dumps(_reference_correlations(ds, target, kept, limit, add))), (target, kept)
+
+
+def test_target_predicted_as_classes_is_categorical_whatever_its_type():
+    from app.analysis.prep import target_values
+    s = pl.Series("g", [i % 30 for i in range(600)])
+    assert target_values(s, "numeric_discrete")[0] == "numeric"
+    assert target_values(s, "numeric_discrete", "classes")[0] == "categorical"

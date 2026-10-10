@@ -139,19 +139,67 @@ _BASE_ALLOWED: dict[str, dict[str, list[str]]] = {
 
 NON_FEATURE_TYPES = {"identifier", "constant"}
 
-# Targets are class labels for a ClassifierChain; a continuous or free-form field would become thousands of classes.
-TARGET_TYPES = ("binary", "categorical", "numeric_discrete")
+# A target is predicted as classes (binary, categorical, or a numeric field with few values) or, when numeric, as a
+# number or as bands of numbers.
+TARGET_TYPES = ("binary", "categorical", "numeric_discrete", "numeric_continuous")
+CLASS_TYPES = ("binary", "categorical", "numeric_discrete")
 MAX_TARGET_LEVELS = 100
+TARGET_TASKS = ("classes", "regression", "bins")
+DEFAULT_BIN_COUNT = 5
+MAX_BIN_COUNT = 20
 
 
-def target_problem(t: str, n_unique: int | None) -> str | None:
-    """Why a field typed `t` with `n_unique` distinct values can't be a target, or None if it can."""
-    if t not in TARGET_TYPES:
-        return (f"a {TYPE_LABELS.get(t, t).lower()} field can't be a target; targets must be binary, categorical "
-                f"or discrete numeric (change the field's type first if its values are class labels)")
-    if n_unique is not None and n_unique > MAX_TARGET_LEVELS:
-        return f"{n_unique:,} distinct values; a target can have at most {MAX_TARGET_LEVELS} classes"
+def default_task(t: str, n_unique: int | None) -> str | None:
+    """How a target of type `t` is predicted unless someone chooses otherwise; None when it can't be a target.
+    Mirrors meta.default_target_task (migration 014)."""
+    if t in ("binary", "categorical"):
+        return "classes"
+    if t == "numeric_continuous":
+        return "regression"
+    if t == "numeric_discrete":
+        return "classes" if (n_unique or 0) <= MAX_TARGET_LEVELS else "regression"
     return None
+
+
+def target_problem(t: str, n_unique: int | None, task: str | None = None) -> str | None:
+    """Why a field typed `t` with `n_unique` distinct values can't be a target predicted as `task` (its default when
+    None), or None if it can."""
+    if t not in TARGET_TYPES:
+        return (f"a {TYPE_LABELS.get(t, t).lower()} field can't be a target; targets must be binary, categorical or "
+                f"numeric (change the field's type first if its values are class labels)")
+    task = task or default_task(t, n_unique)
+    if task not in TARGET_TASKS:
+        return f"unknown target task {task!r} (expected one of {', '.join(TARGET_TASKS)})"
+    if task == "classes":
+        if t not in CLASS_TYPES:
+            return "a continuous field is predicted as a number or as bands, not as classes"
+        if n_unique is not None and n_unique > MAX_TARGET_LEVELS:
+            return (f"{n_unique:,} distinct values; predicting classes allows at most {MAX_TARGET_LEVELS}"
+                    + ("" if t in ("binary", "categorical") else " (predict it as a number or as bands instead)"))
+        return None
+    if t not in NUMERIC:
+        return f"only a numeric field can be predicted as {'a number' if task == 'regression' else 'bands'}"
+    return None
+
+
+def bins_problem(bins: dict | None) -> str | None:
+    """What's wrong with a bands setting: exactly one of `k` (2-20 equal-count bands) or `edges` (1-19 ascending cut
+    points)."""
+    if not isinstance(bins, dict) or len(bins) != 1 or not ({"k", "edges"} & set(bins)):
+        return "bands need either a count (k) or cut points (edges)"
+    if "k" in bins:
+        k = bins["k"]
+        if isinstance(k, bool) or not isinstance(k, int) or not 2 <= k <= MAX_BIN_COUNT:
+            return f"the band count must be a whole number from 2 to {MAX_BIN_COUNT}"
+        return None
+    edges = bins["edges"]
+    if (not isinstance(edges, list) or not 1 <= len(edges) <= MAX_BIN_COUNT - 1
+            or not all(isinstance(e, (int, float)) and not isinstance(e, bool) and math.isfinite(e) for e in edges)):
+        return f"cut points must be 1 to {MAX_BIN_COUNT - 1} finite numbers"
+    if any(b <= a for a, b in zip(edges, edges[1:])):
+        return "cut points must be in ascending order, each different"
+    return None
+
 
 DEFAULT_PARAMS: dict[str, dict[str, Any]] = {
     "onehot": {"max_categories": 30, "min_frequency": 0.01},
@@ -199,7 +247,8 @@ def option_catalog() -> dict[str, Any]:
         "param_rules": {enc: {k: {"integer": kind is int, "min": lo, "max": hi} for k, (kind, lo, hi) in rules.items()}
                         for enc, rules in PARAM_RULES.items()},
         "non_feature_types": sorted(NON_FEATURE_TYPES),
-        "target_rule": {"types": list(TARGET_TYPES), "max_levels": MAX_TARGET_LEVELS},
+        "target_rule": {"types": list(TARGET_TYPES), "numeric_types": sorted(NUMERIC), "max_levels": MAX_TARGET_LEVELS,
+                        "tasks": list(TARGET_TASKS), "default_k": DEFAULT_BIN_COUNT},
     }
 
 
@@ -216,8 +265,12 @@ def validate_decision(d: dict[str, Any], family: str = DEFAULT_FAMILY, n_unique:
         return [f"unknown model family {family!r}"]
     if d.get("action") == "keep" and t in NON_FEATURE_TYPES:
         errors.append(f"a field typed '{t}' cannot be kept as a feature; drop it or change its type")
-    if d.get("action") == "target" and (problem := target_problem(t, n_unique)):
-        errors.append(problem)
+    if d.get("action") == "target":
+        if problem := target_problem(t, n_unique, d.get("target_task")):
+            errors.append(problem)
+        elif (d.get("target_task") or default_task(t, n_unique)) == "bins" and d.get("target_bins") is not None:
+            if problem := bins_problem(d.get("target_bins")):
+                errors.append(problem)
     if d.get("action") in ("drop", "target"):
         return errors
     a = allowed(t, family)

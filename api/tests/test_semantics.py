@@ -1,6 +1,7 @@
 import pytest
 
-from app.semantics import FAMILIES, NUMERIC, SEMANTIC_TYPES, allowed, defaults_for_type, suggest, validate_decision
+from app.semantics import (FAMILIES, NUMERIC, SEMANTIC_TYPES, allowed, defaults_for_type, option_catalog, suggest,
+                           validate_decision)
 
 STATS = {"null_pct": 0.2, "skewness": 3.1, "outlier_pct": 0.1, "min_value": 0.0, "n_unique": 40}
 
@@ -45,3 +46,10 @@ def test_action_does_not_depend_on_family():
 def test_identifier_cannot_be_kept():
     d = {"action": "keep", "semantic_type": "identifier", **defaults_for_type("identifier")}
     assert validate_decision(d)
+
+
+def test_catalog_publishes_the_target_rule():
+    rule = option_catalog()["target_rule"]
+    assert rule["tasks"] == ["classes", "regression", "bins"]
+    assert set(rule["numeric_types"]) == {"numeric_continuous", "numeric_discrete"}
+    assert rule["max_levels"] == 100 and rule["default_k"] == 5

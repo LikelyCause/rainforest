@@ -80,7 +80,8 @@ def apply(conn, recipe: dict, source: dict, user_id: int) -> tuple[dict, list[in
     for name in m["carried"]:
         entry = snap["fields"][name]
         if entry["decision"]["action"] == "target" and (p := target_problem(entry["decision"]["semantic_type"],
-                                                                            by_name[name]["n_unique"])):
+                                                                            by_name[name]["n_unique"],
+                                                                            entry["decision"].get("target_task"))):
             m["reopened"].append({"name": name, "reason": "target", "problem": p})
         elif errors := _settings_problem(entry, source["family"], by_name[name]["n_unique"]):
             m["reopened"].append({"name": name, "reason": "settings", "problem": "; ".join(errors[:3])})
@@ -122,6 +123,7 @@ def apply(conn, recipe: dict, source: dict, user_id: int) -> tuple[dict, list[in
                != {k: v for k, v in (before.get(fid) or {}).items() if k != "updated_at"}}
     _write_history(conn, dataset_id, fam, None, before, changed, user_id)
 
+    tasks = recipes.snapshot_target_tasks(snap)
     targets, not_carried = [], []
     current = {r["name"]: r for r in conn.execute(
         """SELECT f.name, f.n_unique, d.semantic_type FROM meta.fields f JOIN meta.field_decisions d
@@ -129,11 +131,13 @@ def apply(conn, recipe: dict, source: dict, user_id: int) -> tuple[dict, list[in
     for name in recipes.snapshot_targets(snap):
         if name not in current:
             continue
-        if p := target_problem(current[name]["semantic_type"], current[name]["n_unique"]):
+        if p := target_problem(current[name]["semantic_type"], current[name]["n_unique"], tasks[name]["task"]):
             not_carried.append({"name": name, "problem": p})
         else:
             targets.append(name)
-    uncorrelated, added = set_targets(conn, dataset_id, targets, user_id)
+    uncorrelated, added = set_targets(conn, dataset_id, targets, user_id,
+                                      {t: {"target_task": tasks[t]["task"], "target_bins": tasks[t]["bins"]}
+                                       for t in targets})
 
     reopened_ids = [by_name[r["name"]]["id"] for r in m["reopened"]]
     conn.execute(

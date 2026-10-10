@@ -16,7 +16,7 @@ import pytest
 from app import ingest
 from app.modeling.train import train
 from app.profiling import coerce_numeric, detect_datetime_format, infer_type, parse_datetime, profile_column
-from app.semantics import MAX_TARGET_LEVELS, suggest, validate_decision
+from app.semantics import MAX_TARGET_LEVELS, bins_problem, default_task, suggest, validate_decision
 from app.transform import FieldSpec, assign_splits, coercion_exprs, run_export, safe_feature_names
 
 INF = float("inf")
@@ -367,22 +367,50 @@ def test_training_fails_early_when_a_target_has_one_class_in_train(tmp_path):
 
 
 # ------------------------------------------------------------------------------------------- #16 targets
-@pytest.mark.parametrize("t,levels,ok", [
-    ("binary", 2, True), ("categorical", 40, True), ("numeric_discrete", 7, True),
-    ("categorical", MAX_TARGET_LEVELS + 1, False), ("numeric_continuous", 30, False), ("text", 10, False),
-    ("datetime", 10, False), ("identifier", 10, False),
+@pytest.mark.parametrize("t,levels,task,ok", [
+    ("binary", 2, None, True), ("categorical", 40, None, True), ("numeric_discrete", 7, None, True),
+    ("categorical", MAX_TARGET_LEVELS + 1, None, False), ("numeric_continuous", 30, None, True),
+    ("numeric_continuous", 5000, "regression", True), ("numeric_continuous", 30, "classes", False),
+    ("numeric_discrete", 500, "classes", False), ("numeric_discrete", 500, "bins", True),
+    ("categorical", 10, "regression", False), ("binary", 2, "bins", False),
+    ("text", 10, None, False), ("datetime", 10, None, False), ("identifier", 10, None, False),
 ])
-def test_only_class_like_fields_can_be_targets(t, levels, ok):
-    errors = validate_decision({"action": "target", "semantic_type": t}, n_unique=levels)
+def test_target_eligibility_depends_on_type_and_task(t, levels, task, ok):
+    errors = validate_decision({"action": "target", "semantic_type": t, "target_task": task,
+                                "target_bins": {"k": 5} if task == "bins" else None}, n_unique=levels)
     assert (errors == []) is ok
 
 
-def test_upload_target_with_too_many_levels_is_not_made_a_target():
-    p = _profile([i / 3 for i in range(5000)], "price", is_target=True)
-    assert not p.is_target and p.inferred_type == "numeric_continuous"
-    assert any("can't be a target" in r for r in p.reasons)
-    small = _profile([i % 4 for i in range(5000)], "grade", is_target=True)
-    assert small.is_target and small.inferred_type == "categorical"
+@pytest.mark.parametrize("t,levels,task", [
+    ("binary", 2, "classes"), ("categorical", 40, "classes"), ("numeric_discrete", 100, "classes"),
+    ("numeric_discrete", 101, "regression"), ("numeric_continuous", 3, "regression"), ("text", 5, None),
+])
+def test_default_task(t, levels, task):
+    assert default_task(t, levels) == task
+
+
+@pytest.mark.parametrize("bins,ok", [
+    ({"k": 5}, True), ({"k": 2}, True), ({"k": 20}, True), ({"k": 1}, False), ({"k": 21}, False),
+    ({"k": 2.5}, False), ({"edges": [10]}, True), ({"edges": [10, 25.5, 80]}, True), ({"edges": []}, False),
+    ({"edges": [3, 3]}, False), ({"edges": [5, 1]}, False), ({"edges": [1, float("inf")]}, False),
+    ({"edges": list(range(20))}, False), ({"k": 5, "edges": [1]}, False), ({}, False), (None, False),
+])
+def test_bins_problem(bins, ok):
+    assert (bins_problem(bins) is None) is ok
+
+
+def test_upload_targets_keep_their_numeric_type():
+    price = _profile([i / 3 for i in range(5000)], "price", is_target=True)
+    assert price.is_target and price.inferred_type == "numeric_continuous"
+    grade = _profile([i % 4 for i in range(5000)], "grade", is_target=True)
+    assert grade.is_target and grade.inferred_type in ("numeric_discrete", "categorical")
+    ids = _profile([f"id{i}" for i in range(5000)], "code", is_target=True)
+    assert not ids.is_target and any("can't be a target" in r for r in ids.reasons)
+
+
+def test_whole_number_target_that_looks_like_a_key_is_a_number():
+    p = _profile(list(range(1000, 6000)), "price", is_target=True)
+    assert p.is_target and p.inferred_type == "numeric_continuous"
 
 
 # ------------------------------------------------------------------------------------------- API (needs DB)
@@ -412,7 +440,7 @@ def client(tmp_path_factory, login_as):
     get_settings.cache_clear()
 
 
-def test_api_rejects_targets_that_are_not_class_labels(client):
+def test_api_target_rules_follow_the_task(client):
     rng = np.random.default_rng(0)
     rows = "".join(f"{rng.normal():.6f},{'abc'[i % 3]},{i % 2},{rng.integers(0, 100)}\n" for i in range(800))
     ds = client.post("/api/datasets/upload", files={"file": ("t.csv", "cont,cat,y,score\n" + rows, "text/csv")},
@@ -424,14 +452,13 @@ def test_api_rejects_targets_that_are_not_class_labels(client):
     assert ds["status"] == "ready", ds
     try:
         fields = {f["name"]: f for f in client.get(f"/api/datasets/{ds['id']}/fields").json()}
-        r = client.patch(f"/api/datasets/{ds['id']}", json={"target_columns": ["y", "cont"]})
-        assert r.status_code == 422 and "cont" in json.dumps(r.json())
+        assert client.patch(f"/api/datasets/{ds['id']}", json={"target_columns": ["y", "cont"]}).status_code == 200
         cont = fields["cont"]
         r = client.put(f"/api/fields/{cont['id']}/decision", json={
             **{k: cont[k] for k in ("semantic_type", "reviewed")}, "action": "target", "notes": None,
             "imputation": "none", "impute_value": None, "add_missing_indicator": False, "transform": "none",
-            "scaling": "none", "encoding": "none", "params": {}})
-        assert r.status_code == 422 and "target" in json.dumps(r.json())
+            "scaling": "none", "encoding": "none", "params": {}, "target_task": "classes"})
+        assert r.status_code == 422 and "continuous" in json.dumps(r.json())
         assert client.patch(f"/api/datasets/{ds['id']}", json={"target_columns": ["y", "cat"]}).status_code == 200
         assert client.get(f"/api/datasets/{ds['id']}").json()["target_columns"] == ["y", "cat"]
     finally:
