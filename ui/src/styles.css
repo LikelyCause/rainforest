@@ -585,3 +585,17 @@ table.data tr.clickable:focus-visible { outline: 2px solid var(--accent); outlin
 .mode-bar { margin-bottom: 8px; }
 .library-item { padding: 8px 0; border-top: 1px solid var(--border); }
 .library-item:first-child { border-top: 0; }
+
+/* Model settings in the Train menu: the menu widens and scrolls while they're open. */
+.popover:has(.model-settings .ms-summary[aria-expanded="true"]) { width: min(520px, calc(100vw - 32px)); max-height: 75vh; overflow: auto; }
+.ms-summary { display: flex; justify-content: space-between; align-items: center; width: 100%; height: 30px; padding: 0 8px; background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-weight: 600; font-size: 13px; }
+.ms-group h4 { margin: 4px 0 2px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+.ms-row { gap: 1px; padding-top: 4px; padding-bottom: 4px; }
+.ms-line { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 190px) 28px; align-items: center; gap: 8px; min-height: 30px; }
+.ms-line label { font-size: 13px; color: var(--text-secondary); }
+.ms-line select, .ms-line input:not([type="checkbox"]) { width: 100%; min-width: 0; }
+.ms-line button.ghost { height: 24px; padding: 0 4px; }
+.ms-help { line-height: 1.35; }
+.ms-default { white-space: nowrap; color: var(--text-muted); opacity: 0.85; }
+.ms-problem { color: var(--bad); }
+.run-settings { justify-content: space-between; }

@@ -48,6 +48,9 @@ export type TargetBins = { k: number } | { edges: number[] };
 
 export type SettingValue = string | number | boolean | null;
 
+/** A run's model, chain order and settings, to fill the Train menu again. */
+export interface TrainPrefill { exportId: number; model: string; order: string[]; values: Record<string, SettingValue> }
+
 /** One model setting, as GET /api/models publishes it. */
 export interface ModelSetting {
   name: string;
@@ -405,7 +408,7 @@ export interface ModelRun {
   status: "pending" | "running" | "done" | "failed";
   status_message: string | null;
   error: string | null;
-  config: { order?: string[] | null; cv?: number; params?: Record<string, unknown>; device?: Device };
+  config: { order?: string[] | null; cv?: number; seed?: number; params?: Record<string, unknown>; device?: Device };
   metrics: Metrics;
   report: {
     order?: string[];

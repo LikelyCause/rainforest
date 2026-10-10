@@ -4,12 +4,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useFields } from "../hooks";
 import { ErrorAlert } from "../components/ui";
+import { ModelSettings } from "../components/ModelSettings";
 import { RunDetail } from "../components/RunDetail";
 import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtInt, fmtMetric, fmtNum, fmtPct } from "../format";
 import { toast } from "../toast";
 import { bestRuns, columnLabels, metricFor, type RunMetric } from "../runs";
 import { sourceLabel } from "../experiments";
-import type { Dataset, Experiment, ExportJob, ModelRun } from "../types";
+import { changed, problems, restore, runFields } from "../settings";
+import type { Dataset, Experiment, ExportJob, ModelRun, SettingValue, TrainPrefill } from "../types";
 
 const FAMILY_EXPLAINER: Record<string, string> = {
   tree: "Missing values stay as NaN for the trees to route; no scaling or log transforms; mid/high-cardinality categoricals become compact ordinal codes.",
@@ -23,8 +25,13 @@ const MIN_TRAIN = 0.5;
 const isActive = (s: string) => s === "pending" || s === "running";
 
 /** A small anchored popover that closes on outside click or Esc. */
-function Pop({ label, children, primary, align = "right" }: { label: ReactNode; children: (close: () => void) => ReactNode; primary?: boolean; align?: "left" | "right" }) {
+function Pop({ label, children, primary, align = "right", openSignal }: {
+  label: ReactNode; children: (close: () => void) => ReactNode; primary?: boolean; align?: "left" | "right";
+  /** Changing this opens the popover (Train again). */
+  openSignal?: unknown;
+}) {
   const [open, setOpen] = useState(false);
+  useEffect(() => { if (openSignal) setOpen(true); }, [openSignal]);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -189,13 +196,23 @@ function CopyCommand({ command }: { command: string }) {
   );
 }
 
-function TrainForm({ e, targets, onStarted }: { e: ExportJob; targets: string[]; onStarted: (r: ModelRun) => void }) {
+
+const settingsKey = (exportId: number, model: string) => `rf.trainSettings.${exportId}.${model}`;
+function remembered(exportId: number, model: string): unknown {
+  try { return JSON.parse(localStorage.getItem(settingsKey(exportId, model)) ?? "null"); } catch { return null; }
+}
+
+function TrainForm({ e, targets, onStarted, prefill }: {
+  e: ExportJob; targets: string[]; onStarted: (r: ModelRun) => void; prefill?: TrainPrefill | null;
+}) {
   const qc = useQueryClient();
   const models = useQuery({ queryKey: ["exportModels", e.id], queryFn: () => api.modelsForExport(e.id), staleTime: 60_000 });
   const system = useQuery({ queryKey: ["system"], queryFn: api.system, staleTime: Infinity });
-  const [model, setModel] = useState("");
+  const [model, setModel] = useState(prefill?.model ?? "");
   const [gpuOn, setGpuOn] = useState(false);
-  const [order, setOrder] = useState<string[]>(targets);
+  const [order, setOrder] = useState<string[]>(prefill?.order ?? targets);
+  const [valuesByModel, setValuesByModel] = useState<Record<string, Record<string, SettingValue>>>(
+    prefill ? { [prefill.model]: prefill.values } : {});
   const [showAll, setShowAll] = useState(false);
   useEffect(() => {
     if (!model && models.data) {
@@ -203,8 +220,19 @@ function TrainForm({ e, targets, onStarted }: { e: ExportJob; targets: string[];
       setModel((own ?? models.data.find((m) => m.compatible))?.key ?? "");
     }
   }, [model, models.data, e.model_family]);
+  const selectedSettings = models.data?.find((m) => m.key === model)?.settings ?? null;
+  const values = valuesByModel[model] ?? (selectedSettings ? restore(remembered(e.id, model), selectedSettings) : {});
+  const setValues = (v: Record<string, SettingValue>) => {
+    setValuesByModel((old) => ({ ...old, [model]: v }));
+    try { localStorage.setItem(settingsKey(e.id, model), JSON.stringify(v)); } catch { /* private mode: not remembered */ }
+  };
+  const settingProblems = selectedSettings ? Object.keys(problems(values, selectedSettings)).length : 0;
+  const kinds: string[] = order.map((t) => e.summary?.target_kinds?.[t]).filter(Boolean);
   const start = useMutation({
-    mutationFn: () => api.startRun(e.id, { model, order, cv: 5, device: useGpu ? "cuda" : "cpu" }),
+    mutationFn: () => api.startRun(e.id, {
+      model, order, device: useGpu ? "cuda" : "cpu",
+      ...(selectedSettings ? { params: changed(values, selectedSettings), ...runFields(values, selectedSettings) } : { cv: 5 }),
+    }),
     onSuccess: (run) => {
       qc.setQueryData<ModelRun[]>(["runs", e.dataset_id, e.experiment_id], (old) => [run, ...(old ?? []).filter((r) => r.id !== run.id)]);
       qc.invalidateQueries({ queryKey: ["runs", e.dataset_id] });
@@ -247,8 +275,12 @@ function TrainForm({ e, targets, onStarted }: { e: ExportJob; targets: string[];
         <label className="check small-text"><input type="checkbox" checked={showAll} onChange={(ev) => setShowAll(ev.target.checked)} /> show incompatible models</label>
       )}
       {targets.length > 1 && <TargetOrder targets={targets} order={order} onChange={setOrder} />}
+      {selectedSettings && selected?.compatible && (
+        <ModelSettings settings={selectedSettings} values={values} onChange={setValues} kinds={kinds} />
+      )}
       <ErrorAlert error={start.error} />
-      <button type="button" className="primary" disabled={!model || !selected?.compatible || order.length === 0 || start.isPending} onClick={() => start.mutate()}>
+      {settingProblems > 0 && <span className="small-text" role="alert" style={{ color: "var(--bad)" }}>Fix the settings marked above to train.</span>}
+      <button type="button" className="primary" disabled={!model || !selected?.compatible || order.length === 0 || settingProblems > 0 || start.isPending} onClick={() => start.mutate()}>
         {order.length > 1 ? "Train chain" : "Train"}
       </button>
     </>
@@ -293,7 +325,9 @@ function featuresByType(e: ExportJob): string {
   return Object.entries(by).map(([t, x]) => `${t.replace("_", " ")}: ${x.fields} → ${x.features}`).join("\n");
 }
 
-function ExportRow({ e, onStarted, canAdd }: { e: ExportJob; onStarted: (r: ModelRun) => void; canAdd: boolean }) {
+function ExportRow({ e, onStarted, canAdd, prefill }: {
+  e: ExportJob; onStarted: (r: ModelRun) => void; canAdd: boolean; prefill: TrainPrefill | null;
+}) {
   const s = e.summary ?? {};
   const by = s.features_by_type as Record<string, { fields: number }> | undefined;
   const inputs = by ? Object.values(by).reduce((a, x) => a + x.fields, 0) : null;
@@ -336,7 +370,12 @@ function ExportRow({ e, onStarted, canAdd }: { e: ExportJob; onStarted: (r: Mode
       </div>
       {e.status === "done" && (
         <div className="row" style={{ flexWrap: "nowrap" }}>
-          {canAdd && <Pop label="Train ▾" primary>{() => <TrainForm e={e} targets={s.targets ?? []} onStarted={onStarted} />}</Pop>}
+          {canAdd && (
+            <Pop label="Train ▾" primary openSignal={prefill?.exportId === e.id ? prefill : null}>
+              {() => <TrainForm key={prefill?.exportId === e.id ? JSON.stringify(prefill) : "new"} e={e} targets={s.targets ?? []}
+                onStarted={onStarted} prefill={prefill?.exportId === e.id ? prefill : null} />}
+            </Pop>
+          )}
           <Pop label="Files ▾">{() => (
             <>
               <a className="btn" href={`/api/exports/${e.id}/files/data`}>Dataset (.parquet)</a>
@@ -376,7 +415,9 @@ function MlflowCell({ r }: { r: ModelRun }) {
 }
 
 /** One export's runs as their own table: its targets are its columns, and ★ compares only runs on its features. */
-function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: number | null }) {
+function RunsGroup({ e, runs, fresh, onTrainAgain }: {
+  e: ExportJob; runs: ModelRun[]; fresh: number | null; onTrainAgain: ((p: TrainPrefill) => void) | null;
+}) {
   const [open, setOpen] = useState<number | null>(null);
   const targets: string[] = e.summary?.targets ?? [];
   const kinds: Record<string, string> = e.summary?.target_kinds ?? {};
@@ -438,7 +479,7 @@ function RunsGroup({ e, runs, fresh }: { e: ExportJob; runs: ModelRun[]; fresh: 
               <td><MlflowCell r={r} /></td>
             </tr>
             {open === r.id && (
-              <tr className="run-detail"><td colSpan={6 + targets.length * 2}><RunDetail run={r} targets={order} /></td></tr>
+              <tr className="run-detail"><td colSpan={6 + targets.length * 2}><RunDetail run={r} targets={order} onTrainAgain={onTrainAgain} /></td></tr>
             )}
           </Fragment>
         );
@@ -463,6 +504,7 @@ export function ExperimentWorkspace({ ds, x, canAdd }: { ds: Dataset; x: Experim
     queryFn: () => api.runs(datasetId, x.id),
     refetchInterval: (q) => ((q.state.data as ModelRun[] | undefined)?.some((r) => isActive(r.status)) ? 1500 : false),
   });
+  const [prefill, setPrefill] = useState<TrainPrefill | null>(null);
   const onStarted = (r: ModelRun) => {
     setFresh(r.id);
     toast({ message: `Training ${r.model} on Export #${r.export_id}` });
@@ -479,7 +521,7 @@ export function ExperimentWorkspace({ ds, x, canAdd }: { ds: Dataset; x: Experim
         <div className="card-head"><h2>Exports</h2></div>
         <ErrorAlert error={exports.error} />
         {exports.data?.length === 0 && <div className="empty">No exports yet.{canAdd ? " Build one above, then train models on it." : ""}</div>}
-        {exports.data?.map((e) => <ExportRow key={e.id} e={e} onStarted={onStarted} canAdd={canAdd} />)}
+        {exports.data?.map((e) => <ExportRow key={e.id} e={e} onStarted={onStarted} canAdd={canAdd} prefill={prefill} />)}
       </section>
 
       <section className="card stack">
@@ -490,7 +532,8 @@ export function ExperimentWorkspace({ ds, x, canAdd }: { ds: Dataset; x: Experim
         <ErrorAlert error={runs.error} />
         {groups.length ? (
           <div className="table-wrap stack" style={{ maxHeight: "none" }}>
-            {groups.map((g) => <RunsGroup key={g.e.id} e={g.e} runs={g.runs} fresh={fresh} />)}
+            {groups.map((g) => <RunsGroup key={g.e.id} e={g.e} runs={g.runs} fresh={fresh}
+              onTrainAgain={canAdd ? (p) => { setPrefill(p); window.scrollTo({ top: 0, behavior: "smooth" }); } : null} />)}
           </div>
         ) : (
           <div className="empty">Train a chain on a finished export to compare models here.</div>
