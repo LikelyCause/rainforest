@@ -14,7 +14,7 @@ from psycopg import sql
 from . import ingest, profiling
 from .config import get_settings
 from .correlations import Assoc, compute_associations, screen_associations
-from .db import connection, execute, fetch_one, jsonb
+from .db import connection, execute, fetch_all, fetch_one, json_safe, jsonb
 from .semantics import suggest_all
 
 log = logging.getLogger(__name__)
@@ -50,12 +50,12 @@ class _Status:
 def process_dataset(dataset_id: int, upload_path: str | None, fmt: str) -> None:
     s = get_settings()
     st = _Status(dataset_id)
-    ds = fetch_one("SELECT * FROM meta.datasets WHERE id = %s", (dataset_id,))
-    if ds is None:
-        return
-    targets: list[str] = list(ds["target_columns"] or [])
-    parquet_path = s.datasets_dir / str(dataset_id) / "raw.parquet"
     try:
+        ds = fetch_one("SELECT * FROM meta.datasets WHERE id = %s", (dataset_id,))
+        if ds is None:  # deleted while queued
+            return
+        targets: list[str] = list(ds["target_columns"] or [])
+        parquet_path = s.datasets_dir / str(dataset_id) / "raw.parquet"
         # ---- 1. ingest ------------------------------------------------------------
         st.set("ingesting", 0.01, "Converting to Parquet", force=True)
         warnings: list[str] = []
@@ -71,7 +71,7 @@ def process_dataset(dataset_id: int, upload_path: str | None, fmt: str) -> None:
             warnings.append(f"Target column(s) not found in file: {', '.join(missing_targets)}")
 
         st.set("ingesting", 0.05, "Loading raw table into Postgres", force=True)
-        raw_table = ingest.load_raw_table(
+        raw_table, load_warnings = ingest.load_raw_table(
             dataset_id,
             parquet_path,
             db_cols,
@@ -80,6 +80,7 @@ def process_dataset(dataset_id: int, upload_path: str | None, fmt: str) -> None:
                 "ingesting", 0.05 + 0.30 * done / max(total, 1), f"Loading raw table: {done:,} / {total:,} rows"
             ),
         )
+        warnings += load_warnings
         execute(
             """UPDATE meta.datasets SET parquet_path = %s, raw_table = %s, column_count = %s,
                       warnings = %s, updated_at = now() WHERE id = %s""",
@@ -153,7 +154,7 @@ def _persist_profiles(dataset_id: int, profiles: list[profiling.FieldProfile], d
             by_family = suggest_all(p.inferred_type, p.summary, p.is_target)
             row = [
                 dataset_id, p.ordinal, p.name, db_col, p.physical_dtype, p.inferred_type, p.confidence,
-                p.reasons, p.is_target, *[p.summary.get(c) for c in SUMMARY_COLS],
+                p.reasons, p.is_target, *[json_safe(p.summary.get(c)) for c in SUMMARY_COLS],
                 jsonb(p.stats), jsonb(p.charts), jsonb(by_family),
             ]
             fid = conn.execute(insert, row).fetchone()["id"]
@@ -276,6 +277,30 @@ def refresh_target_state(conn, dataset_id: int) -> None:
             WHERE d.field_id = s.id AND d.source = 'suggested' AND d.action IS DISTINCT FROM s.action""",
         (dataset_id,),
     )
+
+
+def sweep_uploads(min_age_s: float = 600) -> list[Path]:
+    """Remove uploads that no queued or ingesting dataset is waiting for (a crash mid-ingest leaves them behind).
+
+    Files younger than `min_age_s` are left alone: an upload is streamed to disk before its row exists.
+    """
+    uploads = get_settings().uploads_dir
+    if not uploads.is_dir():
+        return []
+    needed = {r["upload_path"] for r in fetch_all(
+        "SELECT upload_path FROM meta.datasets WHERE status IN ('pending', 'ingesting') AND upload_path IS NOT NULL")}
+    cutoff = time.time() - min_age_s
+    removed = []
+    for p in uploads.iterdir():
+        try:
+            if p.is_file() and str(p) not in needed and p.stat().st_mtime < cutoff:
+                p.unlink()
+                removed.append(p)
+        except OSError:
+            continue
+    if removed:
+        log.info("removed %d orphaned upload(s)", len(removed))
+    return removed
 
 
 def delete_dataset_files(dataset_id: int) -> None:

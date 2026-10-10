@@ -54,6 +54,57 @@ def fields_of(client, ds) -> dict[str, dict]:
     return {f["name"]: f for f in client.get(f"/api/datasets/{ds['id']}/fields").json()}
 
 
+def sql(client, q: str) -> list[list]:
+    r = client.post("/api/sql", json={"sql": q})
+    assert r.status_code == 200, r.text
+    return r.json()["rows"]
+
+
+def test_raw_table_keeps_backslash_n_text_and_strips_nul_bytes(client):
+    rows = "".join(f"{i},plain{i % 7}\n" for i in range(200))
+    csv = "id,note\n" + rows + "200,\\N\n201,a\x00b\n202,\n"
+    ds = upload(client, csv)
+    try:
+        table = ds["raw_table"]
+        got = dict(sql(client, f"SELECT id, note FROM {table} WHERE id >= 200 ORDER BY id"))
+        assert got == {200: "\\N", 201: "ab", 202: None}
+        assert any("NUL" in w for w in ds["warnings"])
+    finally:
+        client.delete(f"/api/datasets/{ds['id']}")
+
+
+def test_upload_of_a_dataset_deleted_while_queued_is_removed(client):
+    from app.config import get_settings
+    from app.processing import process_dataset
+
+    up = get_settings().uploads_dir / "gone.csv"
+    up.write_text("a\n1\n")
+    process_dataset(10**9, str(up), "csv")
+    assert not up.exists()
+
+
+def test_startup_sweep_removes_only_orphaned_old_uploads(client):
+    from app.config import get_settings
+    from app.db import execute, fetch_one
+    from app.processing import sweep_uploads
+
+    uploads = get_settings().uploads_dir
+    old_orphan, new_orphan, waiting = uploads / "old.csv", uploads / "new.csv", uploads / "waiting.csv"
+    for p in (old_orphan, new_orphan, waiting):
+        p.write_text("a\n1\n")
+    for p in (old_orphan, waiting):
+        os.utime(p, (time.time() - 3600, time.time() - 3600))
+    row = fetch_one("""INSERT INTO meta.datasets (name, file_format, status, upload_path)
+                       VALUES ('w', 'csv', 'pending', %s) RETURNING id""", (str(waiting),))
+    try:
+        assert sweep_uploads() == [old_orphan]
+        assert new_orphan.exists() and waiting.exists()
+    finally:
+        execute("DELETE FROM meta.datasets WHERE id = %s", (row["id"],))
+        for p in (new_orphan, waiting):
+            p.unlink(missing_ok=True)
+
+
 def _leaky_csv(n=20_000, levels=300, seed=0) -> str:
     rng = np.random.default_rng(seed)
     lv = rng.integers(0, levels, n)

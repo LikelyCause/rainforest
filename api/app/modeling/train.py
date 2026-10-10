@@ -149,13 +149,15 @@ def evaluate(y_true: np.ndarray, proba: np.ndarray, labels: list[str] | None = N
         out["recall"] = tp / (tp + fn) if tp + fn else 0.0
         out["f1"] = 2 * out["precision"] * out["recall"] / (out["precision"] + out["recall"]) if tp else 0.0
         out["specificity"] = tn / (tn + fp) if tn + fp else 0.0
-    try:
-        if k == 2:
-            out["roc_auc"] = float(roc_auc_score(y_true, proba[:, 1]))
-        else:
-            out["roc_auc_ovr_macro"] = float(roc_auc_score(y_true, proba, multi_class="ovr", average="macro"))
-    except ValueError:  # a class absent from this split
-        pass
+    # sklearn returns NaN (not an error) for AUC on a single-class split, which JSON can't carry.
+    if len(np.unique(y_true)) >= 2:
+        try:
+            if k == 2:
+                out["roc_auc"] = float(roc_auc_score(y_true, proba[:, 1]))
+            else:
+                out["roc_auc_ovr_macro"] = float(roc_auc_score(y_true, proba, multi_class="ovr", average="macro"))
+        except ValueError:  # a class absent from this split
+            pass
     p, r, f, support = precision_recall_fscore_support(y_true, pred, labels=classes, zero_division=0)
     details = {
         "labels": names,

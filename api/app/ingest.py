@@ -90,25 +90,32 @@ def _sink(src: Path, fmt: str, out: Path) -> list[str]:
         lf.sink_parquet(out, row_group_size=100_000)
         return warnings
 
-    def scan(infer_rows: int | None) -> pl.LazyFrame:
-        return pl.scan_csv(
-            src,
-            infer_schema_length=infer_rows,
-            null_values=NULL_TOKENS,
-            try_parse_dates=False,
-            encoding="utf8-lossy",
-            truncate_ragged_lines=True,
-        )
-
-    try:
-        lf, warnings = _normalize(scan(50_000))
-        lf.sink_parquet(out, row_group_size=100_000)
-    except pl.exceptions.ComputeError as exc:
-        # A value late in the file broke the inferred schema; re-infer over the whole file.
-        log.warning("CSV schema inference on head failed (%s); rescanning full file", exc)
-        out.unlink(missing_ok=True)
-        lf, warnings = _normalize(scan(None))
-        lf.sink_parquet(out, row_group_size=100_000)
+    full, ragged = False, False
+    while True:
+        try:
+            lf, warnings = _normalize(pl.scan_csv(
+                src,
+                infer_schema_length=None if full else 50_000,
+                null_values=NULL_TOKENS,
+                try_parse_dates=False,
+                encoding="utf8-lossy",
+                truncate_ragged_lines=ragged,
+            ))
+            lf.sink_parquet(out, row_group_size=100_000)
+            break
+        except pl.exceptions.ComputeError as exc:
+            out.unlink(missing_ok=True)
+            if not ragged and "more fields" in str(exc):
+                ragged = True
+            elif not full:
+                # A value late in the file broke the inferred schema; re-infer over the whole file.
+                log.warning("CSV schema inference on head failed (%s); rescanning full file", exc)
+                full = True
+            else:
+                raise
+    if ragged:
+        warnings.append("Some rows have more values than the header; the extra values were dropped.")
+    if full:
         warnings.append("CSV schema had to be inferred from the full file (mixed types late in the file).")
     return warnings
 
@@ -135,11 +142,17 @@ def load_raw_table(
     db_columns: list[str],
     batch_rows: int,
     progress: Callable[[int, int], None] | None = None,
-) -> str:
-    """COPY the Parquet data into raw.ds_<id>. Returns the qualified table name."""
+) -> tuple[str, list[str]]:
+    """COPY the Parquet data into raw.ds_<id>. Returns the qualified table name and any warnings.
+
+    Strings are quoted, so only an unquoted \\N (a real null) reads as NULL; text can't hold NUL bytes in
+    Postgres, so they are removed from the raw table (the Parquet copy keeps them).
+    """
     table = f"ds_{dataset_id}"
     schema = pl.read_parquet_schema(parquet_path)
     src_names = list(schema.keys())
+    text_cols = [c for c, dt in schema.items() if dt == pl.String]
+    nul_counts: dict[str, int] = {}
     col_defs = [sql.SQL("{} BIGINT").format(sql.Identifier(ROW_ID))] + [
         sql.SQL("{} {}").format(sql.Identifier(c), sql.SQL(pg_type(dt)))
         for c, dt in zip(db_columns, schema.values())
@@ -158,8 +171,12 @@ def load_raw_table(
             for batch in pf.iter_batches(batch_size=batch_rows, columns=src_names):
                 df = pl.from_arrow(batch)
                 assert isinstance(df, pl.DataFrame)
+                for c in text_cols:
+                    if n := int(df[c].str.contains("\x00", literal=True).sum()):
+                        nul_counts[c] = nul_counts.get(c, 0) + n
+                        df = df.with_columns(pl.col(c).str.replace_all("\x00", "", literal=True))
                 df = df.with_row_index(ROW_ID, offset=offset)
-                copy.write(df.write_csv(include_header=False, null_value="\\N"))
+                copy.write(df.write_csv(include_header=False, null_value="\\N", quote_style="non_numeric"))
                 offset += df.height
                 if progress:
                     progress(offset, total)
@@ -167,4 +184,6 @@ def load_raw_table(
             sql.SQL("ALTER TABLE {} ADD PRIMARY KEY ({})").format(ident, sql.Identifier(ROW_ID))
         )
         conn.execute(sql.SQL("ANALYZE {}").format(ident))
-    return f"raw.{table}"
+    warnings = [f"Removed NUL characters from {n:,} value(s) of {c!r} in raw.{table} (Postgres text can't hold "
+                f"them; profiling and exports read the file as uploaded)." for c, n in nul_counts.items()]
+    return f"raw.{table}", warnings

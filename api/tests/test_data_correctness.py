@@ -58,6 +58,22 @@ def test_csv_type_change_after_inference_window_still_gives_valid_parquet(tmp_pa
     assert [p.name for p in dest.parent.iterdir()] == ["raw.parquet"]
 
 
+def test_rows_longer_than_the_header_are_truncated_with_a_warning(tmp_path):
+    src = tmp_path / "ragged.csv"
+    src.write_text("a,b,c\n1,2,3\n4,5\n6,7,8,9\n10,11,12\n")
+    dest = tmp_path / "ds" / "raw.parquet"
+    warnings = ingest.to_parquet(src, "csv", dest)
+    df = pl.read_parquet(dest)
+    assert df.rows() == [(1, 2, 3), (4, 5, None), (6, 7, 8), (10, 11, 12)]
+    assert any("more values than the header" in w for w in warnings)
+
+
+def test_well_formed_csv_gets_no_ragged_warning(tmp_path):
+    src = tmp_path / "ok.csv"
+    src.write_text("a,b\n1,2\n3,4\n")
+    assert ingest.to_parquet(src, "csv", tmp_path / "ds" / "raw.parquet") == []
+
+
 def test_failed_conversion_leaves_no_partial_file(tmp_path):
     src = tmp_path / "bad.parquet"
     src.write_bytes(b"not a parquet file")

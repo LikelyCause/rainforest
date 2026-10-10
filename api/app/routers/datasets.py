@@ -36,12 +36,12 @@ def _targets(raw: str | None) -> list[str]:
     return list(dict.fromkeys(t.strip() for t in raw.split(",") if t.strip()))
 
 
-def _create(name: str, filename: str | None, fmt: str, targets: list[str]) -> dict:
+def _create(name: str, filename: str | None, fmt: str, targets: list[str], upload_path: Path | None = None) -> dict:
     return fetch_one(
         f"""INSERT INTO meta.datasets (name, source_filename, file_format, target_columns, status, status_message,
-                                       owner)
-            VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s) RETURNING {DATASET_COLS}""",
-        (name, filename, fmt, targets, jobs.owner_id()),
+                                       owner, upload_path)
+            VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s) RETURNING {DATASET_COLS}""",
+        (name, filename, fmt, targets, jobs.owner_id(), None if upload_path is None else str(upload_path)),
     )
 
 
@@ -119,12 +119,20 @@ def upload(
     s = get_settings()
     s.uploads_dir.mkdir(parents=True, exist_ok=True)
     dest = s.uploads_dir / f"{uuid.uuid4().hex}{suffix}"
-    with dest.open("wb") as out:
-        shutil.copyfileobj(file.file, out, length=8 * 1024 * 1024)
+    try:
+        with dest.open("wb") as out:
+            shutil.copyfileobj(file.file, out, length=8 * 1024 * 1024)
+    except BaseException:
+        dest.unlink(missing_ok=True)
+        raise
     if dest.stat().st_size == 0:
         dest.unlink(missing_ok=True)
         raise HTTPException(400, "Uploaded file is empty")
-    ds = _create(name or Path(filename).stem, filename, fmt, _targets(targets))
+    try:
+        ds = _create(name or Path(filename).stem, filename, fmt, _targets(targets), dest)
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise
     jobs.submit(process_dataset, ds["id"], str(dest), fmt)
     return ds
 

@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import logging
+import math
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+import numpy as np
 import psycopg
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
@@ -69,7 +71,23 @@ def execute(query: str | sql.Composable, params: Any = None) -> None:
 
 
 def jsonb(value: Any) -> Jsonb:
-    return Jsonb(value)
+    return Jsonb(json_safe(value))
+
+
+def json_safe(value: Any) -> Any:
+    """What JSONB can store: NaN and ±inf become null (a metric that couldn't be computed), and NUL characters,
+    which Postgres text can't hold, are dropped."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, str):
+        return value.replace("\x00", "") if "\x00" in value else value
+    if isinstance(value, dict):
+        return {json_safe(k): json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(v) for v in value]
+    if isinstance(value, np.generic):
+        return json_safe(value.item())
+    return value
 
 
 def readonly_conninfo() -> str:

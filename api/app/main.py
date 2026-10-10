@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
-from . import auth, db, jobs
+from . import auth, db, jobs, processing
 from .config import get_settings
 from .routers import datasets, explore, exports, fields, query, runs
 from .semantics import option_catalog
@@ -29,6 +29,7 @@ async def lifespan(app: FastAPI):
         log.warning(auth.NO_PASSWORD)
     db.bootstrap()
     jobs.start()
+    processing.sweep_uploads()
     yield
     jobs.shutdown()
     db.close_pool()
