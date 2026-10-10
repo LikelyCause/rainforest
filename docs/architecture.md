@@ -265,10 +265,14 @@ state in Postgres, so any worker can serve the polling.
   runs and analyses whose owner doesn't hold its lock (found in `pg_locks`), however recently they reported progress. A sibling
   worker's jobs are never touched. A dataset that was only correlating new targets goes back to `ready` with a
   warning.
-* **Slots.** A queued job starts only once it holds one of `JOB_SLOTS` advisory locks (class `jobs.SLOT_LOCK`),
-  shared by every process, and runs with its native thread pools limited to `jobs.cpu_threads()`
+* **Slots.** A queued job starts only once it holds one of `JOB_SLOTS` advisory locks (class `jobs.SLOT_LOCK`, one by
+  default), shared by every process, and runs with its native thread pools limited to `jobs.cpu_threads()`
   (usable CPUs `// JOB_SLOTS`, at least 1). Model runs pass that as `n_jobs` to estimators that take one; Explore's t-SNE and
   mutual information use it too.
+* **Queue order.** `jobs.submit` takes a ticket from the `meta.job_ticket` sequence and locks it (class
+  `jobs.TICKET_LOCK`) on the owner connection. A waiting job takes a free slot only when no lower ticket is locked, then
+  releases its ticket, so jobs start in submission order across every process. A process that dies releases its
+  tickets with its connection.
 
 | Job | Entry point | State in |
 |---|---|---|
@@ -322,6 +326,7 @@ recreated from that file. Bootstrap also (re)creates the `rainforest_ro` role an
 | `008_team_assessment.sql` | `meta.recipes` (with the finalized-snapshot trigger), `dataset_assessors`, `assessments`, `assessment_settings`, `assessment_batches`, `review_comments`, `exports.recipe_id`, row-level security on `analyses`; every existing dataset becomes recipe v1 finalized by the first lead (bootstrap writes the snapshots) and its exports point at it |
 | `009_recipe_versions.sql` | `scope` and `reuse` on `meta.recipes`, `meta.recipe_reopened`; `recipes.parent_id` becomes `ON DELETE SET NULL` and the frozen-row trigger allows only that change on a finalized row |
 | `010_experiments.sql` | `meta.experiments`; `experiment_id` on `exports` and `model_runs`, `exports.snapshot`; `meta.import_orphan_experiments()`, which moves existing exports and runs into one *Imported* experiment per dataset; row-level security on `experiments`, `exports` and `model_runs`, and the `analyses` policy extended to results on exports |
+| `011_job_ticket.sql` | `meta.job_ticket`, the sequence that orders queued background jobs |
 
 Child tables reference `meta.datasets` with `ON DELETE CASCADE`; `DELETE /api/datasets/{id}` removes the rows and then
 the dataset's Parquet copy, raw table, export and model directories.

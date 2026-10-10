@@ -574,7 +574,7 @@ value is written `$$`.
 | `READONLY_PASSWORD` | rainforest_ro | password for the SQL console's `rainforest_ro` role |
 | `UI_PORT`, `API_PORT`, `DB_PORT` | 8080, 8000, 5432 | published ports (`API_PORT` and `DB_PORT` bind to 127.0.0.1) |
 | `API_WORKERS` / `JOB_WORKERS` | 2 / 2 | uvicorn workers / background job threads per worker |
-| `JOB_SLOTS` | 2 | background jobs running at once across all workers; each uses `cpu_count // JOB_SLOTS` threads |
+| `JOB_SLOTS` | 1 | background jobs running at once across all workers; each uses `cpu_count // JOB_SLOTS` threads, so the default gives one job every core |
 | `LOG_LEVEL` | info | API log level |
 | `RAINFOREST_AUTH_MODE` | `pick` | `oidc` for team deployments; `pick` lists users to choose from and doesn't authenticate (see [Sign-in](#sign-in)) |
 | `RAINFOREST_OIDC_ISSUER` | – | the provider's issuer URL, exactly as it appears in its tokens (e.g. `https://sso.example.com/realms/rainforest`). Required in `oidc` mode |
@@ -649,8 +649,9 @@ service (so nothing skips) and an MLflow server container, the UI typecheck, tes
 ## Operational notes and limits
 
 * **Background jobs** (ingest, target associations, export, training, Explore analyses) run in a thread pool inside
-  the API process, and their state lives in Postgres. At most `JOB_SLOTS` run at once across all workers; the rest
-  wait as *Queued*. Each job row records the process that runs it, and when a worker starts it fails the queued and
+  the API process, and their state lives in Postgres. At most `JOB_SLOTS` run at once across all workers (one by
+  default, using every core); the rest wait as *Queued* and start oldest first, so a quick job submitted behind a long
+  training run waits for it. Each job row records the process that runs it, and when a worker starts it fails the queued and
   running jobs of processes that are gone, leaving its siblings' jobs alone (an interrupted target-associations job
   leaves its dataset ready, with a warning to choose the targets again). For multi-node deployments, swap
   `app/jobs.py` for a queue (RQ, Celery, Arq).

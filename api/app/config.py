@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     job_workers: int = 2
     # Jobs running at once across every API worker process; each gets cpu_count // job_slots threads.
-    job_slots: int = 2
+    job_slots: int = 1
     log_level: str = "info"
     db_pool_max: int = 10
 
