@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, uploadDataset } from "../api";
-import { PROCESSING, useOptions } from "../hooks";
+import { PROCESSING, useMe, useOptions } from "../hooks";
 import { fmtAgo, fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
 import { ErrorAlert } from "../components/ui";
 import { showError, toast } from "../toast";
@@ -120,7 +120,7 @@ function TargetPicker({ ds, onClose }: { ds: Dataset; onClose: () => void }) {
   );
 }
 
-function RowMenu({ ds, onRename, onDelete }: { ds: Dataset; onRename: () => void; onDelete: () => void }) {
+function RowMenu({ ds, canDelete, onRename, onDelete }: { ds: Dataset; canDelete: boolean; onRename: () => void; onDelete: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -136,7 +136,8 @@ function RowMenu({ ds, onRename, onDelete }: { ds: Dataset; onRename: () => void
         <div className="popover" role="menu" onKeyDown={(e) => e.key === "Escape" && setOpen(false)}>
           <button type="button" role="menuitem" className="ghost menu-item" onClick={() => { setOpen(false); onRename(); }}>Rename</button>
           <button type="button" role="menuitem" className="ghost menu-item" style={{ color: "var(--bad)" }}
-            disabled={PROCESSING.has(ds.status)} onClick={() => { setOpen(false); onDelete(); }}>Delete…</button>
+            disabled={!canDelete || PROCESSING.has(ds.status)} title={canDelete ? undefined : "Only a lead can delete a dataset"}
+            onClick={() => { setOpen(false); onDelete(); }}>Delete…</button>
         </div>
       )}
     </div>
@@ -265,6 +266,7 @@ export function DatasetsPage() {
   const nav = useNavigate();
   const fileInput = useRef<HTMLInputElement>(null);
   const upload = useUpload();
+  const me = useMe();
   const [dragging, setDragging] = useState(false);
   // ?target=<dataset id> opens that dataset's target picker (linked from Explore).
   const [targetFor, setTargetFor] = useState<number | null>(() => Number(new URLSearchParams(window.location.search).get("target")) || null);
@@ -452,7 +454,7 @@ export function DatasetsPage() {
                       <td className="small-text muted" title={fmtDate(ds.updated_at)}>{fmtAgo(ds.updated_at)}</td>
                       <td onClick={(e) => e.stopPropagation()}>
                         <div className="row" style={{ flexWrap: "nowrap", gap: 2 }}>
-                          <RowMenu ds={ds} onRename={() => setRenaming(ds.id)} onDelete={() => setDeleting(ds)} />
+                          <RowMenu ds={ds} canDelete={me.data?.role === "lead"} onRename={() => setRenaming(ds.id)} onDelete={() => setDeleting(ds)} />
                           {ready && <span className="chevron" aria-hidden="true">→</span>}
                         </div>
                       </td>

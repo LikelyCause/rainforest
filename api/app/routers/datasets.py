@@ -10,6 +10,7 @@ import polars as pl
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 
 from .. import jobs
+from ..auth import CurrentUser, LeadUser
 from ..config import get_settings
 from ..correlations import target_associations
 from ..db import connection, execute, fetch_all, fetch_one
@@ -26,7 +27,7 @@ CORRELATED_TYPES = NUMERIC | {"datetime", "categorical", "binary"}
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 
 DATASET_COLS = """id, name, source_filename, file_format, target_columns, model_family, row_count, column_count, status,
-                  progress, status_message, error, warnings, created_at, updated_at, profiled_at, raw_table"""
+                  progress, status_message, error, warnings, created_at, updated_at, profiled_at, raw_table, created_by"""
 
 
 def _targets(raw: str | None) -> list[str]:
@@ -36,12 +37,13 @@ def _targets(raw: str | None) -> list[str]:
     return list(dict.fromkeys(t.strip() for t in raw.split(",") if t.strip()))
 
 
-def _create(name: str, filename: str | None, fmt: str, targets: list[str], upload_path: Path | None = None) -> dict:
+def _create(name: str, filename: str | None, fmt: str, targets: list[str], user_id: int,
+            upload_path: Path | None = None) -> dict:
     return fetch_one(
         f"""INSERT INTO meta.datasets (name, source_filename, file_format, target_columns, status, status_message,
-                                       owner, upload_path)
-            VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s) RETURNING {DATASET_COLS}""",
-        (name, filename, fmt, targets, jobs.owner_id(), None if upload_path is None else str(upload_path)),
+                                       owner, upload_path, created_by)
+            VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s, %s) RETURNING {DATASET_COLS}""",
+        (name, filename, fmt, targets, jobs.owner_id(), None if upload_path is None else str(upload_path), user_id),
     )
 
 
@@ -105,6 +107,7 @@ def headline_metric(status: str, order: list[str] | None, test: dict | None) -> 
 
 @router.post("/upload", status_code=202)
 def upload(
+    user: CurrentUser,
     file: UploadFile = File(...),
     name: str | None = Form(None),
     targets: str | None = Form(None, description="Comma-separated target columns"),
@@ -129,7 +132,7 @@ def upload(
         dest.unlink(missing_ok=True)
         raise HTTPException(400, "Uploaded file is empty")
     try:
-        ds = _create(name or Path(filename).stem, filename, fmt, _targets(targets), dest)
+        ds = _create(name or Path(filename).stem, filename, fmt, _targets(targets), user["id"], dest)
     except Exception:
         dest.unlink(missing_ok=True)
         raise
@@ -143,7 +146,7 @@ def sample_limits() -> dict:
 
 
 @router.post("/sample", status_code=202)
-def create_sample(req: SampleRequest) -> dict:
+def create_sample(req: SampleRequest, user: CurrentUser) -> dict:
     cap = get_settings().sample_max_cells
     if req.rows * req.fields > cap:
         raise HTTPException(
@@ -151,7 +154,7 @@ def create_sample(req: SampleRequest) -> dict:
                  f"{req.rows * req.fields:,}). With {req.fields} fields, use up to {cap // req.fields:,} rows.")
     ds = _create(
         req.name or f"sample-{req.rows // 1000}k-{req.fields}f-{req.target_kind}",
-        None, "generated", ["column_a", "column_b"],
+        None, "generated", ["column_a", "column_b"], user["id"],
     )
     jobs.submit(_generate_and_process, ds["id"], req.model_dump())
     return ds
@@ -187,7 +190,7 @@ def get_dataset(dataset_id: int) -> dict:
 
 
 @router.patch("/{dataset_id}")
-def update_dataset(dataset_id: int, body: DatasetPatch) -> dict:
+def update_dataset(dataset_id: int, body: DatasetPatch, user: CurrentUser) -> dict:
     """Rename a dataset, switch the model family its review settings are shown for, or choose its targets."""
     ds = get_dataset(dataset_id)
     if body.model_family is not None and body.model_family not in FAMILIES:
@@ -203,7 +206,7 @@ def update_dataset(dataset_id: int, body: DatasetPatch) -> dict:
             (body.model_family, body.name, dataset_id),
         )
         if body.target_columns is not None:
-            uncorrelated, added = set_targets(conn, dataset_id, list(dict.fromkeys(body.target_columns)))
+            uncorrelated, added = set_targets(conn, dataset_id, list(dict.fromkeys(body.target_columns)), user["id"])
             screen = added if added and has_screen_fields(conn, dataset_id) else []
             conn.execute(
                 """UPDATE meta.datasets SET warnings = array(
@@ -286,7 +289,7 @@ def correlate_targets(dataset_id: int, target_ids: list[int], screen_ids: list[i
 
 
 @router.delete("/{dataset_id}")
-def delete_dataset(dataset_id: int) -> dict:
+def delete_dataset(dataset_id: int, _: LeadUser) -> dict:
     """Delete a dataset with its fields, exports and model runs, including their files on disk."""
     s = get_settings()
     with connection() as conn:

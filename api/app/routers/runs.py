@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from .. import gpu, jobs
+from ..auth import CurrentUser
 from ..db import execute, fetch_all, fetch_one, jsonb
 from ..modeling.registry import MODELS, catalog, compatibility, param_problems
 from ..schemas import RunRequest
@@ -19,7 +20,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["models"])
 
 RUN_COLS = """id, export_id, dataset_id, model, family, status, status_message, error, config, metrics,
-              report - 'top_features' AS report, created_at, updated_at, finished_at"""
+              report - 'top_features' AS report, created_at, updated_at, finished_at, created_by"""
 
 
 @router.get("/models")
@@ -57,7 +58,7 @@ def models_for_export(export_id: int) -> list[dict]:
 
 
 @router.post("/exports/{export_id}/runs", status_code=202)
-def start_run(export_id: int, req: RunRequest) -> dict:
+def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
     exp, manifest = _export_manifest(export_id)
     spec = MODELS.get(req.model)
     if spec is None:
@@ -77,9 +78,10 @@ def start_run(export_id: int, req: RunRequest) -> dict:
     if req.order and sorted(req.order) != sorted(manifest["targets"]):
         raise HTTPException(422, f"order must be a permutation of {manifest['targets']}")
     run = fetch_one(
-        f"""INSERT INTO meta.model_runs (export_id, dataset_id, model, family, status, status_message, config, owner)
-            VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s) RETURNING {RUN_COLS}""",
-        (export_id, exp["dataset_id"], spec.key, spec.family, jsonb(req.model_dump()), jobs.owner_id()),
+        f"""INSERT INTO meta.model_runs (export_id, dataset_id, model, family, status, status_message, config, owner,
+                                         created_by)
+            VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s, %s) RETURNING {RUN_COLS}""",
+        (export_id, exp["dataset_id"], spec.key, spec.family, jsonb(req.model_dump()), jobs.owner_id(), user["id"]),
     )
     jobs.submit(_run, run["id"], exp["output_dir"], req.model_dump())
     return run

@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from .. import jobs
+from ..auth import CurrentUser
 from ..config import get_settings
 from ..db import execute, fetch_all, fetch_one, jsonb
 from ..schemas import ExportRequest
@@ -109,7 +110,7 @@ def _lone_class_problem(parquet_path: str | None, targets: list[str]) -> str | N
 
 
 @router.post("/datasets/{dataset_id}/exports", status_code=202)
-def start_export(dataset_id: int, req: ExportRequest) -> dict:
+def start_export(dataset_id: int, req: ExportRequest, user: CurrentUser) -> dict:
     ds = fetch_one("SELECT status FROM meta.datasets WHERE id = %s", (dataset_id,))
     if ds is None:
         raise HTTPException(404, "Dataset not found")
@@ -121,9 +122,9 @@ def start_export(dataset_id: int, req: ExportRequest) -> dict:
     if req.valid_size + req.test_size >= 0.9:
         raise HTTPException(422, "valid_size + test_size must be < 0.9")
     exp = fetch_one(
-        """INSERT INTO meta.exports (dataset_id, status, status_message, model_family, config, owner)
-           VALUES (%s, 'pending', 'Queued', %s, %s, %s) RETURNING *""",
-        (dataset_id, pv["family"], jsonb(req.model_dump(exclude={"model_family"})), jobs.owner_id()),
+        """INSERT INTO meta.exports (dataset_id, status, status_message, model_family, config, owner, created_by)
+           VALUES (%s, 'pending', 'Queued', %s, %s, %s, %s) RETURNING *""",
+        (dataset_id, pv["family"], jsonb(req.model_dump(exclude={"model_family"})), jobs.owner_id(), user["id"]),
     )
     jobs.submit(_run, exp["id"])
     return exp

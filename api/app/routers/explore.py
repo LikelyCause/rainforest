@@ -9,6 +9,7 @@ from scipy.spatial.distance import squareform
 
 from .. import jobs
 from ..analysis.runner import ROW_COLS, data_version, find_or_create, public, run_analysis
+from ..auth import CurrentUser
 from ..db import connection, fetch_all
 from ..schemas import AnalysisRequest, CorrelationQuery
 
@@ -49,13 +50,13 @@ def _validate_source(conn, dataset_id: int, params: dict) -> None:
 
 
 @router.post("/datasets/{dataset_id}/analyses")
-def request_analysis(dataset_id: int, req: AnalysisRequest) -> dict:
+def request_analysis(dataset_id: int, req: AnalysisRequest, user: CurrentUser) -> dict:
     """The cached result for these params if current, else the job computing it (started if needed)."""
     params = req.params.normalised(req.kind)
     with connection() as conn:
         _ready_dataset(conn, dataset_id, lock=True)  # serialises concurrent requests for one dataset
         _validate_source(conn, dataset_id, params)
-        row, created = find_or_create(conn, dataset_id, req.kind, params, req.recompute)
+        row, created = find_or_create(conn, dataset_id, req.kind, params, req.recompute, user["id"])
     if created:
         jobs.submit(run_analysis, row["id"])
     return row

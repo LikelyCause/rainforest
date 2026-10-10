@@ -14,7 +14,7 @@ from .prep import AnalysisError, NotEnough, prepare_export, prepare_raw
 log = logging.getLogger(__name__)
 
 ROW_COLS = """id, dataset_id, kind, params, status, progress, status_message, error, result, created_at, finished_at,
-              data_version"""
+              data_version, created_by"""
 KEEP_OLD = 3
 
 
@@ -45,7 +45,8 @@ def public(row: dict, current_version: str | None) -> dict:
     return out
 
 
-def find_or_create(conn, dataset_id: int, kind: str, params: dict, recompute: bool) -> tuple[dict, bool]:
+def find_or_create(conn, dataset_id: int, kind: str, params: dict, recompute: bool,
+                   user_id: int | None = None) -> tuple[dict, bool]:
     """(row, created). Call inside a transaction holding the dataset row lock."""
     key = params_key(params)
     version = data_version(conn, dataset_id, params["data"])
@@ -68,9 +69,10 @@ def find_or_create(conn, dataset_id: int, kind: str, params: dict, recompute: bo
         (dataset_id, kind),
     )
     row = conn.execute(
-        f"""INSERT INTO meta.analyses (dataset_id, kind, params, params_key, data_version, status_message, owner)
-            VALUES (%s, %s, %s, %s, %s, 'Queued', %s) RETURNING {ROW_COLS}""",
-        (dataset_id, kind, jsonb(params), key, version, jobs.owner_id()),
+        f"""INSERT INTO meta.analyses (dataset_id, kind, params, params_key, data_version, status_message, owner,
+                                       created_by)
+            VALUES (%s, %s, %s, %s, %s, 'Queued', %s, %s) RETURNING {ROW_COLS}""",
+        (dataset_id, kind, jsonb(params), key, version, jobs.owner_id(), user_id),
     ).fetchone()
     _prune(conn, dataset_id, kind, version)
     return public(row, version), True

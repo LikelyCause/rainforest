@@ -1,6 +1,7 @@
 import type {
   Analysis, AnalysisKind, AnalysisParams, CorrMatrix, BulkRequest, BulkResult, Correlation, Dataset, DecisionInput, Decision, ExportJob, ExportPreview, FieldFilter,
   FieldListItem, FieldResponse, ModelOption, ModelRun, OptionCatalog, SqlResult, SystemInfo, Device,
+  AuthConfig, Me, PickUser, Role, TeamUser,
 } from "./types";
 
 export class ApiError extends Error {
@@ -11,8 +12,12 @@ export class ApiError extends Error {
 
 /** Where to send the user back to after signing in; only same-app paths. */
 export function safeNext(next: string | null): string {
-  return next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/login") ? next : "/";
+  if (!next || !next.startsWith("/") || next.startsWith("//") || next.includes("\\")) return "/";
+  return next.startsWith("/login") || next.startsWith("/forbidden") ? "/" : next;
 }
+
+/** OIDC sign-in starts at the API, which redirects on to the provider. */
+export const oidcLoginUrl = (next: string) => `/api/auth/oidc/login?next=${encodeURIComponent(next)}`;
 
 let unauthorizedHandler = (next: string) => window.location.assign(`/login?next=${encodeURIComponent(next)}`);
 
@@ -31,7 +36,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: init?.body instanceof FormData ? init.headers : { "content-type": "application/json", ...init?.headers },
   });
-  if (res.status === 401 && path !== "/api/auth/login") signedOut();
+  if (res.status === 401) signedOut();
   if (res.status === 204) return undefined as T;
   const body = await res.json().catch(() => null);
   if (!res.ok) throw errorFromBody(res.status, body);
@@ -50,10 +55,17 @@ export function errorFromBody(status: number, body: any, fallback = `Request fai
 const json = (method: string, data: unknown): RequestInit => ({ method, body: JSON.stringify(data) });
 
 export const api = {
-  me: () => request<{ user: string }>("/api/auth/me"),
-  login: (username: string, password: string) =>
-    request<{ user: string }>("/api/auth/login", json("POST", { username, password })),
-  logout: () => request<void>("/api/auth/logout", { method: "POST" }),
+  me: () => request<Me>("/api/auth/me"),
+  authConfig: () => request<AuthConfig>("/api/auth/config"),
+  pickUsers: () => request<PickUser[]>("/api/auth/users"),
+  pick: (userId: number) => request<Me>("/api/auth/pick", json("POST", { user_id: userId })),
+  /** In OIDC mode `logout_url` ends the provider's session too; the browser should go there next. */
+  logout: () => request<{ logout_url: string | null }>("/api/auth/logout", { method: "POST" }),
+  users: () => request<TeamUser[]>("/api/users"),
+  createUser: (data: { name: string; email?: string | null; role: Role }) =>
+    request<TeamUser>("/api/users", json("POST", data)),
+  patchUser: (id: number, data: { name?: string; email?: string | null; role?: Role; active?: boolean }) =>
+    request<TeamUser>(`/api/users/${id}`, json("PATCH", data)),
   options: () => request<OptionCatalog>("/api/options"),
   datasets: () => request<Dataset[]>("/api/datasets"),
   dataset: (id: number) => request<Dataset>(`/api/datasets/${id}`),

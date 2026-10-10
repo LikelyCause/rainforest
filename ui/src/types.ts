@@ -406,3 +406,41 @@ export interface CorrMatrix {
   order: number[];
   cells: { a: number; b: number; method: CorrMethod; value: number; strength: number; n: number }[];
 }
+
+export type Role = "lead" | "member";
+export type AuthMode = "pick" | "oidc";
+
+export interface Me {
+  id: number;
+  name: string;
+  email: string | null;
+  role: Role;
+  mode: AuthMode;
+}
+
+export interface AuthConfig {
+  mode: AuthMode;
+  provider_name: string | null;
+  lead_group: string;
+  member_group: string;
+  /** Why sign-in can't work yet (OIDC settings missing), or null. */
+  problem: string | null;
+}
+
+export interface PickUser {
+  id: number;
+  name: string;
+  role: Role;
+}
+
+export interface TeamUser {
+  id: number;
+  name: string;
+  email: string | null;
+  role: Role;
+  active: boolean;
+  /** Signed in through the identity provider (OIDC mode); its name, email and role come from there. */
+  sso: boolean;
+  created_at: string;
+  last_seen_at: string | null;
+}

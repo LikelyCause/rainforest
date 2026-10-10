@@ -25,6 +25,8 @@ describe("safeNext", () => {
     expect(safeNext("//evil.example")).toBe("/");
     expect(safeNext("https://evil.example")).toBe("/");
     expect(safeNext("/login?next=/x")).toBe("/");
+    expect(safeNext("/forbidden?reason=no_group")).toBe("/");
+    expect(safeNext("/\\evil.example")).toBe("/");
     expect(safeNext(null)).toBe("/");
   });
 });

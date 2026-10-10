@@ -17,7 +17,9 @@ add things. For endpoints see [api.md](api.md); for usage see the [README](../RE
 | Module | Responsibility |
 |---|---|
 | `main.py` | App, middleware (gzip for API responses, not file downloads), router registration, `/health`, `/api/options`. Startup loads the session secret, runs `db.bootstrap()` and `jobs.start()`, removes orphaned uploads and starts GPU detection. |
-| `auth.py` | Sign-in (`/api/auth/*`), the signed session cookie, the session secret, the login rate limiter, and `SecurityMiddleware`. |
+| `auth.py` | Sign-in routes (`/api/auth/*`: pick mode and the OIDC login / callback), the signed session cookie, the session secret, `SecurityMiddleware`, and the `current_user` / `require_lead` dependencies. |
+| `oidc.py` | The OIDC relying party: discovery and JWKS (cached; an unknown key id refetches), the authorization URL with PKCE, the code exchange, ID token verification, role from the groups claim. Uses httpx and PyJWT. |
+| `users.py` | User queries: the per-request session lookup, OIDC provisioning, Team edits (with the last-lead guard and session-version bumps). |
 | `config.py` | `Settings` (pydantic-settings, read from the environment). |
 | `db.py` | Connection pools (the app's, and a small one for the console's read-only role), query helpers, migrations, read-only role setup. |
 | `jobs.py` | `submit(fn, *args)` onto a `ThreadPoolExecutor` of `JOB_WORKERS` threads; job ownership, the restart sweep and the global job slots. |
@@ -31,7 +33,7 @@ add things. For endpoints see [api.md](api.md); for usage see the [README](../RE
 | `modeling/registry.py`, `modeling/train.py` | Model catalog, compatibility and device params; `ClassifierChain` training, evaluation, CLI. |
 | `gpu.py` | NVIDIA GPU detection (`nvidia-smi` plus an XGBoost CUDA test fit in a subprocess), started in a background thread at startup and cached per process. |
 | `analysis/prep.py`, `analysis/compute.py`, `analysis/runner.py` | Explore jobs: sampling and typing, the numeric work, caching and job lifecycle. |
-| `routers/*.py` | HTTP endpoints, one module per area (datasets, fields, query, exports, runs, explore). |
+| `routers/*.py` | HTTP endpoints, one module per area (datasets, fields, query, exports, runs, explore, users). |
 | `sample_data.py` | Synthetic dataset generator (also a CLI: `python -m app.sample_data`). |
 | `schemas.py` | Request bodies and query models. |
 
@@ -39,16 +41,17 @@ add things. For endpoints see [api.md](api.md); for usage see the [README](../RE
 
 | Path | Responsibility |
 |---|---|
-| `App.tsx` | Routes, the sign-in gate (`RequireAuth`), and the top bar (dataset switcher, workflow steps, Model switch, Sign out). |
+| `App.tsx` | Routes, the sign-in gate (`RequireAuth`), and the top bar (dataset switcher, workflow steps, Model switch, Team, the user and role, Sign out). |
 | `api.ts`, `types.ts` | Typed fetch client for every endpoint; response types. Any `401` (fetch or the upload XHR) sends the user to `/login?next=<current path>`. |
-| `hooks.ts` | Shared queries (`useDataset`, `useFields`, `useOptions`) and `useDebounced`. |
+| `hooks.ts` | Shared queries (`useMe`, `useDataset`, `useFields`, `useOptions`) and `useDebounced`. |
 | `saveQueue.ts` | Review decision saves: one serial lane per field, latest draft wins, failures surface with Retry, flushes on page hide. |
-| `pages/` | `LoginPage`, `DatasetsPage`, `ReviewPage`, `BulkEditPage`, `ExplorePage`, `ExportPage`. |
+| `pages/` | `LoginPage` (user picker or *Sign in with …*), `ForbiddenPage` (OIDC user in neither group, or deactivated), `TeamPage`, `DatasetsPage`, `ReviewPage`, `BulkEditPage`, `ExplorePage`, `ExportPage`. |
 | `components/` | `DatasetLayout` (gates dataset pages on status), `FieldList`, `FieldDetailView`, `DecisionPanel`, `RunDetail`, `Chart`; `components/explore/` holds the four Explore views, their shared state (`state.tsx`) and chart options (`options.ts`). |
 | `signals.ts`, `format.ts`, `theme.ts`, `charts.ts`, `toast.tsx` | Field signal thresholds, formatting and labels, chart theming, toasts. |
 | `decision.ts`, `finder.ts`, `runs.ts`, `components/explore/params.ts` | Pure logic behind the pages: retyping a draft and encoder-param checks, Bulk edit's presets and URL state, run ranking, Explore's URL state. |
 
-Routes: `/login`, `/` (datasets), `/d/:id/review/:fieldId?`, `/d/:id/bulk`, `/d/:id/explore/:view?`, `/d/:id/export`.
+Routes: `/login`, `/forbidden`, `/` (datasets), `/team`, `/d/:id/review/:fieldId?`, `/d/:id/bulk`, `/d/:id/explore/:view?`,
+`/d/:id/export`.
 
 ## Request and data flow
 
@@ -59,15 +62,37 @@ Every request first passes `auth.SecurityMiddleware`, before routing (so file do
 2. **Unsafe methods** (`POST`, `PUT`, `PATCH`, `DELETE`): `Origin`, or failing that `Referer`, must be same-origin with
    `Host` or `X-Forwarded-Host`, or be the Vite dev server (`403`); requests with neither header are not from a
    browser and pass. A body must be `application/json`, or `multipart/form-data` on `/api/datasets/upload` (`415`).
-3. **Session.** Everything except `/health`, `/api/auth/login` and `/api/auth/logout` needs a valid `rf_session`
-   cookie (`401`), and nothing but those is served while `RAINFOREST_ADMIN_PASSWORD` is unset (`503`).
+3. **Session.** Everything except `/health` and the open sign-in paths (`auth.OPEN_PATHS`) needs a valid `rf_session`
+   cookie naming an active user whose session version still matches (one indexed lookup, run off the event loop;
+   `401`). The user `{id, name, email, role}` is left in `request.state.user`. In `oidc` mode with settings missing,
+   nothing but those paths is served (`503`).
 
-The cookie is `base64(claims).HMAC`, with claims `{u, exp}`. The HMAC key is derived from the session secret plus the
-admin user and password, so changing either invalidates every session. The secret comes from
-`RAINFOREST_SESSION_SECRET` or is generated once into `DATA_DIR/session_secret` (mode 600; created with an atomic
-link so concurrent workers agree). It is deliberately not in Postgres, where the console's read-only role could read
-it. nginx forwards `Host` with its port and `X-Forwarded-Proto`, which the origin check and the cookie's `Secure`
-flag rely on.
+Routes take the user through the `CurrentUser` / `LeadUser` dependencies (`Annotated` aliases of `current_user` and
+`require_lead` in `auth.py`); `LeadUser` answers members with `403`. Writes pass `user["id"]` to the row they create.
+
+The cookie is `base64(claims).HMAC`, with claims `{u, v, exp}`: user id, session version, expiry. Deactivating a user
+or changing their role increments `meta.users.session_version`, which ends their sessions on the next request. Each
+use of the signing key has its own derived key (`session`, `oidc-state`, `pkce`, `nonce`), so a value signed for one
+can't pass as another. The secret comes from `RAINFOREST_SESSION_SECRET` or is generated once into
+`DATA_DIR/session_secret` (mode 600; created with an atomic link so concurrent workers agree). It is deliberately not
+in Postgres, where the console's read-only role could read it. nginx forwards `Host` with its port and
+`X-Forwarded-Proto`, which the origin check and the cookie's `Secure` flag rely on.
+
+**OIDC sign-in.** `/api/auth/oidc/login` makes a random `state`, puts it with the return path in the signed `rf_oidc`
+cookie, derives the PKCE verifier and the nonce from it (HMAC with the secret), and redirects to the provider. The
+callback checks `state` against the cookie, exchanges the code at the token endpoint with the verifier and client
+secret, verifies the ID token (`oidc.verify_id_token`) and calls `users.sign_in_oidc`, which finds the user by subject,
+creates or refreshes them, and refuses deactivated users and users in neither group. Nothing from the provider is kept
+but the subject, name, email and role. The state cookie is `SameSite=Lax` because the provider's redirect back is a
+cross-site navigation, which doesn't carry `Strict` cookies; the session cookie stays `Strict`, since the callback sets
+it and only same-site requests from the app need it. Cross-site writes are refused by the origin check either way.
+
+Discovery is read from `RAINFOREST_OIDC_DISCOVERY_URL` when set (else the issuer's `/.well-known` URL) and its
+`issuer` must equal `RAINFOREST_OIDC_ISSUER`. That split exists for Docker: browsers and token issuers use the
+external URL, while the API container reaches the provider on an internal name. In the Keycloak profile, Keycloak's
+`KC_HOSTNAME` is the external URL and `KC_HOSTNAME_BACKCHANNEL_DYNAMIC` makes the discovery it serves on
+`http://keycloak:8080` list the token and JWKS endpoints on that name, while the issuer and the authorization and
+end-session endpoints stay external.
 
 Requests are synchronous SQL against Postgres except where noted. Long work returns `202` with a row whose `status`
 the UI polls (`pending → running → done | failed`, with `progress` and `status_message`).
@@ -171,6 +196,7 @@ recreated from that file. Bootstrap also (re)creates the `rainforest_ro` role an
 | `003_analyses.sql` | `meta.analyses` |
 | `004_job_owner.sql` | `owner` on `meta.datasets`, `exports`, `model_runs` and `analyses` |
 | `005_upload_path.sql` | `upload_path` on `meta.datasets` |
+| `007_users.sql` | `meta.users` (with the first lead, *Admin*); `user_id` on `decision_history` and `bulk_batches`, `created_by` on `datasets`, `exports`, `model_runs` and `analyses`, backfilled to the first lead |
 
 Child tables reference `meta.datasets` with `ON DELETE CASCADE`; `DELETE /api/datasets/{id}` removes the rows and then
 the dataset's Parquet copy, raw table, export and model directories.
@@ -202,14 +228,18 @@ dataset from `useDatasetContext()`, and `DatasetLayout` handles loading, process
 mutations that change what it shows (see the `invalidate` helper in `BulkEditPage.tsx`).
 
 **An endpoint.** Add it to the matching `routers/*.py` module (or a new router registered in `main.py`), with request
-bodies in `schemas.py`, and list it in [api.md](api.md).
+bodies in `schemas.py`, and list it in [api.md](api.md). Take `user: CurrentUser` to know who is acting (and record
+`user["id"]` on rows it creates), or `_: LeadUser` for lead-only actions.
 
 ## Testing and CI
 
 `api/tests` uses pytest. `conftest.py` provides a generated sample Parquet (most tests are pure functions over it) and
-the session-scoped `admin_login` fixture, which sets the admin credentials and signs a `TestClient` in. `test_auth.py`
-drives the app without its startup hook, so it needs no database. The API tests in `test_explore.py`,
-`test_sql_console.py`, `test_data_correctness.py` and `test_api_cleanup.py` start the app against
+the session-scoped `login_as(client, role="lead", name=None)` fixture, which signs a `TestClient` in through pick mode
+as the built-in Admin (a lead) or a user with that role, created on first use. `test_auth.py` drives the app without
+its startup hook and with an in-memory user store, so it needs no database. `test_oidc.py` runs OIDC against an
+in-process provider (`tests/oidc_provider.py`, served through `httpx.MockTransport` by setting `oidc.transport`): the
+redirect and token checks need no database, the provisioning flows do. The API tests in `test_explore.py`,
+`test_sql_console.py`, `test_data_correctness.py`, `test_api_cleanup.py` and `test_users.py` start the app against
 `RAINFOREST_TEST_DATABASE_URL` and skip without it. `make test` runs the suite locally, `make test-db` runs it
 against a throwaway `postgres:16` container.
 
