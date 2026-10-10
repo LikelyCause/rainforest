@@ -226,7 +226,7 @@ Replace the two `if is_target …` blocks:
         t = "binary" if n_unique == 2 else "categorical"
 ```
 
-  Order matters for numeric columns that inference calls `identifier` (whole numbers, almost all unique, e.g. whole-dollar prices): before these two blocks, when `is_target and t == "identifier" and s.dtype.is_numeric()`, set `t = "numeric_continuous"` with the reason "target column; whole numbers that are almost all distinct, treated as a number". Test: `_profile(list(range(1000, 6000)), "price", is_target=True)` is a target typed `numeric_continuous`.
+  Order matters for numeric columns that inference calls `identifier` (whole numbers, almost all unique, e.g. whole-dollar prices): before these two blocks, when `is_target and t in ("identifier", "datetime") and s.dtype.is_numeric()` (almost-all-distinct whole numbers, or integers that look like YYYYMMDD dates or Unix times), set `t = "numeric_continuous"` with the reason "target column; whole numbers that are almost all distinct, treated as a number". Test: `_profile(list(range(1000, 6000)), "price", is_target=True)` is a target typed `numeric_continuous`.
 
   `processing.py:104-106`'s warning becomes "Not used as target(s): {names} (text, identifiers and dates can't be targets, nor labels with more than 100 values)".
 
@@ -843,7 +843,7 @@ def edges_for(bins: dict, train_values: np.ndarray) -> list[float]:
 
 
 def _num(v: float) -> str:
-    return f"{v:g}"
+    return f"{v:.12g}"
 
 
 def band_labels(edges: list[float]) -> list[str]:
@@ -928,7 +928,7 @@ Test: `assert thin_bands(np.array([1.0, 2, 3, 50, 60]), [10, 20]) == ["[10, 20)"
     y_enc = y_enc[targets]
 ```
 
-  The rule is "every band has at least 2 rows among the exported rows"; a band missing from the training rows alone is reported by training as today (`missing_from_train`), except that it must not reach XGBoost with a gap, so `train()` refuses a run whose class target lacks a class in training **for XGBoost only** with "XGBoost needs every class in the training rows: {t} lacks …" (add that check next to `missing_from_train` in Task 6). Import `coerce_numeric` from `.profiling` (check for an import cycle; if `profiling` imports `transform`, move the import inside `run_export`).
+  The rule is "every band has at least 2 rows among the exported rows"; a band missing from the training rows alone is reported by training as today (`missing_from_train`), except that it must not reach XGBoost with a gap, so `train()` refuses a run whose class target lacks a class in training **for XGBoost only** with "XGBoost needs every class in the training rows: {t} lacks …" (add that check next to `missing_from_train` in Task 6). `coerce_numeric` is already imported in `transform.py`.
 
   Add a test to `test_export_transforms.py`:
 
@@ -964,7 +964,7 @@ def test_export_refuses_an_empty_band(tmp_path):
 
 - [ ] **Step 5: exports router**
 
-`export_spec` returns `(specs, targets, tasks)` where `tasks = {t: {**v, "decimal_comma": <the field's stats decimal_comma>} for t, v in recipes.snapshot_target_tasks(snap).items()}` (read `coalesce((stats ->> 'decimal_comma')::boolean, false)` for the target names, as `spec_rows` does for features); `_run` passes `target_tasks=tasks` and adds `"target_tasks": manifest["target_tasks"]` to the summary. Every other caller of `export_spec` (grep) unpacks three values. `_preview_of`: `tasks = recipes.snapshot_target_tasks(snap)`; return `"target_tasks": {t: v["task"] for t, v in tasks.items()}`; `_lone_class_problem` gets only the `classes` targets; for a `bins` target with explicit edges, add a blocking line naming the bands with fewer than 2 rows in the column (`bands.thin_bands` on the column read with `coerce_numeric`); a regression target with fewer than 2 distinct values blocks with "has a single value".
+`export_spec` returns `(specs, targets, tasks)` where `tasks = {t: {**v, "decimal_comma": <the field's stats decimal_comma>} for t, v in recipes.snapshot_target_tasks(snap).items()}` (read `coalesce((stats ->> 'decimal_comma')::boolean, false)` for the target names, as `spec_rows` does for features); `_run` passes `target_tasks=tasks` and adds `"target_tasks": manifest["target_tasks"]` to the summary. Every other caller of `export_spec` (grep) unpacks three values. `_preview_of`: `tasks = recipes.snapshot_target_tasks(snap)`; return `"target_tasks": {t: v["task"] for t, v in tasks.items()}`; `_lone_class_problem` gets only the `classes` targets; for a `bins` target with explicit edges, add a blocking line naming the bands with fewer than 2 rows in the column (`bands.thin_bands` on the column read with `coerce_numeric`); a regression target with fewer than 2 distinct values blocks with "has a single value"; a numeric target with values that don't read as numbers blocks with the same message `run_export` raises (count them with `coerce_numeric` as there), so nobody learns it from a failed export. Placeholder strings like "?" or "NA" are a reason to fix the data, not to drop rows silently from a target.
 
 - [ ] **Step 6: band preview endpoint (`routers/fields.py`)**
 
@@ -1053,7 +1053,7 @@ Open PR A (`regression-a` branch from main with the spec and plan commits), wait
 - Test: `api/tests/test_registry.py` (create if absent; else the file that tests `param_problems`)
 
 **Interfaces:**
-- Produces: `ModelSpec.build_regressor: Callable[[dict, int], Any] | None`, `ModelSpec.regressor_defaults: dict` (default `{}`); `registry.CLASSIFIER_ONLY` (parameter names that only make sense for a classifier); `registry.regressor_params(spec, params: dict) -> dict` (keeps only parameters the regressor accepts, LightGBM's native aliases included, minus `CLASSIFIER_ONLY`); `registry.regression_problem(spec, kinds: list[str]) -> str | None`; `importances` handles 1-D `coef_`.
+- Produces: `modeling/xgb_compact.py` `CompactXGBClassifier` (XGBClassifier that renumbers the labels it is fitted on to 0..k-1 and reports the original ones in `classes_`), used by the `xgboost` spec's classifier builder; `ModelSpec.build_regressor: Callable[[dict, int], Any] | None`, `ModelSpec.regressor_defaults: dict` (default `{}`); `registry.CLASSIFIER_ONLY` (parameter names that only make sense for a classifier); `registry.regressor_params(spec, params: dict) -> dict` (keeps only parameters the regressor accepts, LightGBM's native aliases included, minus `CLASSIFIER_ONLY`); `registry.regression_problem(spec, kinds: list[str]) -> str | None`; `importances` handles 1-D `coef_`.
 
 - [ ] **Step 1: Failing tests**
 
@@ -1076,7 +1076,8 @@ def test_every_model_builds_a_regressor_that_fits(key):
 def test_classifier_only_parameters_are_left_out():
     assert "C" not in regressor_params(MODELS["logistic_regression"], {"C": 2.0, "max_iter": 50})
     assert regressor_params(MODELS["lightgbm"], {"class_weight": "balanced", "is_unbalance": True,
-                                                 "objective": "binary", "min_data_in_leaf": 5}) == {"min_data_in_leaf": 5}
+                                                 "objective": "binary", "application": "binary",
+                                                 "min_data_in_leaf": 5}) == {"min_data_in_leaf": 5}
     assert regressor_params(MODELS["xgboost"], {"scale_pos_weight": 3, "max_depth": 4}) == {"max_depth": 4}
 
 
@@ -1091,9 +1092,54 @@ def test_ridge_importances_are_per_feature():
     assert importances(MODELS["logistic_regression"], est, list("abcd")).shape == (4,)
 ```
 
+And (skipped when xgboost isn't installed):
+
+```python
+def test_xgboost_classifier_takes_labels_with_gaps():
+    pytest.importorskip("xgboost")
+    from sklearn.model_selection import cross_val_predict
+    from sklearn.multioutput import ClassifierChain
+    est = MODELS["xgboost"].build({"n_estimators": 5}, 0)
+    X = np.random.default_rng(0).normal(size=(200, 3))
+    y = np.r_[np.zeros(100), [1], np.full(99, 2)].astype(int)
+    est.fit(X[y != 1], y[y != 1])
+    assert est.classes_.tolist() == [0, 2] and set(est.predict(X)) <= {0, 2}
+    assert est.predict_proba(X).shape == (200, 2)
+    chain = ClassifierChain(MODELS["xgboost"].build({"n_estimators": 5}, 0), cv=5, chain_method="predict")
+    chain.fit(X, np.column_stack([y, (X[:, 0] > 0).astype(int)]))
+```
+
 - [ ] **Step 2: Run** `"$PT" tests/test_registry.py` → FAIL (ImportError).
 
 - [ ] **Step 3: Implement**
+
+`api/app/modeling/xgb_compact.py` (its own module so the registry still imports without xgboost, and so pickled models load by a stable path):
+
+```python
+"""XGBClassifier for labels with gaps. XGBoost wants classes 0..k-1, but a chain's folds, or a band with no
+training rows, can leave a target with classes {0, 2}; scikit-learn's classifiers accept that."""
+import numpy as np
+from xgboost import XGBClassifier
+
+
+class CompactXGBClassifier(XGBClassifier):
+    def fit(self, X, y, **kw):
+        labels = np.unique(y)
+        self.__dict__.pop("labels_", None)  # XGBoost reads classes_ during fit; it must be its own until then
+        super().fit(X, np.searchsorted(labels, y), **kw)
+        self.labels_ = labels
+        return self
+
+    @property
+    def classes_(self):
+        labels = self.__dict__.get("labels_")
+        return labels if labels is not None else XGBClassifier.classes_.fget(self)
+
+    def predict(self, X, **kw):
+        return self.labels_[np.asarray(super().predict(X, **kw), dtype=int)]
+```
+
+  `_xgboost` builds `CompactXGBClassifier` (import inside the function). Prototyped against xgboost 3.4.1: `get_params()` matches `XGBClassifier`'s, labels {0, 2} fit and predict, a cross-validated `ClassifierChain` with a one-row middle class fits, and the chain pickles.
 
 Builders `_lightgbm_reg` (`LGBMRegressor`), `_xgboost_reg` (`XGBRegressor`), `_hgb_reg` (`HistGradientBoostingRegressor`), `_random_forest_reg` (`RandomForestRegressor`), `_ridge` (`Ridge(**params)`; Ridge takes `random_state` only for some solvers, so pass `random_state=seed`), `_mlp_reg` (`MLPRegressor`). Each `ModelSpec` in `MODELS` gets `build_regressor=…`; logistic regression gets `regressor_defaults={"alpha": 1.0}`; `description` stays the classifier's. Update the module docstring's first line to "every model that can sit in a target chain".
 
@@ -1110,7 +1156,18 @@ def regressor_params(spec: ModelSpec, params: dict[str, Any]) -> dict[str, Any]:
     known = set(spec.build_regressor({}, 0).get_params())
     if spec.key == "lightgbm":
         known |= _lightgbm_native_params()
-    return {k: v for k, v in params.items() if k in known and k not in CLASSIFIER_ONLY}
+    return {k: v for k, v in params.items() if k in known and k not in _classifier_only(spec)}
+
+
+def _classifier_only(spec: ModelSpec) -> set[str]:
+    """CLASSIFIER_ONLY plus LightGBM's aliases of those names (application, app, objective_type, loss, …)."""
+    if spec.key != "lightgbm":
+        return CLASSIFIER_ONLY
+    try:
+        from lightgbm.basic import _ConfigAliases
+        return CLASSIFIER_ONLY | {a for k in CLASSIFIER_ONLY for a in _ConfigAliases.get(k)}
+    except Exception:  # noqa: BLE001 - private API, as in _lightgbm_native_params
+        return CLASSIFIER_ONLY
 
 
 def regression_problem(spec: ModelSpec, kinds: list[str]) -> str | None:
@@ -1323,7 +1380,7 @@ In `train()`:
 - `xy` returns `Y` as `float64` (`.astype(np.float64)`);
 - class checks run only on class targets; a regression target with fewer than 2 distinct training values raises `ValueError(f"Target {t!r} has a single value in the training split; there is nothing to predict.")`;
 - `n_classes = [0 if r else len(manifest["target_classes"][t]) for t, r in zip(targets, regression)]`;
-- XGBoost refuses class labels with gaps: when `spec.key == "xgboost"` and `missing_from_train` is non-empty, raise `ValueError(f"XGBoost needs every class of a target in the training rows; missing: {...}")` naming target and classes (test: an export whose rare class lands only in validation, trained with xgboost, raises this message);
+- XGBoost refuses class labels with gaps (a band or class missing from the training rows, or from one cross-validation fold of a chain): Task 5's `CompactXGBClassifier` handles that, so `train()` needs no XGBoost-specific check;
 - when `any(regression)`: `if problem := regression_problem(spec, kinds): raise ValueError(problem)`; build `TargetChain(spec.build(merged, seed), spec.build_regressor({**spec.regressor_defaults, **regressor_params(spec, merged)}, seed), kinds, order, cv, spec.handles_nan)` where `merged = {**spec.default_params, **params}`; fit with `chain.fit(X_tr, Y_tr)`;
 - else today's `build_chain(...)` and `chain.fit(X_tr, Y_tr.astype(np.int64))`;
 - evaluation: a target chain uses `outs = chain.predict_all(X, n_classes)` and per target `evaluate_regression(Y[:, i], outs[i], seed)` or `evaluate(Y[:, i].astype(int), outs[i], labels)`; the classifier-chain path is unchanged (cast `Y` to int there);
@@ -1491,7 +1548,7 @@ where `task = draft.target_task ?? defaultTask(draft.semantic_type, f.n_unique)`
 
 `DatasetsPage.tsx`: replace its local eligibility function with `eligibleTarget` from `baselines.ts`.
 
-`DatasetTeamPage.tsx`: the assessor comparison builds rows with `line(...)` and marks differing ones with `differing([...])`; add a *Predict as* line (shown when any assessor made the field a target) whose value per assessor is `bandsText(a)` = `taskLabel(a.target_task)` plus ` · ${k} equal-sized` or ` · cut at ${edges.join(", ")}`, and include it in `differing`, so a disagreement on the task alone shows what differs. `ReviewPage.tsx` needs no change. Add a vitest for `bandsText` in `recipes.test.ts` (`{target_task:"bins", target_bins:{k:4}}` → `"Bands · 4 equal-sized"`).
+`DatasetTeamPage.tsx`: the assessor comparison builds rows with `line(...)` and marks differing ones with `differing([...])`; add a *Predict as* line (shown when any assessor made the field a target) whose value per assessor is `bandsText(a)` = `taskLabel(a.target_task)` plus ` · ${k} equal-sized` or ` · cut at ${edges.join(", ")}`, and include it in `differing`, so a disagreement on the task alone shows what differs. `differing()` compares the `flat` objects (`DatasetTeamPage.tsx:300-304`, `team.ts:47`), so each `flat` entry also gets `target: bandsText(r)` and `differing` is called with `"target"` in its key list. `ReviewPage.tsx` needs no change. Add a vitest for `bandsText` in `recipes.test.ts` (`{target_task:"bins", target_bins:{k:4}}` → `"Bands · 4 equal-sized"`).
 
 `experiments.ts`: `revertedInput` copies `target_task`/`target_bins` from the baseline; `baselineDiff` adds `"target_task"` to the compared keys; the `BaselineLine` text includes the task when it differs.
 
