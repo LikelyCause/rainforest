@@ -527,6 +527,8 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--cv", type=int, default=5,
                     help="folds for out-of-fold chain features: 0 chains the ground truth, else 2 or more")
+    ap.add_argument("--cv-folds", type=int, default=0,
+                    help="cross-validate on K folds of the training rows: 0 for none (default), else 2-20")
     ap.add_argument("--param", action="append", default=[], metavar="KEY=VALUE",
                     help="override a model parameter, e.g. --param n_estimators=1000 (repeatable)")
     ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"], help="cuda needs the GPU image (XGBoost only)")
@@ -552,7 +554,7 @@ def main() -> None:
         except json.JSONDecodeError:
             overrides[k] = v
     report = train(export_dir, args.model, args.order.split(",") if args.order else None, args.seed, overrides,
-                   args.cv or None, device=args.device)
+                   args.cv or None, device=args.device, cv_folds=args.cv_folds)
     print(json.dumps({k: report[k] for k in ("model_dir", "model", "device", "order", "chain_method", "n_train",
                                              "metrics")},
                      indent=2))

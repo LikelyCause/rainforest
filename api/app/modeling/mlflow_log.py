@@ -53,6 +53,7 @@ def run_params(report: dict) -> dict[str, str]:
         "model": report.get("model"),
         "order": ",".join(report.get("order") or []),
         "cv": report.get("cv") or 0,
+        "cv_folds": report.get("cv_folds") or 0,
         "device": report.get("device", "cpu"),
         "chain_method": report.get("chain_method"),
         "export_family": report.get("export_family"),
@@ -77,6 +78,10 @@ def run_metrics(report: dict) -> dict[str, float]:
             for name, v in values.items():
                 if isinstance(v, (int, float)) and math.isfinite(v):
                     out[_key(split, target, name)] = float(v)
+    for target, values in ((report.get("cross_validation") or {}).get("targets") or {}).items():
+        for name, s in values.items():
+            if isinstance(s.get("std"), (int, float)) and math.isfinite(s["std"]):
+                out[_key("cv_std", target, name)] = float(s["std"])
     if isinstance(report.get("fit_seconds"), (int, float)):
         out["fit_seconds"] = float(report["fit_seconds"])
     return out

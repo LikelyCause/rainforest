@@ -181,7 +181,8 @@ def _run(run_id: int, export_dir: str, req: dict) -> None:
         if "n_jobs" in MODELS[req["model"]].default_params:
             params = {"n_jobs": jobs.cpu_threads(), **params}
         report = train(Path(export_dir), req["model"], req.get("order"), req["seed"], params,
-                       req["cv"] or None, out_dir, progress, device=req.get("device", "cpu"))
+                       req["cv"] or None, out_dir, progress, device=req.get("device", "cpu"),
+                       cv_folds=req.get("cv_folds", 0))
         if mlflow_log.enabled():
             with connection() as conn:
                 # MLflow has no access control, so a private experiment's run is logged once review opens.

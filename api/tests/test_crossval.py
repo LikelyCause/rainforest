@@ -80,3 +80,24 @@ def test_a_fold_without_a_class_skips_cross_validation_not_the_run(tmp_path, mon
                    out_dir=tmp_path / "m", cv_folds=5)
     assert report["cross_validation"]["folds"] == 0 and "skipped" in report["cross_validation"]["note"]
     assert "cv" not in report["metrics"] and "test" in report["metrics"]
+
+
+def test_runs_take_cv_folds_from_0_or_2_to_20_default_5():
+    from pydantic import ValidationError
+
+    from app.schemas import RunRequest
+
+    assert RunRequest().cv_folds == 5 and RunRequest(cv_folds=0).cv_folds == 0 and RunRequest(cv_folds=20).cv_folds == 20
+    for bad in (1, 21, -1):
+        with pytest.raises(ValidationError):
+            RunRequest(cv_folds=bad)
+
+
+def test_mlflow_logs_cross_validation_means_spreads_and_folds():
+    from app.modeling.mlflow_log import run_metrics, run_params
+
+    report = {"metrics": {"cv": {"y": {"roc_auc": 0.9}}}, "cv_folds": 5,
+              "cross_validation": {"folds": 5, "targets": {"y": {"roc_auc": {"mean": 0.9, "std": 0.02, "folds": []}}}}}
+    m = run_metrics(report)
+    assert m["cv.y.roc_auc"] == 0.9 and m["cv_std.y.roc_auc"] == 0.02
+    assert run_params(report)["cv_folds"] == "5" and run_params({"model": "x"})["cv_folds"] == "0"
