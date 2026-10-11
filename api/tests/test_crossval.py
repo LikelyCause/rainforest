@@ -71,7 +71,7 @@ def test_cross_validation_off_reports_none(tmp_path):
 def test_a_fold_without_a_class_skips_cross_validation_not_the_run(tmp_path, monkeypatch):
     from app.modeling import crossval
 
-    def minority_held_out(y, n, k, seed, name):
+    def minority_held_out(y, n, k, seed, name, groups=None):
         rest = np.flatnonzero(y == 0)
         return [(rest[: len(rest) // 2], np.flatnonzero(y == 1))] * k, None, False
 
@@ -128,7 +128,7 @@ def _rare_chain_export(tmp_path):
 def test_a_fold_that_fails_skips_cross_validation_not_the_run(tmp_path, monkeypatch):
     from app.modeling import crossval
 
-    def one_rare_row_in_training(y, n, k, seed, name):
+    def one_rare_row_in_training(y, n, k, seed, name, groups=None):
         rare, common = np.flatnonzero(y == 1), np.flatnonzero(y == 0)
         rows = np.concatenate([rare[:1], common])
         return [(rows, rare[1:])] * k, None, True
@@ -146,7 +146,7 @@ def test_a_fold_without_a_class_is_found_before_any_fold_is_fitted(tmp_path, mon
 
     real = crossval.folds
 
-    def last_fold_loses_a_class(y, n, k, seed, name):
+    def last_fold_loses_a_class(y, n, k, seed, name, groups=None):
         out, note, strat = real(y, n, k, seed, name)
         ones = np.flatnonzero(y == 1)
         return out[:-1] + [(np.setdiff1d(np.arange(n), ones), ones)], note, strat
@@ -184,7 +184,7 @@ def test_a_class_missing_from_a_folds_training_rows_still_scores(tmp_path, monke
     run_export(tmp_path / "d.parquet", [_spec("x", "numeric_continuous")], ["m"], tmp_path / "e", {"seed": 3},
                lambda *_: None, target_tasks={"m": {"task": "classes", "bins": None}})
 
-    def third_class_held_out(y, n, k, seed, name):
+    def third_class_held_out(y, n, k, seed, name, groups=None):
         rare = np.flatnonzero(y == 2)
         rest = np.setdiff1d(np.arange(n), rare)
         cut = len(rest) * 4 // 5

@@ -177,14 +177,30 @@ def target_problem(t: str, n_unique: int | None, task: str | None = None) -> str
             return (f"{n_unique:,} distinct values; predicting classes allows at most {MAX_TARGET_LEVELS}"
                     + ("" if t in ("binary", "categorical") else " (predict it as a number or as bands instead)"))
         return None
+    if task == "bins" and t in ("binary", "categorical"):
+        return None  # one level (or several) against the rest: bins = {"positive": [...]}
     if t not in NUMERIC:
         return f"only a numeric field can be predicted as {'a number' if task == 'regression' else 'bands'}"
     return None
 
 
+def grouped_target(spec: dict | None) -> list[str] | None:
+    """The positive classes of a class target predicted one-vs-rest, or None."""
+    bins = (spec or {}).get("bins") or {}
+    return list(bins["positive"]) if (spec or {}).get("task") == "bins" and "positive" in bins else None
+
+
+GROUP_REST = "rest"
+
+
 def bins_problem(bins: dict | None) -> str | None:
     """What's wrong with a bands setting: exactly one of `k` (2-20 equal-count bands) or `edges` (1-19 ascending cut
     points)."""
+    if isinstance(bins, dict) and set(bins) == {"positive"}:
+        pos = bins["positive"]
+        if not isinstance(pos, list) or not pos or len(pos) > MAX_TARGET_LEVELS or not all(isinstance(v, str) and v for v in pos):
+            return "choose at least one class to predict against the rest"
+        return None
     if not isinstance(bins, dict) or len(bins) != 1 or not ({"k", "edges"} & set(bins)):
         return "bands need either a count (k) or cut points (edges)"
     if "k" in bins:
@@ -269,8 +285,12 @@ def validate_decision(d: dict[str, Any], family: str = DEFAULT_FAMILY, n_unique:
         if problem := target_problem(t, n_unique, d.get("target_task")):
             errors.append(problem)
         elif (d.get("target_task") or default_task(t, n_unique)) == "bins" and d.get("target_bins") is not None:
+            grouped = isinstance(d.get("target_bins"), dict) and "positive" in d["target_bins"]
             if problem := bins_problem(d.get("target_bins")):
                 errors.append(problem)
+            elif grouped != (t in ("binary", "categorical")):
+                errors.append("a class field is predicted against the rest by choosing its positive classes; a number "
+                              "is cut into bands" if grouped else "choose the class(es) to predict against the rest")
     if d.get("action") in ("drop", "target"):
         return errors
     a = allowed(t, family)

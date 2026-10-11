@@ -18,7 +18,7 @@ from ..config import get_settings
 from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..leakage import leak_names
 from ..schemas import ExportRequest
-from ..semantics import FAMILIES, NON_FEATURE_TYPES, validate_decision
+from ..semantics import FAMILIES, NON_FEATURE_TYPES, validate_decision, grouped_target
 from ..profiling import coerce_numeric
 from ..transform import FieldSpec, check_target_classes, run_export
 from .fields import _same_settings
@@ -204,7 +204,7 @@ def _preview_of(conn, dataset_id: int, user: dict, recipe: dict, snap: dict, x: 
 def _numeric_target_problems(parquet_path: str | None, tasks: dict[str, dict]) -> list[str]:
     """The export's own checks on numbers and bands, run on the whole column now rather than after queueing (bands
     with equal-sized counts are cut on the training rows then, so only chosen cut points are checked here)."""
-    numeric = [t for t, v in tasks.items() if v["task"] != "classes"]
+    numeric = [t for t, v in tasks.items() if v["task"] != "classes" and not grouped_target(v)]
     if not numeric or not parquet_path or not Path(parquet_path).exists():
         return []
     out = []
@@ -282,6 +282,12 @@ def start_export(dataset_id: int, req: ExportRequest, user: CurrentUser) -> dict
                 raise HTTPException(409, problem)
             snap = experiments.snapshot_for(conn, x)
         pv = _preview_of(conn, dataset_id, user, recipe, snap, x, req.model_family)
+        names = {r["name"] for r in conn.execute("SELECT name FROM meta.fields WHERE dataset_id = %s",
+                                                 (dataset_id,)).fetchall()}
+        named = [r.field for r in req.exclude] + ([req.first_per.key] if req.first_per else []) \
+            + ([req.first_per.order] if req.first_per and req.first_per.order else []) + ([req.group_by] if req.group_by else [])
+        if unknown := [n for n in named if n not in names]:
+            raise HTTPException(422, f"No field named {', '.join(map(repr, unknown))} in this dataset")
         if pv["blocking"]:
             raise HTTPException(422, {"message": "Cannot export", "errors": pv["blocking"]})
         personal = x["assessor_id"] is not None

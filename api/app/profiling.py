@@ -19,7 +19,9 @@ from scipy import stats as sstats
 
 from .semantics import NUMERIC, target_problem
 
-ID_NAME_RE = re.compile(r"(^|[_\s.-])(id|uuid|guid|key|pk|identifier|code)$", re.IGNORECASE)
+ID_NAME_RE = re.compile(r"(^|[_\s.-])(id|uuid|guid|key|pk|identifier|code|nbr)$", re.IGNORECASE)
+# Codes such as ICD-9's V57 or E909: letters then digits.
+CODE_RE = r"^[A-Za-z]{1,3}\d"
 TOKEN_RE = r"[a-z][a-z']{2,}"
 DATETIME_FORMATS = [
     "%Y-%m-%d",
@@ -305,12 +307,16 @@ def _infer_numeric(nn: pl.Series, name: str, dt: pl.DataType, n_unique: int, n_n
     else:
         integral = True
     if integral and n_nonnull >= 500:
-        if unique_ratio >= 0.999 or (ID_NAME_RE.search(name) and unique_ratio > 0.9):
-            why = "every value is unique" if unique_ratio >= 0.999 else "name looks like a key"
+        keyish = bool(ID_NAME_RE.search(name))
+        if unique_ratio >= 0.999 or (keyish and unique_ratio > 0.9) or (keyish and n_unique > 1000 and unique_ratio > 0.5):
+            why = ("every value is unique" if unique_ratio >= 0.999 else "name looks like a key"
+                   + ("; values repeat, so it may group rows (e.g. several visits per patient)" if unique_ratio <= 0.9 else ""))
             monotonic = nn.head(100_000).is_sorted()
             return "identifier", 0.9 if monotonic else 0.75, [
                 f"integer values; {why}" + ("; monotonically increasing" if monotonic else "")
             ]
+    if integral and ID_NAME_RE.search(name) and n_unique <= 50:
+        return "categorical", 0.7, [f"integer codes: the name looks like a key and there are only {n_unique} values"]
     if integral:
         if n_unique <= 20:
             return "numeric_discrete", 0.7, [
@@ -340,6 +346,11 @@ def _infer_string(s: pl.Series, name: str, n_unique: int, n_nonnull: int):
     decimal_comma = detect_decimal_comma(nn)
     as_num = coerce_numeric(nn, decimal_comma, keep_inf=True)
     num_rate = 1 - as_num.null_count() / max(nn.len(), 1)
+    codes = nn.filter(as_num.is_null())
+    if num_rate >= 0.98 and codes.len() and codes.str.contains(CODE_RE).mean() >= 0.9:
+        examples = ", ".join(codes.unique().head(3).to_list())
+        return "categorical", 0.8, [f"codes: mostly numbers, but {codes.len():,} values such as {examples} aren't",
+                                    f"{n_unique:,} distinct values"], hints
     if num_rate >= 0.98:
         t, c, r = _infer_numeric(null_infinite(as_num).drop_nulls(), name, pl.Float64, n_unique, n_nonnull)
         hints["stored_as_text"] = True

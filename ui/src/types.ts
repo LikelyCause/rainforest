@@ -44,7 +44,8 @@ export interface Dataset {
 export type Action = "keep" | "drop" | "target";
 /** How a target is predicted: one of its values, a number, or a band of numbers. */
 export type TargetTask = "classes" | "regression" | "bins";
-export type TargetBins = { k: number } | { edges: number[] };
+/** Bands of a number (`k` equal-sized, or cut `edges`), or a class field's `positive` classes against the rest. */
+export type TargetBins = { k: number } | { edges: number[] } | { positive: string[] };
 
 export type SettingValue = string | number | boolean | null;
 

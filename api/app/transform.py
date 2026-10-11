@@ -45,7 +45,8 @@ from . import bands
 from .config import get_settings
 from .parquet_rows import read_rows
 from .profiling import coerce_numeric, null_infinite, parse_datetime
-from .semantics import DEFAULT_BIN_COUNT, DEFAULT_FAMILY, DEFAULT_PARAMS, FAMILIES, NON_FEATURE_TYPES, NUMERIC
+from .semantics import (DEFAULT_BIN_COUNT, DEFAULT_FAMILY, DEFAULT_PARAMS, FAMILIES, GROUP_REST, NON_FEATURE_TYPES,
+                        NUMERIC, grouped_target)
 
 SPLIT_COL = "__split"
 ROW_ID = "__row_id"
@@ -462,7 +463,8 @@ def rows_for_budget(mb: int, width: int, floor: int = 1_000) -> int:
 
 def assign_splits(
     y: pd.DataFrame, valid_size: float, test_size: float, seed: int,
-    strata_edges: dict[str, list[float]] | None = None,
+    strata_edges: dict[str, list[float]] | None = None, keep: np.ndarray | None = None,
+    groups: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Return split codes per row (255 = dropped because a target is missing).
 
@@ -473,12 +475,30 @@ def assign_splits(
     n = len(y)
     codes = np.full(n, 255, dtype=np.uint8)
     labeled = y.notna().all(axis=1).to_numpy()
-    idx = np.flatnonzero(labeled)
     info: dict[str, Any] = {"dropped_unlabeled": int((~labeled).sum()), "stratified": False, "stratified_on": None}
+    if keep is not None:
+        labeled &= keep
+    idx = np.flatnonzero(labeled)
 
     holdout = valid_size + test_size
     if holdout <= 0:
         codes[idx] = 0
+        return codes, info
+    if groups is not None:
+        # Every row of a group lands in one split, so validation never sees a patient (or mix) training saw.
+        from sklearn.model_selection import GroupShuffleSplit
+
+        g = groups[idx]
+        tr, rest = next(GroupShuffleSplit(1, test_size=holdout, random_state=seed).split(idx, groups=g))
+        codes[idx[tr]] = 0
+        rest_idx = idx[rest]
+        if test_size <= 0 or valid_size <= 0:
+            codes[rest_idx] = 1 if test_size <= 0 else 2
+        else:
+            v, t = next(GroupShuffleSplit(1, test_size=test_size / holdout, random_state=seed).split(
+                rest_idx, groups=groups[rest_idx]))
+            codes[rest_idx[v]], codes[rest_idx[t]] = 1, 2
+        info["grouped"] = True
         return codes, info
     strata = y.copy()
     for c, edges in (strata_edges or {}).items():
@@ -547,15 +567,56 @@ def encode_targets(y: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, list[str]]]
     return pd.DataFrame(encoded), classes
 
 
+def row_rules(parquet_path: Path, config: dict[str, Any]) -> tuple[np.ndarray | None, np.ndarray | None, dict]:
+    """The export's row rules: which rows stay (exact duplicates, excluded values, one row per key), the group code of
+    each row when the split keeps a field's rows together, and how many rows each rule removed."""
+    dedupe = bool(config.get("dedupe"))
+    exclude = config.get("exclude") or []
+    first = config.get("first_per") or None
+    group_by = config.get("group_by") or None
+    if not (dedupe or exclude or first or group_by):
+        return None, None, {}
+    df = pl.read_parquet(parquet_path).with_row_index("__i")
+    keep = np.ones(df.height, dtype=bool)
+    removed: dict[str, int] = {}
+    if dedupe:
+        dup = df.drop("__i").is_duplicated().to_numpy() & ~df.drop("__i").select(pl.struct(pl.all()).is_first_distinct()).to_series().to_numpy()
+        removed["duplicates"] = int((dup & keep).sum())
+        keep &= ~dup
+    for rule in exclude:
+        hit = df[rule["field"]].cast(pl.Utf8).is_in([str(v) for v in rule["values"]]).fill_null(False).to_numpy()
+        removed[f"{rule['field']} in {', '.join(map(str, rule['values']))}"] = int((hit & keep).sum())
+        keep &= ~hit
+    if first:
+        kept = df.filter(pl.Series(keep))
+        if first.get("order"):
+            kept = kept.sort([first["key"], first["order"]], nulls_last=True, maintain_order=True)
+        firsts = set(kept.unique(subset=[first["key"]], keep="first", maintain_order=True)["__i"].to_list())
+        not_first = keep & ~np.isin(df["__i"].to_numpy(), list(firsts))
+        removed[f"later rows per {first['key']}"] = int(not_first.sum())
+        keep &= ~not_first
+    groups = None
+    if group_by:
+        groups = df[group_by].cast(pl.Utf8).fill_null("").rank("dense").to_numpy().astype(np.int64)
+    return keep, groups, removed
+
+
 def prepare_targets(parquet_path: Path, targets: list[str], target_tasks: dict[str, dict], config: dict[str, Any],
                     seed: int):
     """Read, check and encode the targets, and split the rows. Class targets become codes; a number stays a float; bands
     become codes of bands cut on the training rows. Numeric targets are read the way profiling read them, and a value
     that doesn't read as a number fails the export rather than silently losing its row."""
     tasks = {t: target_tasks.get(t, {}).get("task") or "classes" for t in targets}
+    grouped = {t: pos for t in targets if (pos := grouped_target(target_tasks.get(t)))}
+    for t in grouped:
+        tasks[t] = "classes"
     numeric = [t for t in targets if tasks[t] != "classes"]
     raw = pl.read_parquet(parquet_path, columns=targets)
     y_raw = raw.to_pandas()
+    for t, pos in grouped.items():
+        col = y_raw[t]
+        label = " / ".join(pos)
+        y_raw[t] = col.where(col.isna(), np.where(col.astype(str).isin(pos), label, GROUP_REST))
     for t in numeric:
         num = coerce_numeric(raw[t], target_tasks[t].get("decimal_comma"))
         given = raw[t].fill_nan(None) if raw[t].dtype.is_float() else raw[t]
@@ -566,8 +627,16 @@ def prepare_targets(parquet_path: Path, targets: list[str], target_tasks: dict[s
     class_targets = [t for t in targets if tasks[t] == "classes"]
     check_target_classes(y_raw[class_targets])
     chosen = {t: [float(e) for e in (target_tasks[t].get("bins") or {}).get("edges", [])] for t in numeric}
+    keep, groups, removed = row_rules(parquet_path, config)
+    if keep is not None and not keep.any():
+        raise ValueError("The row rules leave no rows to export.")
     split, split_info = assign_splits(y_raw, float(config.get("valid_size", 0.15)),
-                                      float(config.get("test_size", 0.15)), seed, strata_edges=chosen)
+                                      float(config.get("test_size", 0.15)), seed, strata_edges=chosen, keep=keep,
+                                      groups=groups)
+    if removed:
+        split_info["rows_removed"] = removed
+    if config.get("group_by"):
+        split_info["grouped_on"] = config["group_by"]
     train_rows = split == 0
     y_enc, classes = encode_targets(y_raw[class_targets])
     target_bins, target_stats = {}, {}
@@ -589,7 +658,9 @@ def prepare_targets(parquet_path: Path, targets: list[str], target_tasks: dict[s
                 raise ValueError(f"Target {t!r} has a single value in the training rows; there is nothing to predict.")
             target_stats[t] = {"mean": float(tr.mean()), "std": float(tr.std()), "min": float(tr.min()),
                                "max": float(tr.max())}
-    info = {"target_tasks": tasks, "target_bins": target_bins, "target_stats": target_stats}
+    for t, pos in grouped.items():
+        target_bins[t] = {"positive": pos}
+    info = {"target_tasks": tasks, "target_bins": target_bins, "target_stats": target_stats, "_groups": groups}
     return y_raw, y_enc[targets], classes, split, split_info, info
 
 
@@ -634,6 +705,9 @@ def run_export(
     y_raw, y_enc, classes, split, split_info, target_info = prepare_targets(parquet_path, targets, target_tasks or {},
                                                                             config, seed)
     tasks = target_info["target_tasks"]
+    groups = target_info.pop("_groups")
+    if groups is not None:
+        np.save(out_dir / "groups.npy", groups)
 
     # 2. fit preprocessor on a training sample ---------------------------------------
     progress(0.08, "Fitting preprocessing pipeline on training rows")
@@ -724,7 +798,8 @@ def run_export(
         "config": config,
         "fields": [f.__dict__ for f in specs],
         "versions": {"sklearn": sklearn.__version__, "polars": pl.__version__, "numpy": np.__version__},
-        "files": {"data": "model_ready.parquet", "preprocessor": "preprocessor.joblib"},
+        "files": {"data": "model_ready.parquet", "preprocessor": "preprocessor.joblib",
+                  **({"groups": "groups.npy"} if groups is not None else {})},
     }
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, default=_json_default))
     progress(1.0, "Done")

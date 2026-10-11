@@ -105,7 +105,7 @@ export const api = {
     request<ExportPreview>(`/api/datasets/${id}/export-preview?family=${family}${recipeId ? `&recipe_id=${recipeId}` : ""}${experimentId ? `&experiment_id=${experimentId}` : ""}`),
   exports: (id: number, experimentId?: number) =>
     request<ExportJob[]>(`/api/datasets/${id}/exports${experimentId ? `?experiment_id=${experimentId}` : ""}`),
-  startExport: (id: number, cfg: Record<string, number | string | null>) =>
+  startExport: (id: number, cfg: Record<string, unknown>) =>
     request<ExportJob>(`/api/datasets/${id}/exports`, json("POST", cfg)),
   modelsForExport: (exportId: number) => request<ModelOption[]>(`/api/exports/${exportId}/models`),
   system: () => request<SystemInfo>("/api/system"),

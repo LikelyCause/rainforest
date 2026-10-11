@@ -60,6 +60,55 @@ function SplitBar({ valid, test, rows }: { valid: number; test: number; rows: nu
   );
 }
 
+interface RowRules {
+  dedupe: boolean;
+  exclude: { field: string; values: string[] }[];
+  first_per: { key: string; order: string | null } | null;
+  group_by: string | null;
+}
+const NO_RULES: RowRules = { dedupe: false, exclude: [], first_per: null, group_by: null };
+const rulesBody = (r: RowRules) => ({ ...r, exclude: r.exclude.filter((e) => e.field && e.values.length) });
+
+/** Which rows go into the export and how the split keeps related rows together. */
+function RowRulesEditor({ rules, onChange, names }: { rules: RowRules; onChange: (r: RowRules) => void; names: string[] }) {
+  const set = (patch: Partial<RowRules>) => onChange({ ...rules, ...patch });
+  const pick = (value: string | null, onPick: (v: string | null) => void, none: string, label: string) => (
+    <select aria-label={label} value={value ?? ""} onChange={(e) => onPick(e.target.value || null)}>
+      <option value="">{none}</option>
+      {names.map((n) => <option key={n} value={n}>{n}</option>)}
+    </select>
+  );
+  const active = rules.dedupe || rules.exclude.length > 0 || rules.first_per !== null || rules.group_by !== null;
+  return (
+    <details className="advanced" open={active || undefined}>
+      <summary className="small-text secondary">Rows{active ? " · rules set" : ""}</summary>
+      <div className="stack" style={{ gap: 8, marginTop: 8 }}>
+        <label className="check small-text">
+          <input type="checkbox" checked={rules.dedupe} onChange={(e) => set({ dedupe: e.target.checked })} /> Leave out exact duplicate rows
+        </label>
+        <div className="row small-text" style={{ gap: 6, flexWrap: "wrap" }}>
+          One row per {pick(rules.first_per?.key ?? null, (k) => set({ first_per: k ? { key: k, order: rules.first_per?.order ?? null } : null }), "every row", "One row per")}
+          {rules.first_per && <>first by {pick(rules.first_per.order, (o) => set({ first_per: { key: rules.first_per!.key, order: o } }), "file order", "First by")}</>}
+        </div>
+        {rules.exclude.map((r, i) => (
+          <div key={i} className="row small-text" style={{ gap: 6, flexWrap: "wrap" }}>
+            Leave out rows where {pick(r.field || null, (f) => set({ exclude: rules.exclude.map((x, j) => (j === i ? { ...x, field: f ?? "" } : x)) }), "choose a field", "Field")}
+            is <input type="text" placeholder="values, comma-separated" defaultValue={r.values.join(", ")} style={{ width: 200 }}
+              onBlur={(e) => set({ exclude: rules.exclude.map((x, j) => (j === i ? { ...x, values: e.target.value.split(",").map((v) => v.trim()).filter(Boolean) } : x)) })} />
+            <button type="button" className="link small-text" onClick={() => set({ exclude: rules.exclude.filter((_, j) => j !== i) })}>remove</button>
+          </div>
+        ))}
+        <button type="button" className="link small-text" style={{ alignSelf: "flex-start" }}
+          onClick={() => set({ exclude: [...rules.exclude, { field: "", values: [] }] })}>+ Leave out rows by value</button>
+        <div className="row small-text" style={{ gap: 6, flexWrap: "wrap" }}>
+          Keep rows together by {pick(rules.group_by, (g) => set({ group_by: g }), "no field (split rows freely)", "Keep rows together by")}
+          <span className="muted">each value's rows stay in one split and one CV fold, e.g. a patient's visits</span>
+        </div>
+      </div>
+    </details>
+  );
+}
+
 function BuildPanel({ datasetId, family, rows, x }: { datasetId: number; family: string; rows: number | null; x: Experiment }) {
   const qc = useQueryClient();
   const personal = x.assessor_id !== null;
@@ -71,6 +120,7 @@ function BuildPanel({ datasetId, family, rows, x }: { datasetId: number; family:
   const [seed, setSeed] = useState(42);
   const [fitRows, setFitRows] = useState<number | null>(null);
   const [fitText, setFitText] = useState<string | null>(null);
+  const [rules, setRules] = useState<RowRules>(NO_RULES);
   const v = Number(valid) / 100, t = Number(test) / 100;
   const train = 1 - v - t;
   const splitError = !Number.isFinite(v) || !Number.isFinite(t) || v < 0 || t < 0 ? "Shares must be numbers of 0% or more."
@@ -80,8 +130,8 @@ function BuildPanel({ datasetId, family, rows, x }: { datasetId: number; family:
   const fit = Math.min(fitRows ?? maxFit, 5_000_000);
 
   const start = useMutation({
-    mutationFn: (cfg: { valid_size: number; test_size: number; seed: number; fit_sample_rows: number }) =>
-      api.startExport(datasetId, { ...cfg, model_family: family, experiment_id: x.id }),
+    mutationFn: (cfg: { valid_size: number; test_size: number; seed: number; fit_sample_rows: number } & Partial<RowRules>) =>
+      api.startExport(datasetId, { ...rulesBody(rules), ...cfg, model_family: family, experiment_id: x.id }),
     onSuccess: (e) => {
       qc.invalidateQueries({ queryKey: ["exports", datasetId] });
       qc.invalidateQueries({ queryKey: ["experiment", x.id] });
@@ -94,6 +144,8 @@ function BuildPanel({ datasetId, family, rows, x }: { datasetId: number; family:
   const reExport = () => lastSame && start.mutate({
     valid_size: lastSame.config.valid_size, test_size: lastSame.config.test_size,
     seed: lastSame.config.seed, fit_sample_rows: lastSame.config.fit_sample_rows,
+    dedupe: Boolean(lastSame.config.dedupe), exclude: lastSame.config.exclude ?? [], first_per: lastSame.config.first_per ?? null,
+    group_by: lastSame.config.group_by ?? null,
   });
 
   return (
@@ -145,6 +197,7 @@ function BuildPanel({ datasetId, family, rows, x }: { datasetId: number; family:
           </label>
         </div>
         {splitError && <span className="small-text" style={{ color: "var(--bad)" }} role="alert">{splitError}</span>}
+        <RowRulesEditor rules={rules} onChange={setRules} names={(fields.data ?? []).map((f) => f.name)} />
         <details className="advanced">
           <summary className="small-text secondary">Advanced</summary>
           <div className="row" style={{ gap: 12, marginTop: 8 }}>
@@ -234,6 +287,9 @@ function ExportRow({ e, canAdd, onTrain }: { e: ExportJob; canAdd: boolean; onTr
           <span className="muted small-text num">
             train {fmtInt(s.split_counts.train)} · valid {fmtInt(s.split_counts.valid)} · test {fmtInt(s.split_counts.test)}
             {s.split_info?.stratified ? ` · stratified on ${s.split_info.stratified_on?.join(" × ") ?? "the targets"}` : ""}
+            {s.split_info?.grouped_on ? ` · ${s.split_info.grouped_on} kept together` : ""}
+            {s.split_info?.rows_removed && Object.keys(s.split_info.rows_removed).length > 0
+              ? ` · left out: ${Object.entries(s.split_info.rows_removed).map(([k, n]) => `${fmtInt(n as number)} ${k}`).join(", ")}` : ""}
             {s.contains_nan ? " · contains NaN (tree models only)" : ""}
           </span>
         )}

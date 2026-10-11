@@ -102,6 +102,7 @@ export const taskLabel = (t: TargetTask) => ({ classes: "Classes", regression: "
 export function bandsText(task: TargetTask | null | undefined, bins: TargetBins | null | undefined): string | null {
   if (!task) return null;
   if (task !== "bins" || !bins) return taskLabel(task);
+  if ("positive" in bins) return `One vs rest · ${bins.positive.join(" / ")}`;
   return `Bands · ${"k" in bins ? `${bins.k} equal-sized` : `cut at ${bins.edges.join(", ")}`}`;
 }
 

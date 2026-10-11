@@ -447,8 +447,12 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
     cross_validation = None
     if cv_folds:
         strat = next((i for i in order if not numeric[i]), None)
+        groups = None
+        if gfile := manifest["files"].get("groups"):
+            rows = df.filter(pl.col(split_col) == "train")["__row_id"].to_numpy()
+            groups = np.load(export_dir / gfile)[rows]
         splits, note, stratified = crossval.folds(None if strat is None else Y_tr[:, strat], len(X_tr), cv_folds,
-                                                  seed, None if strat is None else targets[strat])
+                                                  seed, None if strat is None else targets[strat], groups)
         per_fold: list[dict[str, Any]] = []
         t1 = time.time()
         # CV only adds scores: whatever stops a fold skips it with a note, and the run keeps its model and scores.

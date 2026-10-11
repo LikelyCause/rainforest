@@ -7,20 +7,27 @@ import math
 from typing import Any
 
 import numpy as np
-from sklearn.model_selection import KFold, StratifiedKFold
+from sklearn.model_selection import GroupKFold, KFold, StratifiedGroupKFold, StratifiedKFold
 
 
 def folds(y_strat: np.ndarray | None, n: int, k: int, seed: int,
-          strat_name: str | None) -> tuple[list[tuple[np.ndarray, np.ndarray]], str | None, bool]:
+          strat_name: str | None, groups: np.ndarray | None = None) -> tuple[list[tuple[np.ndarray, np.ndarray]], str | None, bool]:
     """(train rows, held-out rows) for each of `k` folds of `n` rows, stratified on `y_strat` when every class has
     at least `k` rows. Returns the folds, a note when they differ from what was asked, and whether they're
     stratified."""
     note = None
     if n < k:
         k, note = n, f"{n} folds: there are only {n} training rows"
+    if groups is not None and (n_groups := np.unique(groups).size) < k:
+        k, note = n_groups, f"{n_groups} folds: there are only {n_groups} groups"
     if k < 2:
         return [], note, False
     idx = np.arange(n)
+    if groups is not None:
+        # The export's groups stay whole in each fold, as they do across its splits.
+        if y_strat is not None:
+            return list(StratifiedGroupKFold(k, shuffle=True, random_state=seed).split(idx, y_strat, groups)), note, True
+        return list(GroupKFold(k).split(idx, groups=groups)), note, False
     if y_strat is not None:
         counts = np.bincount(y_strat.astype(int))
         rarest = int(counts[counts > 0].min())

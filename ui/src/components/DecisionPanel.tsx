@@ -170,9 +170,11 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
           {isTarget && (() => {
             const fallback = defaultTask(draft.semantic_type, f.n_unique);
             const task = draft.target_task ?? fallback;
+            const classField = draft.semantic_type === "binary" || draft.semantic_type === "categorical";
+            const levels = f.charts.distribution?.kind === "bars" ? f.charts.distribution.labels : [];
             const allowedTask = (t: TargetTask) => (t === "classes"
               ? draft.semantic_type !== "numeric_continuous" && (!NUMERIC.has(draft.semantic_type) || (f.n_unique ?? 0) <= catalog.target_rule.max_levels)
-              : NUMERIC.has(draft.semantic_type));
+              : t === "bins" ? NUMERIC.has(draft.semantic_type) || (classField && levels.length > 1) : NUMERIC.has(draft.semantic_type));
             const hint = (t: TargetTask) => (allowedTask(t) ? undefined
               : t === "classes" ? (draft.semantic_type === "numeric_continuous" ? "A continuous field is predicted as a number or as bands"
                 : `More than ${catalog.target_rule.max_levels} distinct values`)
@@ -184,13 +186,19 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
                     {(["classes", "regression", "bins"] as const).map((t) => (
                       <button key={t} type="button" role="radio" aria-checked={task === t} className={task === t ? "on" : ""}
                         disabled={!allowedTask(t)} title={hint(t)}
-                        onClick={() => update({ target_task: t, target_bins: t === "bins" ? draftRef.current.target_bins ?? { k: catalog.target_rule.default_k } : null }, 0)}>
-                        {taskLabel(t)}
+                        onClick={() => update({ target_task: t, target_bins: t !== "bins" ? null
+                          : classField ? (draftRef.current.target_bins && "positive" in draftRef.current.target_bins ? draftRef.current.target_bins : { positive: [levels[levels.length - 1]] })
+                          : draftRef.current.target_bins ?? { k: catalog.target_rule.default_k } }, 0)}>
+                        {t === "bins" && classField ? "One vs rest" : taskLabel(t)}
                       </button>
                     ))}
                 </div>
                 {task !== fallback && fallback && <div className="suggested">default for this type: {taskLabel(fallback).toLowerCase()}</div>}
-                {task === "bins" && (
+                {task === "bins" && classField && (
+                  <PositivePicker levels={levels} positive={draft.target_bins && "positive" in draft.target_bins ? draft.target_bins.positive : []}
+                    readOnly={Boolean(readOnly)} onChange={(positive) => update({ target_task: "bins", target_bins: { positive } }, 0)} />
+                )}
+                {task === "bins" && !classField && (
                   <BandSettings fieldId={f.id} bins={draft.target_bins ?? { k: catalog.target_rule.default_k }} readOnly={Boolean(readOnly)}
                     onChange={(b) => update({ target_task: "bins", target_bins: b }, 0)} />
                 )}
@@ -370,6 +378,26 @@ function BaselineLine({ draft, data, readOnly, onRevert }: {
 
 /** Equal-sized bands or chosen cut points, with how the field's rows fall into them. Cut points are saved once they
  * parse; until then the last valid setting stays. */
+/** Which classes count as positive when a class target is predicted one-vs-rest; the rest form one class. */
+function PositivePicker({ levels, positive, readOnly, onChange }: {
+  levels: string[]; positive: string[]; readOnly: boolean; onChange: (p: string[]) => void;
+}) {
+  const toggle = (l: string) => {
+    const next = positive.includes(l) ? positive.filter((x) => x !== l) : [...positive, l];
+    if (next.length && next.length < levels.length) onChange(next);
+  };
+  return (
+    <div className="stack" style={{ gap: 4, marginTop: 6 }}>
+      <span className="muted small-text">Predict these against all the others:</span>
+      {levels.map((l) => (
+        <label key={l} className="check small-text">
+          <input type="checkbox" checked={positive.includes(l)} disabled={readOnly} onChange={() => toggle(l)} /> {l}
+        </label>
+      ))}
+    </div>
+  );
+}
+
 function BandSettings({ fieldId, bins, readOnly, onChange }: {
   fieldId: number; bins: TargetBins; readOnly: boolean; onChange: (b: TargetBins) => void;
 }) {
@@ -380,7 +408,7 @@ function BandSettings({ fieldId, bins, readOnly, onChange }: {
   const parsed = parseEdges(text);
   const preview = useQuery({
     queryKey: ["bands", fieldId, JSON.stringify(bins)],
-    queryFn: () => api.bands(fieldId, bins),
+    queryFn: () => api.bands(fieldId, "positive" in bins ? { k: 5 } : bins),
     placeholderData: keepPreviousData,
   });
   const max = Math.max(1, ...(preview.data?.counts ?? [1]));

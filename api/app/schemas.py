@@ -78,6 +78,17 @@ class SqlRequest(BaseModel):
     sql: str = Field(min_length=1, max_length=20_000)
 
 
+class ExcludeRule(BaseModel):
+    field: str = Field(..., max_length=500)
+    values: list[str] = Field(..., min_length=1, max_length=1000, description="Rows whose field has one of these "
+                                                                              "values (compared as text) are left out")
+
+
+class FirstPer(BaseModel):
+    key: str = Field(..., max_length=500, description="Keep one row per value of this field")
+    order: str | None = Field(None, max_length=500, description="The first by this field; default: file order")
+
+
 class ExportRequest(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
     source: Literal["recipe", "assessment"] | None = Field(
@@ -91,6 +102,10 @@ class ExportRequest(BaseModel):
     test_size: float = Field(0.15, ge=0, lt=0.5)
     seed: int = 42
     fit_sample_rows: int = Field(500_000, ge=1_000, le=5_000_000)
+    dedupe: bool = Field(False, description="Leave out exact duplicate rows (all columns equal), keeping the first")
+    exclude: list[ExcludeRule] = Field(default_factory=list, max_length=20)
+    first_per: FirstPer | None = None
+    group_by: str | None = Field(None, max_length=500, description="Keep each value's rows in one split and one CV fold")
     chunk_rows: int = Field(200_000, ge=10_000, le=2_000_000)
 
 
