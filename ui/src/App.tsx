@@ -206,6 +206,7 @@ function UserMenu() {
           </div>
           <button type="button" role="menuitem" className="ghost menu-item" onClick={() => { setOpen(false); setPicture(true); }}>Change picture…</button>
           <NavLink role="menuitem" className="menu-item" to="/team" onClick={() => setOpen(false)}>Team</NavLink>
+          <a role="menuitem" className="menu-item" href="/mlflow/" target="_blank" rel="noopener noreferrer" onClick={() => setOpen(false)}>MLflow ↗</a>
           <button type="button" role="menuitem" className="ghost menu-item" disabled={out.isPending} onClick={() => out.mutate()}>
             {pick ? "Switch profile" : "Sign out"}
           </button>

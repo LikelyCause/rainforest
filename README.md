@@ -130,7 +130,7 @@ The top bar shows the dataset switcher, the workflow steps **Review · Bulk edit
 *Finalized*), the **Baseline** chip (the current baseline, e.g. *Trees v2*, linking to the dataset's **Baselines**
 page; while you adjust an experiment, that experiment), *Next unreviewed* (`U`) while fields are left, and on the
 right **Team** (the user list) and your profile: picture, name and role, opening a menu with *Change picture…*,
-*Team* and *Switch profile* (pick mode; *Sign out* with OIDC).
+*Team*, *MLflow ↗* (in a new tab) and *Switch profile* (pick mode; *Sign out* with OIDC).
 
 ### Predicting numbers and bands
 
