@@ -41,9 +41,9 @@ export const METHOD_LABEL: Record<string, string> = {
 const FAMILY_SHORT: Record<string, string> = { tree: "Trees", linear: "Linear", neural: "Neural" };
 /** The one vocabulary for model families in labels and badges. */
 export const familyShort = (f: string) => FAMILY_SHORT[f] ?? f;
-/** "Trees baseline v2", or with `short` "Trees v2". */
-export const baselineLabel = (family: string, version: number, short = false) =>
-  `${familyShort(family)}${short ? "" : " baseline"} v${version}`;
+/** "Trees baseline v2", or with `short` "Trees v2"; named, "Dropout risk v2 (Trees)" and "Dropout risk v2". */
+export const baselineLabel = (family: string, version: number, short = false, name?: string | null) =>
+  name ? `${name} v${version}${short ? "" : ` (${familyShort(family)})`}` : `${familyShort(family)}${short ? "" : " baseline"} v${version}`;
 
 export const roleLabel = (r: string) => (r === "lead" ? "Team Lead" : r === "member" ? "Team Member" : r === "viewer" ? "Viewer" : r);
 

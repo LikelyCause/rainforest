@@ -553,7 +553,7 @@ function BaselineChips({ ds }: { ds: Dataset }) {
   return (
     <>
       {ds.baselines.map((b) => (
-        <PhaseBadge key={b.family} phase={b.phase} label={baselineLabel(b.family, b.version, true)} />
+        <PhaseBadge key={b.family} phase={b.phase} label={baselineLabel(b.family, b.version, true, b.name)} />
       ))}
     </>
   );

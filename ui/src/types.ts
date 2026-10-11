@@ -286,6 +286,7 @@ export interface Experiment {
   recipe_id: number;
   recipe_family: FamilyKey;
   recipe_version: number;
+  recipe_name: string | null;
   recipe_phase: Phase;
   /** The Team experiment the app makes for a finalized baseline's exports. */
   is_default: boolean;
@@ -337,6 +338,7 @@ export interface ExportJob {
   recipe_id: number | null;
   recipe_family?: FamilyKey | null;
   recipe_version: number | null;
+  recipe_name?: string | null;
   experiment_id: number;
   experiment_name: string | null;
   n_rows: number | null;
@@ -602,6 +604,7 @@ export type FamilyKey = "tree" | "linear" | "neural";
 export interface BaselineRef {
   id: number;
   family: FamilyKey;
+  name: string | null;
   version: number;
   phase: Phase;
   label: string;
@@ -611,6 +614,7 @@ export interface BaselineRef {
 
 export interface BaselineSummary {
   family: FamilyKey;
+  name: string | null;
   id: number;
   version: number;
   phase: Phase;
@@ -622,6 +626,7 @@ export interface BaselineSummary {
 export interface BaselineLine {
   family: FamilyKey;
   label: string;
+  name: string | null;
   versions: RecipeVersion[];
   latest_finalized_id: number | null;
 }
@@ -630,7 +635,9 @@ export interface Recipe {
   id: number;
   dataset_id: number;
   family: FamilyKey;
-  /** "Trees baseline v2". */
+  /** The baseline's name, shared by its versions; null when unnamed. */
+  name?: string | null;
+  /** "Dropout risk v2 (Trees)", or "Trees baseline v2" unnamed. */
   label?: string;
   /** Team state only: a new dataset's first baseline nobody has started on. */
   setup?: boolean;
@@ -664,7 +671,7 @@ export interface ReopenedField {
 
 /** How a finalized recipe was matched onto a new dataset. */
 export interface ReuseSummary {
-  source: { recipe_id: number; dataset_id: number; dataset_name: string | null; family?: FamilyKey; version: number };
+  source: { recipe_id: number; dataset_id: number; dataset_name: string | null; family?: FamilyKey; version: number; name?: string | null };
   carried: string[];
   reopened: ReopenedField[];
   missing: string[];
@@ -680,6 +687,7 @@ export interface RecipeVersion extends Recipe {
   parent_dataset_id: number | null;
   parent_family: FamilyKey | null;
   parent_version: number | null;
+  parent_name?: string | null;
   parent_dataset_name: string | null;
 }
 
@@ -688,6 +696,7 @@ export interface FinalizedRecipe {
   dataset_id: number;
   dataset_name: string;
   family: FamilyKey;
+  name: string | null;
   label: string;
   version: number;
   field_count: number;

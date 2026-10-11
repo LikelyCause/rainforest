@@ -9,7 +9,7 @@ export function ReuseCard({ reuse, label }: { reuse: ReuseSummary; label: string
   return (
     <section className="card stack" aria-label="Reuse summary">
       <div className="card-head">
-        <h2>Started from {reuse.source.dataset_name ?? `dataset #${reuse.source.dataset_id}`} · {reuse.source.family ? baselineLabel(reuse.source.family, reuse.source.version) : `v${reuse.source.version}`}</h2>
+        <h2>Started from {reuse.source.dataset_name ?? `dataset #${reuse.source.dataset_id}`} · {reuse.source.family ? baselineLabel(reuse.source.family, reuse.source.version, false, reuse.source.name) : `v${reuse.source.version}`}</h2>
         <span className="muted small-text">{label} of this dataset</span>
       </div>
       <div className="stack" style={{ gap: 6 }}>

@@ -32,15 +32,15 @@ function BaselineChip({ ds }: { ds: Dataset }) {
   const b = ds.baseline;
   if (v?.kind === "experiment" && x.data) {
     return (
-      <Link to={`/d/${ds.id}/experiments/${x.data.id}`} className="baseline-chip" title={`Adjusting ${x.data.name}, built from ${baselineLabel(x.data.recipe_family, x.data.recipe_version)}`}>
-        <span className="muted">Experiment</span> <b>{x.data.name} · {baselineLabel(x.data.recipe_family, x.data.recipe_version, true)}</b>
+      <Link to={`/d/${ds.id}/experiments/${x.data.id}`} className="baseline-chip" title={`Adjusting ${x.data.name}, built from ${baselineLabel(x.data.recipe_family, x.data.recipe_version, false, x.data.recipe_name)}`}>
+        <span className="muted">Experiment</span> <b>{x.data.name} · {baselineLabel(x.data.recipe_family, x.data.recipe_version, true, x.data.recipe_name)}</b>
       </Link>
     );
   }
   if (!b) return null;
   return (
     <Link to={`/d/${ds.id}/baselines`} className="baseline-chip" title={b.setup ? "No baseline yet: a lead sets one up on the Team page. All baselines →" : `${b.label}. All baselines →`}>
-      <span className="muted">Baseline</span> <b>{b.setup ? "none yet" : baselineLabel(b.family, b.version, true)}</b>
+      <span className="muted">Baseline</span> <b>{b.setup ? "none yet" : baselineLabel(b.family, b.version, true, b.name)}</b>
     </Link>
   );
 }

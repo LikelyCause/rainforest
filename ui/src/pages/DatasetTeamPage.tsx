@@ -31,12 +31,12 @@ export function useInvalidateTeam(datasetId: number) {
   };
 }
 
-/** The phase of a baseline version, with its short label ("Trees v2") when given. */
+/** The phase of a baseline version, with its short label ("Trees v2") when given; a long one is cut, in full on hover. */
 export function PhaseBadge({ phase, label }: { phase: Dataset["phase"]; label?: string | null }) {
   if (!phase) return null;
   const cls = phase === "finalized" ? "good" : phase === "review" ? "warn" : "accent";
   const text = label ? `${PHASE_LABEL[phase]} · ${label}` : phase === "review" ? "Review" : PHASE_LABEL[phase];
-  return <span className={`badge ${cls}`} title={`Baseline ${PHASE_LABEL[phase].toLowerCase()}`}>{text}</span>;
+  return <span className={`badge ${cls}`} title={label ? text : `Baseline ${PHASE_LABEL[phase].toLowerCase()}`}><span className="clip">{text}</span></span>;
 }
 
 export function DatasetTeamPage() {

@@ -11,6 +11,11 @@ describe("baselineLabel", () => {
     expect(baselineLabel("tree", 2)).toBe("Trees baseline v2");
     expect(baselineLabel("neural", 1, true)).toBe("Neural v1");
   });
+  it("puts a named baseline's name first, with its model type in the long form", () => {
+    expect(baselineLabel("tree", 2, true, "Dropout risk")).toBe("Dropout risk v2");
+    expect(baselineLabel("tree", 2, false, "Dropout risk")).toBe("Dropout risk v2 (Trees)");
+    expect(baselineLabel("tree", 2, false, null)).toBe("Trees baseline v2");
+  });
 });
 
 describe("startBaselineDefaults", () => {

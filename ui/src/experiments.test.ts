@@ -5,7 +5,7 @@ import type { Experiment } from "./types";
 const me = { id: 2, role: "member" as const };
 const lead = { id: 1, role: "lead" as const };
 const x = (id: number, over: Partial<Experiment> = {}): Experiment => ({
-  id, dataset_id: 1, name: `X${id}`, owner: null, owner_name: null, recipe_id: 10, recipe_version: 1, recipe_family: "tree" as const,
+  id, dataset_id: 1, name: `X${id}`, owner: null, owner_name: null, recipe_id: 10, recipe_version: 1, recipe_family: "tree" as const, recipe_name: null,
   is_default: false, recipe_phase: "finalized", assessor_id: null, source: "recipe:10", notes: null, created_at: "", archived_at: null,
   private: false, ...over,
 });

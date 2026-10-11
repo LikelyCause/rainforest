@@ -44,6 +44,7 @@ export function StartBaseline({ ds, onCancel }: { ds: Dataset; onCancel?: () => 
   const set = (patch: Partial<StartBaselineForm>) => setForm({ ...form, ...patch });
   const toggle = <T,>(list: T[], v: T) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
   const nextVersion = (f: FamilyKey) => (setup ? 1 : (ds.baselines.find((b) => b.family === f)?.version ?? 0) + 1);
+  const nameFor = (f: FamilyKey) => (setup ? null : ds.baselines.find((b) => b.family === f)?.name ?? null);
   const people = (users.data ?? []).filter((u) => u.active && u.role !== "viewer").sort((a, b) => Number(b.id === me.id) - Number(a.id === me.id) || a.name.localeCompare(b.name));
   const missingSource = form.start !== "scratch" && !form.source_recipe_id;
   const blocked = missingSource ? "Choose what to start from" : form.assessors.length === 0 ? "Choose at least one assessor"
@@ -70,7 +71,7 @@ export function StartBaseline({ ds, onCancel }: { ds: Dataset; onCancel?: () => 
         </div>
         <span className="muted small-text">
           {form.start === "recipe" ? "Takes the model type of the baseline it reuses."
-            : `${baselineLabel(form.family, nextVersion(form.family))} · for ${catalog?.families.find((x) => x.value === form.family)?.examples ?? familyShort(form.family)}`}
+            : `${baselineLabel(form.family, nextVersion(form.family), false, nameFor(form.family))} · for ${catalog?.families.find((x) => x.value === form.family)?.examples ?? familyShort(form.family)}`}
         </span>
       </fieldset>
 
@@ -83,7 +84,7 @@ export function StartBaseline({ ds, onCancel }: { ds: Dataset; onCancel?: () => 
           Another baseline of this dataset{own.length === 0 ? " (none finalized yet)" : ""}</label>
         {form.start === "baseline" && (
           <select aria-label="Baseline to start from" value={form.source_recipe_id ?? ""} onChange={(e) => set({ source_recipe_id: Number(e.target.value) })}>
-            {own.map((v) => <option key={v.id} value={v.id}>{baselineLabel(v.family, v.version)} · finalized {fmtAgo(v.finalized_at)}</option>)}
+            {own.map((v) => <option key={v.id} value={v.id}>{baselineLabel(v.family, v.version, false, v.name)} · finalized {fmtAgo(v.finalized_at)}</option>)}
           </select>
         )}
         {setup && (
@@ -139,7 +140,7 @@ export function StartBaseline({ ds, onCancel }: { ds: Dataset; onCancel?: () => 
       <div className="row" style={{ justifyContent: "flex-end" }}>
         {onCancel && <button type="button" className="ghost" onClick={onCancel}>Cancel</button>}
         <button type="submit" className="primary" disabled={Boolean(blocked) || start.isPending} title={blocked ?? undefined}>
-          {form.start === "recipe" ? "Start from this baseline" : `Start ${baselineLabel(form.family, nextVersion(form.family))}`}
+          {form.start === "recipe" ? "Start from this baseline" : `Start ${baselineLabel(form.family, nextVersion(form.family), false, nameFor(form.family))}`}
         </button>
       </div>
     </form>

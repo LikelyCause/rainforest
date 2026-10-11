@@ -104,9 +104,9 @@ function History({ versions }: { versions: RecipeVersion[] }) {
 function builtFrom(v: RecipeVersion): string {
   if (v.reuse) {
     const s = v.reuse.source;
-    return `Reused ${s.family ? baselineLabel(s.family, s.version) : `v${s.version}`} of ${s.dataset_name ?? `dataset #${s.dataset_id}`}${v.parent_id === null ? " (since deleted)" : ""}`;
+    return `Reused ${s.family ? baselineLabel(s.family, s.version, false, s.name) : `v${s.version}`} of ${s.dataset_name ?? `dataset #${s.dataset_id}`}${v.parent_id === null ? " (since deleted)" : ""}`;
   }
-  if (v.parent_version && v.parent_family) return baselineLabel(v.parent_family, v.parent_version);
+  if (v.parent_version && v.parent_family) return baselineLabel(v.parent_family, v.parent_version, false, v.parent_name);
   return "the suggestions";
 }
 
