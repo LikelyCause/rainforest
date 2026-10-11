@@ -6,6 +6,7 @@ import { useFields } from "../hooks";
 import { showError, toast } from "../toast";
 import type { Dataset, DerivedInput } from "../types";
 import { ErrorAlert } from "./ui";
+import { Banner, Segmented, confirmDialog } from "./kit";
 
 type Kind = DerivedInput["kind"];
 const KIND_LABEL: Record<Kind, string> = { formula: "Formula", groups: "Group values", count: "Count matches" };
@@ -54,75 +55,91 @@ export function DerivedFields({ ds }: { ds: Dataset }) {
 
   const shown = (fields ?? []).filter((f) => !countFilter || f.name.toLowerCase().includes(countFilter.toLowerCase()));
   return (
-    <section className="card stack">
-      <p className="muted small-text">
+    <div className="stack tools-derived">
+      <p className="secondary small-text tools-lead">
         A derived field is computed from this dataset's fields and added to its data. Add them while the baseline is being set up,
         or once it is finalized and then start a new version so they get assessed.
       </p>
+      <ErrorAlert error={list.error} />
       {list.data && list.data.length > 0 && (
-        <table className="data">
-          <thead><tr><th>Field</th><th>Kind</th><th>Definition</th><th /></tr></thead>
-          <tbody>
-            {list.data.map((f) => (
-              <tr key={f.id}>
-                <td>{f.name}</td><td>{KIND_LABEL[f.kind]}</td><td><code>{describeDerived(f)}</code></td>
-                <td><button type="button" className="ghost small" disabled={remove.isPending}
-                  onClick={() => { if (window.confirm(`Remove ${f.name} and its review?`)) remove.mutate(f.id); }}>Remove</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-      <div className="chips" role="radiogroup" aria-label="Kind">
-        {(Object.keys(KIND_LABEL) as Kind[]).map((k) => (
-          <button key={k} type="button" role="radio" aria-checked={kind === k} className={`chip${kind === k ? " on" : ""}`}
-            onClick={() => { setKind(k); preview.reset(); }}>{KIND_LABEL[k]}</button>
-        ))}
-      </div>
-      <span className="muted small-text">{KIND_HELP[kind]}</span>
-      {kind === "formula" && (
-        <input aria-label="Formula" placeholder="water / (cement + blast_furnace_slag + fly_ash)" value={expr} onChange={(e) => setExpr(e.target.value)} />
-      )}
-      {kind === "groups" && (
-        <>
-          <label className="row">Field
-            <select value={source} onChange={(e) => setSource(e.target.value)}>
-              <option value="">Choose…</option>
-              {fields?.map((f) => <option key={f.id} value={f.name}>{f.name}</option>)}
-            </select>
-          </label>
-          <textarea aria-label="Groups" rows={5} placeholder={"Circulatory: 390-459, 785\nDiabetes: 250-250.99"} value={groupText} onChange={(e) => setGroupText(e.target.value)} />
-          {groupText.trim() && parsed.error && <span className="small-text" style={{ color: "var(--bad)" }}>{parsed.error}</span>}
-          <label className="row">Everything else <input value={other} onChange={(e) => setOther(e.target.value)} /></label>
-        </>
-      )}
-      {kind === "count" && (
-        <>
-          <input aria-label="Filter fields" placeholder={`Filter fields (${countFields.length} chosen)`} value={countFilter} onChange={(e) => setCountFilter(e.target.value)} />
-          <div className="chips" style={{ maxHeight: 160, overflowY: "auto" }}>
-            {shown.map((f) => {
-              const on = countFields.includes(f.name);
-              return <button key={f.id} type="button" aria-pressed={on} className={`chip${on ? " on" : ""}`}
-                onClick={() => setCountFields(on ? countFields.filter((n) => n !== f.name) : [...countFields, f.name])}>{f.name}</button>;
-            })}
+        <section className="card stack" aria-labelledby="derived-list-title">
+          <h2 id="derived-list-title">Derived fields <span className="muted num">{list.data.length}</span></h2>
+          <div className="table-wrap">
+            <table className="data">
+              <thead><tr><th>Field</th><th>Kind</th><th>Definition</th><th aria-label="Actions" /></tr></thead>
+              <tbody>
+                {list.data.map((f) => (
+                  <tr key={f.id}>
+                    <td className="mono">{f.name}</td><td>{KIND_LABEL[f.kind]}</td><td><code>{describeDerived(f)}</code></td>
+                    <td className="tools-actions">
+                      <button type="button" className="ghost small" disabled={remove.isPending} onClick={async () => {
+                        const ok = await confirmDialog({
+                          title: `Remove ${f.name}?`, confirm: "Remove field", danger: true,
+                          body: "The field leaves this dataset's data, and its review goes with it.",
+                        });
+                        if (ok) remove.mutate(f.id);
+                      }}>Remove</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <input aria-label="Values to count" placeholder="Up, Down" value={countValues} onChange={(e) => setCountValues(e.target.value)} />
-        </>
+        </section>
       )}
-      <div className="row">
-        <button type="button" disabled={!input || preview.isPending} onClick={() => input && preview.mutate(input)}>Preview</button>
-        <input aria-label="New field name" placeholder="New field name" value={name} onChange={(e) => setName(e.target.value)} />
-        <button type="button" className="primary" disabled={!input || !name.trim() || add.isPending} onClick={() => add.mutate()}>
-          {add.isPending ? "Adding…" : "Add field"}
-        </button>
-      </div>
-      <ErrorAlert error={preview.error ?? add.error} />
-      {preview.data && (
-        <div className="small-text">
-          <span className="muted">{preview.data.type} · {preview.data.distinct.toLocaleString()} distinct · {preview.data.missing.toLocaleString()} of {preview.data.rows.toLocaleString()} missing · first rows: </span>
-          <code>{preview.data.sample.map((v) => (v === null ? "—" : typeof v === "number" ? +v.toPrecision(4) : v)).join(", ")}</code>
+      <section className="card stack" aria-labelledby="derived-new-title">
+        <h2 id="derived-new-title">New derived field</h2>
+        <Segmented label="Kind" value={kind} onChange={(k) => { setKind(k); preview.reset(); }}
+          options={(Object.keys(KIND_LABEL) as Kind[]).map((k) => ({ value: k, label: KIND_LABEL[k] }))} />
+        <span className="secondary small-text">{KIND_HELP[kind]}</span>
+        {kind === "formula" && (
+          <input className="mono" aria-label="Formula" placeholder="water / (cement + blast_furnace_slag + fly_ash)" value={expr} onChange={(e) => setExpr(e.target.value)} />
+        )}
+        {kind === "groups" && (
+          <>
+            <label className="field tools-narrow">Field
+              <select value={source} onChange={(e) => setSource(e.target.value)}>
+                <option value="">Choose…</option>
+                {fields?.map((f) => <option key={f.id} value={f.name}>{f.name}</option>)}
+              </select>
+            </label>
+            <textarea className="mono" aria-label="Groups" rows={5} placeholder={"Circulatory: 390-459, 785\nDiabetes: 250-250.99"}
+              value={groupText} onChange={(e) => setGroupText(e.target.value)} />
+            {groupText.trim() && parsed.error && <span className="small-text tools-bad" role="alert">{parsed.error}</span>}
+            <label className="field tools-narrow">Everything else<input value={other} onChange={(e) => setOther(e.target.value)} /></label>
+          </>
+        )}
+        {kind === "count" && (
+          <>
+            <input type="search" aria-label="Filter fields" placeholder={`Filter fields (${countFields.length} chosen)`} value={countFilter}
+              onChange={(e) => setCountFilter(e.target.value)} />
+            <div className="chips tools-count-fields" role="group" aria-label="Fields to count across">
+              {shown.map((f) => {
+                const on = countFields.includes(f.name);
+                return <button key={f.id} type="button" aria-pressed={on} className={`chip${on ? " on" : ""}`}
+                  onClick={() => setCountFields(on ? countFields.filter((n) => n !== f.name) : [...countFields, f.name])}>{f.name}</button>;
+              })}
+            </div>
+            <label className="field">Values to count, comma-separated
+              <input placeholder="Up, Down" value={countValues} onChange={(e) => setCountValues(e.target.value)} />
+            </label>
+          </>
+        )}
+        <div className="row tools-derived-actions">
+          <button type="button" disabled={!input || preview.isPending} onClick={() => input && preview.mutate(input)}>Preview</button>
+          <input aria-label="New field name" placeholder="New field name" value={name} onChange={(e) => setName(e.target.value)} />
+          <button type="button" className="primary" disabled={!input || !name.trim() || add.isPending} onClick={() => add.mutate()}>
+            {add.isPending ? "Adding…" : "Add field"}
+          </button>
         </div>
-      )}
-    </section>
+        <ErrorAlert error={preview.error ?? add.error} />
+        {preview.data && (
+          <Banner tone="info" title="Preview" icon={false}>
+            <span className="secondary num">{preview.data.type} · {preview.data.distinct.toLocaleString()} distinct · {preview.data.missing.toLocaleString()} of {preview.data.rows.toLocaleString()} missing · first rows: </span>
+            <code>{preview.data.sample.map((v) => (v === null ? "—" : typeof v === "number" ? +v.toPrecision(4) : v)).join(", ")}</code>
+          </Banner>
+        )}
+      </section>
+    </div>
   );
 }

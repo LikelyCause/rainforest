@@ -4,6 +4,7 @@ import { useChartTheme } from "../../theme";
 import { fmtInt, fmtNum, fmtP, TYPE_SHORT } from "../../format";
 import { Chart } from "../Chart";
 import { Empty } from "../ui";
+import { Banner, Icon } from "../kit";
 import { testDetailOption } from "./options";
 import { AnalysisState, SkippedList, useAnalysis, type ExploreState } from "./state";
 import type { Dataset, TestRow, TestsResult } from "../../types";
@@ -43,14 +44,14 @@ function TestsTable({ ds, r }: { ds: Dataset; r: TestsResult }) {
   const th = (key: SortKey, text: string, num = false) => (
     <th className={`sortable${num ? " num" : ""}`} aria-sort={sort.key === key ? (sort.desc ? "descending" : "ascending") : "none"}>
       <button type="button" className="th-sort" onClick={() => setSort({ key, desc: sort.key === key ? !sort.desc : key === "effect" || key === "n" })}>
-        {text}{sort.key === key ? (sort.desc ? " ▼" : " ▲") : ""}
+        {text}{sort.key === key && <Icon name="chevron-down" size={12} className={sort.desc ? "tools-sort" : "tools-sort up"} />}
       </button>
     </th>
   );
   const selected = sel !== null ? r.rows[sel] : null;
 
   return (
-    <div className="stack" style={{ gap: 12 }}>
+    <div className="stack tools-gap-12">
       <div className="row secondary small-text">
         <span>
           Each field tested against <code>{r.target}</code> ({r.target_kind}) · <b>{significant}</b> of {r.rows.length} significant
@@ -58,16 +59,14 @@ function TestsTable({ ds, r }: { ds: Dataset; r: TestsResult }) {
         </span>
       </div>
       {r.excluded_classes.length > 0 && (
-        <div className="alert info">
-          <span className="grow">
-            Classes with fewer than 5 sampled rows are left out:{" "}
-            {r.excluded_classes.map((c, i) => <span key={c.name}>{i > 0 && ", "}<code>{c.name}</code> ({fmtInt(c.n)})</span>)}
-          </span>
-        </div>
+        <Banner tone="info">
+          Classes with fewer than 5 sampled rows are left out:{" "}
+          {r.excluded_classes.map((c, i) => <span key={c.name}>{i > 0 && ", "}<code>{c.name}</code> ({fmtInt(c.n)})</span>)}
+        </Banner>
       )}
       {r.rows.length === 0 ? <div className="card"><Empty title="No fields could be tested" /></div> : (
         <div className={`explore-split${selected ? " with-panel wide" : ""}`}>
-          <div className="table-wrap" style={{ maxHeight: "calc(100vh - 330px)", minHeight: 300, background: "var(--surface-1)" }}>
+          <div className="table-wrap tools-tests-table">
             <table className="data compact">
               <thead><tr>
                 {th("name", "Field")}{th("test", "Test")}{th("effect", "Effect", true)}{th("p_adj", "Adj. p", true)}{th("n", "n", true)}
@@ -79,8 +78,8 @@ function TestsTable({ ds, r }: { ds: Dataset; r: TestsResult }) {
                     <tr key={i} className={`clickable${sel === i ? " selected" : ""}`} onClick={() => setSel(sel === i ? null : i)}
                       tabIndex={0} onKeyDown={(e) => e.key === "Enter" && setSel(sel === i ? null : i)} aria-selected={sel === i}>
                       <td>
-                        <span className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
-                          <span className="mono" style={{ overflow: "hidden", textOverflow: "ellipsis", maxWidth: 260 }}>{row.name}</span>
+                        <span className="row tools-nowrap tools-gap-6">
+                          <span className="mono tools-ellipsis tools-test-name">{row.name}</span>
                           <span className="type-tag">{TYPE_SHORT[row.type] ?? row.type}</span>
                         </span>
                       </td>
@@ -117,12 +116,12 @@ function TestDetailPanel({ ds, r, row, onClose }: { ds: Dataset; r: TestsResult;
     : `${r.target} against ${row.name}`;
   return (
     <aside className="card side-panel stack" aria-label={`Test details for ${row.name}`}>
-      <div className="row" style={{ justifyContent: "space-between", flexWrap: "nowrap" }}>
-        <h2 className="mono" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{row.name}</h2>
-        <button type="button" className="ghost small" aria-label="Close" onClick={onClose}>✕</button>
+      <div className="row tools-between tools-nowrap">
+        <h2 className="mono tools-ellipsis">{row.name}</h2>
+        <button type="button" className="ghost small tools-icon-btn" aria-label="Close" onClick={onClose}><Icon name="x" /></button>
       </div>
-      {row.field_id !== null && <Link className="small-text" to={`/d/${ds.id}/review/${row.field_id}`}>Open in Review →</Link>}
-      <div className="kv" style={{ gridTemplateColumns: "1fr 1fr" }}>
+      {row.field_id !== null && <Link className="small-text" to={`/d/${ds.id}/review/${row.field_id}`}>Open field</Link>}
+      <div className="kv tools-kv-2">
         <div><span>{row.test}</span><b>{fmtNum(row.statistic)}</b></div>
         <div><span>p</span><b>{fmtP(row.p)}</b></div>
         <div><span>{row.effect_name}</span><b>{fmtNum(row.effect, 3)}</b></div>

@@ -38,8 +38,8 @@ describe("theme preference", () => {
 });
 
 describe("settings sections", () => {
-  it("shows Team to leads only", () => {
-    expect(visibleSections({ role: "lead" }).map((s) => s.key)).toContain("team");
+  it("shows People to leads only", () => {
+    expect(visibleSections({ role: "lead" }).map((s) => s.key)).toContain("people");
     for (const role of ["member", "viewer"] as const) {
       expect(visibleSections({ role }).map((s) => s.key)).toEqual(["profile", "appearance", "integrations", "application"]);
     }

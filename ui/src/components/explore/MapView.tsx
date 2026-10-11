@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useDebounced } from "../../hooks";
 import { useChartTheme } from "../../theme";
 import { Chart } from "../Chart";
+import { Segmented } from "../kit";
 import { mapOption } from "./options";
 import { AnalysisState, SkippedList, useAnalysis, type ExploreState } from "./state";
 import type { AnalysisParams, Dataset, MapResult } from "../../types";
@@ -23,14 +24,10 @@ export function MapView({ ds, st }: { ds: Dataset; st: ExploreState }) {
   const a = useAnalysis<MapResult>(ds.id, "map", params);
 
   return (
-    <div className="stack" style={{ gap: 12 }}>
+    <div className="stack tools-gap-12">
       <div className="row explore-controls">
-        <div className="segmented soft" role="radiogroup" aria-label="Embedding method">
-          {(["tsne", "umap"] as const).map((m) => (
-            <button key={m} type="button" role="radio" aria-checked={method === m} className={method === m ? "on" : ""}
-              onClick={() => st.set({ method: m === "tsne" ? null : "umap" })}>{m === "tsne" ? "t-SNE" : "UMAP"}</button>
-          ))}
-        </div>
+        <Segmented size="small" label="Embedding method" value={method} onChange={(m) => st.set({ method: m === "tsne" ? null : "umap" })}
+          options={[{ value: "tsne", label: "t-SNE" }, { value: "umap", label: "UMAP" }]} />
         <KnobInput key={method} label={knob.label} hint={knob.hint} value={knobValue} min={knob.min} max={knob.max}
           onCommit={(v) => st.set({ [knob.key]: v === knob.def ? null : String(v) })} />
         <span className="muted small-text">Fixed seed{method === "tsne" ? "; reduced to 50 PCA components first" : ""}.</span>
@@ -55,11 +52,11 @@ function KnobInput({ label, hint, value, min, max, onCommit }: {
   const n = Number(text);
   const bad = text !== "" && (!Number.isFinite(n) || n < min || n > max);
   return (
-    <label className="row" style={{ gap: 6 }} title={hint}>
+    <label className="tools-control" title={hint}>
       <span className="secondary small-text">{label}</span>
       <input type="number" min={min} max={max} step={1} value={text} onChange={(e) => setText(e.target.value)}
-        style={{ width: 76, ...(bad ? { borderColor: "var(--bad)" } : {}) }} aria-invalid={bad} />
-      {bad && <span className="small-text" style={{ color: "var(--bad)" }}>{min}–{max}</span>}
+        className={`tools-knob${bad ? " bad" : ""}`} aria-invalid={bad} />
+      {bad && <span className="small-text tools-bad">{min}–{max}</span>}
     </label>
   );
 }
@@ -69,10 +66,10 @@ function MapChart({ r }: { r: MapResult }) {
   const option = useMemo(() => mapOption(t, r), [t, r]);
   return (
     <>
-      <div className="card chart-card" style={{ padding: 8 }}>
+      <div className="card chart-card tools-chart-pad">
         <Chart option={option} height={580} ariaLabel={`${r.method === "umap" ? "UMAP" : "t-SNE"} map of ${r.n} rows`} />
-        <span className="muted small-text" style={{ padding: "0 8px 4px" }}>
-          {r.target ? <>Coloured by <code>{r.target}</code>{r.target_kind === "categorical" && " — click legend entries to hide classes"}. </> : "No target chosen, so points are uncoloured. "}
+        <span className="muted small-text tools-chart-foot">
+          {r.target ? <>Coloured by <code>{r.target}</code>{r.target_kind === "categorical" && "; click legend entries to hide classes"}. </> : "No target chosen, so points are uncoloured. "}
           Distances between far-apart clusters aren't meaningful; nearby points are similar rows.
         </span>
       </div>

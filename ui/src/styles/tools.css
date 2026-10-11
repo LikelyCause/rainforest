@@ -1,1 +1,111 @@
-/* tools: styles for this area; loads after styles.css, so rules here override it. */
+/* tools: styles for this area; loads after styles.css, so rules here override it.
+   Fields · Table / SQL / Derived, Explore, People, Settings, sign-in, the picture dialog. */
+
+/* ---------------------------------------------------------------- small helpers */
+.tools-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.tools-between { justify-content: space-between; }
+.tools-center { justify-content: center; }
+.tools-nowrap { flex-wrap: nowrap; }
+.tools-start { align-self: flex-start; }
+.tools-left { text-align: left; }
+.tools-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tools-gap-4 { gap: 4px; }
+.tools-gap-6 { gap: 6px; }
+.tools-gap-12 { gap: 12px; }
+.tools-gap-16 { gap: 16px; }
+.tools-pad-6 { padding: 6px; }
+.tools-lead { margin: 0; max-width: 72ch; }
+.tools-bad { color: var(--bad); }
+.tools-differs { color: var(--warn); }
+.tools-retry { margin-top: 6px; }
+.tools-nowrap-cell { white-space: nowrap; }
+.tools-actions { text-align: right; white-space: nowrap; }
+.tools-icon-btn { width: 32px; padding: 0; }
+button.tools-danger-text, button.ghost.tools-danger-text { color: var(--bad); }
+.tools-inline-icon { display: inline-flex; align-items: center; gap: 4px; }
+.tools-sort { margin-left: 4px; vertical-align: -1px; }
+.tools-sort.up { transform: rotate(180deg); }
+.tools-form-row { align-items: flex-end; }
+.tools-title { display: flex; flex-direction: column; gap: 4px; }
+.tools-title .secondary { font-size: var(--fs-body); }
+.tools-control { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.tools-control select { min-width: 0; }
+
+/* ---------------------------------------------------------------- Fields · Table / SQL / Derived */
+.tools-head { display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
+.tools-hint { flex: 1 1 260px; min-width: 0; }
+.tools-finder { gap: 12px; }
+.tools-filters { gap: 10px; }
+.tools-filters .filter-row > .segmented { justify-self: start; }
+.tools-sql select { width: auto; max-width: 100%; }
+.tools-derived .segmented { align-self: flex-start; max-width: 100%; }
+.tools-check-col { width: 32px; }
+.tools-bulk-table { max-height: calc(100vh - 380px); min-height: 240px; border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
+.tools-bulk-table thead th { background: var(--surface-1); }
+.tools-bulk-table .badge { vertical-align: middle; }
+.tools-sql .sql-editor { min-height: 160px; border-radius: var(--radius-sm); }
+.tools-sql-tables code { white-space: nowrap; }
+.tools-sql-result { max-height: 520px; }
+.tools-derived .card { gap: 12px; }
+.tools-derived h2 .muted { font-weight: 400; }
+.tools-narrow { max-width: 360px; }
+.tools-count-fields { max-height: 160px; overflow-y: auto; }
+.tools-derived-actions input { flex: 1 1 200px; min-width: 0; }
+
+/* ---------------------------------------------------------------- Explore */
+.tools-explore { gap: 12px; }
+.tools-explore .explore-toolbar { padding: 8px 12px; border-radius: var(--radius-sm); }
+.tools-chart-pad { padding: 8px; }
+.tools-chart-foot { padding: 0 8px 4px; justify-content: space-between; }
+.tools-chart-note { margin-bottom: 8px; }
+.tools-threshold-value { width: 32px; }
+.tools-skeleton-chart { height: 320px; }
+.tools-adder { position: relative; }
+.tools-adder input { width: 220px; max-width: 100%; }
+.tools-knob { width: 76px; }
+.tools-knob.bad { border-color: var(--bad); }
+.tools-tests-table { max-height: calc(100vh - 330px); min-height: 300px; background: var(--surface-1); }
+.tools-test-name { max-width: 260px; }
+.tools-kv-1 { grid-template-columns: 1fr; }
+.tools-kv-2 { grid-template-columns: 1fr 1fr; }
+.tools-explore .analysis-bar .badge { height: 20px; }
+.tools-explore .computing .meter { width: 100%; }
+
+/* ---------------------------------------------------------------- People and Settings */
+.tools-people .table-wrap, .tools-people-table { max-height: none; }
+.tools-name-field { flex: 1 1 240px; max-width: 360px; }
+
+/* ---------------------------------------------------------------- Sign-in and the picture dialog */
+.tools-login .login-brand { font-size: var(--fs-section); }
+.tools-login h1 { font-size: var(--fs-title); }
+.tools-login .picker { align-items: center; text-align: center; gap: 16px; }
+.tools-login-skeleton { width: 240px; margin: 0 auto; }
+.tools-framer { align-items: center; gap: 10px; }
+.picture-dialog { gap: 12px; }
+.picture-dialog .row button.small { gap: 4px; }
+
+/* ---------------------------------------------------------------- phone */
+@media (max-width: 759px) {
+  .tools-head .segmented { width: 100%; display: flex; }
+  .tools-head .segmented button { flex: 1; min-width: 0; height: 40px; padding: 0 6px; }
+  .tools-bulk-table { max-height: 60vh; }
+  /* Column and remove on the first line, operator and value on the second. */
+  .tools-fields .filter-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .tools-fields .filter-row > * { min-width: 0; }
+  .tools-fields .filter-row > :nth-child(1) { grid-column: 1 / 3; grid-row: 1; }
+  .tools-fields .filter-row > :nth-child(4) { grid-column: 3; grid-row: 1; }
+  .tools-fields .filter-row > :nth-child(2) { grid-column: 1; grid-row: 2; }
+  .tools-fields .filter-row > :nth-child(3) { grid-column: 2 / 4; grid-row: 2; }
+  .tools-fields .bulk-bar button { min-height: 40px; }
+  .tools-fields .chips .chip, .tools-derived .chips .chip { height: 36px; padding: 0 12px; }
+  .tools-icon-btn { width: 44px; height: 44px; }
+  .tools-explore .explore-toolbar { flex-direction: column; align-items: stretch; gap: 10px; }
+  .tools-explore .explore-toolbar select { max-width: 100%; width: 100%; }
+  .tools-explore .tools-control { justify-content: space-between; }
+  .tools-explore .explore-split.with-panel, .tools-explore .explore-split.with-panel.wide { grid-template-columns: minmax(0, 1fr); }
+  .tools-explore .side-panel { position: static; }
+  .tools-adder, .tools-adder input { width: 100%; }
+  .tools-test-name { max-width: 160px; }
+  .tools-name-field { max-width: none; }
+  .tools-form-row > label.field { flex: 1 1 100%; }
+}

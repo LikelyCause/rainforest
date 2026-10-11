@@ -4,6 +4,7 @@ import { api, isServerPath, oidcLoginUrl, safeNext } from "../api";
 import { Avatar } from "../components/Avatar";
 import { Logo } from "../components/Logo";
 import { ErrorAlert } from "../components/ui";
+import { Chip } from "../components/kit";
 import { roleLabel } from "../format";
 import type { AuthConfig } from "../types";
 
@@ -31,14 +32,14 @@ function PickUser({ next }: { next: string }) {
   return (
     <>
       <ErrorAlert error={users.error} />
-      {users.isPending && <span className="skeleton" style={{ width: 240, margin: "0 auto" }} />}
+      {users.isPending && <span className="skeleton tools-login-skeleton" />}
       <ul className="profile-grid" aria-label="Profiles">
         {users.data?.map((u) => (
           <li key={u.id}>
             <button type="button" className="profile" disabled={pick.isPending} onClick={() => pick.mutate(u.id)}>
               <Avatar user={u} />
               <span className="profile-name">{u.name}</span>
-              <span className={`badge role-${u.role}`}>{roleLabel(u.role)}</span>
+              <Chip tone={u.role === "lead" ? "accent" : "plain"} className={`role-${u.role}`}>{roleLabel(u.role)}</Chip>
             </button>
           </li>
         ))}
@@ -64,10 +65,13 @@ export function LoginPage() {
   const cfg = useQuery({ queryKey: ["authConfig"], queryFn: api.authConfig, retry: false, staleTime: Infinity });
   const picker = cfg.data?.mode === "pick" && !cfg.data.problem;
   return (
-    <div className="login">
+    <div className="login tools-login">
       <div className={`stack ${picker ? "picker" : "card login-card"}`}>
         <div className="login-brand"><Logo /> Rainforest</div>
-        <h1>{cfg.data?.mode === "pick" ? "Who are you?" : "Sign in"}</h1>
+        <div className="tools-title">
+          <h1>{cfg.data?.mode === "pick" ? "Who are you?" : "Sign in"}</h1>
+          {picker && <span className="secondary">Pick your profile to sign in.</span>}
+        </div>
         {failure && <ErrorAlert error={{ message: failure }} />}
         {cfg.error && <ErrorAlert error={cfg.error} title="Can't reach the API." />}
         {cfg.data && <SignInBody cfg={cfg.data} next={next} />}

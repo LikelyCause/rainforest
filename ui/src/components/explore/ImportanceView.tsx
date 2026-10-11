@@ -17,7 +17,7 @@ export function ImportanceView({ ds, st }: { ds: Dataset; st: ExploreState }) {
   return (
     <AnalysisState a={a} datasetId={ds.id}>
       {(r) => (
-        <div className="stack" style={{ gap: 16 }}>
+        <div className="stack tools-gap-16">
           <MiCard ds={ds} r={r} />
           {r.pca && r.pca.explained.length > 0 && <PcaCards pca={r.pca} />}
           <SkippedList skipped={r.skipped} />
@@ -56,7 +56,7 @@ function MiCard({ ds, r }: { ds: Dataset; r: ImportanceResult }) {
           </label>
         )}
       </div>
-      <span className="muted small-text" style={{ marginBottom: 8 }}>
+      <span className="muted small-text tools-chart-note">
         How much knowing each field reduces uncertainty about the target; catches non-linear links that correlation misses. 0 = independent.
       </span>
       <Chart option={option} height={rows.length * 22 + 16} ariaLabel="Mutual information by field"
@@ -86,7 +86,7 @@ function PcaCards({ pca }: { pca: NonNullable<ImportanceResult["pca"]> }) {
     <div className="grid-2">
       <section className="card chart-card">
         <div className="card-head"><h2>PCA explained variance</h2><span className="muted small-text">{pca.n_features} features</span></div>
-        <span className="muted small-text" style={{ marginBottom: 8 }}>
+        <span className="muted small-text tools-chart-note">
           {to80 >= 0 ? <>{to80 + 1} component{to80 ? "s" : ""} explain {fmtPct(pca.cumulative[to80], 0)} of the variance.</> : <>The first {pca.cumulative.length} components explain {fmtPct(pca.cumulative[pca.cumulative.length - 1], 0)}.</>}
         </span>
         <Chart option={pcaOpt} height={300} ariaLabel="Explained variance per principal component" />

@@ -5,6 +5,7 @@ import { api } from "../../api";
 import { can } from "../../can";
 import { useFields, useMe } from "../../hooks";
 import { Empty, ErrorAlert } from "../ui";
+import { Banner, ProgressBar, StatusBadge } from "../kit";
 import { fmtAgo, fmtInt } from "../../format";
 import type { Analysis, AnalysisKind, AnalysisParams, Dataset, NotEnoughReason, Skipped } from "../../types";
 import { parseExploreParams } from "./params";
@@ -88,13 +89,13 @@ export function AnalysisState<R>({ a, datasetId, children }: {
     if (query.error) {
       return (
         <ErrorAlert error={query.error} title="Couldn't start the analysis.">
-          <div style={{ marginTop: 6 }}><button type="button" className="small" onClick={() => query.refetch()}>Retry</button></div>
+          <div className="tools-retry"><button type="button" className="small" onClick={() => query.refetch()}>Retry</button></div>
         </ErrorAlert>
       );
     }
-    return <Computing progress={0} message="Starting…" />;
+    return <Computing status="pending" progress={0} message="Starting…" />;
   }
-  if (isActive(row.status)) return <Computing progress={row.progress} message={row.status_message} />;
+  if (isActive(row.status)) return <Computing status={row.status} progress={row.progress} message={row.status_message} />;
   if (row.status === "failed") {
     const reason = (row.result as { reason?: NotEnoughReason } | null)?.reason;
     if (row.error?.startsWith("Not enough") && reason && NOT_ENOUGH[reason]) {
@@ -110,7 +111,7 @@ export function AnalysisState<R>({ a, datasetId, children }: {
     }
     return (
       <ErrorAlert error={{ message: row.error?.split("\n")[0] ?? "The analysis failed." }} title="Analysis failed.">
-        <div className="row" style={{ marginTop: 6 }}>
+        <div className="row tools-retry">
           <button type="button" className="small" disabled={a.recomputing} onClick={a.recompute}>Retry</button>
           {a.recomputeError != null && <span>{(a.recomputeError as Error).message}</span>}
         </div>
@@ -121,13 +122,13 @@ export function AnalysisState<R>({ a, datasetId, children }: {
   return (
     <>
       {row.stale ? (
-        <div className="alert warn">
-          <span className="grow">Out of date: decisions changed since this ran ({fmtAgo(row.finished_at)}).</span>
-          {mayRecompute && <button type="button" className="small" disabled={a.recomputing} onClick={a.recompute}>Recompute</button>}
-        </div>
+        <Banner tone="warn" title="Out of date."
+          action={mayRecompute && <button type="button" className="small" disabled={a.recomputing} onClick={a.recompute}>Recompute</button>}>
+          Decisions changed since this ran ({fmtAgo(row.finished_at)}).
+        </Banner>
       ) : (
         <div className="analysis-bar">
-          <span>As of {fmtAgo(row.finished_at)}{n != null && <> · {fmtInt(n)} rows</>}</span>
+          <span className="row tools-gap-6"><StatusBadge status="done" /><span className="num">As of {fmtAgo(row.finished_at)}{n != null && <> · {fmtInt(n)} rows</>}</span></span>
           {mayRecompute && (
             <button type="button" className="small ghost" disabled={a.recomputing} onClick={a.recompute}>
               {a.recomputing ? "Starting…" : "Recompute"}
@@ -141,11 +142,11 @@ export function AnalysisState<R>({ a, datasetId, children }: {
   );
 }
 
-function Computing({ progress, message }: { progress: number; message: string | null }) {
+function Computing({ status, progress, message }: { status: string; progress: number; message: string | null }) {
   return (
     <div className="card computing" aria-busy="true">
-      <b>Computing…</b>
-      <div className="meter"><span style={{ width: `${Math.max(progress, 0.03) * 100}%` }} /></div>
+      <div className="row tools-between"><b>Computing…</b><StatusBadge status={status} /></div>
+      <ProgressBar value={Math.max(progress, 0.03)} max={1} label="Analysis progress" />
       <span className="secondary small-text">{message ?? "Waiting for a worker"}</span>
     </div>
   );

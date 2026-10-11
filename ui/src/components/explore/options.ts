@@ -195,7 +195,7 @@ export function miOption(t: ChartTheme, rows: ImportanceResult["mi"]): EChartsCo
       ...tip(t),
       formatter: (p: any) => {
         const r = rows[p.dataIndex];
-        return `<b>${esc(r.name)}</b><br/>Mutual information ${fmtNum(r.value)}${r.field_id ? '<br/><span style="opacity:.7">click to open in Review</span>' : ""}`;
+        return `<b>${esc(r.name)}</b><br/>Mutual information ${fmtNum(r.value)}${r.field_id ? '<br/><span style="opacity:.7">click to open the field</span>' : ""}`;
       },
     },
     series: [{

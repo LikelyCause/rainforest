@@ -16,7 +16,7 @@ export function ForbiddenPage() {
     onSuccess: ({ logout_url }) => window.location.assign(logout_url ?? "/login"),
   });
   return (
-    <div className="login">
+    <div className="login tools-login">
       <div className="card login-card stack">
         <div className="login-brand"><Logo /> Rainforest</div>
         <h1>No access</h1>
@@ -30,7 +30,7 @@ export function ForbiddenPage() {
           </p>
         )}
         <ErrorAlert error={out.error} />
-        <div className="row">
+        <div className="row tools-between">
           <button type="button" className="primary" disabled={out.isPending} onClick={() => out.mutate()}>
             Sign out of {provider}
           </button>

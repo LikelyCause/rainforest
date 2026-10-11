@@ -1,20 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { can } from "../can";
 import { useAccess, useDebounced, useMe, useOptions, useFields } from "../hooks";
 import { JoinAssessment } from "../components/JoinAssessment";
 import { DerivedFields } from "../components/DerivedFields";
-import { ExperimentModeBar } from "../components/ExperimentModeBar";
 import { useView, type View, viewKey, withView } from "../view";
 import { useDatasetContext } from "../components/DatasetLayout";
 import { Empty, ErrorAlert, StatusGlyph, glyphFor } from "../components/ui";
+import { Banner, Chip, Icon, Segmented } from "../components/kit";
 import { fmtNum, fmtPct, TYPE_SHORT } from "../format";
 import { completeFilters, finderState, PRESETS, QUERY_LIMIT, selectionLabel, type Preset } from "../finder";
 import { LEAK_AT } from "../signals";
 import { showError, toast } from "../toast";
-import type { BulkRequest, BulkResult, FieldFilter, OptionCatalog, SqlResult } from "../types";
+import type { BulkRequest, BulkResult, Dataset, FieldFilter, OptionCatalog, SqlResult } from "../types";
 
 type Kind = "num" | "pct" | "text" | "bool" | "enum";
 interface Col { value: string; label: string; kind: Kind; group: "Decision" | "Stats" | "Type" }
@@ -76,7 +76,6 @@ function useFinderState() {
   };
   return {
     ...state,
-    setTab: (t: string) => set({ tab: t === "sql" || t === "derived" ? t : null }),
     setPreset: (p: Preset) => set({ preset: p.key, f: null, sort: p.sort ?? null }),
     setFilters: (f: FieldFilter[]) => set({ f: JSON.stringify(f) }),
     setSort: (s: string) => set({ sort: s }),
@@ -189,21 +188,23 @@ function FieldFinder({ datasetId, presetLabel, canEdit, view }: {
   const setFilter = (i: number, patch: Partial<FieldFilter>) => st.setFilters(st.filters.map((f, j) => (j === i ? { ...f, ...patch } : f)));
   const sortBy = (col: string) => st.setSort(sortCol === col && desc ? col : `-${col}`);
   const th = (col: string, text: string, num = false) => (
-    <th className={`sortable${num ? " num" : ""}`} onClick={() => sortBy(col)} aria-sort={sortCol === col ? (desc ? "descending" : "ascending") : "none"}>
-      {text}{sortCol === col ? (desc ? " ▼" : " ▲") : ""}
+    <th className={`sortable${num ? " num" : ""}`} aria-sort={sortCol === col ? (desc ? "descending" : "ascending") : "none"}>
+      <button type="button" className="th-sort" onClick={() => sortBy(col)}>
+        {text}{sortCol === col && <Icon name="chevron-down" size={12} className={desc ? "tools-sort" : "tools-sort up"} />}
+      </button>
     </th>
   );
   const allChecked = selected.length === rows.length;
 
   return (
-    <section className="stack" style={{ gap: 12 }}>
+    <section className="stack tools-finder">
       <div className="chips" role="group" aria-label="Presets">
         {PRESETS.map((p) => (
           <button key={p.key} type="button" className={`chip${st.preset === p.key ? " on" : ""}`}
             aria-pressed={st.preset === p.key} onClick={() => st.setPreset(p)}>{p.label}</button>
         ))}
       </div>
-      <div className="card stack">
+      <div className="card stack tools-filters">
         {st.filters.map((f, i) => {
           const col = colOf(f.column);
           return (
@@ -225,39 +226,42 @@ function FieldFinder({ datasetId, presetLabel, canEdit, view }: {
                 </select>
               )}
               <ValueEditor col={col} filter={f} catalog={catalog} onChange={(value) => setFilter(i, { value })} />
-              <button type="button" className="ghost" aria-label="Remove filter" onClick={() => st.setFilters(st.filters.filter((_, j) => j !== i))}>✕</button>
+              <button type="button" className="ghost tools-icon-btn" aria-label="Remove filter" title="Remove filter"
+                onClick={() => st.setFilters(st.filters.filter((_, j) => j !== i))}><Icon name="x" /></button>
             </div>
           );
         })}
-        <div><button type="button" className="ghost" onClick={() => st.setFilters([...st.filters, { column: "null_pct", op: ">", value: undefined }])}>+ Filter</button></div>
+        <div><button type="button" className="ghost small" onClick={() => st.setFilters([...st.filters, { column: "null_pct", op: ">", value: undefined }])}>
+          <Icon name="plus" size={14} />Add filter
+        </button></div>
       </div>
 
       <ErrorAlert error={q.error} />
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <span className="secondary">
+      <div className="row tools-between">
+        <span className="secondary num">
           {q.isFetching && !q.data ? "Searching…"
             : truncated ? `More than ${QUERY_LIMIT} fields match; the first ${QUERY_LIMIT} are shown`
             : `${rows.length} field${rows.length === 1 ? "" : "s"} match`}
           {(excluded.size > 0 || truncated) && ` · bulk actions: ${selectionLabel(rows.length, excluded.size, truncated)}`}
         </span>
         <button type="button" className="primary" disabled={!selected.length} onClick={reviewSet}>
-          Review these {selected.length} → <kbd>R</kbd>
+          Review these {selected.length}<Icon name="arrow-right" size={14} /><kbd>R</kbd>
         </button>
       </div>
 
       {rows.length > 0 ? (
         <div>
-          <div className="table-wrap" style={{ maxHeight: "calc(100vh - 380px)", minHeight: 240, borderRadius: "6px 6px 0 0" }}>
+          <div className="table-wrap tools-bulk-table">
             <table className="data compact">
               <thead><tr>
-                <th style={{ width: 32 }}>
+                <th className="tools-check-col">
                   <input type="checkbox" aria-label="Select all" checked={allChecked}
                     ref={(el) => { if (el) el.indeterminate = !allChecked && selected.length > 0; }}
                     onChange={() => setExcluded(allChecked ? new Set(rows.map((r) => r.field_id)) : new Set())} />
                 </th>
                 {th("name", "Name")}<th>Type</th><th>Decision</th><th>Suggestion</th>
                 {th("null_pct", "Missing", true)}{th("n_unique", "Distinct", true)}{th("skewness", "Skew", true)}
-                {th("max_target_assoc", "Target assoc.", true)}<th title="Reviewed">✓</th>
+                {th("max_target_assoc", "Target assoc.", true)}<th title="Reviewed"><Icon name="check" size={14} label="Reviewed" /></th>
               </tr></thead>
               <tbody>
                 {rows.map((r) => {
@@ -275,7 +279,7 @@ function FieldFinder({ datasetId, presetLabel, canEdit, view }: {
                       <td><button type="button" className="link" onClick={() => openSet(label, selected, r.field_id)}>{r.name}</button></td>
                       <td><span className="type-tag">{TYPE_SHORT[r.semantic_type] ?? r.semantic_type}</span></td>
                       <td>
-                        {r.action === "target" ? <span className="badge accent">◎ target</span> : (
+                        {r.action === "target" ? <Chip tone="accent" icon="target">target</Chip> : (
                           <div className="segmented mini-seg" role="radiogroup" aria-label={`Decision for ${r.name}`}>
                             {(["keep", "drop"] as const).map((a) => (
                               <button key={a} type="button" role="radio" aria-checked={r.action === a} className={r.action === a ? `on ${a}` : ""}
@@ -284,14 +288,14 @@ function FieldFinder({ datasetId, presetLabel, canEdit, view }: {
                           </div>
                         )}
                       </td>
-                      <td className={differs ? "" : "muted"} style={differs ? { color: "var(--warn)" } : undefined}>{r.suggested_action ?? "—"}</td>
+                      <td className={differs ? "tools-differs" : "muted"}>{r.suggested_action ?? "—"}</td>
                       <td className="num">{fmtPct(r.null_pct)}</td>
                       <td className="num">{fmtNum(r.n_unique)}</td>
                       <td className="num">{fmtNum(r.skewness, 2)}</td>
                       <td className="num">
                         {r.is_target ? <span className="muted">—</span> : <>
                           {fmtNum(r.max_target_assoc, 2)}
-                          {(r.max_target_assoc ?? 0) >= LEAK_AT && <span className="badge bad" style={{ marginLeft: 6 }}>leak</span>}
+                          {(r.max_target_assoc ?? 0) >= LEAK_AT && <> <Chip tone="bad">leak</Chip></>}
                         </>}
                       </td>
                       <td><StatusGlyph kind={glyphFor(r)} reviewed={r.reviewed} /></td>
@@ -305,7 +309,7 @@ function FieldFinder({ datasetId, presetLabel, canEdit, view }: {
             <div className="bulk-bar preview" role="alertdialog" aria-label="Confirm bulk change">
               <span className="grow">
                 <b>{pending.action.label} · {pending.preview.matched} field{pending.preview.matched === 1 ? "" : "s"}</b>
-                {" — "}{pending.preview.changed} will change
+                {": "}{pending.preview.changed} will change
                 {Object.entries(pending.preview.transitions).map(([t, n]) => ` · ${n} ${t}`).join("")}
                 {pending.preview.unchanged > 0 && ` · ${pending.preview.unchanged} already so`}
                 {pending.preview.reviewed_changed > 0 && <> · <b>{pending.preview.reviewed_changed} reviewed field{pending.preview.reviewed_changed === 1 ? "" : "s"} will change</b></>}
@@ -342,13 +346,8 @@ function ValueEditor({ col, filter, catalog, onChange }: {
   if (col.kind === "bool") {
     const v = filter.value === undefined ? null : String(filter.value);
     return (
-      <div className="segmented soft" role="radiogroup" aria-label={col.label}>
-        {(["true", "false"] as const).map((x) => (
-          <button key={x} type="button" role="radio" aria-checked={v === x} className={v === x ? "on" : ""} onClick={() => onChange(x)}>
-            {x === "true" ? "Yes" : "No"}
-          </button>
-        ))}
-      </div>
+      <Segmented size="small" label={col.label} value={(v ?? "") as "true" | "false" | ""} onChange={(x) => onChange(x)}
+        options={[{ value: "true", label: "Yes" }, { value: "false", label: "No" }]} />
     );
   }
   if (col.kind === "enum") {
@@ -382,24 +381,28 @@ function ValueEditor({ col, filter, catalog, onChange }: {
 }
 
 const NAME_COLUMNS = new Set(["name", "field_name", "other_field_name"]);
+const DEFAULT_SQL = `SELECT name, inferred_type, null_pct, n_unique\nFROM meta.v_fields\nWHERE dataset_id = :dataset\nORDER BY null_pct DESC\nLIMIT 20`;
 
 function SqlConsole({ datasetId }: { datasetId: number }) {
   const examples = useQuery({ queryKey: ["sqlExamples"], queryFn: api.sqlExamples, staleTime: Infinity });
   const { data: fields } = useFields(datasetId);
   const openSet = useOpenWorkingSet(datasetId);
   const storeKey = `sql:${datasetId}`;
+  // A fresh console starts from an example; what you typed last comes back when you return.
   const [sql, setSqlState] = useState(() => {
-    try { return sessionStorage.getItem(storeKey) ?? ""; } catch { return ""; }
-  }) || `SELECT name, inferred_type, null_pct, n_unique\nFROM meta.v_fields\nWHERE dataset_id = :dataset\nORDER BY null_pct DESC\nLIMIT 20`;
+    try { return sessionStorage.getItem(storeKey) || DEFAULT_SQL; } catch { return DEFAULT_SQL; }
+  });
   const setSql = (v: string) => {
     setSqlState(v);
     try { sessionStorage.setItem(storeKey, v); } catch { /* storage unavailable */ }
   };
   const m = useMutation({ mutationFn: (q: string) => api.sql(q.split(":dataset").join(String(datasetId))) });
-  const ranOnce = useRef(false);
   useEffect(() => {
-    // Re-run on return only for metadata queries; raw-data scans can be slow.
-    if (!ranOnce.current && sql && !/raw\./i.test(sql)) { ranOnce.current = true; m.mutate(sql); }
+    // Re-run on return only for metadata queries; raw-data scans can be slow. Deferred a tick so a remount (Strict
+    // Mode) cancels the first call rather than leaving a mutation no observer hears back from.
+    if (!sql || /raw\./i.test(sql)) return;
+    const t = setTimeout(() => m.mutate(sql), 0);
+    return () => clearTimeout(t);
   }, []);
 
   const byName = useMemo(() => new Map((fields ?? []).map((f) => [f.name, f])), [fields]);
@@ -409,11 +412,11 @@ function SqlConsole({ datasetId }: { datasetId: number }) {
     : [];
 
   return (
-    <section className="card stack">
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <span className="muted small-text">read-only role · <code>:dataset</code> = {datasetId}</span>
+    <section className="card stack tools-sql">
+      <div className="row tools-between">
+        <span className="muted small-text">Read-only role · <code>:dataset</code> = {datasetId}</span>
         <select aria-label="Examples" value="" onChange={(e) => { const ex = examples.data?.find((x) => x.title === e.target.value); if (ex) setSql(ex.sql); }}>
-          <option value="">Examples ▾</option>
+          <option value="">Examples</option>
           {examples.data?.map((e) => <option key={e.title} value={e.title}>{e.title}</option>)}
         </select>
       </div>
@@ -421,8 +424,10 @@ function SqlConsole({ datasetId }: { datasetId: number }) {
         onChange={(e) => setSql(e.target.value)}
         onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); m.mutate(sql); } }} />
       <div className="row">
-        <button type="button" className="primary" disabled={m.isPending} onClick={() => m.mutate(sql)}>Run <kbd>⌘↵</kbd></button>
-        <span className="muted small-text">
+        <button type="button" className="primary" disabled={m.isPending} onClick={() => m.mutate(sql)}>
+          <Icon name="play" size={14} />{m.isPending ? "Running…" : "Run"} <kbd>⌘↵</kbd>
+        </button>
+        <span className="muted small-text tools-sql-tables">
           Views: <code>meta.v_fields</code>, <code>meta.v_correlations</code> · tables: <code>meta.fields</code>, <code>meta.field_decisions</code>,
           <code> meta.decision_history</code>, <code>raw.ds_{datasetId}</code>
         </span>
@@ -430,14 +435,14 @@ function SqlConsole({ datasetId }: { datasetId: number }) {
       <ErrorAlert error={m.error} />
       {m.data && (
         <>
-          <div className="row" style={{ justifyContent: "space-between" }}>
-            <span className="muted small-text">
+          <div className="row tools-between">
+            <span className="muted small-text num">
               {m.data.row_count} row{m.data.row_count === 1 ? "" : "s"}{m.data.truncated ? " (truncated)" : ""} · {m.data.elapsed_ms} ms
             </span>
             {resultFields.length > 0 && (
               <button type="button" className="primary"
                 onClick={() => openSet("SQL result", resultFields.map((f) => ({ field_id: f!.id, reviewed: f!.reviewed })))}>
-                Review these {resultFields.length} →
+                Review these {resultFields.length}<Icon name="arrow-right" size={14} />
               </button>
             )}
           </div>
@@ -452,9 +457,9 @@ function SqlConsole({ datasetId }: { datasetId: number }) {
 }
 
 function ResultTable({ result, nameCols, onOpen }: { result: SqlResult; nameCols: Set<number>; onOpen: (name: string) => void }) {
-  if (!result.columns.length) return <div className="muted">Statement executed — no rows returned.</div>;
+  if (!result.columns.length) return <div className="muted">Statement executed; no rows returned.</div>;
   return (
-    <div className="table-wrap">
+    <div className="table-wrap tools-sql-result">
       <table className="data">
         <thead><tr>{result.columns.map((c) => <th key={c}>{c}</th>)}</tr></thead>
         <tbody>
@@ -475,6 +480,51 @@ function ResultTable({ result, nameCols, onOpen }: { result: SqlResult; nameCols
   );
 }
 
+type FieldsView = "focus" | "table" | "sql" | "derived" | "queue";
+
+/** Fields' own view switch: Focus · Table · SQL · Derived (and the queue first during team review). Each is a place,
+ * so pressing one navigates; `?view=` comes along. SQL and Derived only show for the baseline in progress, to those
+ * allowed them. */
+export function FieldsViewSwitch({ ds, current, className }: { ds: Dataset; current: FieldsView; className?: string }) {
+  const nav = useNavigate();
+  const view = useView();
+  const me = useMe().data;
+  const { pathname, search } = useLocation();
+  const sql = can(me, "querySql") && !view;
+  const derive = can(me, "editDataset") && !view;
+  const base = `/d/${ds.id}`;
+  const options: { value: FieldsView; label: string; title?: string }[] = [
+    ...(ds.phase === "review" ? [{ value: "queue" as const, label: "Queue", title: "The team review queue" }] : []),
+    { value: "focus", label: "Focus", title: "One field at a time" },
+    { value: "table", label: "Table", title: "Filter fields and change many at once" },
+    ...(sql ? [{ value: "sql" as const, label: "SQL", title: "Query the field metadata and raw data" }] : []),
+    ...(derive ? [{ value: "derived" as const, label: "Derived", title: "Fields computed from other fields" }] : []),
+  ];
+  const to: Record<FieldsView, string> = {
+    queue: `${base}/team`, focus: withView(`${base}/review`, view), table: withView(`${base}/bulk`, view),
+    sql: `${base}/bulk?tab=sql`, derived: `${base}/bulk?tab=derived`,
+  };
+  const go = (v: FieldsView) => {
+    if (v === current) return;
+    // Within the table page only `tab` changes, so the finder's presets and filters survive a look at SQL.
+    if (pathname.endsWith("/bulk") && (v === "table" || v === "sql" || v === "derived")) {
+      const next = new URLSearchParams(search);
+      if (v === "table") next.delete("tab"); else next.set("tab", v);
+      const q = next.toString();
+      return nav(`${pathname}${q ? `?${q}` : ""}`);
+    }
+    nav(to[v]);
+  };
+  return <Segmented pressed label="Fields view" className={className} value={current} options={options} onChange={go} />;
+}
+
+// Derived explains itself below the switch.
+const VIEW_HINT: Record<"table" | "sql" | "derived", string | null> = {
+  table: "Filter fields and change many at once. Changes show up in Focus straight away.",
+  sql: "Read-only SQL over the field metadata, decisions and raw data.",
+  derived: null,
+};
+
 export function BulkEditPage() {
   const ds = useDatasetContext();
   const view = useView();
@@ -484,21 +534,24 @@ export function BulkEditPage() {
   const derive = can(useMe().data, "editDataset");
   const st = useFinderState();
   const presetLabel = (p: string | null) => PRESETS.find((x) => x.key === p)?.label ?? "Custom filter";
+  // SQL and Derived read and change the baseline in progress, so an experiment's or a finalized copy shows the table.
+  const tab = st.tab === "derived" && derive && !view ? "derived" : st.tab === "sql" && sql && !view ? "sql" : "table";
   return (
-    <div className="page">
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <h1>Bulk edit</h1>
-        <Link to={withView(`/d/${ds.id}/review`, view)} className="muted small-text">Changes here show up in Review at once</Link>
+    <div className="page tools-fields">
+      <div className="tools-head">
+        <h1 className="tools-sr">Fields · {tab === "table" ? "Table" : tab === "sql" ? "SQL" : "Derived"}</h1>
+        <FieldsViewSwitch ds={ds} current={tab} />
+        {VIEW_HINT[tab] && (
+          <span className="secondary small-text tools-hint">
+            {VIEW_HINT[tab]}
+            {tab === "table" && <> <Link to={withView(`/d/${ds.id}/review`, view)}>Open Focus</Link></>}
+          </span>
+        )}
       </div>
-      {view ? <ExperimentModeBar ds={ds} view={view} /> : <JoinAssessment ds={ds} />}
-      {access.note && <div className={`alert ${access.canEdit ? "info" : "warn"}`}>{access.note}</div>}
-      <div className="tabs-inline" role="tablist">
-        <button type="button" role="tab" aria-selected={st.tab === "fields"} className={st.tab === "fields" ? "on" : ""} onClick={() => st.setTab("fields")}>Fields</button>
-        {sql && !view && <button type="button" role="tab" aria-selected={st.tab === "sql"} className={st.tab === "sql" ? "on" : ""} onClick={() => st.setTab("sql")}>SQL</button>}
-        {derive && !view && <button type="button" role="tab" aria-selected={st.tab === "derived"} className={st.tab === "derived" ? "on" : ""} onClick={() => st.setTab("derived")}>Derived fields</button>}
-      </div>
-      {st.tab === "derived" && derive && !view ? <DerivedFields ds={ds} />
-        : st.tab === "fields" || view || !sql ? <FieldFinder datasetId={ds.id} presetLabel={presetLabel} canEdit={access.canEdit} view={view} /> : <SqlConsole datasetId={ds.id} />}
+      {!view && <JoinAssessment ds={ds} />}
+      {access.note && <Banner tone={access.canEdit ? "info" : "warn"}>{access.note}</Banner>}
+      {tab === "derived" ? <DerivedFields ds={ds} />
+        : tab === "table" ? <FieldFinder datasetId={ds.id} presetLabel={presetLabel} canEdit={access.canEdit} view={view} /> : <SqlConsole datasetId={ds.id} />}
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { api } from "../api";
 import { MAX_ZOOM, centred, clampFrame, coverScale, cropSquare, zoomAt, type Frame, type Size } from "../crop";
 import { Avatar } from "./Avatar";
 import { ErrorAlert } from "./ui";
+import { Banner, Dialog, Icon } from "./kit";
 
 const TYPES = ["image/jpeg", "image/png", "image/webp"];
 const VIEW = 240;
@@ -71,7 +72,7 @@ function Framer({ src, img, frame, onFrame }: { src: string; img: Size; frame: F
 
   const s = coverScale(img, VIEW) * frame.zoom;
   return (
-    <div className="stack" style={{ alignItems: "center", gap: 10 }}>
+    <div className="stack tools-framer">
       <div ref={box} className="framer" style={{ width: VIEW, height: VIEW }} tabIndex={0} role="group"
         aria-label="Picture framing: drag or use the arrow keys to move it, scroll, pinch or + and − to zoom"
         onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onKeyDown={key}>
@@ -132,48 +133,41 @@ export function PictureDialog({ user, onClose }: {
     setFrame(null);
     setPreview(URL.createObjectURL(f));
   };
-  useEffect(() => {
-    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    document.addEventListener("keydown", esc);
-    return () => document.removeEventListener("keydown", esc);
-  }, [onClose]);
   const framing = preview && img && frame;
   return (
-    <div className="overlay" onClick={onClose}>
-      <div className="dialog stack picture-dialog" role="dialog" aria-modal="true" aria-label="Change picture" onClick={(e) => e.stopPropagation()}
-        onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); choose(e.dataTransfer.files[0]); }}>
-        <h2>{user.name}'s picture</h2>
+    <Dialog title={`${user.name}'s picture`} onClose={onClose} labelledBy="picture-title"
+      actions={<>
+        {user.avatar_url && (
+          <button type="button" className="ghost tools-danger-text" disabled={remove.isPending} onClick={() => remove.mutate()}>Remove picture</button>
+        )}
+        <span className="spacer" />
+        <button type="button" className="ghost" onClick={onClose}>Cancel</button>
+        <button type="button" className="primary" disabled={!framing || save.isPending} onClick={() => save.mutate()}>
+          {save.isPending ? "Saving…" : "Save"}
+        </button>
+      </>}>
+      <div className="stack picture-dialog" onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => { e.preventDefault(); choose(e.dataTransfer.files[0]); }}>
         {framing ? (
           <>
             <Framer src={preview} img={img} frame={frame} onFrame={setFrame} />
-            <div className="row" style={{ justifyContent: "center" }}>
+            <div className="row tools-center">
               <span className="muted small-text">Drag to move · scroll or pinch to zoom</span>
-              <button type="button" className="link small-text" onClick={() => setFrame(centred(img, VIEW))}>Reset</button>
-              <button type="button" className="link small-text" onClick={() => input.current?.click()}>Choose another…</button>
+              <button type="button" className="ghost small" onClick={() => setFrame(centred(img, VIEW))}><Icon name="reset" size={14} />Reset</button>
+              <button type="button" className="ghost small" onClick={() => input.current?.click()}><Icon name="upload" size={14} />Choose another…</button>
             </div>
           </>
         ) : (
-          <button type="button" className="dropzone picture-drop" autoFocus onClick={() => input.current?.click()}>
+          <button type="button" className="dropzone picture-drop" data-autofocus onClick={() => input.current?.click()}>
             <Avatar user={user} size={112} />
             <span className="muted small-text">Drop a picture here or click to choose one · JPEG, PNG or WebP, up to 5 MB.
               You can move and zoom it next.</span>
           </button>
         )}
         <input ref={input} type="file" accept={TYPES.join(",")} hidden onChange={(e) => { choose(e.target.files?.[0]); e.target.value = ""; }} />
-        {problem && <span className="small-text" role="alert" style={{ color: "var(--bad)" }}>{problem}</span>}
+        {problem && <Banner tone="bad">{problem}</Banner>}
         <ErrorAlert error={save.error ?? remove.error} />
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          {user.avatar_url ? (
-            <button type="button" className="ghost" disabled={remove.isPending} onClick={() => remove.mutate()}>Remove picture</button>
-          ) : <span />}
-          <div className="row">
-            <button type="button" className="ghost" onClick={onClose}>Cancel</button>
-            <button type="button" className="primary" disabled={!framing || save.isPending} onClick={() => save.mutate()}>
-              {save.isPending ? "Saving…" : "Save"}
-            </button>
-          </div>
-        </div>
       </div>
-    </div>
+    </Dialog>
   );
 }

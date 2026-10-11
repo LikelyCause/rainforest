@@ -5,6 +5,7 @@ import { useMe } from "../hooks";
 import { Avatar } from "../components/Avatar";
 import { PictureDialog } from "../components/PictureDialog";
 import { ErrorAlert } from "../components/ui";
+import { Chip, Icon, confirmDialog } from "../components/kit";
 import { fmtAgo, roleLabel } from "../format";
 import { showError, toast } from "../toast";
 import type { Role, TeamUser } from "../types";
@@ -32,7 +33,7 @@ function AddUser() {
   return (
     <form className="card stack" onSubmit={submit} aria-label="Add a user">
       <h2>Add a user</h2>
-      <div className="row" style={{ alignItems: "flex-end" }}>
+      <div className="row tools-form-row">
         <label className="field">Name<input value={name} onChange={(e) => setName(e.target.value)} required maxLength={200} /></label>
         <label className="field">Email (optional)<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} maxLength={320} /></label>
         <label className="field">Role
@@ -42,7 +43,7 @@ function AddUser() {
             <option value="viewer">{roleLabel("viewer")}</option>
           </select>
         </label>
-        <button type="submit" className="primary" disabled={!name.trim() || add.isPending}>Add</button>
+        <button type="submit" className="primary" disabled={!name.trim() || add.isPending}><Icon name="plus" size={14} />Add</button>
       </div>
       <ErrorAlert error={add.error} />
     </form>
@@ -90,7 +91,7 @@ function UserRow({ u, meId, canEdit, sso, lead }: { u: TeamUser; meId: number; c
         <div className="name-cell">
           {(lead || u.id === meId) && u.active ? (
             <button type="button" className="ghost avatar-button" title={`Change ${u.id === meId ? "your" : `${u.name}'s`} picture`}
-              onClick={() => setPicture(true)}><Avatar user={u} size={28} /></button>
+              aria-label={`Change ${u.id === meId ? "your" : `${u.name}'s`} picture`} onClick={() => setPicture(true)}><Avatar user={u} size={28} /></button>
           ) : <Avatar user={u} size={28} />}
           {picture && <PictureDialog user={u} onClose={() => setPicture(false)} />}
           {editDetails ? <EditableText value={u.name} label={`Name of ${u.name}`} disabled={patch.isPending}
@@ -110,15 +111,21 @@ function UserRow({ u, meId, canEdit, sso, lead }: { u: TeamUser; meId: number; c
             <option value="lead">{roleLabel("lead")}</option>
             <option value="viewer">{roleLabel("viewer")}</option>
           </select>
-        ) : <span className={`badge${u.role === "lead" ? " accent" : ""}`}>{roleLabel(u.role)}</span>}
+        ) : <Chip tone={u.role === "lead" ? "accent" : "plain"}>{roleLabel(u.role)}</Chip>}
       </td>
-      <td>{u.active ? <span className="badge good">Active</span> : <span className="badge">Deactivated</span>}</td>
-      <td className="muted" title={u.last_seen_at ?? undefined}>{u.last_seen_at ? fmtAgo(u.last_seen_at) : "never"}</td>
-      <td style={{ textAlign: "right" }}>
+      <td>{u.active ? <Chip tone="good">Active</Chip> : <Chip>Deactivated</Chip>}</td>
+      <td className="muted tools-nowrap-cell" title={u.last_seen_at ?? undefined}>{u.last_seen_at ? fmtAgo(u.last_seen_at) : "never"}</td>
+      <td className="tools-actions">
         {canEdit && (u.active ? (
           <button type="button" className="ghost small" disabled={patch.isPending || u.id === meId}
             title={u.id === meId ? "You can't deactivate yourself" : "Signs them out and hides them from sign-in"}
-            onClick={() => patch.mutate({ active: false })}>Deactivate</button>
+            onClick={async () => {
+              const ok = await confirmDialog({
+                title: `Deactivate ${u.name}?`, confirm: "Deactivate", danger: true,
+                body: "They are signed out everywhere and no longer appear on the sign-in page. Their work stays; you can reactivate them later.",
+              });
+              if (ok) patch.mutate({ active: false });
+            }}>Deactivate</button>
         ) : (
           <button type="button" className="small" disabled={patch.isPending} onClick={() => patch.mutate({ active: true })}>Reactivate</button>
         ))}
@@ -127,7 +134,7 @@ function UserRow({ u, meId, canEdit, sso, lead }: { u: TeamUser; meId: number; c
   );
 }
 
-/** The user list; `embedded` drops the page frame and title, for the Team section of Settings. */
+/** People: the user list. `embedded` drops the page frame and title, for the People section of Settings. */
 export function TeamPage({ embedded = false }: { embedded?: boolean }) {
   const me = useMe();
   const users = useQuery({ queryKey: ["users"], queryFn: api.users });
@@ -137,13 +144,14 @@ export function TeamPage({ embedded = false }: { embedded?: boolean }) {
   const sso = me.data.mode === "oidc";
   const fromEnv = Boolean(cfg.data?.accounts_from_env);
   return (
-    <div className={embedded ? "stack" : "page"} style={embedded ? { gap: 16 } : undefined}>
+    <div className={embedded ? "stack tools-gap-16" : "page tools-people"}>
       {!embedded && (
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <h1>Team</h1>
+        <div className="tools-title">
+          <h1>People</h1>
+          <span className="secondary">Users and roles</span>
         </div>
       )}
-      <p className="secondary" style={{ margin: 0 }}>
+      <p className="secondary tools-lead">
         {sso
           ? "People appear here after they first sign in. Names, emails and roles come from the identity provider (its lead and member groups); here a lead can deactivate or reactivate someone."
           : fromEnv
@@ -155,7 +163,7 @@ export function TeamPage({ embedded = false }: { embedded?: boolean }) {
       {lead && !sso && !fromEnv && <AddUser />}
       <ErrorAlert error={users.error} />
       {users.data && (
-        <div className="table-wrap" style={{ maxHeight: "none" }}>
+        <div className="table-wrap tools-people-table">
           <table className="data team">
             <thead>
               <tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Last seen</th><th aria-label="Actions" /></tr>
