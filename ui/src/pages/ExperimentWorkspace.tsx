@@ -4,14 +4,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useFields } from "../hooks";
 import { ErrorAlert } from "../components/ui";
-import { ModelSettings } from "../components/ModelSettings";
 import { RunDetail } from "../components/RunDetail";
+import { TrainPanel, type TrainRequest } from "../components/TrainPanel";
 import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtInt, fmtMetric, fmtNum, fmtPct } from "../format";
 import { toast } from "../toast";
 import { bestRuns, columnLabels, metricFor, type RunMetric } from "../runs";
 import { sourceLabel } from "../experiments";
-import { changed, prefillValues, problems, restore, runFields } from "../settings";
-import type { Dataset, Experiment, ExportJob, ModelRun, SettingValue, TrainPrefill } from "../types";
+import type { Dataset, Experiment, ExportJob, ModelRun, TrainPrefill } from "../types";
 
 const FAMILY_EXPLAINER: Record<string, string> = {
   tree: "Missing values stay as NaN for the trees to route; no scaling or log transforms; mid/high-cardinality categoricals become compact ordinal codes.",
@@ -25,13 +24,10 @@ const MIN_TRAIN = 0.5;
 const isActive = (s: string) => s === "pending" || s === "running";
 
 /** A small anchored popover that closes on outside click or Esc. */
-function Pop({ label, children, primary, align = "right", openSignal }: {
+function Pop({ label, children, primary, align = "right" }: {
   label: ReactNode; children: (close: () => void) => ReactNode; primary?: boolean; align?: "left" | "right";
-  /** Changing this opens the popover (Train again). */
-  openSignal?: unknown;
 }) {
   const [open, setOpen] = useState(false);
-  useEffect(() => { if (openSignal) setOpen(true); }, [openSignal]);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -197,151 +193,13 @@ function CopyCommand({ command }: { command: string }) {
 }
 
 
-const settingsKey = (exportId: number, model: string) => `rf.trainSettings.${exportId}.${model}`;
-function remembered(exportId: number, model: string): unknown {
-  try { return JSON.parse(localStorage.getItem(settingsKey(exportId, model)) ?? "null"); } catch { return null; }
-}
-
-function TrainForm({ e, targets, onStarted, prefill, onPrefillUsed }: {
-  e: ExportJob; targets: string[]; onStarted: (r: ModelRun) => void; prefill?: TrainPrefill | null; onPrefillUsed?: () => void;
-}) {
-  const qc = useQueryClient();
-  const models = useQuery({ queryKey: ["exportModels", e.id], queryFn: () => api.modelsForExport(e.id), staleTime: 60_000 });
-  const system = useQuery({ queryKey: ["system"], queryFn: api.system, staleTime: Infinity });
-  const [model, setModel] = useState(prefill?.model ?? "");
-  const [gpuOn, setGpuOn] = useState(false);
-  const [order, setOrder] = useState<string[]>(prefill?.order ?? targets);
-  const [valuesByModel, setValuesByModel] = useState<Record<string, Record<string, SettingValue>>>({});
-  const [dropped, setDropped] = useState<string[]>([]);
-  // Train again: the run's settings become this model's remembered ones (once), so closing and reopening the menu,
-  // or opening it later, shows the latest edits rather than the run again.
-  useEffect(() => {
-    const catalog = prefill && models.data?.find((m) => m.key === prefill.model)?.settings;
-    if (!prefill || !catalog) return;
-    const { values: v, dropped: d } = prefillValues(prefill.values, catalog);
-    setValuesByModel((old) => ({ ...old, [prefill.model]: v }));
-    try { localStorage.setItem(settingsKey(e.id, prefill.model), JSON.stringify(v)); } catch { /* not remembered */ }
-    setDropped(d);
-    onPrefillUsed?.();
-  }, [prefill, models.data]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [showAll, setShowAll] = useState(false);
-  useEffect(() => {
-    if (!model && models.data) {
-      const own = models.data.find((m) => m.compatible && m.family === e.model_family);
-      setModel((own ?? models.data.find((m) => m.compatible))?.key ?? "");
-    }
-  }, [model, models.data, e.model_family]);
-  const selectedSettings = models.data?.find((m) => m.key === model)?.settings ?? null;
-  const values = valuesByModel[model] ?? (selectedSettings ? restore(remembered(e.id, model), selectedSettings) : {});
-  const setValues = (v: Record<string, SettingValue>) => {
-    setValuesByModel((old) => ({ ...old, [model]: v }));
-    try { localStorage.setItem(settingsKey(e.id, model), JSON.stringify(v)); } catch { /* private mode: not remembered */ }
-  };
-  const kinds: string[] = order.map((t) => e.summary?.target_kinds?.[t]).filter(Boolean);
-  const settingProblems = selectedSettings ? Object.keys(problems(values, selectedSettings, kinds)).length : 0;
-  const start = useMutation({
-    mutationFn: () => api.startRun(e.id, {
-      model, order, device: useGpu ? "cuda" : "cpu",
-      ...(selectedSettings ? { params: changed(values, selectedSettings, kinds), ...runFields(values, selectedSettings) } : { cv: 5 }),
-    }),
-    onSuccess: (run) => {
-      qc.setQueryData<ModelRun[]>(["runs", e.dataset_id, e.experiment_id], (old) => [run, ...(old ?? []).filter((r) => r.id !== run.id)]);
-      qc.invalidateQueries({ queryKey: ["runs", e.dataset_id] });
-      qc.invalidateQueries({ queryKey: ["experiment", e.experiment_id] });
-      onStarted(run);
-    },
-  });
-  const shown = models.data?.filter((m) => !m.planned && (showAll || m.compatible)) ?? [];
-  const planned = models.data?.filter((m) => m.planned) ?? [];
-  const selected = models.data?.find((m) => m.key === model);
-  const gpu = system.data?.gpu;
-  const gpuChoice = Boolean(gpu?.available && selected?.devices?.includes("cuda"));
-  const useGpu = gpuChoice && gpuOn;
-  return (
-    <>
-      <label className="field">Model
-        <select value={model} onChange={(ev) => setModel(ev.target.value)}>
-          {shown.map((m) => <option key={m.key} value={m.key} disabled={!m.compatible}>{m.label}{m.compatible ? "" : " — not compatible"}</option>)}
-          {planned.length > 0 && (
-            <optgroup label="Planned">
-              {planned.map((m) => <option key={m.key} value={m.key} disabled>{m.label} (planned)</option>)}
-            </optgroup>
-          )}
-        </select>
-      </label>
-      {selected && <span className="muted small-text">{selected.description}</span>}
-      {gpuChoice && gpu && (
-        <div className="stack" style={{ gap: 4 }}>
-          <span className="secondary small-text" id={`device-label-${e.id}`}>Train on</span>
-          <div className="segmented soft" role="radiogroup" aria-labelledby={`device-label-${e.id}`}>
-            {([false, true] as const).map((on) => (
-              <button key={String(on)} type="button" role="radio" aria-checked={gpuOn === on} className={gpuOn === on ? "on" : ""}
-                onClick={() => setGpuOn(on)}>{on ? "GPU" : "CPU"}</button>
-            ))}
-          </div>
-          <span className="muted small-text num">{gpu.name}{gpu.memory_mb ? ` · ${fmtInt(Math.round(gpu.memory_mb / 1024))} GB` : ""}</span>
-        </div>
-      )}
-      {models.data?.some((m) => !m.compatible) && (
-        <label className="check small-text"><input type="checkbox" checked={showAll} onChange={(ev) => setShowAll(ev.target.checked)} /> show incompatible models</label>
-      )}
-      {targets.length > 1 && <TargetOrder targets={targets} order={order} onChange={setOrder} />}
-      {selectedSettings && selected?.compatible && (
-        <ModelSettings settings={selectedSettings} values={values} onChange={setValues} kinds={kinds} />
-      )}
-      {dropped.length > 0 && (
-        <span className="muted small-text">Not carried over (no longer settings of this model): {dropped.join(", ")}</span>
-      )}
-      <ErrorAlert error={start.error} />
-      {settingProblems > 0 && <span className="small-text" role="alert" style={{ color: "var(--bad)" }}>Fix the settings marked above to train.</span>}
-      <button type="button" className="primary" disabled={!model || !selected?.compatible || order.length === 0 || settingProblems > 0 || start.isPending} onClick={() => start.mutate()}>
-        {order.length > 1 ? "Train chain" : "Train"}
-      </button>
-    </>
-  );
-}
-
-/** Which of the export's targets a run trains, and in what chain order: the ticked ones, top to bottom. */
-function TargetOrder({ targets, order, onChange }: { targets: string[]; order: string[]; onChange: (o: string[]) => void }) {
-  const rows = [...order, ...targets.filter((t) => !order.includes(t))];
-  const move = (t: string) => {
-    const i = order.indexOf(t);
-    onChange([...order.slice(0, i - 1), t, order[i - 1], ...order.slice(i + 1)]);
-  };
-  return (
-    <fieldset className="field bare target-order">
-      <legend>Targets</legend>
-      {rows.map((t) => {
-        const i = order.indexOf(t);
-        return (
-          <div key={t} className="row" style={{ gap: 8 }}>
-            <label className="check">
-              <input type="checkbox" checked={i >= 0}
-                onChange={(ev) => onChange(ev.target.checked ? [...order, t] : order.filter((x) => x !== t))} />
-              {i >= 0 && order.length > 1 ? `${i + 1}. ` : ""}{t}
-            </label>
-            {i > 0 && <button type="button" className="link small-text" onClick={() => move(t)} aria-label={`Move ${t} earlier`}>↑ earlier</button>}
-          </div>
-        );
-      })}
-      <span className="muted small-text">
-        {order.length === 0 ? "Choose at least one target."
-          : order.length === 1 ? "One target: a single model, no chain."
-          : `Chain: ${order.join(" → ")}. Each model also sees the predictions of the ones before it.`}
-      </span>
-    </fieldset>
-  );
-}
-
 function featuresByType(e: ExportJob): string {
   const by = e.summary?.features_by_type as Record<string, { fields: number; features: number }> | undefined;
   if (!by) return "";
   return Object.entries(by).map(([t, x]) => `${t.replace("_", " ")}: ${x.fields} → ${x.features}`).join("\n");
 }
 
-function ExportRow({ e, onStarted, canAdd, prefill, onPrefillUsed }: {
-  e: ExportJob; onStarted: (r: ModelRun) => void; canAdd: boolean; prefill: TrainPrefill | null; onPrefillUsed: () => void;
-}) {
+function ExportRow({ e, canAdd, onTrain }: { e: ExportJob; canAdd: boolean; onTrain: (exportId: number) => void }) {
   const s = e.summary ?? {};
   const by = s.features_by_type as Record<string, { fields: number }> | undefined;
   const inputs = by ? Object.values(by).reduce((a, x) => a + x.fields, 0) : null;
@@ -384,12 +242,7 @@ function ExportRow({ e, onStarted, canAdd, prefill, onPrefillUsed }: {
       </div>
       {e.status === "done" && (
         <div className="row" style={{ flexWrap: "nowrap" }}>
-          {canAdd && (
-            <Pop label="Train ▾" primary openSignal={prefill?.exportId === e.id ? prefill : null}>
-              {() => <TrainForm e={e} targets={s.targets ?? []} onStarted={onStarted}
-                prefill={prefill?.exportId === e.id ? prefill : null} onPrefillUsed={onPrefillUsed} />}
-            </Pop>
-          )}
+          {canAdd && <button type="button" className="small primary" onClick={() => onTrain(e.id)}>Train ↓</button>}
           <Pop label="Files ▾">{() => (
             <>
               <a className="btn" href={`/api/exports/${e.id}/files/data`}>Dataset (.parquet)</a>
@@ -518,7 +371,12 @@ export function ExperimentWorkspace({ ds, x, canAdd }: { ds: Dataset; x: Experim
     queryFn: () => api.runs(datasetId, x.id),
     refetchInterval: (q) => ((q.state.data as ModelRun[] | undefined)?.some((r) => isActive(r.status)) ? 1500 : false),
   });
-  const [prefill, setPrefill] = useState<TrainPrefill | null>(null);
+  const [request, setRequest] = useState<TrainRequest | null>(null);
+  const panel = useRef<HTMLElement>(null);
+  const train = (exportId: number, prefill?: TrainPrefill) => {
+    setRequest({ exportId, prefill, nonce: Date.now() });
+    window.setTimeout(() => panel.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  };
   const onStarted = (r: ModelRun) => {
     setFresh(r.id);
     toast({ message: `Training ${r.model} on Export #${r.export_id}` });
@@ -535,9 +393,10 @@ export function ExperimentWorkspace({ ds, x, canAdd }: { ds: Dataset; x: Experim
         <div className="card-head"><h2>Exports</h2></div>
         <ErrorAlert error={exports.error} />
         {exports.data?.length === 0 && <div className="empty">No exports yet.{canAdd ? " Build one above, then train models on it." : ""}</div>}
-        {exports.data?.map((e) => <ExportRow key={e.id} e={e} onStarted={onStarted} canAdd={canAdd} prefill={prefill}
-          onPrefillUsed={() => setPrefill(null)} />)}
+        {exports.data?.map((e) => <ExportRow key={e.id} e={e} canAdd={canAdd} onTrain={train} />)}
       </section>
+
+      {canAdd && <TrainPanel ref={panel} exports={exports.data ?? []} request={request} onStarted={onStarted} />}
 
       <section className="card stack">
         <div className="card-head">
@@ -548,7 +407,7 @@ export function ExperimentWorkspace({ ds, x, canAdd }: { ds: Dataset; x: Experim
         {groups.length ? (
           <div className="table-wrap stack" style={{ maxHeight: "none" }}>
             {groups.map((g) => <RunsGroup key={g.e.id} e={g.e} runs={g.runs} fresh={fresh}
-              onTrainAgain={canAdd ? (p) => { setPrefill(p); window.scrollTo({ top: 0, behavior: "smooth" }); } : null} />)}
+              onTrainAgain={canAdd ? (p) => train(p.exportId, p) : null} />)}
           </div>
         ) : (
           <div className="empty">Train a chain on a finished export to compare models here.</div>

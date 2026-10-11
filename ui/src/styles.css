@@ -410,7 +410,7 @@ fieldset.bare { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; f
 .suggested button { height: 20px; padding: 0 6px; font-size: 12px; }
 .inline-warn { font-size: 12px; color: var(--warn); padding-left: 112px; }
 .segmented.full { display: flex; width: 100%; }
-.segmented.full button { flex: 1; min-width: 0; padding: 0 6px; }
+.segmented.full button { flex: 1; min-width: 0; padding: 0 6px; justify-content: center; }
 .predict-as { gap: 6px; }
 .predict-as .setting-label { font-size: 13px; color: var(--text-secondary); }
 .predict-as .suggested, .band-settings .inline-warn { padding-left: 0; }
@@ -610,8 +610,12 @@ table.data tr.clickable:focus-visible { outline: 2px solid var(--accent); outlin
 .library-item { padding: 8px 0; border-top: 1px solid var(--border); }
 .library-item:first-child { border-top: 0; }
 
-/* Model settings in the Train menu: the menu widens and scrolls while they're open. */
-.popover:has(.model-settings .ms-summary[aria-expanded="true"]) { width: min(520px, calc(100vw - 32px)); max-height: 75vh; overflow: auto; }
+/* The Train panel: its choices in a row, then the model's settings as columns of groups. */
+.train-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 16px; align-items: start; }
+.train-controls .field select { width: 100%; }
+.train-footer { justify-content: flex-end; gap: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
+.ms-title { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14px; }
+.ms-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 4px 28px; align-items: start; }
 .ms-summary { display: flex; justify-content: space-between; align-items: center; width: 100%; height: 30px; padding: 0 8px; background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-weight: 600; font-size: 13px; }
 .ms-group h4 { margin: 4px 0 2px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
 .ms-row { gap: 1px; padding-top: 4px; padding-bottom: 4px; }

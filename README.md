@@ -572,28 +572,34 @@ experiment, and its manifest's `config` the `source` (`recipe` or `assessment`),
   macro for multiclass), precision / recall / F1 (macro and weighted, plus positive-class and specificity for binary
   targets), confusion matrices, a per-class table and ROC curves (one-vs-rest per class for multiclass targets, up to
   200 points each), plus the top importances per chain link. A number gets `rmse`, `mae`, `r2` and `mape` (only when
-  no actual value is 0), up to 1,000 sampled (actual, predicted) pairs and a 30-bin histogram of the errors.
-* **Model settings:** under the model picker in *Train ▾*, *Model settings* (LightGBM so far) lists the model's
-  parameters with a control each: a dropdown for a choice (boosting type, loss, class weights), a number with its range,
-  an on/off switch. They are grouped (run, trees, learning, sampling, regularization, then settings for class targets
-  and for number targets, shown only when the export has such a target), and every other parameter that changes the
+  no actual value is 0), up to 1,000 sampled (actual, predicted) pairs and a 30-bin histogram of the errors, and is
+  also scored on ranges: actual and predicted values put in 5 equal-sized ranges cut on the training rows, with
+  `band_accuracy`, `band_f1_macro`, a confusion matrix and per-range precision, recall and F1.
+* **Model settings:** the *Train a model* panel, between the exports and the runs, lays out the chosen model's
+  parameters (LightGBM so far), each with its own control: a dropdown for a choice (boosting type, loss, class weights),
+  a number with its range, an on/off switch. They change with the model and are grouped (run, trees, learning,
+  sampling, regularization, then settings for class targets and for number targets, shown only when the export has
+  such a target), and every other parameter that changes the
   model sits under a folded, searchable *Advanced*. Each shows its default and a one-line explanation; a changed one is
   marked and has ↺. Settings that depend on another appear only when it calls for them (DART's drop settings with
   DART, alpha with the Huber or quantile loss). A value outside its range blocks *Train*, and a combination LightGBM
   refuses (random forest without bagging or a feature sample, say) is caught when the run is asked for, by fitting the
   settings on 64 synthetic rows. A loss that needs non-negative numbers (Poisson, Tweedie; gamma needs positive ones)
-  is refused for a target whose training minimum breaks it. The menu remembers each model's last settings per export
+  is refused for a target whose training minimum breaks it. The panel remembers each model's last settings per export
   in your browser. A run stores the settings that differ from the defaults; its detail lists them, with *Train again
-  with these settings*.
-* **On the page:** each export has *Train ▾* (the model, its settings, and which of the export's targets to train in
-  which chain order: tick one target for a single model, or several and order them), *Files ▾* (Parquet, preprocessor, manifest) and
+  with these settings*, which fills the panel with them.
+* **On the page:** the *Train a model* panel picks the export (the newest finished one unless you choose another),
+  the model, CPU or GPU, which of the export's targets to train in which chain order (tick one target for a single
+  model, or several and order them) and the model's settings. Each export has *Train ↓* (points the panel at it),
+  *Files ▾* (Parquet, preprocessor, manifest) and
   *Use from code* (the CLI command and class mappings). Runs are listed per export, with that export's targets as
   columns, showing test-split AUC and macro-F1 (R² and RMSE for a number). In each of these columns ★ marks the run
   that scored best on the validation split for that target and metric (lowest for RMSE), so choosing it doesn't use
   the test split. A run expands into, per target, its headline metrics (precision, recall and F1 are the positive
   class's for a binary target and macro averages otherwise), a confusion matrix (correct predictions shaded in blue,
   errors in red), its ROC curves and one per-class table ending in the macro and weighted averages; for a number, R²,
-  RMSE, MAE and MAPE tiles, a predicted-vs-actual scatter and the error histogram. *Download model* and a test /
+  RMSE, MAE and MAPE tiles over three tabs: the predicted-vs-actual scatter, the error histogram, and *Ranges* (the
+  confusion matrix and per-range precision, recall and F1 described above). *Download model* and a test /
   validation switch apply to every target.
 
 ```bash
@@ -618,7 +624,7 @@ builder, default parameters and how to read importances, plus optionally a descr
 
 XGBoost can train on an NVIDIA GPU. The default image ships the 5 MB CPU build (`xgboost-cpu`); the GPU image swaps
 in the CUDA build (`xgboost`, built with CUDA 13.3), which adds about 800 MB, mostly its NCCL dependency. Training
-on the GPU is a per-run choice: when the API sees a usable GPU, *Train ▾* shows a CPU / GPU switch with the GPU's
+on the GPU is a per-run choice: when the API sees a usable GPU, the Train panel shows a CPU / GPU switch with the GPU's
 name for models that support it (XGBoost: `device="cuda"`, `tree_method="hist"`). The runs table has a Device
 column, and each run's `report.json` records `device`. Other models always train on the CPU, and Explore's analyses
 run on the CPU.

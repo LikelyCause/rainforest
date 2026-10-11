@@ -397,6 +397,11 @@ export interface RegressionEvaluation {
   n: number;
   scatter: { actual: number[]; predicted: number[] };
   residuals: { edges: number[]; counts: number[] };
+  /** Actual and predicted values put in ranges cut on the training rows, scored as classes (older runs lack it). */
+  bands?: {
+    labels: string[]; edges: number[]; confusion_matrix: number[][];
+    per_class: { label: string; precision: number; recall: number; f1: number; support: number }[];
+  };
 }
 
 export interface ModelRun {

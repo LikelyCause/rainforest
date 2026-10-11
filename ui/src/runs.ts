@@ -39,3 +39,8 @@ export function bestRuns(runs: ModelRun[], targets: string[]): Record<string, nu
 export function columnLabels(kind: string | undefined): [string, string] {
   return kind === "regression" ? ["R²", "RMSE"] : ["AUC", "F1 (macro)"];
 }
+
+/** The export the Train panel works on: the chosen one while it's finished, else the newest finished one. */
+export function pickExport<E extends { id: number }>(done: E[], chosen: number | null): E | null {
+  return done.find((e) => e.id === chosen) ?? done.reduce<E | null>((a, b) => (a && a.id > b.id ? a : b), null);
+}

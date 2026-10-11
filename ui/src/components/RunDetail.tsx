@@ -106,11 +106,63 @@ export function regressionTiles(m: Record<string, number>): [string, number | un
   ];
 }
 
+export function regressionTabs(ev: RegressionEvaluation): { key: "scatter" | "errors" | "bands"; label: string }[] {
+  return [
+    { key: "scatter", label: "Predicted vs actual" },
+    { key: "errors", label: "Errors" },
+    ...(ev.bands ? [{ key: "bands" as const, label: "Ranges" }] : []),
+  ];
+}
+
+/** A number scored as classes: which range it fell in against which range was predicted. */
+function RangesView({ ev, m }: { ev: RegressionEvaluation; m: Record<string, number> }) {
+  const b = ev.bands!;
+  const asClasses = { labels: b.labels, confusion_matrix: b.confusion_matrix, per_class: b.per_class } as unknown as TargetEvaluation;
+  const macro = (k: "precision" | "recall" | "f1") => b.per_class.reduce((a, c) => a + c[k], 0) / Math.max(b.per_class.length, 1);
+  return (
+    <div className="stack" style={{ gap: 10 }}>
+      <span className="muted small-text">
+        Actual and predicted values put in {b.labels.length} equal-sized ranges cut on the training rows, then scored as
+        classes: how often the model predicts the right range.
+      </span>
+      <div className="stats metric-tiles">
+        {([["Range accuracy", m.band_accuracy], ["Precision", macro("precision")], ["Recall", macro("recall")], ["F1", m.band_f1_macro ?? macro("f1")]] as [string, number | undefined][])
+          .map(([label, v]) => (
+            <div key={label} className="stat" title={label === "Range accuracy" ? undefined : "Macro average over ranges"}>
+              <div className="label">{label}</div>
+              <div className={`value${v === undefined ? " muted" : ""}`}>{fmtMetric(v)}</div>
+            </div>
+          ))}
+      </div>
+      <ConfusionMatrix ev={asClasses} accuracy={m.band_accuracy} />
+      <table className="data class-metrics">
+        <thead>
+          <tr><th>Range</th><th className="num">Precision</th><th className="num">Recall</th><th className="num">F1</th><th className="num">Support</th></tr>
+        </thead>
+        <tbody>
+          {b.per_class.map((c) => (
+            <tr key={c.label}>
+              <td className="mono">{c.label}</td>
+              <td className="num">{fmtMetric(c.precision)}</td>
+              <td className="num">{fmtMetric(c.recall)}</td>
+              <td className="num">{fmtMetric(c.f1)}</td>
+              <td className="num">{fmtInt(c.support)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function RegressionCard({ target, m, ev }: { target: string; m: Record<string, number>; ev?: RegressionEvaluation }) {
   const t = useChartTheme();
+  const [tab, setTab] = useState<"scatter" | "errors" | "bands">("scatter");
   const scatter = useMemo(() => (ev ? scatterOption(t, ev.scatter.actual, ev.scatter.predicted) : null), [t, ev]);
   const residuals = useMemo(() => (ev ? histogramOption(t, { kind: "histogram", edges: ev.residuals.edges, counts: ev.residuals.counts } as HistogramChart,
     { xLabel: "Error (predicted − actual)" }) : null), [t, ev]);
+  const tabs = ev ? regressionTabs(ev) : [];
+  const shown = tabs.some((x) => x.key === tab) ? tab : "scatter";
   return (
     <section className="card stack target-card">
       <div className="card-head" style={{ marginBottom: 0 }}>
@@ -127,16 +179,28 @@ function RegressionCard({ target, m, ev }: { target: string; m: Record<string, n
       </div>
       {ev && scatter && residuals ? (
         <>
-          <div className="stack" style={{ gap: 4 }}>
-            <span className="muted small-text">
-              Predicted vs actual · {fmtInt(ev.n)} rows{ev.n > ev.scatter.actual.length ? `, showing ${fmtInt(ev.scatter.actual.length)}` : ""}
-            </span>
-            <Chart option={scatter} height={260} ariaLabel="Predicted against actual values" />
+          <div className="segmented soft" role="tablist" aria-label={`Results for ${target}`}>
+            {tabs.map((x) => (
+              <button key={x.key} type="button" role="tab" aria-selected={shown === x.key} className={shown === x.key ? "on" : ""}
+                onClick={() => setTab(x.key)}>{x.label}</button>
+            ))}
           </div>
-          <div className="stack" style={{ gap: 4 }}>
-            <span className="muted small-text">Errors</span>
-            <Chart option={residuals} height={200} ariaLabel="Histogram of prediction errors" />
-          </div>
+          {shown === "scatter" && (
+            <div className="stack" style={{ gap: 4 }}>
+              <span className="muted small-text">
+                {fmtInt(ev.n)} rows{ev.n > ev.scatter.actual.length ? `, showing ${fmtInt(ev.scatter.actual.length)}` : ""} · on the dashed line the prediction is exact
+              </span>
+              <Chart option={scatter} height={300} ariaLabel="Predicted against actual values" />
+            </div>
+          )}
+          {shown === "errors" && (
+            <div className="stack" style={{ gap: 4 }}>
+              <span className="muted small-text">How far off each prediction was: left of 0 too low, right of 0 too high</span>
+              <Chart option={residuals} height={260} ariaLabel="Histogram of prediction errors" />
+            </div>
+          )}
+          {shown === "bands" && <RangesView ev={ev} m={m} />}
+          {!ev.bands && <span className="muted small-text">This run predates range scores; train it again to see them.</span>}
         </>
       ) : <div className="muted small-text">No evaluation details for this split.</div>}
     </section>

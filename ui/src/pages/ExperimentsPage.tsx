@@ -194,7 +194,9 @@ function Header({ ds, x, me }: { ds: Dataset; x: Experiment; me: Me }) {
             : x.private && <span className="muted small-text">MLflow: logged when review opens</span>}
           {editable && !renaming && <button type="button" className="small" onClick={() => setRenaming(true)}>Rename</button>}
           {editable && (
-            <button type="button" className="small" disabled={patch.isPending} onClick={() => patch.mutate({ archived: !x.archived_at })}>
+            <button type="button" className="small" disabled={patch.isPending} onClick={() => patch.mutate({ archived: !x.archived_at })}
+              title={x.archived_at ? "Bring it back to the experiment list, so exports and runs can be added again."
+                : "Hide it from the experiment list. Nothing is deleted: its exports, runs and MLflow history stay, and Unarchive brings it back. While archived, nothing new can be added."}>
               {x.archived_at ? "Unarchive" : "Archive"}
             </button>
           )}

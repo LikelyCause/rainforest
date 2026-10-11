@@ -97,7 +97,7 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
       {!onReview && !view && all.length > 0 && (nextTodo ? (
         <Link className="btn" to={`/d/${ds.id}/review/${nextTodo.id}`}>Next unreviewed › <kbd>U</kbd></Link>
       ) : ds.phase === "finalized" ? !onExperiments && (
-        <Link className="btn" to={`/d/${ds.id}/experiments`} style={{ background: "var(--good)", borderColor: "var(--good)", color: "#fff" }}>All reviewed → Experiments</Link>
+        <Link className="btn" to={`/d/${ds.id}/experiments`} style={{ background: "var(--good)", borderColor: "var(--good)", color: "#fff" }}>Finalized → Start experimenting</Link>
       ) : !onTeam && access.source === "mine" && access.canEdit ? (
         <Link className="btn" to={`/d/${ds.id}/team`} style={{ background: "var(--good)", borderColor: "var(--good)", color: "#fff" }}>All reviewed → Submit</Link>
       ) : null)}

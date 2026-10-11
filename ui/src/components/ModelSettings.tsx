@@ -89,12 +89,11 @@ function Row({ s, values, onChange, problem }: {
   );
 }
 
-/** A model's settings, grouped as the catalog says. Groups for class or number targets show only when the export
- * has such a target; Advanced is folded, with a search. */
+/** A model's settings, grouped as the catalog says and laid out side by side. Groups for class or number targets
+ * show only when the run has such a target; Advanced is folded, with a search. */
 export function ModelSettings({ settings, values, onChange, kinds }: {
   settings: ModelSetting[]; values: Values; onChange: (v: Values) => void; kinds: string[];
 }) {
-  const [open, setOpen] = useState(false);
   const [advanced, setAdvanced] = useState(false);
   const [q, setQ] = useState("");
   const diff = changed(values, settings, kinds);
@@ -106,46 +105,49 @@ export function ModelSettings({ settings, values, onChange, kinds }: {
   const inAdvanced = settings.filter((s) => s.group === "advanced" && visible(s));
   const advancedChanged = inAdvanced.filter((s) => s.name in diff).length;
   const query = q.trim().toLowerCase();
-  return (
-    <div className="stack model-settings" style={{ gap: 8 }}>
-      <button type="button" className="ms-summary" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <span>{open ? "▾" : "▸"} Model settings</span>
-        <span className={n ? "badge accent" : "muted small-text"}>{n ? `${n} changed` : "Defaults"}</span>
-      </button>
-      {open && (
-        <div className="stack" style={{ gap: 12 }}>
-          {n > 0 && (
-            <div className="row" style={{ justifyContent: "flex-end" }}>
-              <button type="button" className="link small-text" onClick={() => onChange({})}>Reset all</button>
-            </div>
-          )}
-          {GROUP_ORDER.filter((g) => g !== "advanced").map((g) => {
-            const rows = settings.filter((s) => s.group === g && visible(s));
-            if (!rows.length) return null;
-            return (
-              <section key={g} className="stack ms-group" style={{ gap: 2 }} aria-label={GROUP_LABEL[g]}>
-                <h4>{GROUP_LABEL[g]}</h4>
-                {rows.map((s) => <Row key={s.name} s={s} values={values} onChange={set} problem={issues[s.name]} />)}
-              </section>
-            );
-          })}
-          {inAdvanced.length > 0 && (
-            <section className="stack ms-group" style={{ gap: 2 }} aria-label="Advanced">
-              <button type="button" className="ms-summary" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}>
-                <span>{advanced ? "▾" : "▸"} Advanced · {inAdvanced.length} settings</span>
-                {advancedChanged > 0 && <span className="badge accent">{advancedChanged} changed</span>}
-              </button>
-              {advanced && (
-                <>
-                  <input type="search" placeholder="Search settings" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search settings" />
-                  {inAdvanced.filter((s) => !query || `${s.label} ${s.name} ${s.help}`.toLowerCase().includes(query))
-                    .map((s) => <Row key={s.name} s={s} values={values} onChange={set} problem={issues[s.name]} />)}
-                </>
-              )}
+  const summary = (
+    <span className={n ? "badge accent" : "muted small-text"}>{n ? `${n} changed` : "Defaults"}</span>
+  );
+  const body = (
+    <div className="stack" style={{ gap: 12 }}>
+      <div className="ms-grid">
+        {GROUP_ORDER.filter((g) => g !== "advanced").map((g) => {
+          const rows = settings.filter((s) => s.group === g && visible(s));
+          if (!rows.length) return null;
+          return (
+            <section key={g} className="stack ms-group" style={{ gap: 2 }} aria-label={GROUP_LABEL[g]}>
+              <h4>{GROUP_LABEL[g]}</h4>
+              {rows.map((s) => <Row key={s.name} s={s} values={values} onChange={set} problem={issues[s.name]} />)}
             </section>
+          );
+        })}
+      </div>
+      {inAdvanced.length > 0 && (
+        <section className="stack ms-group" style={{ gap: 2 }} aria-label="Advanced">
+          <button type="button" className="ms-summary" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}>
+            <span>{advanced ? "▾" : "▸"} Advanced · {inAdvanced.length} settings</span>
+            {advancedChanged > 0 && <span className="badge accent">{advancedChanged} changed</span>}
+          </button>
+          {advanced && (
+            <>
+              <input type="search" placeholder="Search settings" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search settings" />
+              <div className="ms-grid">
+                {inAdvanced.filter((s) => !query || `${s.label} ${s.name} ${s.help}`.toLowerCase().includes(query))
+                  .map((s) => <Row key={s.name} s={s} values={values} onChange={set} problem={issues[s.name]} />)}
+              </div>
+            </>
           )}
-        </div>
+        </section>
       )}
+    </div>
+  );
+  return (
+    <div className="stack model-settings" style={{ gap: 10 }}>
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <h3 className="ms-title">Model settings {summary}</h3>
+        {n > 0 && <button type="button" className="link small-text" onClick={() => onChange({})}>Reset all</button>}
+      </div>
+      {body}
     </div>
   );
 }

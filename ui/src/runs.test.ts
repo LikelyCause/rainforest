@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bestRuns, metricFor } from "./runs";
+import { bestRuns, metricFor, pickExport } from "./runs";
 import type { ModelRun } from "./types";
 
 const run = (id: number, valid: Record<string, Record<string, number>>, test: Record<string, Record<string, number>> = valid) =>
@@ -42,5 +42,15 @@ describe("number targets", () => {
     const best = bestRuns([reg(1, 0.8, 3), reg(2, 0.7, 2)], ["p"]);
     expect(best["p:primary"]).toBe(1);
     expect(best["p:secondary"]).toBe(2);
+  });
+});
+
+describe("pickExport", () => {
+  it("keeps the chosen export, else takes the newest", () => {
+    const xs = [{ id: 3 }, { id: 9 }, { id: 5 }];
+    expect(pickExport(xs, 5)?.id).toBe(5);
+    expect(pickExport(xs, null)?.id).toBe(9);
+    expect(pickExport(xs, 42)?.id).toBe(9);
+    expect(pickExport([], null)).toBeNull();
   });
 });
