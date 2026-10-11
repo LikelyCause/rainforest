@@ -573,7 +573,7 @@ experiment, and its manifest's `config` the `source` (`recipe` or `assessment`),
   targets), confusion matrices, a per-class table and ROC curves (one-vs-rest per class for multiclass targets, up to
   200 points each), plus the top importances per chain link. A number gets `rmse`, `mae`, `r2` and `mape` (only when
   no actual value is 0), up to 1,000 sampled (actual, predicted) pairs and a 30-bin histogram of the errors, and is
-  also scored on ranges: actual and predicted values put in 5 equal-sized ranges cut on the training rows, with
+  also scored on ranges: actual and predicted values put in up to 5 ranges of roughly equal count, cut on the training rows (tied values can make fewer), with
   `band_accuracy`, `band_f1_macro`, a confusion matrix and per-range precision, recall and F1.
 * **Model settings:** the *Train a model* panel, between the exports and the runs, lays out the chosen model's
   parameters (LightGBM so far), each with its own control: a dropdown for a choice (boosting type, loss, class weights),
@@ -596,12 +596,15 @@ experiment, and its manifest's `config` the `source` (`recipe` or `assessment`),
   columns, showing AUC and macro-F1 (R² and RMSE for a number) on the test split, or on the validation split with the
   *Test / Validation* switch. In each of these columns ★ marks the run that scored best on the validation split for
   that target and metric (lowest for RMSE), so choosing it doesn't use the test split; on *Test* the star can sit on a
-  lower number than another run's, and its tooltip gives the validation score it was picked on. A run expands into, per target, its headline metrics (precision, recall and F1 are the positive
-  class's for a binary target and macro averages otherwise), a confusion matrix (correct predictions shaded in blue,
+  lower number than another run's, and its tooltip gives the validation score it was picked on. A run expands into,
+  per target, its headline metrics (precision, recall and F1 are the positive class's for a binary target and macro
+  averages otherwise), a confusion matrix (correct predictions shaded in blue,
   errors in red), its ROC curves and one per-class table ending in the macro and weighted averages; for a number, R²,
   RMSE, MAE and MAPE tiles over three tabs: the predicted-vs-actual scatter, the error histogram, and *Ranges* (the
   confusion matrix and per-range precision, recall and F1 described above). *Download model* and a test /
-  validation switch apply to every target.
+  validation switch apply to every target. A failed run expands into its settings, why it failed in a sentence (the full
+  message under *Details*) and *Train again with these settings*; a run stopped by an API restart says so, since its
+  settings weren't the problem.
 
 ```bash
 make train EXPORT=1                          # LightGBM

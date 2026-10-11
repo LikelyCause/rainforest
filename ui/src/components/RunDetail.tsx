@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import { describeSettings } from "../settings";
+import { whyFailed } from "../runs";
 import { histogramOption, rocOption, scatterOption } from "../charts";
 import { fmtInt, fmtMetric, fmtPct } from "../format";
 import { useChartTheme } from "../theme";
@@ -122,8 +123,8 @@ function RangesView({ ev, m }: { ev: RegressionEvaluation; m: Record<string, num
   return (
     <div className="stack" style={{ gap: 10 }}>
       <span className="muted small-text">
-        Actual and predicted values put in {b.labels.length} equal-sized ranges cut on the training rows, then scored as
-        classes: how often the model predicts the right range.
+        Actual and predicted values put in {b.labels.length} ranges of roughly equal count, cut on the training rows (tied
+        values can make fewer), then scored as classes: how often the model predicts the right range.
       </span>
       <div className="stats metric-tiles">
         {([["Range accuracy", m.band_accuracy], ["Precision", macro("precision")], ["Recall", macro("recall")], ["F1", m.band_f1_macro ?? macro("f1")]] as [string, number | undefined][])
@@ -294,9 +295,24 @@ export function RunDetail({ run, targets, onTrainAgain = null }: {
 }) {
   const [split, setSplit] = useState<Split>("test");
   const metrics = run.metrics?.[split];
-  if (run.status !== "done") {
-    return run.error ? <pre className="alert bad" style={{ whiteSpace: "pre-wrap" }}>{run.error}</pre> : null;
+  if (run.status === "failed") {
+    return (
+      <div className="stack" style={{ gap: 10, padding: "8px 4px" }}>
+        <RunSettings run={run} onTrainAgain={onTrainAgain} />
+        <div className="alert bad" role="note">
+          <span aria-hidden="true">✕</span>
+          <div className="grow stack" style={{ gap: 6 }}>
+            <b>Why it failed</b>
+            <span>{whyFailed(run.error)}</span>
+            {run.error && run.error.includes("\n") && (
+              <details><summary className="small-text">Details</summary><pre style={{ whiteSpace: "pre-wrap" }}>{run.error}</pre></details>
+            )}
+          </div>
+        </div>
+      </div>
+    );
   }
+  if (run.status !== "done") return null;
   return (
     <div className="stack" style={{ gap: 12, padding: "8px 4px" }}>
       <RunSettings run={run} onTrainAgain={onTrainAgain} />

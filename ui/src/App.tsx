@@ -3,6 +3,7 @@ import { Link, NavLink, Navigate, Outlet, Route, Routes, useMatch, useNavigate }
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAccess, useDataset, useExperiment, useFields, useMe } from "./hooks";
 import { ApiError, api, setUnauthorizedHandler } from "./api";
+import { can } from "./can";
 import { Avatar } from "./components/Avatar";
 import { Logo } from "./components/Logo";
 import { PictureDialog } from "./components/PictureDialog";
@@ -51,6 +52,7 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
   const onTeam = useMatch("/d/:datasetId/team");
   const view = useView();
   const access = useAccess(ds, view);
+  const me = useMe();
   const fields = useFields(ds.id, true, view);
   const exports = useQuery({ queryKey: ["exports", ds.id], queryFn: () => api.exports(ds.id) });
   const runs = useQuery({ queryKey: ["runs", ds.id], queryFn: () => api.runs(ds.id) });
@@ -97,7 +99,9 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
       {!onReview && !view && all.length > 0 && (nextTodo ? (
         <Link className="btn" to={`/d/${ds.id}/review/${nextTodo.id}`}>Next unreviewed › <kbd>U</kbd></Link>
       ) : ds.phase === "finalized" ? !onExperiments && (
-        <Link className="btn" to={`/d/${ds.id}/experiments`} style={{ background: "var(--good)", borderColor: "var(--good)", color: "#fff" }}>Finalized → Start experimenting</Link>
+        <Link className="btn" to={`/d/${ds.id}/experiments`} style={{ background: "var(--good)", borderColor: "var(--good)", color: "#fff" }}>
+          {can(me.data, "createExperiment") ? "Finalized → Start experimenting" : "Finalized → See experiments"}
+        </Link>
       ) : !onTeam && access.source === "mine" && access.canEdit ? (
         <Link className="btn" to={`/d/${ds.id}/team`} style={{ background: "var(--good)", borderColor: "var(--good)", color: "#fff" }}>All reviewed → Submit</Link>
       ) : null)}

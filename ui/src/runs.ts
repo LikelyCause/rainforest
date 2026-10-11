@@ -53,3 +53,17 @@ export function starTitle(r: ModelRun, split: Split, target: string, m: RunMetri
   return `Best on the validation split (${fmtMetric(metricFor(r, "valid", target, m))}). The ★ is picked there so the `
     + "test split stays an honest check; switch to Validation to see the scores it was picked on.";
 }
+
+/** Why a run failed, in a sentence: the API's own message (its first line, without the exception type), or a plain
+ * explanation for the failures that don't come from the run's settings. */
+export function whyFailed(error: string | null | undefined): string {
+  if (!error) return "The run failed without a message.";
+  if (error.startsWith("Interrupted by an API restart")) {
+    return "The API restarted while it was training (an update or a restart of the server), which stops running jobs. "
+      + "Its settings weren't the problem: train it again.";
+  }
+  if (/MemoryError|Unable to allocate|Killed/.test(error)) {
+    return "The server ran out of memory training it. Try fewer trees or leaves, fewer chain folds, or a smaller export.";
+  }
+  return error.split("\n")[0].replace(/^[A-Za-z]*(Error|Exception): /, "");
+}

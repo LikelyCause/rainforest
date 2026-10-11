@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bestRuns, metricFor, pickExport, starTitle } from "./runs";
+import { bestRuns, metricFor, pickExport, starTitle, whyFailed } from "./runs";
 import type { ModelRun } from "./types";
 
 const run = (id: number, valid: Record<string, Record<string, number>>, test: Record<string, Record<string, number>> = valid) =>
@@ -62,5 +62,19 @@ describe("starTitle", () => {
   });
   it("on the test split, it says where the star was picked and the score there", () => {
     expect(starTitle(r, "test", "a", "primary")).toMatch(/validation split \(0\.900\).*Validation/);
+  });
+});
+
+describe("whyFailed", () => {
+  it("explains a restart without blaming the settings", () => {
+    expect(whyFailed("Interrupted by an API restart.")).toMatch(/restarted while it was training.*settings weren't the problem/);
+  });
+  it("explains running out of memory", () => {
+    expect(whyFailed("MemoryError: Unable to allocate 3.1 GiB")).toMatch(/memory/i);
+  });
+  it("passes a run's own message through, first line only", () => {
+    expect(whyFailed("ValueError: Target 'y' has a single value in the training split; there is nothing to predict.\n\nTraceback ..."))
+      .toBe("Target 'y' has a single value in the training split; there is nothing to predict.");
+    expect(whyFailed(null)).toBe("The run failed without a message.");
   });
 });

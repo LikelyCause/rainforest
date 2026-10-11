@@ -148,3 +148,10 @@ def test_bands_come_from_the_training_rows_in_a_run(tmp_path):
                    out_dir=tmp_path / "m")
     b = report["evaluation"]["test"]["g3"]["bands"]
     assert len(b["labels"]) == 5 and "band_accuracy" in report["metrics"]["test"]["g3"]
+
+
+def test_a_prediction_that_isnt_a_number_fails_the_run_clearly():
+    y = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    pred = np.array([1.0, 2.0, 3.0, 4.0, 5.0, np.nan])
+    with pytest.raises(ValueError, match="1 of 6 rows"):
+        evaluate_regression(y, pred, edges=[2.5, 4.5])

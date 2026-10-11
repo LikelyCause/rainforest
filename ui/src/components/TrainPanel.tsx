@@ -76,9 +76,13 @@ export const TrainPanel = forwardRef<HTMLElement, {
     setPending(request.prefill ?? null);
     if (!request.prefill) setDropped([]);
   }, [request]);
+  // Once shown, the panel stays on its export: a newer one finishing mustn't move the run being set up.
   useEffect(() => {
-    if (!e) return;
-    setOrder((old) => (old.length && old.every((t) => targets.includes(t)) ? old : targets));
+    if (exportId === null && e) setExportId(e.id);
+  }, [exportId, e?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Each export starts with all its targets; Train again's order (applied below) comes after.
+  useEffect(() => {
+    if (e) setOrder(targets);
   }, [e?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!pending || !e || pending.exportId !== e.id || !models.data) return;
@@ -131,7 +135,14 @@ export const TrainPanel = forwardRef<HTMLElement, {
   if (!e) return null;
   const shown = models.data?.filter((m) => !m.planned && (showAll || m.compatible)) ?? [];
   const planned = models.data?.filter((m) => m.planned) ?? [];
-  const blocked = !model ? "Choose a model" : !selected?.compatible ? "This model can't train on this export"
+  const choose = (next: { exportId?: number; model?: string }) => {
+    start.reset();
+    setDropped([]);
+    if (next.exportId !== undefined) setExportId(next.exportId);
+    if (next.model !== undefined) setModel(next.model);
+  };
+  const blocked = models.isLoading ? "Loading models…" : !model ? "Choose a model"
+    : !selected?.compatible ? "This model can't train on this export"
     : order.length === 0 ? "Choose at least one target" : settingProblems > 0 ? "Fix the settings marked in red" : null;
 
   return (
@@ -139,12 +150,12 @@ export const TrainPanel = forwardRef<HTMLElement, {
       <div className="card-head"><h2>Train a model</h2></div>
       <div className="train-controls">
         <label className="field">Export
-          <select value={e.id} onChange={(ev) => setExportId(Number(ev.target.value))}>
+          <select value={e.id} onChange={(ev) => choose({ exportId: Number(ev.target.value) })}>
             {done.map((x) => <option key={x.id} value={x.id}>Export #{x.id} · {fmtInt(x.n_rows)} rows · {(x.summary?.targets ?? []).join(", ")}</option>)}
           </select>
         </label>
         <label className="field">Model
-          <select value={model} onChange={(ev) => setModel(ev.target.value)}>
+          <select value={model} onChange={(ev) => choose({ model: ev.target.value })}>
             {shown.map((m) => <option key={m.key} value={m.key} disabled={!m.compatible}>{m.label}{m.compatible ? "" : " — not compatible"}</option>)}
             {planned.length > 0 && (
               <optgroup label="Planned">

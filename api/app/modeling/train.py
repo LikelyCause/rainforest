@@ -299,6 +299,10 @@ def evaluate_regression(y: np.ndarray, pred: np.ndarray, seed: int = 42,
     With `edges` (cut points from the training rows), actual and predicted values are also put in those bands and
     scored as classes, so a number has a confusion matrix and precision, recall and F1 too: how often the model
     predicts the right range."""
+    if bad := int((~np.isfinite(pred)).sum()):
+        # Scoring the rest would give a broken model believable numbers.
+        raise ValueError(f"The model predicted something that isn't a number for {bad:,} of {pred.size:,} rows; it "
+                         "probably diverged. Try a lower learning rate or fewer trees.")
     err = pred - y
     out = {"rmse": float(np.sqrt(np.mean(err ** 2))), "mae": float(np.mean(np.abs(err)))}
     if y.size >= 2 and np.var(y) > 0:

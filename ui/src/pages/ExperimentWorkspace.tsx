@@ -8,7 +8,7 @@ import { RunDetail } from "../components/RunDetail";
 import { TrainPanel, type TrainRequest } from "../components/TrainPanel";
 import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtInt, fmtMetric, fmtNum, fmtPct } from "../format";
 import { toast } from "../toast";
-import { bestRuns, columnLabels, metricFor, starTitle, type RunMetric, type Split } from "../runs";
+import { bestRuns, columnLabels, metricFor, starTitle, whyFailed, type RunMetric, type Split } from "../runs";
 import { sourceLabel } from "../experiments";
 import type { Dataset, Experiment, ExportJob, ModelRun, TrainPrefill } from "../types";
 
@@ -289,11 +289,15 @@ function RunsGroup({ e, runs, fresh, onTrainAgain, split }: {
   const targets: string[] = e.summary?.targets ?? [];
   const kinds: Record<string, string> = e.summary?.target_kinds ?? {};
   const best = useMemo(() => bestRuns(runs, targets), [runs, targets]);
+  const models = useQuery({ queryKey: ["exportModels", e.id], queryFn: () => api.modelsForExport(e.id), staleTime: 60_000 });
+  const labels = Object.fromEntries((models.data ?? []).map((m) => [m.key, m.label]));
+  // A finished run opens on its results; a failed one on why it failed.
+  const opens = (r: ModelRun) => r.status === "done" || r.status === "failed";
   // Open a run's detail as soon as the run you just started finishes.
   const prevStatus = useRef(new Map<number, string>());
   useEffect(() => {
     for (const r of runs) {
-      if (r.id === fresh && prevStatus.current.get(r.id) && isActive(prevStatus.current.get(r.id)!) && r.status === "done") setOpen(r.id);
+      if (r.id === fresh && prevStatus.current.get(r.id) && isActive(prevStatus.current.get(r.id)!) && opens(r)) setOpen(r.id);
       prevStatus.current.set(r.id, r.status);
     }
   }, [runs, fresh]);
@@ -331,12 +335,12 @@ function RunsGroup({ e, runs, fresh, onTrainAgain, split }: {
         return (
           <Fragment key={r.id}>
             <tr className={`run-row${open === r.id ? " open" : ""}${fresh === r.id ? " fresh" : ""}`}
-              onClick={() => r.status === "done" && setOpen(open === r.id ? null : r.id)} aria-expanded={open === r.id}>
-              <td>{r.status === "done" ? (open === r.id ? "▾" : "▸") : ""} {r.report?.model_label ?? r.model}</td>
+              onClick={() => opens(r) && setOpen(open === r.id ? null : r.id)} aria-expanded={opens(r) ? open === r.id : undefined}>
+              <td>{opens(r) ? (open === r.id ? "▾" : "▸") : ""} {r.report?.model_label ?? labels[r.model] ?? r.model}</td>
               <td className="secondary">{order.join(" → ")}</td>
               <td>
                 {r.status === "done" ? <span className="badge good">✓ done</span>
-                  : r.status === "failed" ? <span className="badge bad" title={r.error ?? ""}>✕ failed</span>
+                  : r.status === "failed" ? <span className="badge bad" title={whyFailed(r.error)}>✕ failed</span>
                   : <span className="row" style={{ flexWrap: "nowrap" }}><span className="badge accent"><span className="spinner" aria-hidden="true" /> {r.status_message ?? r.status}</span></span>}
               </td>
               {targets.map((t) => <Fragment key={t + "a"}>{cell(r, t, "primary")}</Fragment>)}

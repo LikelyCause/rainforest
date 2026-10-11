@@ -427,7 +427,7 @@ the dataset's Parquet copy, raw table, export and model directories.
 builder, default params, importance source, optional `requires` package, `cuda_params` if it can train on a GPU,
 and `build_regressor` with `regressor_defaults` for number targets). The CLI, `/api/models`,
 `/api/exports/{id}/models` and the Train form pick it up. Compatibility rules are in `registry.compatibility`. To give
-it settings in the Train menu, add its list of `Setting`s to `CATALOG` in `api/app/modeling/params.py`; the form,
+it settings in the Train panel, add its list of `Setting`s to `CATALOG` in `api/app/modeling/params.py`; the form,
 the checks, the dry fit and the routing to classifiers and regressors follow from it.
 
 **A migration.** Add `api/app/migrations/NNN_description.sql` with the next number, written to be safe to run once
