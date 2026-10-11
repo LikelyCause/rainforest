@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { can } from "../can";
@@ -7,6 +7,7 @@ import { useAccess, useDebounced, useMe, useOptions, useFields } from "../hooks"
 import { JoinAssessment } from "../components/JoinAssessment";
 import { DerivedFields } from "../components/DerivedFields";
 import { useView, type View, viewKey, withView } from "../view";
+import { FieldsViewSwitch } from "../components/FieldsViewSwitch";
 import { useDatasetContext } from "../components/DatasetLayout";
 import { Empty, ErrorAlert, StatusGlyph, glyphFor } from "../components/ui";
 import { Banner, Chip, Icon, Segmented } from "../components/kit";
@@ -14,7 +15,7 @@ import { fmtNum, fmtPct, TYPE_SHORT } from "../format";
 import { completeFilters, finderState, PRESETS, QUERY_LIMIT, selectionLabel, type Preset } from "../finder";
 import { LEAK_AT } from "../signals";
 import { showError, toast } from "../toast";
-import type { BulkRequest, BulkResult, Dataset, FieldFilter, OptionCatalog, SqlResult } from "../types";
+import type { BulkRequest, BulkResult, FieldFilter, OptionCatalog, SqlResult } from "../types";
 
 type Kind = "num" | "pct" | "text" | "bool" | "enum";
 interface Col { value: string; label: string; kind: Kind; group: "Decision" | "Stats" | "Type" }
@@ -478,44 +479,6 @@ function ResultTable({ result, nameCols, onOpen }: { result: SqlResult; nameCols
       </table>
     </div>
   );
-}
-
-type FieldsView = "focus" | "table" | "sql" | "derived" | "queue";
-
-/** Fields' own view switch: Focus · Table · SQL · Derived (and the queue first during team review). Each is a place,
- * so pressing one navigates; `?view=` comes along. SQL and Derived only show for the baseline in progress, to those
- * allowed them. */
-export function FieldsViewSwitch({ ds, current, className }: { ds: Dataset; current: FieldsView; className?: string }) {
-  const nav = useNavigate();
-  const view = useView();
-  const me = useMe().data;
-  const { pathname, search } = useLocation();
-  const sql = can(me, "querySql") && !view;
-  const derive = can(me, "editDataset") && !view;
-  const base = `/d/${ds.id}`;
-  const options: { value: FieldsView; label: string; title?: string }[] = [
-    ...(ds.phase === "review" ? [{ value: "queue" as const, label: "Queue", title: "The team review queue" }] : []),
-    { value: "focus", label: "Focus", title: "One field at a time" },
-    { value: "table", label: "Table", title: "Filter fields and change many at once" },
-    ...(sql ? [{ value: "sql" as const, label: "SQL", title: "Query the field metadata and raw data" }] : []),
-    ...(derive ? [{ value: "derived" as const, label: "Derived", title: "Fields computed from other fields" }] : []),
-  ];
-  const to: Record<FieldsView, string> = {
-    queue: `${base}/team`, focus: withView(`${base}/review`, view), table: withView(`${base}/bulk`, view),
-    sql: `${base}/bulk?tab=sql`, derived: `${base}/bulk?tab=derived`,
-  };
-  const go = (v: FieldsView) => {
-    if (v === current) return;
-    // Within the table page only `tab` changes, so the finder's presets and filters survive a look at SQL.
-    if (pathname.endsWith("/bulk") && (v === "table" || v === "sql" || v === "derived")) {
-      const next = new URLSearchParams(search);
-      if (v === "table") next.delete("tab"); else next.set("tab", v);
-      const q = next.toString();
-      return nav(`${pathname}${q ? `?${q}` : ""}`);
-    }
-    nav(to[v]);
-  };
-  return <Segmented pressed label="Fields view" className={className} value={current} options={options} onChange={go} />;
 }
 
 // Derived explains itself below the switch.

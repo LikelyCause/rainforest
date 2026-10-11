@@ -1,41 +1,16 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { useNavigate } from "react-router-dom";
 import type { Dataset, FieldListItem } from "../types";
 import { TYPE_SHORT } from "../format";
 import { attentionOf } from "../signals";
-import { withView, type View } from "../view";
+import type { View } from "../view";
 import { useFailedSaves } from "../saveQueue";
-import { useMe } from "../hooks";
-import { can } from "../can";
-import { Icon, Segmented, useDismiss } from "./kit";
+import { Icon, useDismiss } from "./kit";
+import { FieldsViewSwitch } from "./FieldsViewSwitch";
 import { Empty, ReviewMeter, StatusGlyph, glyphFor } from "./ui";
 
 export type StatusFilter = "todo" | "kept" | "dropped" | "all";
 
 export interface WorkingSet { key: string; label: string; ids: number[] }
-
-export type FieldsView = "queue" | "focus" | "table" | "sql" | "derived";
-
-/** Focus · Table · SQL · Derived: the ways into a dataset's fields, at the top of each. In team review the queue
- * comes first. SQL and Derived follow the Table page's own rules: not in a view, and only for those allowed. */
-export function FieldsViewSwitch({ ds, current, view }: { ds: Dataset; current: FieldsView; view: View }) {
-  const me = useMe().data;
-  const nav = useNavigate();
-  const base = `/d/${ds.id}`;
-  const to: Record<FieldsView, string> = {
-    queue: `${base}/team`, focus: withView(`${base}/review`, view), table: withView(`${base}/bulk`, view),
-    sql: `${base}/bulk?tab=sql`, derived: `${base}/bulk?tab=derived`,
-  };
-  const options: { value: FieldsView; label: string; title?: string }[] = [
-    ...(ds.phase === "review" && !view ? [{ value: "queue" as const, label: "Queue", title: "Team review queue" }] : []),
-    { value: "focus", label: "Focus", title: "One field at a time" },
-    { value: "table", label: "Table", title: "Every field in a table, with bulk actions" },
-    ...(can(me, "querySql") && !view ? [{ value: "sql" as const, label: "SQL", title: "Read-only SQL console" }] : []),
-    ...(can(me, "editDataset") && !view ? [{ value: "derived" as const, label: "Derived", title: "Derived fields" }] : []),
-  ];
-  return <Segmented pressed full label="Fields view" className="fields-view" value={current} options={options}
-    onChange={(v) => v !== current && nav(to[v])} />;
-}
 
 interface Props {
   /** The decision source the list shows (view.ts), for its failed-save marks. */
@@ -146,7 +121,7 @@ export function FieldList(p: Props) {
             <button type="button" className="ghost small" aria-label="Close the field list" onClick={p.onClose}><Icon name="x" /></button>
           </div>
         )}
-        {p.ds && <FieldsViewSwitch ds={p.ds} current="focus" view={p.view ?? null} />}
+        {p.ds && <FieldsViewSwitch ds={p.ds} current="focus" className="fields-view" />}
         <label className="search-box">
           <Icon name="search" />
           <input ref={p.searchRef} type="search" placeholder="Search fields" value={p.search} aria-label="Search fields"

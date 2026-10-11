@@ -442,7 +442,6 @@ table.data tr.clickable:hover td { background: var(--surface-hover); }
 .att.edited { color: var(--text-muted); }
 
 .glyph { position: relative; display: inline-grid; place-items: center; width: 14px; height: 14px; font-size: 12px; line-height: 1; font-weight: 700; }
-.glyph.todo::before { content: ""; width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--text-muted); }
 .glyph.kept { color: var(--good); }
 .glyph.dropped { color: var(--text-muted); }
 .glyph.target { color: var(--target); }
