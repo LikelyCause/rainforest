@@ -641,7 +641,7 @@ builder, default parameters and how to read importances, plus optionally a descr
 XGBoost can train on an NVIDIA GPU. The default image ships the 5 MB CPU build (`xgboost-cpu`); the GPU image swaps
 in the CUDA build (`xgboost`, built with CUDA 13.3), which adds about 800 MB, mostly its NCCL dependency. Training
 on the GPU is a per-run choice: when the API sees a usable GPU, the Train panel shows a CPU / GPU switch with the GPU's
-name for models that support it (XGBoost: `device="cuda"`, `tree_method="hist"`). The runs table has a Device
+name for models that support it, set to GPU (XGBoost: `device="cuda"`, `tree_method="hist"`). The runs table has a Device
 column, and each run's `report.json` records `device`. Other models always train on the CPU, and Explore's analyses
 run on the CPU.
 
