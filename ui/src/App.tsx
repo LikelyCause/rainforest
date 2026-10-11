@@ -91,7 +91,7 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
           <span>Team <PhaseBadge phase={ds.phase} /></span>
         </NavLink>
         <NavLink to={`/d/${ds.id}/experiments`} className={step} title="Exports and model runs, grouped into experiments">
-          <span>Experiments{running > 0 && <span className="badge accent" style={{ marginLeft: 6 }} title={`${running} running`}>{running}</span>}</span>
+          <span>Experiments{running > 0 && <span className="running-dot" role="status" aria-label={`${running} in progress`} title={`${running} export${running === 1 ? " or run" : "s or runs"} in progress`} />}</span>
         </NavLink>
       </nav>
       <div className="spacer" />

@@ -5,6 +5,7 @@ import { Chart } from "./Chart";
 import { barsOption, correlationOption, histogramOption } from "../charts";
 import { useChartTheme } from "../theme";
 import { fmtInt, fmtNum, fmtPct } from "../format";
+import { stripLabels } from "../quantiles";
 import { fieldSignals } from "../signals";
 import type { BoxSummary, FieldResponse } from "../types";
 import { ErrorAlert } from "./ui";
@@ -25,10 +26,10 @@ function QuantileStrip({ box }: { box: BoxSummary }) {
       <div className="whisker" style={{ left: 0, right: 0 }} />
       <div className="box" style={{ left: x(p25!), width: `calc(${x(p75!)} - ${x(p25!)})` }} />
       <div className="median" style={{ left: x(p50!) }} />
-      {([["p1", p01], ["median", p50], ["p99", p99]] as const).map(([k, v]) => (
-        <span key={k} className="tick" title={k}
-          style={{ left: x(v!), transform: k === "p1" ? "none" : k === "p99" ? "translateX(-100%)" : undefined }}>
-          {k} {fmtNum(v)}
+      {stripLabels({ p01: lo, p50: p50!, p99: hi }).map((l) => (
+        <span key={l.key} className={`tick ${l.row}`} title={l.key}
+          style={{ left: `${l.at * 100}%`, transform: l.anchor === "start" ? "none" : l.anchor === "end" ? "translateX(-100%)" : undefined }}>
+          {l.text}
         </span>
       ))}
     </div>
