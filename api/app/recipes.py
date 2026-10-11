@@ -112,7 +112,8 @@ def load_working(conn, dataset_id: int, snap: dict | None, family: str, targets:
         conn.execute(
             """UPDATE meta.field_decisions SET action = %s, semantic_type = %s, notes = %s, reviewed = %s, source = %s,
                       updated_at = now() WHERE field_id = %s""",
-            (action, t, dec.get("notes"), reviewed, "suggested" if as_suggested else "user", f["id"]),
+            # A field the snapshot doesn't have (derived since) is new to the team, so it is never carried as reviewed.
+            (action, t, dec.get("notes"), reviewed and not as_suggested, "suggested" if as_suggested else "user", f["id"]),
         )
         settings = (entry or {}).get("settings") or {}
         chosen = settings.get(family) or next(iter(settings.values()), None)

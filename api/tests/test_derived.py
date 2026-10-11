@@ -67,6 +67,21 @@ def test_a_derived_field_joins_the_dataset_and_a_new_version_assesses_it(people)
     assert lead.delete(f"/api/datasets/{ds['id']}/derived/{f['id']}").status_code == 409  # being assessed again
 
 
+@pytest.mark.parametrize("reopen", [False, True])
+def test_a_new_version_puts_fields_added_since_the_last_one_in_front_of_the_team(people, reopen):
+    lead = people["lead"]
+    ds = upload(lead, CSV)
+    start(lead, ds, "tree", [lead])
+    submit_and_finalize(lead, ds)
+    assert lead.post(f"/api/datasets/{ds['id']}/derived", json={"name": "wc", "kind": "formula", "spec": {"expr": "w / c"}}).status_code == 201
+    body = {"family": "tree", "reopen": [fields(lead, ds)["w"]["id"]] if reopen else []}
+    r = lead.post(f"/api/datasets/{ds['id']}/recipes", json=body)
+    assert r.status_code == 200, r.text
+    f = fields(lead, ds)
+    assert not f["wc"]["reviewed"] and f["c"]["reviewed"]
+    assert lead.get(f"/api/fields/{f['wc']['id']}").json()["locked"] is None  # open to decide, not carried over
+
+
 def test_a_lead_marks_one_chosen_run_per_experiment_and_authors_note_runs(people):
     from .team_helpers import experiment, export, finalized_trees, wait
 

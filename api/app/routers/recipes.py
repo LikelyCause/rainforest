@@ -103,6 +103,9 @@ def new_version(dataset_id: int, body: NewVersionIn, user: LeadUser) -> dict:
                                        "reopened" if reopen else "all")
         uncorrelated, added = recipe.pop("_target_work")
         if reopen:
+            reopen += [r["field_id"] for r in conn.execute(
+                "SELECT field_id FROM meta.field_decisions WHERE dataset_id = %s AND NOT reviewed AND field_id <> ALL(%s)",
+                (dataset_id, reopen)).fetchall()]
             conn.execute("INSERT INTO meta.recipe_reopened (recipe_id, field_id) SELECT %s, unnest(%s::bigint[])",
                          (recipe["id"], reopen))
             # The queue of what is left to look at: reopened fields are to do again, carried ones are settled.
