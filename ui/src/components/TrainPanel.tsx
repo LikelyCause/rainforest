@@ -61,7 +61,7 @@ export const TrainPanel = forwardRef<HTMLElement, {
   const models = useQuery({ queryKey: ["exportModels", e?.id], queryFn: () => api.modelsForExport(e!.id), staleTime: 60_000, enabled: !!e });
   const system = useQuery({ queryKey: ["system"], queryFn: api.system, staleTime: Infinity });
   const [model, setModel] = useState("");
-  const [gpuOn, setGpuOn] = useState(false);
+  const [gpuOn, setGpuOn] = useState(true);
   const [order, setOrder] = useState<string[]>(targets);
   const [valuesByModel, setValuesByModel] = useState<Record<string, Record<string, SettingValue>>>({});
   const [dropped, setDropped] = useState<string[]>([]);

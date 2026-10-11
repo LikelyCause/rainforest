@@ -258,7 +258,7 @@ function AdjustmentsCard({ ds, x }: { ds: Dataset; x: ExperimentDetail }) {
   });
   const ids = useQuery({ queryKey: ["fields", ds.id, "current"], queryFn: () => api.fields(ds.id) });
   const idOf = (name: string) => ids.data?.find((f) => f.name === name)?.id;
-  const base = baselineLabel(x.recipe_family, x.recipe_version);
+  const base = baselineLabel(x.recipe_family, x.recipe_version, false, x.recipe_name);
   return (
     <section className="card stack" aria-label="Adjustments">
       <div className="card-head">

@@ -19,6 +19,7 @@ def finalized_recipes(_: CurrentUser) -> list[dict]:
     with connection() as conn:
         rows = conn.execute(
             """SELECT r.id, r.dataset_id, d.name AS dataset_name, r.family, r.version,
+                      meta.baseline_name(r.dataset_id, r.family) AS name,
                       (SELECT count(*) FROM jsonb_object_keys(r.snapshot -> 'fields')) AS field_count,
                       r.finalized_by, u.name AS finalized_by_name, r.finalized_at
                  FROM meta.recipes r JOIN meta.datasets d ON d.id = r.dataset_id
@@ -42,6 +43,8 @@ def versions(dataset_id: int, _: CurrentUser) -> list[dict]:
                       CASE WHEN r.scope = 'reopened'
                            THEN (SELECT count(*) FROM meta.recipe_reopened o WHERE o.recipe_id = r.id) END AS reopened,
                       p.dataset_id AS parent_dataset_id, p.family AS parent_family, p.version AS parent_version,
+                      meta.baseline_name(r.dataset_id, r.family) AS name,
+                      meta.baseline_name(p.dataset_id, p.family) AS parent_name,
                       pd.name AS parent_dataset_name
                  FROM meta.recipes r
                  LEFT JOIN meta.users cu ON cu.id = r.created_by
@@ -72,7 +75,7 @@ def diff(dataset_id: int, _: CurrentUser, a: int = Query(..., ge=1), b: int = Qu
         out = recipes.diff(recipes.snapshot_of(conn, ra), recipes.snapshot_of(conn, rb),
                            ra["family"] if ra["family"] == rb["family"] else None,
                            decisions_only=ra["family"] != rb["family"])
-    keys = ("id", "family", "version", "phase")
+    keys = ("id", "family", "version", "phase", "name")
     return {"a": {**{k: ra[k] for k in keys}, "label": recipes.label(ra)},
             "b": {**{k: rb[k] for k in keys}, "label": recipes.label(rb)}, **out}
 

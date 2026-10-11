@@ -5,7 +5,7 @@ import type { Experiment } from "./types";
 const me = { id: 2, role: "member" as const };
 const lead = { id: 1, role: "lead" as const };
 const x = (id: number, over: Partial<Experiment> = {}): Experiment => ({
-  id, dataset_id: 1, name: `X${id}`, owner: null, owner_name: null, recipe_id: 10, recipe_version: 1, recipe_family: "tree" as const,
+  id, dataset_id: 1, name: `X${id}`, owner: null, owner_name: null, recipe_id: 10, recipe_version: 1, recipe_family: "tree" as const, recipe_name: null,
   is_default: false, recipe_phase: "finalized", assessor_id: null, source: "recipe:10", notes: null, created_at: "", archived_at: null,
   private: false, ...over,
 });
@@ -74,9 +74,9 @@ describe("sourceOptions", () => {
   it("offers my assessment first while I assess, then finalized versions newest first", () => {
     expect(sourceOptions(versions, team("assessing", true), me)).toEqual([
       { value: "assessment:12:2", label: "My assessment (Trees v3)" },
-      { value: "recipe:11", label: "Trees baseline v2 (finalized)" },
-      { value: "recipe:10", label: "Trees baseline v1 (finalized)" },
-      { value: "recipe:13", label: "Linear baseline v1 (finalized)" },
+      { value: "recipe:11", label: "Trees baseline v2 · finalized" },
+      { value: "recipe:10", label: "Trees baseline v1 · finalized" },
+      { value: "recipe:13", label: "Linear baseline v1 · finalized" },
     ]);
   });
 

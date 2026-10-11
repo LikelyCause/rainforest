@@ -16,14 +16,14 @@ export function filterExperiments(list: Experiment[], filter: ExperimentFilter, 
   return live;
 }
 
-export function sourceLabel(x: Pick<Experiment, "assessor_id" | "recipe_family" | "recipe_version" | "owner_name">, me?: Viewer): string {
-  if (x.assessor_id === null) return baselineLabel(x.recipe_family, x.recipe_version);
+export function sourceLabel(x: Pick<Experiment, "assessor_id" | "recipe_family" | "recipe_version" | "recipe_name" | "owner_name">, me?: Viewer): string {
+  if (x.assessor_id === null) return baselineLabel(x.recipe_family, x.recipe_version, false, x.recipe_name);
   const whose = me && x.assessor_id === me.id ? "My" : `${x.owner_name ?? "An assessor"}'s`;
-  return `${whose} assessment (${baselineLabel(x.recipe_family, x.recipe_version, true)})`;
+  return `${whose} assessment (${baselineLabel(x.recipe_family, x.recipe_version, true, x.recipe_name)})`;
 }
 
-export function privacyNote(x: Pick<Experiment, "private" | "assessor_id" | "recipe_family" | "recipe_version">): string | null {
-  const v = baselineLabel(x.recipe_family, x.recipe_version);
+export function privacyNote(x: Pick<Experiment, "private" | "assessor_id" | "recipe_family" | "recipe_version" | "recipe_name">): string | null {
+  const v = baselineLabel(x.recipe_family, x.recipe_version, false, x.recipe_name);
   if (x.private) return `Only you can see this until ${v} reaches team review.`;
   if (x.assessor_id !== null) return `Visible to the team since ${v} reached review.`;
   return null;
@@ -50,19 +50,19 @@ const FAMILY_ORDER = ["tree", "linear", "neural"];
 /** What the viewer can build a new experiment from: their own assessment of the baseline being worked (when they
  * assess it), then every finalized baseline version, by model type and newest first. */
 export function sourceOptions(
-  versions: { id: number; family: string; version: number; phase: Phase }[],
-  team: { recipe: { id: number; family: string; version: number; phase: Phase }; me: unknown } | undefined,
+  versions: { id: number; family: string; version: number; phase: Phase; name?: string | null }[],
+  team: { recipe: { id: number; family: string; version: number; phase: Phase; name?: string | null }; me: unknown } | undefined,
   me: Viewer,
 ): SourceOption[] {
   const out: SourceOption[] = [];
   if (team?.me && team.recipe.phase !== "finalized") {
     out.push({ value: `assessment:${team.recipe.id}:${me.id}`,
-      label: `My assessment (${baselineLabel(team.recipe.family, team.recipe.version, true)})` });
+      label: `My assessment (${baselineLabel(team.recipe.family, team.recipe.version, true, team.recipe.name)})` });
   }
   const finalized = versions.filter((v) => v.phase === "finalized")
     .sort((a, b) => FAMILY_ORDER.indexOf(a.family) - FAMILY_ORDER.indexOf(b.family) || b.version - a.version);
   for (const v of finalized) {
-    out.push({ value: `recipe:${v.id}`, label: `${baselineLabel(v.family, v.version)} (finalized)` });
+    out.push({ value: `recipe:${v.id}`, label: `${baselineLabel(v.family, v.version, false, v.name)} · finalized` });
   }
   return out;
 }

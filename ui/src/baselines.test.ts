@@ -11,13 +11,18 @@ describe("baselineLabel", () => {
     expect(baselineLabel("tree", 2)).toBe("Trees baseline v2");
     expect(baselineLabel("neural", 1, true)).toBe("Neural v1");
   });
+  it("puts a named baseline's name first, with its model type in the long form", () => {
+    expect(baselineLabel("tree", 2, true, "Dropout risk")).toBe("Dropout risk v2");
+    expect(baselineLabel("tree", 2, false, "Dropout risk")).toBe("Dropout risk v2 (Trees)");
+    expect(baselineLabel("tree", 2, false, null)).toBe("Trees baseline v2");
+  });
 });
 
 describe("startBaselineDefaults", () => {
   it("offers the first type without a baseline and populates from the latest finalized one", () => {
     const ds = { baseline: { setup: false }, baselines: [{ family: "tree", id: 12, version: 2, phase: "finalized", latest_finalized_id: 12 }] } as any;
     expect(startBaselineDefaults(ds, me, [f("y", { action: "target" }), f("c")])).toEqual(
-      { family: "linear", start: "baseline", source_recipe_id: 12, targets: ["y"], assessors: [7] });
+      { family: "linear", start: "baseline", source_recipe_id: 12, targets: ["y"], assessors: [7], name: "" });
   });
   it("sets up a new dataset from scratch, as Trees", () => {
     const ds = { baseline: { setup: true }, baselines: [{ family: "tree", id: 3, version: 1, phase: "assessing", latest_finalized_id: null }] } as any;

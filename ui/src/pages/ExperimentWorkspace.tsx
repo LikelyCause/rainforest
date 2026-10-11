@@ -155,7 +155,7 @@ function BuildPanel({ datasetId, family, rows, x }: { datasetId: number; family:
           </div>
         </details>
         <div className="row" style={{ justifyContent: "flex-end", marginTop: "auto" }}>
-          <span className="muted small-text">Prepared as {baselineLabel(x.recipe_family, x.recipe_version)} decided</span>
+          <span className="muted small-text">Prepared as {baselineLabel(x.recipe_family, x.recipe_version, false, x.recipe_name)} decided</span>
           <button type="button" className="primary" disabled={!p || p.blocking.length > 0 || Boolean(splitError) || start.isPending}
             onClick={() => start.mutate({ valid_size: v, test_size: t, seed, fit_sample_rows: Math.max(fit, 1000) })}>
             Export for {familyShort(family).toLowerCase()} models
@@ -209,7 +209,7 @@ function ExportRow({ e, canAdd, onTrain }: { e: ExportJob; canAdd: boolean; onTr
         <div className="row">
           <b>Export #{e.id}</b>
           <span className="badge">{familyShort(e.model_family)}</span>
-          {e.recipe_version != null && <span className="badge" title="Built from this baseline version's snapshot">{baselineLabel(e.recipe_family ?? e.model_family, e.recipe_version, true)}</span>}
+          {e.recipe_version != null && <span className="badge" title="Built from this baseline version's snapshot">{baselineLabel(e.recipe_family ?? e.model_family, e.recipe_version, true, e.recipe_name)}</span>}
           {e.status === "done" ? <span className="badge good">✓ done</span>
             : e.status === "failed" ? <span className="badge bad">✕ failed</span>
             : <span className="badge accent"><span className="spinner" aria-hidden="true" /> {e.status}</span>}
@@ -318,7 +318,7 @@ function RunsGroup({ e, runs, fresh, onTrainAgain, split }: {
       <thead>
         <tr className="group-head">
           <td colSpan={6 + targets.length * 2}>
-            Export #{e.id} · {e.recipe_version != null ? baselineLabel(e.recipe_family ?? e.model_family, e.recipe_version, true) : familyShort(e.model_family)}
+            Export #{e.id} · {e.recipe_version != null ? baselineLabel(e.recipe_family ?? e.model_family, e.recipe_version, true, e.recipe_name) : familyShort(e.model_family)}
             {adjustedNote(e)}{sc ? ` · ${fmtInt(sc.train)} / ${fmtInt(sc.valid)} / ${fmtInt(sc.test)}` : ""}
           </td>
         </tr>

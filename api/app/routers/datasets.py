@@ -267,6 +267,7 @@ def with_baselines(rows: list[dict]) -> list[dict]:
     with connection() as conn:
         latest = conn.execute(
             """SELECT DISTINCT ON (r.dataset_id, r.family) r.dataset_id, r.family, r.id, r.version, r.phase,
+                      meta.baseline_name(r.dataset_id, r.family) AS name,
                       (SELECT f.id FROM meta.recipes f WHERE f.dataset_id = r.dataset_id AND f.family = r.family
                           AND f.phase = 'finalized' ORDER BY f.finalized_at DESC, f.id DESC LIMIT 1)
                           AS latest_finalized_id
@@ -276,6 +277,7 @@ def with_baselines(rows: list[dict]) -> list[dict]:
         ).fetchall()
         current = {r["dataset_id"]: r for r in conn.execute(
             """SELECT DISTINCT ON (r.dataset_id) r.dataset_id, r.id, r.family, r.version, r.phase,
+                      meta.baseline_name(r.dataset_id, r.family) AS name,
                       (r.version = 1 AND r.phase = 'assessing' AND r.parent_id IS NULL AND r.reuse IS NULL
                        AND NOT EXISTS (SELECT 1 FROM meta.dataset_assessors a WHERE a.recipe_id = r.id)
                        AND NOT EXISTS (SELECT 1 FROM meta.assessments a WHERE a.recipe_id = r.id)
@@ -288,13 +290,13 @@ def with_baselines(rows: list[dict]) -> list[dict]:
     by_ds: dict[int, list[dict]] = {}
     for r in sorted(latest, key=lambda r: order.index(r["family"])):
         by_ds.setdefault(r["dataset_id"], []).append(
-            {k: r[k] for k in ("family", "id", "version", "phase", "latest_finalized_id")} | {"label": recipes.label(r)})
+            {k: r[k] for k in ("family", "id", "version", "phase", "latest_finalized_id", "name")} | {"label": recipes.label(r)})
     out = []
     for row in rows:
         cur = current.get(row["id"])
         out.append({**row, "baselines": by_ds.get(row["id"], []),
                     "baseline": None if cur is None else {**{k: cur[k] for k in ("id", "family", "version", "phase",
-                                                                                 "setup")},
+                                                                                 "setup", "name")},
                                                           "label": recipes.label(cur)}})
     return out
 

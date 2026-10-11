@@ -303,14 +303,11 @@ function FirstRun({ onBrowse, onDemo, busy }: { onBrowse: () => void; onDemo: ()
       <div className="stack" style={{ justifyContent: "center", gap: 12 }}>
         <h2>No data handy?</h2>
         <div><button type="button" className="primary" disabled={busy} onClick={onDemo}>Open the 50k × 150 demo</button></div>
+        <span className="secondary small-text">
+          A generated dataset with a leaky feature, ID columns, numbers stored as text and missing values, for Rainforest to catch.
+        </span>
         <span className="muted small-text">Or choose a real dataset, or a generated one's size and targets, under <b>Samples ▾</b> above.</span>
-        <div className="chips">
-          {["leaky feature", "ID columns", "numbers-as-text", "missingness"].map((c) => <span key={c} className="badge">{c}</span>)}
-        </div>
       </div>
-      <p className="muted" style={{ gridColumn: "1 / -1", margin: 0 }}>
-        <b className="secondary">1</b> Review each field (<kbd>J</kbd>/<kbd>K</kbd>, <kbd>X</kbd>, <kbd>↵</kbd>) → <b className="secondary">2</b> Export and train in an experiment
-      </p>
     </section>
   );
 }
@@ -553,7 +550,7 @@ function BaselineChips({ ds }: { ds: Dataset }) {
   return (
     <>
       {ds.baselines.map((b) => (
-        <PhaseBadge key={b.family} phase={b.phase} label={baselineLabel(b.family, b.version, true)} />
+        <PhaseBadge key={b.family} phase={b.phase} label={baselineLabel(b.family, b.version, true, b.name)} />
       ))}
     </>
   );

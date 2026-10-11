@@ -21,6 +21,7 @@ export function StartBaseline({ ds, onCancel }: { ds: Dataset; onCancel?: () => 
   const users = useQuery({ queryKey: ["users"], queryFn: api.users });
   const lines = useQuery({ queryKey: ["baselines", ds.id], queryFn: () => api.baselines(ds.id) });
   const setup = Boolean(ds.baseline?.setup);
+  const isNew = (f: FamilyKey) => setup || !ds.baselines.some((b) => b.family === f);
   const others = useQuery({ queryKey: ["finalizedRecipes"], queryFn: api.finalizedRecipes, enabled: setup });
   const invalidate = useInvalidateTeam(ds.id);
   const [form, setForm] = useState<StartBaselineForm | null>(null);
@@ -32,6 +33,7 @@ export function StartBaseline({ ds, onCancel }: { ds: Dataset; onCancel?: () => 
   const start = useMutation({
     mutationFn: (f: StartBaselineForm) => api.startBaseline(ds.id, {
       ...f, source_recipe_id: f.start === "scratch" ? null : f.source_recipe_id, targets: f.start === "recipe" ? [] : f.targets,
+      name: isNew(f.family) ? f.name : undefined,
     }),
     onSuccess: (t) => {
       invalidate();
@@ -44,6 +46,7 @@ export function StartBaseline({ ds, onCancel }: { ds: Dataset; onCancel?: () => 
   const set = (patch: Partial<StartBaselineForm>) => setForm({ ...form, ...patch });
   const toggle = <T,>(list: T[], v: T) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
   const nextVersion = (f: FamilyKey) => (setup ? 1 : (ds.baselines.find((b) => b.family === f)?.version ?? 0) + 1);
+  const nameFor = (f: FamilyKey) => (isNew(f) ? form.name.trim() || null : ds.baselines.find((b) => b.family === f)?.name ?? null);
   const people = (users.data ?? []).filter((u) => u.active && u.role !== "viewer").sort((a, b) => Number(b.id === me.id) - Number(a.id === me.id) || a.name.localeCompare(b.name));
   const missingSource = form.start !== "scratch" && !form.source_recipe_id;
   const blocked = missingSource ? "Choose what to start from" : form.assessors.length === 0 ? "Choose at least one assessor"
@@ -70,9 +73,20 @@ export function StartBaseline({ ds, onCancel }: { ds: Dataset; onCancel?: () => 
         </div>
         <span className="muted small-text">
           {form.start === "recipe" ? "Takes the model type of the baseline it reuses."
-            : `${baselineLabel(form.family, nextVersion(form.family))} · for ${catalog?.families.find((x) => x.value === form.family)?.examples ?? familyShort(form.family)}`}
+            : `${baselineLabel(form.family, nextVersion(form.family), false, nameFor(form.family))} · for ${catalog?.families.find((x) => x.value === form.family)?.examples ?? familyShort(form.family)}`}
         </span>
       </fieldset>
+
+      {isNew(form.family) ? (
+        <label className="field">
+          <span>Name <span className="muted">(optional)</span></span>
+          <input value={form.name} maxLength={60} placeholder="e.g. Dropout risk" onChange={(e) => set({ name: e.target.value })} />
+        </label>
+      ) : (
+        <span className="muted small-text">
+          {nameFor(form.family) ? `This baseline is called ${nameFor(form.family)}` : "This baseline has no name"}; rename it on the Baselines page.
+        </span>
+      )}
 
       <fieldset className="bare stack" style={{ gap: 6 }}>
         <legend className="field-label">Start from</legend>
@@ -83,7 +97,7 @@ export function StartBaseline({ ds, onCancel }: { ds: Dataset; onCancel?: () => 
           Another baseline of this dataset{own.length === 0 ? " (none finalized yet)" : ""}</label>
         {form.start === "baseline" && (
           <select aria-label="Baseline to start from" value={form.source_recipe_id ?? ""} onChange={(e) => set({ source_recipe_id: Number(e.target.value) })}>
-            {own.map((v) => <option key={v.id} value={v.id}>{baselineLabel(v.family, v.version)} · finalized {fmtAgo(v.finalized_at)}</option>)}
+            {own.map((v) => <option key={v.id} value={v.id}>{baselineLabel(v.family, v.version, false, v.name)} · finalized {fmtAgo(v.finalized_at)}</option>)}
           </select>
         )}
         {setup && (
@@ -139,7 +153,7 @@ export function StartBaseline({ ds, onCancel }: { ds: Dataset; onCancel?: () => 
       <div className="row" style={{ justifyContent: "flex-end" }}>
         {onCancel && <button type="button" className="ghost" onClick={onCancel}>Cancel</button>}
         <button type="submit" className="primary" disabled={Boolean(blocked) || start.isPending} title={blocked ?? undefined}>
-          {form.start === "recipe" ? "Start from this baseline" : `Start ${baselineLabel(form.family, nextVersion(form.family))}`}
+          {form.start === "recipe" ? "Start from this baseline" : `Start ${baselineLabel(form.family, nextVersion(form.family), false, nameFor(form.family))}`}
         </button>
       </div>
     </form>

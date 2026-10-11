@@ -169,6 +169,12 @@ class StartBaselineIn(BaseModel):
     source_recipe_id: int | None = None
     targets: list[str] = Field(default_factory=list, max_length=50)
     assessors: list[int] = Field(default_factory=list, max_length=200)
+    name: str | None = Field(None, max_length=200, description="The baseline's name, for a model type that has none "
+                                                                "yet; blank for none")
+
+
+class RenameBaselineIn(BaseModel):
+    name: str = Field(..., max_length=200, description="Blank removes the name")
 
 
 class NewVersionIn(BaseModel):

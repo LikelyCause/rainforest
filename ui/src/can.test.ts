@@ -8,6 +8,7 @@ describe("can", () => {
   it("keeps lead-only actions for leads", () => {
     expect(can({ role: "member" }, "finalize")).toBe(false);
     expect(can({ role: "member" }, "train")).toBe(true);
+    expect(can({ role: "member" }, "renameBaseline")).toBe(false);
     for (const a of ACTIONS) expect(can({ role: "lead" }, a)).toBe(true);
   });
   it("allows nothing before the user is known", () => {

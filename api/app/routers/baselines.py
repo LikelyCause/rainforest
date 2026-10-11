@@ -8,7 +8,7 @@ from .. import recipes, reuse
 from ..assessment import seed
 from ..auth import CurrentUser, LeadUser
 from ..db import connection
-from ..schemas import StartBaselineIn
+from ..schemas import RenameBaselineIn, StartBaselineIn
 from .datasets import queue_target_work
 from .team import _team_state
 
@@ -25,9 +25,14 @@ def list_baselines(dataset_id: int, _: CurrentUser) -> list[dict]:
         rows = conn.execute(
             """SELECT r.id, r.family, r.version, r.phase, r.scope, r.parent_id, p.family AS parent_family,
                       p.version AS parent_version, p.dataset_id AS parent_dataset_id, r.created_at, r.finalized_at,
+                      meta.baseline_name(r.dataset_id, r.family) AS name,
+                      meta.baseline_name(p.dataset_id, p.family) AS parent_name, pd.name AS parent_dataset_name,
+                      r.reuse, CASE WHEN r.scope = 'reopened'
+                           THEN (SELECT count(*) FROM meta.recipe_reopened o WHERE o.recipe_id = r.id) END AS reopened,
                       cu.name AS created_by_name, fu.name AS finalized_by_name
                  FROM meta.recipes r
                  LEFT JOIN meta.recipes p ON p.id = r.parent_id
+                 LEFT JOIN meta.datasets pd ON pd.id = p.dataset_id
                  LEFT JOIN meta.users cu ON cu.id = r.created_by
                  LEFT JOIN meta.users fu ON fu.id = r.finalized_by
                 WHERE r.dataset_id = %s ORDER BY r.version DESC""",
@@ -39,7 +44,7 @@ def list_baselines(dataset_id: int, _: CurrentUser) -> list[dict]:
         if versions:
             fin = [v for v in versions if v["phase"] == "finalized"]
             latest = max(fin, key=lambda v: (v["finalized_at"], v["id"]))["id"] if fin else None
-            out.append({"family": fam, "label": recipes.FAMILY_LABEL[fam], "versions": versions,
+            out.append({"family": fam, "label": recipes.FAMILY_LABEL[fam], "name": versions[0]["name"], "versions": versions,
                         "latest_finalized_id": latest})
     return out
 
@@ -57,6 +62,7 @@ def start_baseline(dataset_id: int, body: StartBaselineIn, user: LeadUser) -> di
         raise HTTPException(422, "Choose at least one target")
     if body.start != "scratch" and body.source_recipe_id is None:
         raise HTTPException(422, "Choose the baseline to start from")
+    name = recipes.clean_name(body.name)
     with connection() as conn:
         ds = conn.execute("SELECT status FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()
         if ds is None:
@@ -72,6 +78,16 @@ def start_baseline(dataset_id: int, body: StartBaselineIn, user: LeadUser) -> di
         recipes.lock_dataset(conn, dataset_id)
         cur = recipes.current(conn, dataset_id, lock="update")
         setup = recipes.is_setup(conn, cur)
+        if setup:
+            conn.execute("DELETE FROM meta.baseline_names WHERE dataset_id = %s", (dataset_id,))
+        elif body.start != "recipe" and (line := conn.execute(
+                "SELECT meta.baseline_name(%s, %s) AS name, EXISTS (SELECT 1 FROM meta.recipes WHERE dataset_id = %s "
+                "AND family = %s) AS has", (dataset_id, body.family, dataset_id, body.family)).fetchone())["has"]:
+            if name and name != line["name"]:
+                raise HTTPException(422, f"This {recipes.FAMILY_LABEL[body.family]} baseline is "
+                                         f"{repr(line['name']) if line['name'] else 'unnamed'}; rename it on the "
+                                         "Baselines page.")
+            name = line["name"]
         if body.start == "recipe":
             if not setup:
                 raise HTTPException(409, "Only a new dataset's first baseline can start from another dataset's.")
@@ -105,7 +121,22 @@ def start_baseline(dataset_id: int, body: StartBaselineIn, user: LeadUser) -> di
                 conn.execute("INSERT INTO meta.dataset_assessors (recipe_id, user_id, assigned_by) VALUES (%s, %s, %s)",
                              (recipe["id"], uid, user["id"]))
                 seed(conn, recipe, uid)
+        recipes.set_name(conn, dataset_id, recipe["family"], name)
         work = queue_target_work(conn, dataset_id, uncorrelated, added)
         state = _team_state(conn, dataset_id, user)
     work()
     return state
+
+
+@router.patch("/datasets/{dataset_id}/baselines/{family}")
+def rename_baseline(dataset_id: int, family: str, body: RenameBaselineIn, user: LeadUser) -> list[dict]:
+    """Name or rename the dataset's baseline of `family` (blank removes the name). The name sits outside the
+    versions, so a finalized baseline can be renamed."""
+    name = recipes.clean_name(body.name)
+    with connection() as conn:
+        recipes.lock_dataset(conn, dataset_id)
+        if conn.execute("SELECT 1 FROM meta.recipes WHERE dataset_id = %s AND family = %s LIMIT 1",
+                        (dataset_id, family)).fetchone() is None:
+            raise HTTPException(404, "This dataset has no baseline of that model type")
+        recipes.set_name(conn, dataset_id, family, name)
+    return list_baselines(dataset_id, user)

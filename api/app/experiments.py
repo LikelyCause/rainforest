@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 
 COLS = """x.id, x.dataset_id, x.name, x.owner, x.recipe_id, x.assessor_id, x.source, x.notes, x.created_at,
           x.archived_at, x.is_default, x.target_order, xr.family AS recipe_family, xr.version AS recipe_version,
-          xr.phase AS recipe_phase,
+          xr.phase AS recipe_phase, meta.baseline_name(xr.dataset_id, xr.family) AS recipe_name,
           (x.assessor_id IS NOT NULL AND xr.phase = 'assessing') AS private,
           (SELECT name FROM meta.users u WHERE u.id = coalesce(x.owner, x.assessor_id)) AS owner_name"""
 FROM = "meta.experiments x JOIN meta.recipes xr ON xr.id = x.recipe_id"
@@ -113,7 +113,7 @@ def create(conn, dataset_id: int, name: str, source: str, user: dict, notes: str
             raise HTTPException(403, "A personal experiment can only be built from your own assessment.")
         if conn.execute("SELECT 1 FROM meta.assessments WHERE recipe_id = %s AND user_id = %s LIMIT 1",
                         (recipe_id, assessor_id)).fetchone() is None:
-            raise HTTPException(403, f"You don't assess {recipes.label(recipe).lower()}.")
+            raise HTTPException(403, f"You don't assess {recipes.label(recipe, lower=True)}.")
     row = conn.execute(
         """INSERT INTO meta.experiments (dataset_id, name, owner, recipe_id, assessor_id, source, notes)
            VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
@@ -252,7 +252,7 @@ def backfill_copies(conn) -> int:
 
 
 def team_name(recipe: dict) -> str:
-    return f"Team · {recipes.FAMILY_LABEL[recipe['family']]} v{recipe['version']}"
+    return f"Team · {recipes.short_label(recipe['family'], recipe['version'], recipe['name'])}"
 
 
 def list_for(conn, dataset_id: int, user: dict) -> list[dict]:

@@ -18,10 +18,12 @@ from .semantics import SETTING_KEYS, suggest, validate_decision
 PHASES = ("assessing", "review", "finalized")
 DECISION_KEYS = ("action", "semantic_type", "notes", "target_task", "target_bins")
 FAMILY_LABEL = {"tree": "Trees", "linear": "Linear", "neural": "Neural"}
+NAME_MAX = 60
 RECIPE_COLS = """id, dataset_id, family, version, phase, scope, parent_id, created_by, created_at, finalized_by,
-                 finalized_at, schema_fingerprint"""
+                 finalized_at, schema_fingerprint, meta.baseline_name(dataset_id, family) AS name"""
 # Joins a dataset row `d` to its current (latest started) baseline version as `rc`.
-CURRENT_JOIN = """LEFT JOIN LATERAL (SELECT id, family, version, phase, scope FROM meta.recipes
+CURRENT_JOIN = """LEFT JOIN LATERAL (SELECT id, family, version, phase, scope,
+                                            meta.baseline_name(dataset_id, family) AS name FROM meta.recipes
                                        WHERE dataset_id = d.id ORDER BY id DESC LIMIT 1) rc ON true"""
 
 
@@ -178,7 +180,7 @@ def locked_problem(conn, recipe: dict, field_ids: list[int]) -> str | None:
         return None
     one = len(locked) == 1
     names = ", ".join(r["name"] for r in locked[:8]) + ("…" if len(locked) > 8 else "")
-    return (f"{names}: carried over into {label(recipe).lower()} and locked. To change "
+    return (f"{names}: carried over into {label(recipe, lower=True)} and locked. To change "
             f"{'it' if one else 'them'}, start a new version that reopens {'it' if one else 'them'}.")
 
 
@@ -191,8 +193,43 @@ def snapshot_of(conn, recipe: dict) -> dict:
     return snapshot(conn, recipe["dataset_id"], family=recipe["family"])
 
 
-def label(recipe: dict) -> str:
-    return f"{FAMILY_LABEL[recipe['family']]} baseline v{recipe['version']}"
+def label(recipe: dict, lower: bool = False) -> str:
+    """ "Dropout risk v2 (Trees)", or "Trees baseline v2" unnamed ("trees baseline v2" with `lower`, for mid-sentence;
+    a name keeps its case). `name` is required, so a query that forgets it fails instead of labelling the baseline by
+    its model type."""
+    name, fam = recipe["name"], FAMILY_LABEL[recipe["family"]]
+    if name:
+        return f"{name} v{recipe['version']} ({fam})"
+    text = f"{fam} baseline v{recipe['version']}"
+    return text.lower() if lower else text
+
+
+def short_label(family: str, version: int, name: str | None) -> str:
+    return f"{name or FAMILY_LABEL[family]} v{version}"
+
+
+def set_name(conn, dataset_id: int, family: str, name: str | None) -> None:
+    if name is None:
+        conn.execute("DELETE FROM meta.baseline_names WHERE dataset_id = %s AND family = %s", (dataset_id, family))
+        return
+    # A model type can lose its versions' family (reuse switches a new dataset's placeholder); its name goes with it.
+    conn.execute("""DELETE FROM meta.baseline_names n WHERE n.dataset_id = %s AND NOT EXISTS (
+                      SELECT 1 FROM meta.recipes r WHERE r.dataset_id = n.dataset_id AND r.family = n.family)""",
+                 (dataset_id,))
+    taken = conn.execute("SELECT family, name FROM meta.baseline_names WHERE dataset_id = %s AND family <> %s "
+                         "AND lower(name) = lower(%s)", (dataset_id, family, name)).fetchone()
+    if taken:
+        raise HTTPException(422, f"This dataset's {FAMILY_LABEL[taken['family']]} baseline is already called "
+                                 f"{taken['name']!r}")
+    conn.execute("""INSERT INTO meta.baseline_names (dataset_id, family, name) VALUES (%s, %s, %s)
+                    ON CONFLICT (dataset_id, family) DO UPDATE SET name = excluded.name""", (dataset_id, family, name))
+
+
+def clean_name(raw: str | None) -> str | None:
+    name = (raw or "").strip()
+    if len(name) > NAME_MAX:
+        raise HTTPException(422, f"A baseline name is at most {NAME_MAX} characters")
+    return name or None
 
 
 def fingerprint(columns: list[tuple[str, str]]) -> str:

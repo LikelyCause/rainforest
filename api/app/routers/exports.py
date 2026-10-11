@@ -36,7 +36,7 @@ FILES = {
 EXPORT_COLS = """e.id, e.dataset_id, e.status, e.progress, e.status_message, e.error, e.model_family, e.config,
                  e.output_dir, e.n_rows, e.n_features, e.summary, e.created_at, e.updated_at, e.finished_at, e.owner,
                  e.created_by, e.recipe_id, e.experiment_id, r.family AS recipe_family, r.version AS recipe_version,
-                 x.name AS experiment_name"""
+                 meta.baseline_name(r.dataset_id, r.family) AS recipe_name, x.name AS experiment_name"""
 EXPORT_SELECT = (f"SELECT {EXPORT_COLS} FROM meta.exports e LEFT JOIN meta.recipes r ON r.id = e.recipe_id "
                  "LEFT JOIN meta.experiments x ON x.id = e.experiment_id")
 PHASE_WAIT = {"assessing": "is being assessed", "review": "is in team review"}
@@ -184,7 +184,7 @@ def _preview_of(conn, dataset_id: int, user: dict, recipe: dict, snap: dict, x: 
                         f"{', '.join(invalid[:8])}{'…' if len(invalid) > 8 else ''}")
     return {
         "family": fam,
-        "recipe": {**{k: recipe[k] for k in ("id", "family", "version", "phase")}, "label": recipes.label(recipe)},
+        "recipe": {**{k: recipe[k] for k in ("id", "family", "version", "phase", "name")}, "label": recipes.label(recipe)},
         "source": "assessment" if personal else "recipe",
         "experiment_id": experiment_id,
         "kept": len(keep),
@@ -290,7 +290,7 @@ def start_export(dataset_id: int, req: ExportRequest, user: CurrentUser) -> dict
                   "source": "assessment" if personal else "recipe", "recipe_id": recipe["id"],
                   "recipe_version": recipe["version"], "experiment_id": x["id"],
                   "baseline": {"recipe_id": recipe["id"], "family": recipe["family"], "version": recipe["version"],
-                               "label": recipes.label(recipe)},
+                               "name": recipe["name"], "label": recipes.label(recipe)},
                   "adjustments": {"count": adj["count"], "fields": [f["name"] for f in adj["fields"]],
                                   "targets_changed": adj["targets_changed"], "targets": adj["targets"],
                                   "detail": adj["fields"]}}
