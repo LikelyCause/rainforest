@@ -11,6 +11,11 @@ import App from "./App";
 import { initSaveQueue } from "./saveQueue";
 import { applyThemePref } from "./theme";
 import "./styles.css";
+import "./styles/home.css";
+import "./styles/fields.css";
+import "./styles/baseline.css";
+import "./styles/experiments.css";
+import "./styles/tools.css";
 
 const queryClient = new QueryClient({
   defaultOptions: {
