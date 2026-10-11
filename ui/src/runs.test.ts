@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bestRuns, metricFor, pickExport, runColumns, spreadFor, starTitle, whyFailed } from "./runs";
+import { batchSummary, bestRuns, metricFor, pickExport, runColumns, spreadFor, starTitle, whyFailed } from "./runs";
 import type { ModelRun } from "./types";
 
 const run = (id: number, valid: Record<string, Record<string, number>>, test: Record<string, Record<string, number>> = valid) =>
@@ -111,5 +111,16 @@ describe("cross-validation", () => {
     const t = starTitle(cvRun, "cv", "a", "primary");
     expect(t).toContain("validation split (0.800)");
     expect(t).not.toContain("test split");
+  });
+});
+
+describe("batchSummary", () => {
+  it("counts finished and failed runs and names the best validation score", () => {
+    const a = { ...run(1, { y: { r2: 0.8 } }), status: "done" } as ModelRun;
+    const b = { ...run(2, { y: { r2: 0.9 } }), status: "done" } as ModelRun;
+    const c = { id: 3, status: "failed", metrics: {} } as unknown as ModelRun;
+    expect(batchSummary([a, b], "y", "regression")).toBe("2 runs finished · best R² 0.900");
+    expect(batchSummary([a, c], "y", "regression")).toBe("1 run finished, 1 failed · best R² 0.800");
+    expect(batchSummary([c], "y", "binary")).toBe("1 run failed");
   });
 });

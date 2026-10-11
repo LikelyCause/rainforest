@@ -56,11 +56,15 @@ describe("regressionTabs", () => {
     expect(regressionTabs(ev).map((t) => t.key)).toEqual(["scatter", "errors"]);
     expect(regressionTabs({ ...ev, bands: { labels: ["< 1", "≥ 1"], edges: [1], confusion_matrix: [[1, 0], [0, 1]], per_class: [] } })
       .map((t) => t.key)).toEqual(["scatter", "errors", "bands"]);
+    expect(regressionTabs(ev, true).map((t) => t.key)).toEqual(["scatter", "errors", "features"]);
   });
 });
 
 describe("classTabs", () => {
   it("offers the matrix, the ROC curves and the per-class table", () => {
     expect(classTabs().map((t) => t.key)).toEqual(["matrix", "roc", "classes"]);
+  });
+  it("adds Threshold and Top features when the run has them", () => {
+    expect(classTabs(true, true).map((t) => t.key)).toEqual(["matrix", "roc", "classes", "threshold", "features"]);
   });
 });

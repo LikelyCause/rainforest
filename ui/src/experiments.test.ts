@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lastRowRules, addBlocked, baselineDiff, metricLabel, canEdit, filterExperiments, mlflowExperimentUrl, privacyNote, revertedInput, sourceLabel, sourceOptions } from "./experiments";
+import { lastRowRules, addBlocked, baselineDiff, metricLabel, canEdit, experimentTab, filterExperiments, finalizedPrompt, mlflowExperimentUrl, privacyNote, revertedInput, sourceChip, sourceLabel, sourceOptions } from "./experiments";
 import type { Experiment } from "./types";
 
 const me = { id: 2, role: "member" as const };
@@ -139,5 +139,34 @@ describe("lastRowRules", () => {
     expect(lastRowRules([ex(1, { group_by: "p" })])).toEqual({ from: 1, rules: { dedupe: false, exclude: [], first_per: null, group_by: "p" } });
     expect(lastRowRules([ex(1, { dedupe: false, exclude: [] })])).toBeNull();
     expect(lastRowRules([])).toBeNull();
+  });
+});
+
+describe("experimentTab", () => {
+  it("opens Runs for a missing or unknown tab", () => {
+    expect(experimentTab(null)).toBe("runs");
+    expect(experimentTab("bogus")).toBe("runs");
+    expect(experimentTab("train")).toBe("train");
+  });
+});
+
+describe("sourceChip", () => {
+  it("says a team experiment uses the finalized snapshot and a personal one the assessment as it stands", () => {
+    expect(sourceChip(x(1), me)).toMatchObject({ lens: "frozen", text: "From Trees baseline v1 · as finalized" });
+    expect(sourceChip(x(2, { assessor_id: 2, owner_name: "Me" }), me).text).toBe("From my assessment of Trees v1 · as it stands");
+    expect(sourceChip(x(3, { assessor_id: 3, owner_name: "Dana" }), me)).toMatchObject({ lens: "private", text: "From Dana's assessment of Trees v1 · as it stands" });
+  });
+});
+
+describe("finalizedPrompt", () => {
+  const base = { id: 10, phase: "finalized" as const };
+  it("follows ?finalized= after finalizing", () => {
+    expect(finalizedPrompt([x(1)], base, "12")).toBe(12);
+  });
+  it("offers the finalized baseline while nothing live is built on it", () => {
+    expect(finalizedPrompt([], base, null)).toBe(10);
+    expect(finalizedPrompt([x(1, { archived_at: "2026-01-01" })], base, null)).toBe(10);
+    expect(finalizedPrompt([x(1)], base, null)).toBeNull();
+    expect(finalizedPrompt([], { id: 10, phase: "assessing" }, null)).toBeNull();
   });
 });

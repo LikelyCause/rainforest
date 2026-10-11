@@ -116,3 +116,32 @@ export function lastRowRules(exports: { id: number; config: Record<string, any> 
   }
   return null;
 }
+
+/** An experiment page's places, as `?tab=`; anything else opens Runs. */
+export type ExperimentTab = "runs" | "train" | "exports" | "adjustments" | "notes";
+const TABS: ExperimentTab[] = ["runs", "train", "exports", "adjustments", "notes"];
+export const experimentTab = (v: string | null): ExperimentTab => (TABS.includes(v as ExperimentTab) ? (v as ExperimentTab) : "runs");
+
+/** Where an experiment's fields come from, as its header chip says it: a frozen baseline, or an assessment as it stands. */
+export function sourceChip(x: Pick<Experiment, "assessor_id" | "recipe_family" | "recipe_version" | "recipe_name" | "owner_name">, me?: Viewer):
+  { lens: "frozen" | "private"; text: string; title: string } {
+  if (x.assessor_id === null) {
+    return { lens: "frozen", text: `From ${baselineLabel(x.recipe_family, x.recipe_version, false, x.recipe_name)} · as finalized`,
+      title: "Exports use the version's frozen snapshot; later versions don't change it." };
+  }
+  const whose = me && x.assessor_id === me.id ? "my" : `${x.owner_name ?? "an assessor"}'s`;
+  return { lens: "private", text: `From ${whose} assessment of ${baselineLabel(x.recipe_family, x.recipe_version, true, x.recipe_name)} · as it stands`,
+    title: "Each export uses the assessment as it stands when it is made; later edits don't change an export already made." };
+}
+
+/** The finalized-baseline card on Experiments: shown right after finalizing (`?finalized=`), or while no live
+ * experiment is built on the dataset's finalized baseline yet. */
+export function finalizedPrompt(
+  list: Pick<Experiment, "recipe_id" | "archived_at">[] | undefined,
+  baseline: { id: number; phase: Phase | null } | null,
+  param: string | null,
+): number | null {
+  if (param && Number(param)) return Number(param);
+  if (!list || !baseline || baseline.phase !== "finalized") return null;
+  return list.some((x) => !x.archived_at && x.recipe_id === baseline.id) ? null : baseline.id;
+}

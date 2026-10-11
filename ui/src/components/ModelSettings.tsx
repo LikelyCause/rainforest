@@ -1,15 +1,9 @@
 import { useState } from "react";
-import { changed, GROUP_LABEL, GROUP_ORDER, isVisible, problems, suitsTargets } from "../settings";
+import { changed, fmtSetting, GROUP_LABEL, GROUP_ORDER, groupSummary, isVisible, problems, suitsTargets } from "../settings";
 import type { ModelSetting, SettingValue } from "../types";
+import { Icon } from "./kit";
 
 type Values = Record<string, SettingValue>;
-
-const shown = (s: ModelSetting, v: SettingValue): string => {
-  if (s.kind === "choice") return s.options?.find((o) => o.value === v)?.label ?? String(v);
-  if (s.kind === "bool") return v ? "on" : "off";
-  if (s.kind === "int_or_none" && v === s.none_value) return s.none_label ?? String(v);
-  return String(v);
-};
 
 /** A number typed as text, so partial input ("0.", "-") can pass through on the way; committed once it parses. */
 function NumberInput({ s, value, onChange, id }: { s: ModelSetting; value: number; onChange: (v: number) => void; id: string }) {
@@ -74,80 +68,76 @@ function Row({ s, values, onChange, problem }: {
   const value = s.name in values ? values[s.name] : s.default;
   const isChanged = value !== s.default;
   return (
-    <div className={`setting ms-row${isChanged ? " edited" : ""}`}>
-      <div className="ms-line">
-        <label htmlFor={`ms-${s.name}`} title={s.help}>{s.label}</label>
-        <Control s={s} value={value} onChange={(v) => onChange(s.name, v)} />
-        {isChanged
-          ? <button type="button" className="ghost small" title={`Back to the default (${shown(s, s.default)})`} onClick={() => onChange(s.name, s.default)}>↺</button>
-          : <span />}
-      </div>
+    <div className={`setting ms-row${isChanged ? " edited" : ""}${problem ? " invalid" : ""}`}>
+      <label htmlFor={`ms-${s.name}`} title={s.help}>{s.label}</label>
+      <Control s={s} value={value} onChange={(v) => onChange(s.name, v)} />
       <div className="ms-help muted small-text">
-        {problem ? <span className="ms-problem">{s.label} {problem}</span> : <>{s.help} <span className="ms-default">default {shown(s, s.default)}</span></>}
+        {problem ? <span className="ms-problem" role="alert">{s.label} {problem}</span>
+          : isChanged ? (
+            <span className="ms-default">
+              Default {fmtSetting(s, s.default)}{" "}
+              <button type="button" className="link small-text" aria-label={`Reset ${s.label} to its default, ${fmtSetting(s, s.default)}`}
+                onClick={() => onChange(s.name, s.default)}>Reset</button>
+            </span>
+          ) : s.help}
       </div>
     </div>
   );
 }
 
-/** A model's settings, grouped as the catalog says and laid out side by side. Groups for class or number targets
- * show only when the run has such a target; Advanced is folded, with a search. */
+/** A model's settings, one folding group per catalog group, each summed up in a line when folded. Groups for class
+ * or number targets show only when the run has such a target. A group with a change starts open; Find a setting
+ * searches every group. */
 export function ModelSettings({ settings, values, onChange, kinds }: {
   settings: ModelSetting[]; values: Values; onChange: (v: Values) => void; kinds: string[];
 }) {
-  const [advanced, setAdvanced] = useState(false);
   const [q, setQ] = useState("");
+  const [toggled, setToggled] = useState<Record<string, boolean>>({});
   const diff = changed(values, settings, kinds);
   const issues = problems(values, settings, kinds);
   const runChanged = settings.filter((s) => s.group === "run" && s.name in values && values[s.name] !== s.default).length;
   const n = Object.keys(diff).length + runChanged;
   const set = (name: string, v: SettingValue) => onChange({ ...values, [name]: v });
   const visible = (s: ModelSetting) => isVisible(s, values, settings) && suitsTargets(s, kinds);
-  const inAdvanced = settings.filter((s) => s.group === "advanced" && visible(s));
-  const advancedChanged = inAdvanced.filter((s) => s.name in diff).length;
   const query = q.trim().toLowerCase();
-  const summary = (
-    <span className={n ? "badge accent" : "muted small-text"}>{n ? `${n} changed` : "Defaults"}</span>
-  );
-  const body = (
-    <div className="stack" style={{ gap: 12 }}>
-      <div className="ms-grid ms-groups">
-        {GROUP_ORDER.filter((g) => g !== "advanced").map((g) => {
-          const rows = settings.filter((s) => s.group === g && visible(s));
-          if (!rows.length) return null;
-          return (
-            <section key={g} className="stack ms-group" style={{ gap: 2 }} aria-label={GROUP_LABEL[g]}>
-              <h4>{GROUP_LABEL[g]}</h4>
-              {rows.map((s) => <Row key={s.name} s={s} values={values} onChange={set} problem={issues[s.name]} />)}
-            </section>
-          );
-        })}
-      </div>
-      {inAdvanced.length > 0 && (
-        <section className="stack ms-group" style={{ gap: 2 }} aria-label="Advanced">
-          <button type="button" className="ms-summary" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}>
-            <span>{advanced ? "▾" : "▸"} Advanced · {inAdvanced.length} settings</span>
-            {advancedChanged > 0 && <span className="badge accent">{advancedChanged} changed</span>}
-          </button>
-          {advanced && (
-            <>
-              <input type="search" placeholder="Search settings" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search settings" />
-              <div className="ms-grid">
-                {inAdvanced.filter((s) => !query || `${s.label} ${s.name} ${s.help}`.toLowerCase().includes(query))
-                  .map((s) => <Row key={s.name} s={s} values={values} onChange={set} problem={issues[s.name]} />)}
-              </div>
-            </>
-          )}
-        </section>
-      )}
-    </div>
-  );
+  const matches = (s: ModelSetting) => !query || `${s.label} ${s.name} ${s.help}`.toLowerCase().includes(query);
+  const groups = GROUP_ORDER.map((g) => ({ g, rows: settings.filter((s) => s.group === g && visible(s)) })).filter((x) => x.rows.length);
+  const found = groups.reduce((a, x) => a + x.rows.filter(matches).length, 0);
   return (
-    <div className="stack model-settings" style={{ gap: 10 }}>
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <h3 className="ms-title">Model settings {summary}</h3>
-        {n > 0 && <button type="button" className="link small-text" onClick={() => onChange({})}>Reset all</button>}
+    <section className="card model-settings" aria-labelledby="ms-title">
+      <div className="ms-head">
+        <h2 id="ms-title">Settings <span className="muted num ms-count">{n ? `${n} changed from defaults` : "all at defaults"}</span></h2>
+        <div className="row" style={{ gap: 8 }}>
+          <label className="ms-search">
+            <Icon name="search" size={14} />
+            <input type="search" placeholder="Find a setting" aria-label="Find a setting" value={q} onChange={(e) => setQ(e.target.value)} />
+          </label>
+          <button type="button" className="small" disabled={n === 0} onClick={() => onChange({})}>Reset all</button>
+        </div>
       </div>
-      {body}
-    </div>
+      {query && found === 0 && <div className="ms-none muted small-text">No setting matches “{q.trim()}”.</div>}
+      {groups.map(({ g, rows }) => {
+        const shownRows = rows.filter(matches);
+        if (query && !shownRows.length) return null;
+        const edited = rows.some((s) => s.name in diff || (s.group === "run" && s.name in values && values[s.name] !== s.default));
+        const bad = rows.some((s) => issues[s.name]);
+        const open = query ? true : toggled[g] ?? (edited || bad);
+        return (
+          <section key={g} className="ms-group" aria-label={GROUP_LABEL[g]}>
+            <button type="button" className="ms-summary" aria-expanded={open}
+              onClick={() => !query && setToggled({ ...toggled, [g]: !open })}>
+              <Icon name={open ? "chevron-down" : "chevron-right"} />
+              <b>{GROUP_LABEL[g]}</b>
+              <span className={`ms-line-summary${bad ? " ms-problem" : ""}`}>{bad ? "A setting here needs fixing" : groupSummary(rows, values)}</span>
+            </button>
+            {open && (
+              <div className="ms-grid">
+                {shownRows.map((s) => <Row key={s.name} s={s} values={values} onChange={set} problem={issues[s.name]} />)}
+              </div>
+            )}
+          </section>
+        );
+      })}
+    </section>
   );
 }

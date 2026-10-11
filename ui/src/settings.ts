@@ -85,15 +85,32 @@ export function prefillValues(saved: Record<string, SettingValue>, settings: Mod
   return { values, dropped: Object.keys(saved).filter((k) => !(k in values)) };
 }
 
+/** A setting's value in words: a choice by its label, on/off, or the "no limit" wording. */
+export function fmtSetting(s: ModelSetting | undefined, v: SettingValue): string {
+  return s?.kind === "choice" ? s.options?.find((o) => o.value === v)?.label ?? String(v)
+    : s?.kind === "int_or_none" && v === s.none_value ? s.none_label ?? String(v)
+    : typeof v === "boolean" ? (v ? "on" : "off") : String(v);
+}
+
 /** "num_leaves 127 · learning_rate 0.02", labelled when the catalog is known. */
 export function describeSettings(params: Record<string, SettingValue>, settings: ModelSetting[] | null | undefined): string {
   const entries = Object.entries(params);
   if (!entries.length) return "defaults";
   return entries.map(([k, v]) => {
     const s = settings?.find((x) => x.name === k);
-    const shown = s?.kind === "choice" ? s.options?.find((o) => o.value === v)?.label ?? String(v)
-      : s?.kind === "int_or_none" && v === s.none_value ? s.none_label ?? String(v)
-      : typeof v === "boolean" ? (v ? "on" : "off") : String(v);
-    return `${s?.label ?? k} ${shown}`;
+    return `${s?.label ?? k} ${fmtSetting(s, v)}`;
   }).join(" · ");
+}
+
+/** A folded settings group's one line: what changed in it, else its first few values and "defaults". A long group
+ * (Advanced) is summed up by its size. */
+export function groupSummary(rows: ModelSetting[], values: Record<string, SettingValue>, max = 3): string {
+  const edited = rows.filter((s) => s.name in values && values[s.name] !== s.default);
+  if (edited.length) {
+    const rest = rows.length - edited.length;
+    return `${edited.map((s) => `${s.label} ${fmtSetting(s, values[s.name])}`).join(" · ")}${rest ? ` · ${rest} at defaults` : ""}`;
+  }
+  if (rows.length > 6) return `${rows.length} settings · defaults`;
+  const head = rows.slice(0, max).map((s) => `${s.label} ${fmtSetting(s, s.default)}`).join(" · ");
+  return `${head}${rows.length > max ? ` · ${rows.length - max} more` : ""} · defaults`;
 }

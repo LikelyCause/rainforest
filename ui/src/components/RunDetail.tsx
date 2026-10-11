@@ -6,6 +6,7 @@ import { useMe } from "../hooks";
 import { describeSettings } from "../settings";
 import { showError } from "../toast";
 import { whyFailed, type Split } from "../runs";
+import { Banner, Chip, Icon, Segmented } from "./kit";
 import { histogramOption, rocOption, scatterOption } from "../charts";
 import { fmtInt, fmtMetric, fmtNum, fmtPct } from "../format";
 import { useChartTheme } from "../theme";
@@ -35,10 +36,8 @@ function ConfusionMatrix({ ev, accuracy }: { ev: TargetEvaluation; accuracy?: nu
         <span className="muted small-text">
           Confusion matrix · {fmtInt(total)} rows{accuracy !== undefined ? ` · accuracy ${fmtMetric(accuracy)}` : ""}
         </span>
-        <div className="segmented" role="radiogroup" aria-label="Cell values">
-          <button type="button" role="radio" aria-checked={mode === "count"} className={`small${mode === "count" ? " on" : ""}`} onClick={() => setMode("count")}>counts</button>
-          <button type="button" role="radio" aria-checked={mode === "row"} className={`small${mode === "row" ? " on" : ""}`} onClick={() => setMode("row")}>row %</button>
-        </div>
+        <Segmented label="Show as" pressed size="small" value={mode} onChange={setMode}
+          options={[{ value: "count", label: "Counts" }, { value: "row", label: "Row %" }]} />
       </div>
       <div style={{ overflowX: "auto" }}>
         <table className="cm" role="grid">
@@ -111,11 +110,13 @@ export function regressionTiles(m: Record<string, number>): [string, number | un
   ];
 }
 
-export function regressionTabs(ev: RegressionEvaluation): { key: "scatter" | "errors" | "bands"; label: string }[] {
+type RegressionTab = "scatter" | "errors" | "bands" | "features";
+export function regressionTabs(ev: RegressionEvaluation, features = false): { key: RegressionTab; label: string }[] {
   return [
     { key: "scatter", label: "Predicted vs actual" },
     { key: "errors", label: "Errors" },
     ...(ev.bands ? [{ key: "bands" as const, label: "Ranges" }] : []),
+    ...(features ? [{ key: "features" as const, label: "Top features" }] : []),
   ];
 }
 
@@ -160,19 +161,21 @@ function RangesView({ ev, m }: { ev: RegressionEvaluation; m: Record<string, num
   );
 }
 
-function RegressionCard({ target, m, ev }: { target: string; m: Record<string, number>; ev?: RegressionEvaluation }) {
+type Features = { feature: string; source: string; importance: number }[];
+
+function RegressionCard({ target, m, ev, features }: { target: string; m: Record<string, number>; ev?: RegressionEvaluation; features?: Features }) {
   const t = useChartTheme();
-  const [tab, setTab] = useState<"scatter" | "errors" | "bands">("scatter");
+  const [tab, setTab] = useState<RegressionTab>("scatter");
   const steady = useSteadyHeight();
   const scatter = useMemo(() => (ev ? scatterOption(t, ev.scatter.actual, ev.scatter.predicted) : null), [t, ev]);
   const residuals = useMemo(() => (ev ? histogramOption(t, { kind: "histogram", edges: ev.residuals.edges, counts: ev.residuals.counts } as HistogramChart,
     { xLabel: "Error (predicted − actual)" }) : null), [t, ev]);
-  const tabs = ev ? regressionTabs(ev) : [];
+  const tabs = ev ? regressionTabs(ev, Boolean(features?.length)) : [];
   const shown = tabs.some((x) => x.key === tab) ? tab : "scatter";
   return (
     <section className="card stack target-card">
       <div className="card-head" style={{ marginBottom: 0 }}>
-        <h3>◎ {target}</h3>
+        <h3><Icon name="target" size={14} /> {target}</h3>
         <span className="muted small-text">predicted as a number</span>
       </div>
       <div className="stats metric-tiles">
@@ -202,17 +205,25 @@ function RegressionCard({ target, m, ev }: { target: string; m: Record<string, n
             </div>
           )}
           {shown === "bands" && <RangesView ev={ev} m={m} />}
+          {shown === "features" && features && <TopFeatures rows={features} />}
           </div>
           {!ev.bands && <span className="muted small-text">This run predates range scores; train it again to see them.</span>}
         </>
-      ) : <div className="muted small-text">No evaluation details for this split.</div>}
+      ) : (
+        <>
+          <div className="muted small-text">No evaluation details for this split.</div>
+          {features?.length ? <TopFeatures rows={features} /> : null}
+        </>
+      )}
     </section>
   );
 }
 
-export function classTabs(threshold = false): { key: "matrix" | "roc" | "classes" | "threshold"; label: string }[] {
-  return [{ key: "matrix", label: "Confusion matrix" }, { key: "roc", label: "ROC curves" }, { key: "classes", label: "Per class" },
-    ...(threshold ? [{ key: "threshold" as const, label: "Threshold" }] : [])];
+type ClassTab = "matrix" | "roc" | "classes" | "threshold" | "features";
+export function classTabs(threshold = false, features = false): { key: ClassTab; label: string }[] {
+  return [{ key: "matrix", label: "Confusion" }, { key: "roc", label: "ROC curves" }, { key: "classes", label: "Per class" },
+    ...(threshold ? [{ key: "threshold" as const, label: "Threshold" }] : []),
+    ...(features ? [{ key: "features" as const, label: "Top features" }] : [])];
 }
 
 /** What moving a binary target's cut-off from 0.5 would trade: precision against recall, at each threshold. */
@@ -252,7 +263,7 @@ function ResultTabs<K extends string>({ tabs, value, onChange, label }: {
   tabs: { key: K; label: string }[]; value: K; onChange: (k: K) => void; label: string;
 }) {
   return (
-    <div className="segmented soft" role="tablist" aria-label={label} style={{ alignSelf: "flex-start" }}>
+    <div className="view-tabs" role="tablist" aria-label={label}>
       {tabs.map((x) => (
         <button key={x.key} type="button" role="tab" aria-selected={value === x.key} className={value === x.key ? "on" : ""}
           onClick={() => onChange(x.key)}>{x.label}</button>
@@ -261,16 +272,16 @@ function ResultTabs<K extends string>({ tabs, value, onChange, label }: {
   );
 }
 
-function TargetCard({ target, m, ev }: { target: string; m: Record<string, number>; ev?: TargetEvaluation }) {
+function TargetCard({ target, m, ev, features }: { target: string; m: Record<string, number>; ev?: TargetEvaluation; features?: Features }) {
   const binary = ev ? ev.labels.length === 2 : "precision" in m;
   const total = ev?.per_class.reduce((a, c) => a + c.support, 0);
   const tiles = headlineTiles(m, binary);
-  const [tab, setTab] = useState<"matrix" | "roc" | "classes" | "threshold">("matrix");
+  const [tab, setTab] = useState<ClassTab>("matrix");
   const steady = useSteadyHeight();
   return (
     <section className="card stack target-card">
       <div className="card-head" style={{ marginBottom: 0 }}>
-        <h3>◎ {target}</h3>
+        <h3><Icon name="target" size={14} /> {target}</h3>
         {binary && ev?.positive_label && <span className="muted small-text">positive class: <b>{ev.positive_label}</b></span>}
       </div>
       <div className="stats metric-tiles">
@@ -281,15 +292,16 @@ function TargetCard({ target, m, ev }: { target: string; m: Record<string, numbe
           </div>
         ))}
       </div>
-      <ResultTabs tabs={classTabs(Boolean(ev?.thresholds))} value={tab} onChange={(k) => { steady.hold(); setTab(k); }} label={`Results for ${target}`} />
-      {tab === "threshold" && ev?.thresholds && <ThresholdView rows={ev.thresholds} positive={ev.positive_label} />}
+      <ResultTabs tabs={classTabs(Boolean(ev?.thresholds), Boolean(features?.length))} value={tab} onChange={(k) => { steady.hold(); setTab(k); }} label={`Results for ${target}`} />
       <div ref={steady.box} className="stack" style={{ gap: 8 }}>
+      {tab === "threshold" && ev?.thresholds && <ThresholdView rows={ev.thresholds} positive={ev.positive_label} />}
+      {tab === "features" && features && <TopFeatures rows={features} />}
       {tab === "matrix" && (ev ? <ConfusionMatrix ev={ev} accuracy={m.accuracy} /> : (
-        <div className="muted small-text">This run predates confusion matrices — train it again to see them.</div>
+        <div className="muted small-text">This run predates confusion matrices; train it again to see them.</div>
       ))}
       {tab === "roc" && (ev?.roc?.length ? <RocChart curves={ev.roc} binary={binary} /> : (
         <div className="muted small-text">
-          {ev?.roc ? "No ROC curve: this split has only one class." : "This run predates ROC curves — train it again to see them."}
+          {ev?.roc ? "No ROC curve: this split has only one class." : "This run predates ROC curves; train it again to see them."}
         </div>
       ))}
       {tab === "classes" && (
@@ -328,63 +340,6 @@ function TargetCard({ target, m, ev }: { target: string; m: Record<string, numbe
   );
 }
 
-/** The run's changed settings, and a way to train again with them. */
-function RunSettings({ run, onTrainAgain }: { run: ModelRun; onTrainAgain: ((p: TrainPrefill) => void) | null }) {
-  const models = useQuery({ queryKey: ["exportModels", run.export_id], queryFn: () => api.modelsForExport(run.export_id), staleTime: 60_000 });
-  const settings = models.data?.find((m) => m.key === run.model)?.settings ?? null;
-  const params = (run.config?.params ?? {}) as Record<string, SettingValue>;
-  const extra = [run.config?.seed !== undefined && run.config.seed !== 42 ? `seed ${run.config.seed}` : null,
-    run.config?.cv !== undefined && run.config.cv !== 5 ? (run.config.cv ? `chain folds ${run.config.cv}` : "chain folds off") : null,
-    !run.config?.cv_folds ? "no cross-validation" : run.config.cv_folds !== 5 ? `${run.config.cv_folds}-fold cross-validation` : null]
-    .filter(Boolean);
-  const text = [describeSettings(params, settings), ...extra].filter((x) => x !== "defaults" || !extra.length).join(" · ");
-  return (
-    <div className="row run-settings" style={{ gap: 10 }}>
-      <span className="secondary small-text">Settings: <span className="mono">{text}</span></span>
-      {onTrainAgain && settings && (
-        <button type="button" className="small" onClick={() => onTrainAgain({
-          exportId: run.export_id, model: run.model, order: run.report?.order ?? run.config?.order ?? [],
-          values: { ...params, ...(run.config?.seed !== undefined ? { seed: run.config.seed } : {}),
-            ...(run.config?.cv !== undefined ? { cv: run.config.cv } : {}) },
-          cvFolds: run.config?.cv_folds ?? 0,
-        })}>Train again with these settings</button>
-      )}
-    </div>
-  );
-}
-
-/** The run's note, and for a lead, marking it as the experiment's chosen model. */
-function RunChoice({ run }: { run: ModelRun }) {
-  const qc = useQueryClient();
-  const me = useMe().data;
-  const lead = can(me, "chooseModel");
-  const canNote = lead || (me != null && me.role !== "viewer" && me.id === run.created_by);
-  const [note, setNote] = useState(run.note ?? "");
-  const save = useMutation({
-    mutationFn: (body: { note?: string; chosen?: boolean }) => api.updateRun(run.id, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["runs", run.dataset_id] }),
-    onError: (e) => showError("Couldn't save", e),
-  });
-  const chosen = Boolean(run.chosen_at);
-  if (!canNote && !chosen && !run.note) return null;
-  return (
-    <div className="stack run-choice" style={{ gap: 6 }}>
-      <div className="row" style={{ gap: 10 }}>
-        {chosen && <span className="badge good">Chosen model{run.chosen_by_name ? ` · ${run.chosen_by_name}` : ""}</span>}
-        {lead && run.status === "done" && (
-          <button type="button" className="small" disabled={save.isPending} onClick={() => save.mutate({ chosen: !chosen })}>
-            {chosen ? "Unmark as chosen" : "Mark as the chosen model"}
-          </button>
-        )}
-      </div>
-      {canNote ? (
-        <textarea aria-label="Note" rows={2} placeholder="Why this run: what changed, what it showed" value={note}
-          onChange={(e) => setNote(e.target.value)} onBlur={() => { if (note.trim() !== (run.note ?? "")) save.mutate({ note }); }} />
-      ) : run.note && <p className="small-text" style={{ whiteSpace: "pre-wrap" }}>{run.note}</p>}
-    </div>
-  );
-}
-
 /** A target's cross-validation: each headline metric as mean ± spread over the folds, the folds on hover. */
 function CvCard({ target, cv }: { target: string; cv: CrossValidation }) {
   const s = cv.targets[target];
@@ -398,7 +353,7 @@ function CvCard({ target, cv }: { target: string; cv: CrossValidation }) {
   return (
     <section className="card stack target-card">
       <div className="card-head" style={{ marginBottom: 0 }}>
-        <h3>◎ {target}</h3>
+        <h3><Icon name="target" size={14} /> {target}</h3>
         <span className="muted small-text">
           {cv.folds}-fold cross-validation on the training rows{cv.stratified_on ? ` · stratified on ${cv.stratified_on}` : ""}
           {cv.seconds !== undefined ? ` · ${fmtNum(cv.seconds)} s` : ""}
@@ -414,7 +369,7 @@ function CvCard({ target, cv }: { target: string; cv: CrossValidation }) {
           </div>
         ))}
       </div>
-      <details className="cv-folds">
+      <details className="cv-folds" open>
         <summary className="small-text">Per fold</summary>
         <div className="table-wrap">
           <table className="data">
@@ -431,101 +386,181 @@ function CvCard({ target, cv }: { target: string; cv: CrossValidation }) {
   );
 }
 
-export function RunDetail({ run, targets, onTrainAgain = null }: {
-  run: ModelRun; targets: string[]; onTrainAgain?: ((p: TrainPrefill) => void) | null;
-}) {
-  const [split, setSplit] = useState<Split>("test");
-  const steady = useSteadyHeight();
-  const metrics = run.metrics?.[split];
-  const cv = run.report?.cross_validation;
-  if (run.status === "failed") {
-    return (
-      <div className="stack" style={{ gap: 10, padding: "8px 4px" }}>
-        <RunSettings run={run} onTrainAgain={onTrainAgain} />
-        <div className="alert bad" role="note">
-          <span aria-hidden="true">✕</span>
-          <div className="grow stack" style={{ gap: 6 }}>
-            <span>{whyFailed(run.error)}</span>
-            {run.error && run.error.includes("\n") && (
-              <details><summary className="small-text">Details</summary><pre style={{ whiteSpace: "pre-wrap" }}>{run.error}</pre></details>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-  if (run.status !== "done") return null;
+/** The run's note, and for a lead, marking it as the experiment's chosen model (with the note saying why). */
+function RunChoice({ run }: { run: ModelRun }) {
+  const qc = useQueryClient();
+  const me = useMe().data;
+  const lead = can(me, "chooseModel");
+  const canNote = lead || (me != null && me.role !== "viewer" && me.id === run.created_by);
+  const [note, setNote] = useState(run.note ?? "");
+  const save = useMutation({
+    mutationFn: (body: { note?: string; chosen?: boolean }) => api.updateRun(run.id, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["runs", run.dataset_id] });
+      qc.invalidateQueries({ queryKey: ["experiment", run.experiment_id] });
+      qc.invalidateQueries({ queryKey: ["experiments", run.dataset_id] });
+    },
+    onError: (e) => showError("Couldn't save", e),
+  });
+  const chosen = Boolean(run.chosen_at);
+  const edited = note.trim() !== (run.note ?? "");
+  if (!canNote && !chosen && !run.note) return null;
   return (
-    <div className="stack" style={{ gap: 12, padding: "8px 4px" }}>
-      <RunSettings run={run} onTrainAgain={onTrainAgain} />
-      <RunChoice run={run} />
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <span className="secondary small-text">
-          {targets.some((t) => metrics?.[t] && !("r2" in metrics[t] || "rmse" in metrics[t]))
-            ? "Class targets use the most likely class (0.5 threshold for binary targets)" : ""}
-        </span>
-        <div className="row" style={{ gap: 12 }}>
-          <a className="small-text" href={`/api/runs/${run.id}/files/model`}>Download model ↓</a>
-          <div className="segmented" role="radiogroup" aria-label="Split">
-            {(["test", "valid", ...(cv && run.metrics?.cv ? ["cv"] : [])] as Split[]).map((s) => (
-              <button key={s} type="button" role="radio" aria-checked={split === s} className={`small${split === s ? " on" : ""}`} onClick={() => { steady.hold(); setSplit(s); }}>
-                {s === "valid" ? "validation" : s === "cv" ? "cross-validation" : "test"}
-              </button>
-            ))}
-          </div>
-        </div>
+    <div className={`run-choice${chosen ? " chosen" : ""}`}>
+      {chosen && <Icon name="check" className="run-choice-icon" />}
+      <div className="exp-grow stack" style={{ gap: 6 }}>
+        <b>{chosen ? `Chosen model${run.chosen_by_name ? ` · ${run.chosen_by_name}` : ""}` : "Note"}</b>
+        {canNote ? (
+          <textarea aria-label="Note" rows={2} placeholder="Why this run: what changed, what it showed" value={note}
+            onChange={(e) => setNote(e.target.value)} onBlur={() => { if (edited) save.mutate({ note }); }} />
+        ) : run.note && <p className="secondary" style={{ margin: 0, whiteSpace: "pre-wrap" }}>“{run.note}”</p>}
       </div>
-      {cv?.note && <div className="muted small-text">{cv.note}</div>}
-      {!run.mlflow_url && run.report?.mlflow_error && (
-        <div className="alert warn">Not logged to MLflow: {run.report.mlflow_error} (log it later with make mlflow-backfill)</div>
+      {lead && run.status === "done" && (
+        <button type="button" className={chosen ? "ghost small" : "small"} disabled={save.isPending}
+          onClick={() => save.mutate({ chosen: !chosen, ...(edited ? { note } : {}) })}>
+          {chosen ? "Unmark" : "Mark as chosen"}
+        </button>
       )}
-      <div ref={steady.box}>
-      {split === "cv" && cv && metrics ? (
-        <div className="grid-2">
-          {targets.filter((t) => cv.targets[t]).map((t) => <CvCard key={t} target={t} cv={cv} />)}
-        </div>
-      ) : metrics ? (
-        <div className="grid-2">
-          {targets.filter((t) => metrics[t]).map((t) => {
-            const ev = run.report?.evaluation?.[split]?.[t];
-            return ev?.kind === "regression" || "r2" in metrics[t] || "rmse" in metrics[t]
-              ? <RegressionCard key={t} target={t} m={metrics[t]} ev={ev?.kind === "regression" ? ev : undefined} />
-              : <TargetCard key={t} target={t} m={metrics[t]} ev={ev as TargetEvaluation | undefined} />;
-          })}
-        </div>
-      ) : (
-        <div className="muted">No {split} split in this export.</div>
-      )}
-      </div>
-      {run.report?.top_features && Object.keys(run.report.top_features).length > 0 && <TopFeatures top={run.report.top_features} />}
     </div>
   );
 }
 
-/** The features each target's model leaned on most (gain or impurity importance, scaled to the largest). */
-function TopFeatures({ top }: { top: Record<string, { feature: string; source: string; importance: number }[]> }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <details className="card stack" open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
-      <summary><b>Top features</b> <span className="muted small-text">what each target's model relied on most</span></summary>
-      <div className="grid-2" style={{ marginTop: 8 }}>
-        {Object.entries(top).map(([target, rows]) => {
-          const max = Math.max(...rows.map((r) => r.importance), 1e-12);
-          return (
-            <div key={target} className="stack" style={{ gap: 3 }}>
-              <span className="small-text"><b>◎ {target}</b></span>
-              {rows.slice(0, 15).map((r) => (
-                <div key={r.feature} className="row small-text" style={{ gap: 8 }} title={r.source !== r.feature ? `from ${r.source}` : undefined}>
-                  <span className="mono" style={{ width: "45%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.feature}</span>
-                  <span style={{ flex: 1, background: "var(--surface-2)", borderRadius: 3, height: 10 }}>
-                    <span style={{ display: "block", width: `${(100 * r.importance) / max}%`, height: 10, borderRadius: 3, background: "var(--series-1)" }} />
-                  </span>
-                </div>
-              ))}
-            </div>
-          );
-        })}
+/** Where the run is in MLflow: a link, or why it isn't there (yet). */
+export function MlflowLink({ run, button }: { run: ModelRun; button?: boolean }) {
+  if (run.mlflow_url) {
+    return (
+      <a className={button ? "btn small" : undefined} href={run.mlflow_url} target="_blank" rel="noopener" onClick={(ev) => ev.stopPropagation()}>
+        MLflow <Icon name="external" size={14} label="(opens in a new tab)" />
+      </a>
+    );
+  }
+  if (run.report?.mlflow_pending) {
+    return <Chip title="This experiment is private while its baseline version is being assessed, and MLflow can't keep runs private. The run is logged when review opens.">MLflow after review</Chip>;
+  }
+  if (run.report?.mlflow_error) return <Chip tone="warn" title={`Not logged to MLflow: ${run.report.mlflow_error}`}>Not in MLflow</Chip>;
+  return button ? null : <span className="muted small-text">—</span>;
+}
+
+/** "strength_mpa as a number", "a → b as classes": what the run predicts. */
+function predicts(run: ModelRun, targets: string[]): string {
+  const kind = (t: string) => {
+    const k = run.report?.target_kinds?.[t];
+    const m = run.metrics?.test?.[t] ?? run.metrics?.valid?.[t];
+    return k === "regression" || (m && ("r2" in m || "rmse" in m)) ? "a number" : "classes";
+  };
+  const kinds = new Set(targets.map(kind));
+  return kinds.size === 1 ? `${targets.join(" → ")} as ${[...kinds][0]}` : targets.map((t) => `${t} as ${kind(t)}`).join(", ");
+}
+
+/** One run in full, for the aside beside the runs table: what it is, the chosen-model box, its scores per target with
+ * their charts, and a way to train again with its settings. */
+export function RunDetail({ run, targets, onTrainAgain = null, onClose, split: initialSplit = "test" }: {
+  run: ModelRun; targets: string[]; onTrainAgain?: ((p: TrainPrefill) => void) | null; onClose?: () => void; split?: Split;
+}) {
+  const cv = run.report?.cross_validation;
+  const [split, setSplit] = useState<Split>(initialSplit === "cv" && !(cv && run.metrics?.cv) ? "test" : initialSplit);
+  const steady = useSteadyHeight();
+  const models = useQuery({ queryKey: ["exportModels", run.export_id], queryFn: () => api.modelsForExport(run.export_id), staleTime: 60_000 });
+  const option = models.data?.find((m) => m.key === run.model);
+  const settings = option?.settings ?? null;
+  const params = (run.config?.params ?? {}) as Record<string, SettingValue>;
+  const extra = [run.config?.seed !== undefined && run.config.seed !== 42 ? `seed ${run.config.seed}` : null,
+    run.config?.cv !== undefined && run.config.cv !== 5 ? (run.config.cv ? `chain folds ${run.config.cv}` : "chain folds off") : null,
+    !run.config?.cv_folds ? "no cross-validation" : run.config.cv_folds !== 5 ? `${run.config.cv_folds}-fold cross-validation` : null]
+    .filter(Boolean);
+  const settingsText = [describeSettings(params, settings), ...extra].filter((x) => x !== "defaults" || !extra.length).join(" · ");
+  const metrics = run.metrics?.[split];
+  const top = run.report?.top_features ?? {};
+  const label = run.report?.model_label ?? option?.label ?? run.model;
+  const trainAgain = onTrainAgain && settings ? () => onTrainAgain({
+    exportId: run.export_id, model: run.model, order: run.report?.order ?? run.config?.order ?? [],
+    values: { ...params, ...(run.config?.seed !== undefined ? { seed: run.config.seed } : {}),
+      ...(run.config?.cv !== undefined ? { cv: run.config.cv } : {}) },
+    cvFolds: run.config?.cv_folds ?? 0,
+  }) : null;
+
+  const head = (
+    <div className="run-head">
+      <div className="stack" style={{ gap: 2, minWidth: 0 }}>
+        <h2 id={`run-${run.id}-title`}>{label}</h2>
+        <span className="secondary small-text">
+          Run {run.id} · <span title="Settings changed from the defaults">{settingsText}</span> · predicts {predicts(run, targets)}
+        </span>
       </div>
-    </details>
+      <div className="row run-actions">
+        {trainAgain && <button type="button" className="small" onClick={trainAgain} title="Open Train with this run's export, model, chain order and settings">Train again</button>}
+        <MlflowLink run={run} button />
+        {run.status === "done" && <a className="btn small" href={`/api/runs/${run.id}/files/model`} title="The fitted model (.joblib)"><Icon name="download" size={14} />Model</a>}
+        {onClose && <button type="button" className="ghost small exp-icon" aria-label="Close run detail" onClick={onClose}><Icon name="x" /></button>}
+      </div>
+    </div>
+  );
+
+  if (run.status === "failed") {
+    return (
+      <div className="stack run-detail-body">
+        {head}
+        <Banner tone="bad" title="Failed.">
+          {whyFailed(run.error)}
+          {run.error && run.error.includes("\n") && (
+            <details><summary className="small-text">Details</summary><pre style={{ whiteSpace: "pre-wrap" }}>{run.error}</pre></details>
+          )}
+        </Banner>
+      </div>
+    );
+  }
+  if (run.status !== "done") {
+    return <div className="stack run-detail-body">{head}<span className="muted">{run.status_message ?? "Training"}…</span></div>;
+  }
+  return (
+    <div className="stack run-detail-body">
+      {head}
+      <RunChoice run={run} />
+      {!run.mlflow_url && run.report?.mlflow_error && (
+        <Banner tone="warn">Not logged to MLflow: {run.report.mlflow_error} (log it later with make mlflow-backfill)</Banner>
+      )}
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <Segmented label="Scores on" size="small" value={split} onChange={(s) => { steady.hold(); setSplit(s); }}
+          options={(["test", "valid", ...(cv && run.metrics?.cv ? ["cv"] : [])] as Split[]).map((s) => ({
+            value: s, label: s === "valid" ? "Validation" : s === "cv" ? "Cross-validation" : "Test" }))} />
+        <span className="muted small-text">
+          {targets.some((t) => metrics?.[t] && !("r2" in metrics[t] || "rmse" in metrics[t]))
+            ? "Class targets use the most likely class (0.5 threshold for binary targets)" : ""}
+        </span>
+      </div>
+      {cv?.note && <div className="muted small-text">{cv.note}</div>}
+      <div ref={steady.box} className="stack run-targets">
+      {split === "cv" && cv && metrics ? (
+        targets.filter((t) => cv.targets[t]).map((t) => <CvCard key={t} target={t} cv={cv} />)
+      ) : metrics ? (
+        targets.filter((t) => metrics[t]).map((t) => {
+          const ev = run.report?.evaluation?.[split]?.[t];
+          return ev?.kind === "regression" || "r2" in metrics[t] || "rmse" in metrics[t]
+            ? <RegressionCard key={t} target={t} m={metrics[t]} ev={ev?.kind === "regression" ? ev : undefined} features={top[t]} />
+            : <TargetCard key={t} target={t} m={metrics[t]} ev={ev as TargetEvaluation | undefined} features={top[t]} />;
+        })
+      ) : (
+        <div className="muted">No {split === "valid" ? "validation" : split} split in this export.</div>
+      )}
+      </div>
+    </div>
+  );
+}
+
+/** The features a target's model leaned on most (gain or impurity importance, scaled to the largest). */
+function TopFeatures({ rows }: { rows: Features }) {
+  const max = Math.max(...rows.map((r) => r.importance), 1e-12);
+  return (
+    <div className="stack top-features" style={{ gap: 3 }}>
+      <span className="muted small-text">What the model relied on most, scaled to the largest</span>
+      {rows.slice(0, 15).map((r) => (
+        <div key={r.feature} className="row small-text" style={{ gap: 8, flexWrap: "nowrap" }} title={r.source !== r.feature ? `from ${r.source}` : undefined}>
+          <span className="mono tf-name">{r.feature}</span>
+          <span className="tf-track" role="img" aria-label={`${r.feature}: ${fmtNum((100 * r.importance) / max, 0)}% of the largest`}>
+            <span style={{ width: `${(100 * r.importance) / max}%` }} />
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }

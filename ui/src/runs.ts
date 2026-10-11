@@ -82,3 +82,19 @@ export function whyFailed(error: string | null | undefined): string {
   }
   return error.split("\n")[0].replace(/^[A-Za-z]*(Error|Exception): /, "");
 }
+
+export const isActive = (s: string) => s === "pending" || s === "running";
+
+/** The toast for a batch of runs that has finished: how many finished or failed, and the best validation score on
+ * the first target (the score the ★ is picked on). */
+export function batchSummary(runs: ModelRun[], target: string | undefined, kind: string | undefined): string {
+  const done = runs.filter((r) => r.status === "done");
+  const failed = runs.length - done.length;
+  const head = done.length
+    ? `${done.length} run${done.length === 1 ? "" : "s"} finished${failed ? `, ${failed} failed` : ""}`
+    : `${failed} run${failed === 1 ? "" : "s"} failed`;
+  if (!target || !done.length) return head;
+  const scores = done.map((r) => metricFor(r, "valid", target, "primary")).filter((v): v is number => v !== undefined);
+  if (!scores.length) return head;
+  return `${head} · best ${runColumns(kind)[0].label} ${fmtMetric(Math.max(...scores))}`;
+}

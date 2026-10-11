@@ -1,11 +1,12 @@
-import { forwardRef, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { fmtInt } from "../format";
-import { changed, isVisible, prefillValues, problems, restore, runFields, suitsTargets } from "../settings";
+import { fmtInt, fmtPct } from "../format";
+import { changed, describeSettings, fmtSetting, isVisible, prefillValues, problems, restore, runFields, suitsTargets } from "../settings";
 import { combinations, parseSweep, SWEEP_MAX } from "../sweep";
 import { pickExport } from "../runs";
 import type { ExportJob, ModelRun, ModelSetting, SettingValue, TrainPrefill } from "../types";
+import { Chip, Icon, Segmented } from "./kit";
 import { ModelSettings } from "./ModelSettings";
 import { ErrorAlert } from "./ui";
 
@@ -17,7 +18,6 @@ function remembered(exportId: number, model: string): unknown {
 /** Which export the panel trains on and, for Train again, the run to start from. `nonce` makes a repeat request new. */
 export interface TrainRequest { exportId: number; prefill?: TrainPrefill; nonce: number }
 
-/** Which of the export's targets a run trains, and in what chain order: the ticked ones, top to bottom. */
 /** Up to two settings, each with values to try; Train then starts one run per combination. */
 function Sweep({ catalog, values, kinds, axes, onChange }: {
   catalog: ModelSetting[]; values: Record<string, SettingValue>; kinds: string[];
@@ -26,29 +26,41 @@ function Sweep({ catalog, values, kinds, axes, onChange }: {
   const choices = catalog.filter((s) => s.group !== "run" && isVisible(s, values, catalog) && suitsTargets(s, kinds));
   const set = (i: number, a: { name: string; text: string } | null) =>
     onChange(a ? axes.map((x, j) => (j === i ? a : x)) : axes.filter((_, j) => j !== i));
+  const add = () => onChange([...axes, { name: choices.find((c) => !axes.some((x) => x.name === c.name))!.name, text: "" }]);
+  const canAdd = axes.length < 2 && choices.length > axes.length;
   return (
-    <div className="stack sweep">
+    <section className="card stack sweep" aria-labelledby="sweep-title">
+      <div className="row" style={{ justifyContent: "space-between" }}>
+        <h2 id="sweep-title">Try several values</h2>
+        {canAdd && axes.length > 0 && <button type="button" className="small ghost" onClick={add}><Icon name="plus" />Add a second setting</button>}
+      </div>
       {axes.map((a, i) => {
         const s = catalog.find((x) => x.name === a.name);
-        const error = s && a.text.trim() ? parseSweep(s, a.text).error : null;
+        const parsed = s && a.text.trim() ? parseSweep(s, a.text) : null;
         return (
-          <div key={i} className="row">
-            <select aria-label={`Setting ${i + 1}`} value={a.name} onChange={(ev) => set(i, { name: ev.target.value, text: "" })}>
-              {choices.map((c) => <option key={c.name} value={c.name} disabled={c.name !== a.name && axes.some((x) => x.name === c.name)}>{c.label}</option>)}
-            </select>
-            <input aria-label={`Values for ${s?.label ?? a.name}`} value={a.text} onChange={(ev) => set(i, { ...a, text: ev.target.value })}
-              placeholder={s?.options ? s.options.map((o) => o.label).slice(0, 3).join(", ") : s?.kind === "float" ? "0.01, 0.05, 0.1" : "15, 31, 63"} />
-            <button type="button" className="ghost small" onClick={() => set(i, null)}>Remove</button>
-            {error && <span className="small-text" style={{ color: "var(--bad)" }}>{error}</span>}
+          <div key={i} className="stack" style={{ gap: 6 }}>
+            <div className="row sweep-row">
+              <select aria-label={`Setting to vary${axes.length > 1 ? ` ${i + 1}` : ""}`} value={a.name} onChange={(ev) => set(i, { name: ev.target.value, text: "" })}>
+                {choices.map((c) => <option key={c.name} value={c.name} disabled={c.name !== a.name && axes.some((x) => x.name === c.name)}>{c.label}</option>)}
+              </select>
+              <input aria-label={`Values for ${s?.label ?? a.name}`} value={a.text} onChange={(ev) => set(i, { ...a, text: ev.target.value })}
+                placeholder={s?.options ? s.options.map((o) => o.label).slice(0, 3).join(", ") : s?.kind === "float" ? "0.01, 0.05, 0.1" : "15, 31, 63"} />
+              <button type="button" className="ghost small" onClick={() => set(i, null)}>Remove</button>
+            </div>
+            {parsed?.error ? <span className="small-text" role="alert" style={{ color: "var(--bad)" }}>{parsed.error}</span>
+              : parsed && s && <div className="chips">{parsed.values.map((v) => <Chip key={String(v)} className="num">{fmtSetting(s, v)}</Chip>)}</div>}
           </div>
         );
       })}
-      {axes.length < 2 && choices.length > axes.length && (
-        <div><button type="button" className="ghost small"
-          onClick={() => onChange([...axes, { name: choices.find((c) => !axes.some((x) => x.name === c.name))!.name, text: "" }])}>
-          {axes.length ? "Add a second setting" : "Try several values"}</button></div>
-      )}
-    </div>
+      {axes.length === 0 ? (
+        canAdd && <div><button type="button" className="small" onClick={add}><Icon name="plus" />Choose a setting to vary</button></div>
+      ) : null}
+      <p className="muted small-text" style={{ margin: 0 }}>
+        {axes.length === 0 ? "Compare values of one or two settings: one run per value, or per combination of two. "
+          : axes.length === 1 ? "One run per value; everything else as set above. " : "One run per combination; everything else as set above. "}
+        Up to {SWEEP_MAX} runs.
+      </p>
+    </section>
   );
 }
 
@@ -83,11 +95,11 @@ function TargetOrder({ targets, order, onChange }: { targets: string[]; order: s
   );
 }
 
-/** Train a model on one of the experiment's exports: the export, the model, where it trains, which targets in which
- * order, and the model's settings, laid out in full. */
-export const TrainPanel = forwardRef<HTMLElement, {
-  exports: ExportJob[]; request: TrainRequest | null; onStarted: (r: ModelRun, count: number) => void;
-}>(function TrainPanel({ exports, request, onStarted }, ref) {
+/** Train a model on one of the experiment's exports: what to train (the export, the model, cross-validation, where it
+ * trains, which targets in which order), the model's settings, values to sweep, and a summary with the Train button. */
+export function TrainPanel({ exports, request, onStarted }: {
+  exports: ExportJob[]; request: TrainRequest | null; onStarted: (runs: ModelRun[], e: ExportJob, label: string) => void;
+}) {
   const qc = useQueryClient();
   const done = exports.filter((e) => e.status === "done");
   const [exportId, setExportId] = useState<number | null>(null);
@@ -180,7 +192,7 @@ export const TrainPanel = forwardRef<HTMLElement, {
     },
     onSuccess: (runs) => {
       qc.setQueryData<ModelRun[]>(["runs", e!.dataset_id, e!.experiment_id], (old) => [...[...runs].reverse(), ...(old ?? []).filter((r) => !runs.some((x) => x.id === r.id))]);
-      onStarted(runs[runs.length - 1], runs.length);
+      onStarted(runs, e!, selected?.label ?? model);
     },
   });
   if (!e) return null;
@@ -200,71 +212,101 @@ export const TrainPanel = forwardRef<HTMLElement, {
     : combos.length > SWEEP_MAX ? `${combos.length} combinations; keep it to ${SWEEP_MAX}`
     : comboProblem ? `A combination won't train: ${comboProblem[0]} ${comboProblem[1]}` : null;
 
+  const split = e.summary?.split_counts as { train: number; valid: number; test: number } | undefined;
+  const info = e.summary?.split_info as { stratified_on?: string[] | null; grouped_on?: string | null } | undefined;
+  const cfg = e.config ?? {};
+  const splitText = cfg.valid_size !== undefined
+    ? `Split ${fmtPct(1 - cfg.valid_size - cfg.test_size, 0)} / ${fmtPct(cfg.valid_size, 0)} / ${fmtPct(cfg.test_size, 0)}` : null;
+  const runChanged = catalog ? catalog.filter((s) => s.group === "run" && s.name in values && values[s.name] !== s.default) : [];
+  const changedText = catalog ? describeSettings({ ...changed(values, catalog, kinds), ...Object.fromEntries(runChanged.map((s) => [s.name, values[s.name]])) }, catalog) : "defaults";
+  const swept = parsedAxes.filter((a) => !a.error).map((a) => {
+    const s = catalog!.find((x) => x.name === a.name)!;
+    return `${s.label}, swept over ${a.values.map((v) => fmtSetting(s, v)).join(", ")}`;
+  });
+  const count = combos.length || 1;
+
   return (
-    <section ref={ref} className="card stack train-panel" aria-label="Train a model">
-      <div className="card-head"><h2>Train a model</h2></div>
-      <div className="train-controls">
-        <label className="field">Export
-          <select value={e.id} onChange={(ev) => choose({ exportId: Number(ev.target.value) })}>
-            {done.map((x) => <option key={x.id} value={x.id}>Export #{x.id} · {fmtInt(x.n_rows)} rows · {(x.summary?.targets ?? []).join(", ")}</option>)}
-          </select>
-        </label>
-        <label className="field">Model
-          <select value={model} onChange={(ev) => choose({ model: ev.target.value })}>
-            {shown.map((m) => <option key={m.key} value={m.key} disabled={!m.compatible}>{m.label}{m.compatible ? "" : " — not compatible"}</option>)}
-            {planned.length > 0 && (
-              <optgroup label="Planned">
-                {planned.map((m) => <option key={m.key} value={m.key} disabled>{m.label} (planned)</option>)}
-              </optgroup>
+    <div className="train-layout">
+      <div className="stack train-main">
+        <section className="card stack" aria-labelledby="train-what">
+          <h2 id="train-what">What to train</h2>
+          <div className="train-controls">
+            <label className="field">Export
+              <select value={e.id} onChange={(ev) => choose({ exportId: Number(ev.target.value) })}>
+                {done.map((x) => <option key={x.id} value={x.id}>Export #{x.id} · {fmtInt(x.n_rows)} rows · {(x.summary?.targets ?? []).join(", ")}</option>)}
+              </select>
+              <span className="muted small-text">
+                {[splitText, info?.stratified_on?.length ? `stratified on ${info.stratified_on.join(" × ")}` : null, info?.grouped_on ? `${info.grouped_on} kept together` : null]
+                  .filter(Boolean).join(", ")}
+              </span>
+            </label>
+            <label className="field">Model
+              <select value={model} onChange={(ev) => choose({ model: ev.target.value })}>
+                {shown.map((m) => <option key={m.key} value={m.key} disabled={!m.compatible}>{m.label}{m.compatible ? "" : " — not compatible"}</option>)}
+                {planned.length > 0 && (
+                  <optgroup label="Planned">
+                    {planned.map((m) => <option key={m.key} value={m.key} disabled>{m.label} (planned)</option>)}
+                  </optgroup>
+                )}
+              </select>
+              <span className="muted small-text">{selected?.compatible === false && selected.reason ? selected.reason : selected?.description}</span>
+            </label>
+            <label className="field">Cross-validation
+              <select value={cvFolds} onChange={(ev) => setCvFolds(Number(ev.target.value))}>
+                <option value={0}>Off</option>
+                {Array.from({ length: 19 }, (_, i) => i + 2).map((k) => <option key={k} value={k}>{k} folds</option>)}
+              </select>
+              <span className="muted small-text">
+                {cvFolds ? `Also scores ${cvFolds} folds of the training rows; about ${cvFolds + 1}× the time` : "Validation and test scores only"}
+                {cvFolds && info?.grouped_on ? `. Each ${info.grouped_on} stays in one fold.` : ""}
+              </span>
+            </label>
+            {gpuChoice && gpu && (
+              <div className="field">
+                <span id="train-device">Train on</span>
+                <Segmented label="Train on" full value={gpuOn ? "gpu" : "cpu"} onChange={(v) => setGpuOn(v === "gpu")}
+                  options={[{ value: "cpu", label: "CPU" }, { value: "gpu", label: "GPU" }]} />
+                <span className="muted small-text num">{gpu.name}{gpu.memory_mb ? ` · ${fmtInt(Math.round(gpu.memory_mb / 1024))} GB` : ""}</span>
+              </div>
             )}
-          </select>
-        </label>
-        {gpuChoice && gpu && (
-          <div className="field">
-            <span id="train-device">Train on</span>
-            <div className="segmented soft full" role="radiogroup" aria-labelledby="train-device">
-              {([false, true] as const).map((on) => (
-                <button key={String(on)} type="button" role="radio" aria-checked={gpuOn === on} className={gpuOn === on ? "on" : ""}
-                  onClick={() => setGpuOn(on)}>{on ? "GPU" : "CPU"}</button>
-              ))}
-            </div>
-            <span className="muted small-text num">{gpu.name}{gpu.memory_mb ? ` · ${fmtInt(Math.round(gpu.memory_mb / 1024))} GB` : ""}</span>
           </div>
+          {models.data?.some((m) => !m.compatible) && (
+            <label className="check small-text"><input type="checkbox" checked={showAll} onChange={(ev) => setShowAll(ev.target.checked)} /> Show incompatible models</label>
+          )}
+          {targets.length > 1 && <TargetOrder targets={targets} order={order} onChange={setOrder} />}
+        </section>
+        {catalog && selected?.compatible ? (
+          <>
+            <ModelSettings settings={catalog} values={values} onChange={setValues} kinds={kinds} />
+            <Sweep catalog={catalog} values={values} kinds={kinds} axes={axes} onChange={setAxes} />
+          </>
+        ) : selected?.compatible && (
+          <section className="card"><span className="muted small-text">{selected.label}'s settings aren't in the app yet; it trains with its defaults.</span></section>
         )}
-        <label className="field">Cross-validation
-          <select value={cvFolds} onChange={(ev) => setCvFolds(Number(ev.target.value))}>
-            <option value={0}>Off</option>
-            {Array.from({ length: 19 }, (_, i) => i + 2).map((k) => <option key={k} value={k}>{k} folds</option>)}
-          </select>
-          <span className="muted small-text">
-            {cvFolds ? `Scores ${cvFolds} folds of the training rows too: about ${cvFolds + 1}× the time` : "Validation and test scores only"}
-          </span>
-        </label>
       </div>
-      {models.data?.some((m) => !m.compatible) && (
-        <div className="row" style={{ justifyContent: "flex-end" }}>
-          <label className="check small-text"><input type="checkbox" checked={showAll} onChange={(ev) => setShowAll(ev.target.checked)} /> show incompatible models</label>
-        </div>
-      )}
-      {targets.length > 1 && <TargetOrder targets={targets} order={order} onChange={setOrder} />}
-      {catalog && selected?.compatible ? (
-        <>
-          <ModelSettings settings={catalog} values={values} onChange={setValues} kinds={kinds} />
-          <Sweep catalog={catalog} values={values} kinds={kinds} axes={axes} onChange={setAxes} />
-        </>
-      ) : selected?.compatible && (
-        <div className="muted small-text">{selected.label}'s settings aren't in the app yet; it trains with its defaults.</div>
-      )}
-      {dropped.length > 0 && (
-        <span className="muted small-text">Not carried over (no longer settings of this model): {dropped.join(", ")}</span>
-      )}
-      <ErrorAlert error={start.error} />
-      <div className="row train-footer">
+
+      <aside className="card stack train-summary" aria-labelledby="train-ready">
+        <h2 id="train-ready">{blocked ? "Not ready yet" : "Ready to train"}</h2>
+        <dl className="num">
+          <dt>Model</dt><dd>{selected?.label ?? "—"}</dd>
+          <dt>On</dt><dd>Export #{e.id}{split ? ` · ${fmtInt(split.train)} training rows` : ""}</dd>
+          {order.length > 1 && <><dt>Chain</dt><dd>{order.join(" → ")}</dd></>}
+          <dt>Changed</dt><dd>{[changedText === "defaults" && swept.length ? null : changedText, ...swept].filter(Boolean).join(" · ")}</dd>
+          <dt>Scoring</dt><dd>{cvFolds ? `Validation, test and ${cvFolds} folds` : "Validation and test"}</dd>
+          {gpuChoice && <><dt>Device</dt><dd>{useGpu ? "GPU" : "CPU"}</dd></>}
+          <dt>Runs</dt><dd><b>{count}</b></dd>
+        </dl>
         {blocked && <span className="small-text" role={settingProblems ? "alert" : undefined} style={settingProblems ? { color: "var(--bad)" } : undefined}>{blocked}</span>}
-        <button type="button" className="primary" disabled={Boolean(blocked) || start.isPending} onClick={() => start.mutate()}>
+        <button type="button" className="primary large" disabled={Boolean(blocked) || start.isPending} onClick={() => start.mutate()}>
+          <Icon name="play" />
           {start.isPending ? "Starting…" : combos.length ? `Train ${combos.length} runs` : order.length > 1 ? "Train chain" : "Train"}
         </button>
-      </div>
-    </section>
+        {dropped.length > 0 && (
+          <span className="muted small-text">Not carried over (no longer settings of this model): {dropped.join(", ")}</span>
+        )}
+        <ErrorAlert error={start.error} />
+        <p className="muted small-text" style={{ margin: 0 }}>You'll go to Runs, where {count > 1 ? "they appear" : "it appears"} at the top as {count > 1 ? "they train" : "it trains"}.</p>
+      </aside>
+    </div>
   );
-});
+}

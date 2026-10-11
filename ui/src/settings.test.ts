@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { changed, isVisible, prefillValues, problems, restore, runFields, settingProblem } from "./settings";
+import { changed, groupSummary, isVisible, prefillValues, problems, restore, runFields, settingProblem } from "./settings";
 import type { ModelSetting } from "./types";
 
 const S = (o: Partial<ModelSetting>): ModelSetting => ({ name: "x", label: "X", help: "", group: "trees", kind: "int", default: 1,
@@ -57,5 +57,16 @@ describe("settings by target kind and rule", () => {
     const { values, dropped } = prefillValues({ num_leaves: 127, lambda_l2: 3, max_depth: 999 }, settings);
     expect(values).toEqual({ num_leaves: 127 });
     expect(dropped).toEqual(["lambda_l2", "max_depth"]);
+  });
+});
+
+describe("groupSummary", () => {
+  const trees = settings.filter((s) => s.group === "trees");
+  it("names what changed and counts the rest", () => {
+    expect(groupSummary(trees, { num_leaves: 15 })).toBe("X 15 · 2 at defaults");
+  });
+  it("lists the first values when nothing changed", () => {
+    expect(groupSummary(trees, {})).toBe("X 63 · X No limit · X GBDT · defaults");
+    expect(groupSummary(trees, {}, 1)).toBe("X 63 · 2 more · defaults");
   });
 });
