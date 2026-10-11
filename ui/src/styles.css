@@ -287,6 +287,7 @@ table.data tr.clickable:hover td { background: var(--surface-hover); }
 .dropzone {
   border: 2px dashed var(--border-strong); border-radius: var(--radius); padding: 28px; text-align: center;
   color: var(--text-secondary); cursor: pointer; transition: border-color 0.12s, background 0.12s;
+  white-space: normal; /* drop zones are buttons, which don't wrap */
 }
 .dropzone.over, .dropzone:hover { border-color: var(--accent); background: var(--accent-weak); }
 
@@ -552,7 +553,7 @@ tr.clickable:hover .chevron, tr.clickable:focus-within .chevron, tr.clickable:fo
 .combo-list { max-height: 260px; overflow: auto; display: flex; flex-direction: column; }
 .menu-item { justify-content: flex-start; width: 100%; }
 .first-run { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; padding: 24px; }
-.first-drop { height: auto; min-height: 200px; flex-direction: column; gap: 6px; white-space: normal; background: transparent; }
+.first-drop { height: auto; min-height: 200px; flex-direction: column; gap: 6px; background: transparent; }
 .drop-overlay {
   position: fixed; inset: 0; z-index: 60; background: color-mix(in srgb, var(--accent-weak) 85%, transparent);
   display: grid; place-items: center; pointer-events: none;
