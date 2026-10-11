@@ -4,11 +4,11 @@ import type { Role } from "./types";
 export const ACTIONS = [
   "upload", "editDataset", "decide", "comment", "createExperiment", "export", "train", "recompute",
   "startBaseline", "renameBaseline", "assign", "finalize", "deleteDataset", "manageUsers", "join", "changeOwnPicture",
-  "querySql",
+  "querySql", "chooseModel",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
-const LEAD_ONLY = new Set<Action>(["startBaseline", "renameBaseline", "assign", "finalize", "deleteDataset", "manageUsers", "join"]);
+const LEAD_ONLY = new Set<Action>(["startBaseline", "renameBaseline", "assign", "finalize", "deleteDataset", "manageUsers", "join", "chooseModel"]);
 
 export function can(me: { role: Role } | null | undefined, action: Action): boolean {
   if (!me) return false;

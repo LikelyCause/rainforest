@@ -5,6 +5,7 @@ import { api } from "../api";
 import { can } from "../can";
 import { useAccess, useDebounced, useMe, useOptions, useFields } from "../hooks";
 import { JoinAssessment } from "../components/JoinAssessment";
+import { DerivedFields } from "../components/DerivedFields";
 import { ExperimentModeBar } from "../components/ExperimentModeBar";
 import { useView, type View, viewKey, withView } from "../view";
 import { useDatasetContext } from "../components/DatasetLayout";
@@ -75,7 +76,7 @@ function useFinderState() {
   };
   return {
     ...state,
-    setTab: (t: string) => set({ tab: t === "sql" ? "sql" : null }),
+    setTab: (t: string) => set({ tab: t === "sql" || t === "derived" ? t : null }),
     setPreset: (p: Preset) => set({ preset: p.key, f: null, sort: p.sort ?? null }),
     setFilters: (f: FieldFilter[]) => set({ f: JSON.stringify(f) }),
     setSort: (s: string) => set({ sort: s }),
@@ -480,6 +481,7 @@ export function BulkEditPage() {
   const access = useAccess(ds, view);
   // The console reads every table, work in progress included, so it isn't a Viewer's.
   const sql = can(useMe().data, "querySql");
+  const derive = can(useMe().data, "editDataset");
   const st = useFinderState();
   const presetLabel = (p: string | null) => PRESETS.find((x) => x.key === p)?.label ?? "Custom filter";
   return (
@@ -493,8 +495,10 @@ export function BulkEditPage() {
       <div className="tabs-inline" role="tablist">
         <button type="button" role="tab" aria-selected={st.tab === "fields"} className={st.tab === "fields" ? "on" : ""} onClick={() => st.setTab("fields")}>Fields</button>
         {sql && !view && <button type="button" role="tab" aria-selected={st.tab === "sql"} className={st.tab === "sql" ? "on" : ""} onClick={() => st.setTab("sql")}>SQL</button>}
+        {derive && !view && <button type="button" role="tab" aria-selected={st.tab === "derived"} className={st.tab === "derived" ? "on" : ""} onClick={() => st.setTab("derived")}>Derived fields</button>}
       </div>
-      {st.tab === "fields" || view || !sql ? <FieldFinder datasetId={ds.id} presetLabel={presetLabel} canEdit={access.canEdit} view={view} /> : <SqlConsole datasetId={ds.id} />}
+      {st.tab === "derived" && derive && !view ? <DerivedFields ds={ds} />
+        : st.tab === "fields" || view || !sql ? <FieldFinder datasetId={ds.id} presetLabel={presetLabel} canEdit={access.canEdit} view={view} /> : <SqlConsole datasetId={ds.id} />}
     </div>
   );
 }

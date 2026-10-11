@@ -2,9 +2,10 @@ import { forwardRef, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { fmtInt } from "../format";
-import { changed, prefillValues, problems, restore, runFields } from "../settings";
+import { changed, isVisible, prefillValues, problems, restore, runFields, suitsTargets } from "../settings";
+import { combinations, parseSweep, SWEEP_MAX } from "../sweep";
 import { pickExport } from "../runs";
-import type { ExportJob, ModelRun, SettingValue, TrainPrefill } from "../types";
+import type { ExportJob, ModelRun, ModelSetting, SettingValue, TrainPrefill } from "../types";
 import { ModelSettings } from "./ModelSettings";
 import { ErrorAlert } from "./ui";
 
@@ -17,6 +18,40 @@ function remembered(exportId: number, model: string): unknown {
 export interface TrainRequest { exportId: number; prefill?: TrainPrefill; nonce: number }
 
 /** Which of the export's targets a run trains, and in what chain order: the ticked ones, top to bottom. */
+/** Up to two settings, each with values to try; Train then starts one run per combination. */
+function Sweep({ catalog, values, kinds, axes, onChange }: {
+  catalog: ModelSetting[]; values: Record<string, SettingValue>; kinds: string[];
+  axes: { name: string; text: string }[]; onChange: (a: { name: string; text: string }[]) => void;
+}) {
+  const choices = catalog.filter((s) => s.group !== "run" && isVisible(s, values, catalog) && suitsTargets(s, kinds));
+  const set = (i: number, a: { name: string; text: string } | null) =>
+    onChange(a ? axes.map((x, j) => (j === i ? a : x)) : axes.filter((_, j) => j !== i));
+  return (
+    <div className="stack sweep">
+      {axes.map((a, i) => {
+        const s = catalog.find((x) => x.name === a.name);
+        const error = s && a.text.trim() ? parseSweep(s, a.text).error : null;
+        return (
+          <div key={i} className="row">
+            <select aria-label={`Setting ${i + 1}`} value={a.name} onChange={(ev) => set(i, { name: ev.target.value, text: "" })}>
+              {choices.map((c) => <option key={c.name} value={c.name} disabled={c.name !== a.name && axes.some((x) => x.name === c.name)}>{c.label}</option>)}
+            </select>
+            <input aria-label={`Values for ${s?.label ?? a.name}`} value={a.text} onChange={(ev) => set(i, { ...a, text: ev.target.value })}
+              placeholder={s?.options ? s.options.map((o) => o.label).slice(0, 3).join(", ") : s?.kind === "float" ? "0.01, 0.05, 0.1" : "15, 31, 63"} />
+            <button type="button" className="ghost small" onClick={() => set(i, null)}>Remove</button>
+            {error && <span className="small-text" style={{ color: "var(--bad)" }}>{error}</span>}
+          </div>
+        );
+      })}
+      {axes.length < 2 && choices.length > axes.length && (
+        <div><button type="button" className="ghost small"
+          onClick={() => onChange([...axes, { name: choices.find((c) => !axes.some((x) => x.name === c.name))!.name, text: "" }])}>
+          {axes.length ? "Add a second setting" : "Try several values"}</button></div>
+      )}
+    </div>
+  );
+}
+
 function TargetOrder({ targets, order, onChange }: { targets: string[]; order: string[]; onChange: (o: string[]) => void }) {
   const rows = [...order, ...targets.filter((t) => !order.includes(t))];
   const move = (t: string) => {
@@ -51,7 +86,7 @@ function TargetOrder({ targets, order, onChange }: { targets: string[]; order: s
 /** Train a model on one of the experiment's exports: the export, the model, where it trains, which targets in which
  * order, and the model's settings, laid out in full. */
 export const TrainPanel = forwardRef<HTMLElement, {
-  exports: ExportJob[]; request: TrainRequest | null; onStarted: (r: ModelRun) => void;
+  exports: ExportJob[]; request: TrainRequest | null; onStarted: (r: ModelRun, count: number) => void;
 }>(function TrainPanel({ exports, request, onStarted }, ref) {
   const qc = useQueryClient();
   const done = exports.filter((e) => e.status === "done");
@@ -68,6 +103,7 @@ export const TrainPanel = forwardRef<HTMLElement, {
   const [dropped, setDropped] = useState<string[]>([]);
   const [showAll, setShowAll] = useState(false);
   const [pending, setPending] = useState<TrainPrefill | null>(null);
+  const [axes, setAxes] = useState<{ name: string; text: string }[]>([]);
 
   // A request picks the export; Train again also brings the run's model, order and settings once the export's
   // models have loaded.
@@ -122,16 +158,27 @@ export const TrainPanel = forwardRef<HTMLElement, {
   const gpu = system.data?.gpu;
   const gpuChoice = Boolean(gpu?.available && selected?.devices?.includes("cuda"));
   const useGpu = gpuChoice && gpuOn;
+  const parsedAxes = catalog ? axes.map((a) => ({ name: a.name, ...parseSweep(catalog.find((s) => s.name === a.name)!, a.text) })) : [];
+  const combos = catalog && axes.length ? combinations(values, parsedAxes) : [];
+  const comboProblem = combos.map((c) => Object.entries(problems(c, catalog!, kinds))[0]).find(Boolean);
+  const startOne = (v: Record<string, SettingValue>) => api.startRun(e!.id, {
+    model, order, device: useGpu ? "cuda" : "cpu", cv_folds: cvFolds,
+    ...(catalog ? { params: changed(v, catalog, kinds), ...runFields(v, catalog) } : { cv: 5 }),
+  });
   const start = useMutation({
-    mutationFn: () => api.startRun(e!.id, {
-      model, order, device: useGpu ? "cuda" : "cpu", cv_folds: cvFolds,
-      ...(catalog ? { params: changed(values, catalog, kinds), ...runFields(values, catalog) } : { cv: 5 }),
-    }),
-    onSuccess: (run) => {
-      qc.setQueryData<ModelRun[]>(["runs", e!.dataset_id, e!.experiment_id], (old) => [run, ...(old ?? []).filter((r) => r.id !== run.id)]);
+    // A sweep's runs start one after another so a refusal stops the rest instead of leaving a partial grid unexplained.
+    mutationFn: async () => {
+      const runs: ModelRun[] = [];
+      for (const v of combos.length ? combos : [values]) runs.push(await startOne(v));
+      return runs;
+    },
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: ["runs", e!.dataset_id] });
       qc.invalidateQueries({ queryKey: ["experiment", e!.experiment_id] });
-      onStarted(run);
+    },
+    onSuccess: (runs) => {
+      qc.setQueryData<ModelRun[]>(["runs", e!.dataset_id, e!.experiment_id], (old) => [...[...runs].reverse(), ...(old ?? []).filter((r) => !runs.some((x) => x.id === r.id))]);
+      onStarted(runs[runs.length - 1], runs.length);
     },
   });
   if (!e) return null;
@@ -140,12 +187,16 @@ export const TrainPanel = forwardRef<HTMLElement, {
   const choose = (next: { exportId?: number; model?: string }) => {
     start.reset();
     setDropped([]);
+    if (next.model !== undefined) setAxes([]);
     if (next.exportId !== undefined) setExportId(next.exportId);
     if (next.model !== undefined) setModel(next.model);
   };
   const blocked = models.isLoading ? "Loading models…" : !model ? "Choose a model"
     : !selected?.compatible ? "This model can't train on this export"
-    : order.length === 0 ? "Choose at least one target" : settingProblems > 0 ? "Fix the settings marked in red" : null;
+    : order.length === 0 ? "Choose at least one target" : settingProblems > 0 ? "Fix the settings marked in red"
+    : parsedAxes.some((a) => a.error) ? "Finish the values to try"
+    : combos.length > SWEEP_MAX ? `${combos.length} combinations; keep it to ${SWEEP_MAX}`
+    : comboProblem ? `A combination won't train: ${comboProblem[0]} ${comboProblem[1]}` : null;
 
   return (
     <section ref={ref} className="card stack train-panel" aria-label="Train a model">
@@ -195,7 +246,10 @@ export const TrainPanel = forwardRef<HTMLElement, {
       )}
       {targets.length > 1 && <TargetOrder targets={targets} order={order} onChange={setOrder} />}
       {catalog && selected?.compatible ? (
-        <ModelSettings settings={catalog} values={values} onChange={setValues} kinds={kinds} />
+        <>
+          <ModelSettings settings={catalog} values={values} onChange={setValues} kinds={kinds} />
+          <Sweep catalog={catalog} values={values} kinds={kinds} axes={axes} onChange={setAxes} />
+        </>
       ) : selected?.compatible && (
         <div className="muted small-text">{selected.label}'s settings aren't in the app yet; it trains with its defaults.</div>
       )}
@@ -206,7 +260,7 @@ export const TrainPanel = forwardRef<HTMLElement, {
       <div className="row train-footer">
         {blocked && <span className="small-text" role={settingProblems ? "alert" : undefined} style={settingProblems ? { color: "var(--bad)" } : undefined}>{blocked}</span>}
         <button type="button" className="primary" disabled={Boolean(blocked) || start.isPending} onClick={() => start.mutate()}>
-          {start.isPending ? "Starting…" : order.length > 1 ? "Train chain" : "Train"}
+          {start.isPending ? "Starting…" : combos.length ? `Train ${combos.length} runs` : order.length > 1 ? "Train chain" : "Train"}
         </button>
       </div>
     </section>

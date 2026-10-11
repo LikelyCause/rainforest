@@ -1,7 +1,10 @@
 import { useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
+import { can } from "../can";
+import { useMe } from "../hooks";
 import { describeSettings } from "../settings";
+import { showError } from "../toast";
 import { whyFailed, type Split } from "../runs";
 import { histogramOption, rocOption, scatterOption } from "../charts";
 import { fmtInt, fmtMetric, fmtNum, fmtPct } from "../format";
@@ -350,6 +353,38 @@ function RunSettings({ run, onTrainAgain }: { run: ModelRun; onTrainAgain: ((p: 
   );
 }
 
+/** The run's note, and for a lead, marking it as the experiment's chosen model. */
+function RunChoice({ run }: { run: ModelRun }) {
+  const qc = useQueryClient();
+  const me = useMe().data;
+  const lead = can(me, "chooseModel");
+  const canNote = lead || (me != null && me.role !== "viewer" && me.id === run.created_by);
+  const [note, setNote] = useState(run.note ?? "");
+  const save = useMutation({
+    mutationFn: (body: { note?: string; chosen?: boolean }) => api.updateRun(run.id, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["runs", run.dataset_id] }),
+    onError: (e) => showError("Couldn't save", e),
+  });
+  const chosen = Boolean(run.chosen_at);
+  if (!canNote && !chosen && !run.note) return null;
+  return (
+    <div className="stack run-choice" style={{ gap: 6 }}>
+      <div className="row" style={{ gap: 10 }}>
+        {chosen && <span className="badge good">Chosen model{run.chosen_by_name ? ` · ${run.chosen_by_name}` : ""}</span>}
+        {lead && run.status === "done" && (
+          <button type="button" className="small" disabled={save.isPending} onClick={() => save.mutate({ chosen: !chosen })}>
+            {chosen ? "Unmark as chosen" : "Mark as the chosen model"}
+          </button>
+        )}
+      </div>
+      {canNote ? (
+        <textarea aria-label="Note" rows={2} placeholder="Why this run: what changed, what it showed" value={note}
+          onChange={(e) => setNote(e.target.value)} onBlur={() => { if (note.trim() !== (run.note ?? "")) save.mutate({ note }); }} />
+      ) : run.note && <p className="small-text" style={{ whiteSpace: "pre-wrap" }}>{run.note}</p>}
+    </div>
+  );
+}
+
 /** A target's cross-validation: each headline metric as mean ± spread over the folds, the folds on hover. */
 function CvCard({ target, cv }: { target: string; cv: CrossValidation }) {
   const s = cv.targets[target];
@@ -423,6 +458,7 @@ export function RunDetail({ run, targets, onTrainAgain = null }: {
   return (
     <div className="stack" style={{ gap: 12, padding: "8px 4px" }}>
       <RunSettings run={run} onTrainAgain={onTrainAgain} />
+      <RunChoice run={run} />
       <div className="row" style={{ justifyContent: "space-between" }}>
         <span className="secondary small-text">
           {targets.some((t) => metrics?.[t] && !("r2" in metrics[t] || "rmse" in metrics[t]))

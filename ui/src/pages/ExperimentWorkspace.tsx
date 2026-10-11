@@ -394,7 +394,9 @@ function RunsGroup({ e, runs, fresh, onTrainAgain, split }: {
           <Fragment key={r.id}>
             <tr className={`run-row${open === r.id ? " open" : ""}${fresh === r.id ? " fresh" : ""}`}
               onClick={() => opens(r) && setOpen(open === r.id ? null : r.id)} aria-expanded={opens(r) ? open === r.id : undefined}>
-              <td>{opens(r) ? (open === r.id ? "▾" : "▸") : ""} {r.report?.model_label ?? labels[r.model] ?? r.model}</td>
+              <td>{opens(r) ? (open === r.id ? "▾" : "▸") : ""} {r.report?.model_label ?? labels[r.model] ?? r.model}
+                {r.chosen_at && <> <span className="badge good" title={r.chosen_by_name ? `Chosen by ${r.chosen_by_name}` : undefined}>Chosen</span></>}
+                {r.note && <span className="muted small-text" title={r.note}> ✎</span>}</td>
               <td className="secondary">{order.join(" → ")}</td>
               <td>
                 {r.status === "done" ? <span className="badge good">✓ done</span>
@@ -440,9 +442,9 @@ export function ExperimentWorkspace({ ds, x, canAdd }: { ds: Dataset; x: Experim
     setRequest({ exportId, prefill, nonce: Date.now() });
     window.setTimeout(() => panel.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
   };
-  const onStarted = (r: ModelRun) => {
+  const onStarted = (r: ModelRun, count: number) => {
     setFresh(r.id);
-    toast({ message: `Training ${r.model} on Export #${r.export_id}` });
+    toast({ message: count > 1 ? `Training ${count} ${r.model} runs on Export #${r.export_id}` : `Training ${r.model} on Export #${r.export_id}` });
   };
   const groups = useMemo(() => (exports.data ?? [])
     .map((e) => ({ e, runs: (runs.data ?? []).filter((r) => r.export_id === e.id) }))

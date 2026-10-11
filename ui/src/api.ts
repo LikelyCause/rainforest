@@ -1,7 +1,7 @@
 import type { StartBaselineForm } from "./baselines";
 import { type View, viewQuery } from "./view";
 import type {
-  Analysis, AnalysisKind, AnalysisParams, AuthConfig, BandPreview, BaselineLine, BulkRequest, BulkResult, CorrMatrix, Correlation, Dataset, Decision, DecisionInput, Device, Experiment, ExperimentDetail, ExportJob, ExportPreview, FamilyKey, FieldFilter, FieldListItem, FieldResponse, FieldReview, FinalizedRecipe, LibraryEntry, Me, ModelOption, ModelRun, OptionCatalog, PickUser, RecipeDiff, RecipeVersion, ReviewComment, ReviewQueue, Role, SqlResult, SystemInfo, TeamState, TeamUser,
+  Analysis, AnalysisKind, AnalysisParams, AuthConfig, DerivedField, DerivedInput, DerivedPreview, BandPreview, BaselineLine, BulkRequest, BulkResult, CorrMatrix, Correlation, Dataset, Decision, DecisionInput, Device, Experiment, ExperimentDetail, ExportJob, ExportPreview, FamilyKey, FieldFilter, FieldListItem, FieldResponse, FieldReview, FinalizedRecipe, LibraryEntry, Me, ModelOption, ModelRun, OptionCatalog, PickUser, RecipeDiff, RecipeVersion, ReviewComment, ReviewQueue, Role, SqlResult, SystemInfo, TeamState, TeamUser,
 } from "./types";
 
 export class ApiError extends Error {
@@ -111,6 +111,14 @@ export const api = {
   system: () => request<SystemInfo>("/api/system"),
   startRun: (exportId: number, data: { model: string; order?: string[]; cv?: number; cv_folds?: number; seed?: number; params?: Record<string, unknown>; device?: Device }) =>
     request<ModelRun>(`/api/exports/${exportId}/runs`, json("POST", data)),
+  derived: (datasetId: number) => request<DerivedField[]>(`/api/datasets/${datasetId}/derived`),
+  previewDerived: (datasetId: number, body: DerivedInput) =>
+    request<DerivedPreview>(`/api/datasets/${datasetId}/derived/preview`, json("POST", body)),
+  addDerived: (datasetId: number, body: DerivedInput & { name: string }) =>
+    request<{ id: number; name: string }>(`/api/datasets/${datasetId}/derived`, json("POST", body)),
+  removeDerived: (datasetId: number, fieldId: number) =>
+    request<{ removed: string }>(`/api/datasets/${datasetId}/derived/${fieldId}`, { method: "DELETE" }),
+  updateRun: (runId: number, body: { note?: string; chosen?: boolean }) => request<ModelRun>(`/api/runs/${runId}`, json("PATCH", body)),
   runs: (datasetId: number, experimentId?: number) =>
     request<ModelRun[]>(`/api/datasets/${datasetId}/runs${experimentId ? `?experiment_id=${experimentId}` : ""}`),
   experiments: (datasetId: number) => request<Experiment[]>(`/api/datasets/${datasetId}/experiments`),

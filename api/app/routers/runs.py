@@ -7,6 +7,7 @@ import time
 import traceback
 from pathlib import Path
 
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
@@ -27,7 +28,8 @@ MLFLOW_URL = """CASE WHEN mlflow_run_id IS NOT NULL
                    THEN '/mlflow/#/experiments/' || mlflow_experiment_id || '/runs/' || mlflow_run_id END AS mlflow_url"""
 RUN_COLS = f"""id, export_id, dataset_id, model, family, status, status_message, error, config, metrics,
               report, created_at, updated_at, finished_at, mlflow_experiment_id,
-              mlflow_run_id, {MLFLOW_URL}, created_by, experiment_id"""
+              mlflow_run_id, {MLFLOW_URL}, created_by, experiment_id, note, chosen_at,
+              (SELECT name FROM meta.users u WHERE u.id = chosen_by) AS chosen_by_name"""
 
 
 @router.get("/models")
@@ -141,6 +143,36 @@ def get_run(run_id: int, user: CurrentUser) -> dict:
     if run is None:
         raise HTTPException(404, "Run not found")
     return run
+
+
+class RunPatch(BaseModel):
+    note: str | None = Field(None, max_length=4000)
+    chosen: bool | None = Field(None, description="Lead only: mark this run as the experiment's chosen model (one per "
+                                                  "experiment; marking another moves it)")
+
+
+@router.patch("/runs/{run_id}")
+def update_run(run_id: int, body: RunPatch, user: CurrentUser) -> dict:
+    """The run's note (its author or a lead), or whether it is the experiment's chosen model (a lead)."""
+    run = get_run(run_id, user)
+    fields = body.model_fields_set
+    if "note" in fields and user["role"] != "lead" and run["created_by"] != user["id"]:
+        raise HTTPException(403, "Only the run's author or a lead can change its note")
+    if "chosen" in fields:
+        if user["role"] != "lead":
+            raise HTTPException(403, "A lead chooses the team's model")
+        if body.chosen and run["status"] != "done":
+            raise HTTPException(409, "Only a finished run can be chosen")
+    with connection() as conn:
+        if "note" in fields:
+            conn.execute("UPDATE meta.model_runs SET note = %s WHERE id = %s", ((body.note or "").strip() or None, run_id))
+        if "chosen" in fields:
+            conn.execute("UPDATE meta.model_runs SET chosen_at = NULL, chosen_by = NULL WHERE experiment_id = %s "
+                         "AND chosen_at IS NOT NULL", (run["experiment_id"],))
+            if body.chosen:
+                conn.execute("UPDATE meta.model_runs SET chosen_at = now(), chosen_by = %s WHERE id = %s",
+                             (user["id"], run_id))
+    return get_run(run_id, user)
 
 
 @router.get("/runs/{run_id}/files/{kind}")

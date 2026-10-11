@@ -144,6 +144,9 @@ Each target has a *Predict as* setting in Review's decision panel, part of its d
   *Cut points* you type (`10, 25, 80` gives `< 10`, `[10, 25)`, `[25, 80)`, `≥ 80`). The panel previews how many
   rows fall in each band on the whole column; an export cuts equal-sized bands on its training rows only.
 
+* **One vs rest:** for a class target, the positive classes against everything else (`readmitted`: `<30` vs
+  `(rest)`), a binary target made from a categorical one.
+
 Number and bands are for numeric targets only, and a continuous target can't be predicted as classes. Assessors who
 choose a different *Predict as* (or different bands) for a target disagree on its core decision, so the field goes to
 the review queue. The choice is part of a baseline's snapshot, and an experiment can change it like any other
@@ -472,6 +475,10 @@ text compared with short categorical strings.
 * A target named at upload stays numeric when its values are numbers, and whole numbers that look like keys or
   dates are read as numbers too. A non-numeric target with more than 100 distinct values isn't made a target; the
   dataset gets a warning.
+* Integers whose name looks like a key (`…_id`, `…_nbr`, `key`, `code`) are read by what they hold: with more than
+  1,000 distinct values that also repeat (a patient number seen on several visits) they are identifiers, with 50 or
+  fewer they are categories (`admission_type_id`). Text that is mostly numbers but has letter-prefixed codes
+  (`V45`, `E880` among ICD-9 numbers) is categorical rather than a number with junk.
 
 Fields with a ≥ 0.95 association to a target are flagged as **possible leakage** and suggested for dropping.
 
@@ -529,6 +536,15 @@ experiment, and its manifest's `config` the `source` (`recipe` or `assessment`),
 `experiment_id`, `baseline` (`recipe_id`, `family`, `version`, `label`), `adjustments` (`count`, `fields`,
 `targets_changed`, `targets`, and `detail`: each adjusted field's changes) and, for a personal export, `assessor_id`.
 
+* **Rows:** under *Rows* in the export panel, an export can leave rows out before anything else happens: exact
+  duplicates (*Leave out exact duplicate rows*), rows whose field holds given values (*Leave out rows where …*, e.g.
+  `discharge_disposition_id` 11, 13, 14, 19–21 for patients who died or went to hospice), and all but the first row
+  per key (*One row per* a patient number, *First by* an encounter number). The export row says how many rows each rule removed
+  (`split_info.rows_removed`).
+* **Grouped split:** with *Keep rows together by* naming a field (a patient number), every row sharing its value lands in the
+  same split and, for cross-validation, the same fold, so a model is never scored on someone it trained on. The split
+  then uses scikit-learn's `GroupShuffleSplit` (shares are of groups, so row shares come out close but not exact) and
+  folds `StratifiedGroupKFold`; the manifest records `split_info.grouped_on` and the export writes `groups.npy`.
 * **Leakage-safe split:** the train / valid / test split is assigned first, stratified on the target combination
   (single-row combinations are pooled; if the combinations still can't be stratified, on one target, else not at
   all). A numeric target stratifies on bands (its cut points, else 5 equal-count bands), so each split covers its
@@ -543,7 +559,8 @@ experiment, and its manifest's `config` the `source` (`recipe` or `assessment`),
   `preprocessor.joblib`, and `manifest.json` (feature → source field, class mappings, model family, NaN report, and
   `inf_values`: ±inf per field, written as missing). Feature names never take a target's name or `__row_id` /
   `__split`; a clashing feature gets a numbered suffix.
-* **Targets** follow their *Predict as*: classes are label-encoded; a number is written as float64; bands become
+* **Targets** follow their *Predict as*: classes are label-encoded; a class target set to *One vs rest* (in Review,
+  choosing the positive classes, e.g. `<30` of `readmitted`) becomes binary: those classes against `(rest)`; a number is written as float64; bands become
   class codes labelled like `< 10`, `[10, 25)`, `≥ 80`, with equal-sized bands cut on the training split only.
   Numeric targets are read as profiling reads them (thousands separators, decimal commas). The manifest records
   `target_tasks`, `target_bins` (`edges`, `labels`, `k`) and `target_stats` (training `mean`, `std`, `min`, `max`
@@ -582,7 +599,9 @@ experiment, and its manifest's `config` the `source` (`recipe` or `assessment`),
 * **Metrics** per target on the valid and test splits: accuracy, balanced accuracy, log-loss, ROC-AUC (one-vs-rest
   macro for multiclass), precision / recall / F1 (macro and weighted, plus positive-class and specificity for binary
   targets), confusion matrices, a per-class table and ROC curves (one-vs-rest per class for multiclass targets, up to
-  200 points each), plus the top importances per chain link. A number gets `rmse`, `mae`, `r2` and `mape` (only when
+  200 points each), PR-AUC (`pr_auc`, `pr_auc_macro` for multiclass; the score to read when the positive class is
+  rare), for a binary target a threshold table (precision, recall, F1 and the share flagged at each cut from 0.05 to
+  0.95), plus the top importances per chain link. A number gets `rmse`, `mae`, `r2` and `mape` (only when
   no actual value is 0), up to 1,000 sampled (actual, predicted) pairs and a 30-bin histogram of the errors, and is
   also scored on ranges: actual and predicted values put in up to 5 ranges of roughly equal count, cut on the training rows (tied values can make fewer), with
   `band_accuracy`, `band_f1_macro`, a confusion matrix and per-range precision, recall and F1.
@@ -597,7 +616,8 @@ experiment, and its manifest's `config` the `source` (`recipe` or `assessment`),
   detail's cross-validation view shows how long the folds took and, under *Per fold*, every fold's scores. It is
   separate from *Chain folds*, which only decides what chained targets pass down.
 * **Model settings:** the *Train a model* panel, between the exports and the runs, lays out the chosen model's
-  parameters (LightGBM and XGBoost so far), each with its own control: a dropdown for a choice (boosting type, loss, class weights),
+  parameters (every trainable model: LightGBM, XGBoost, histogram GBM, random forest, logistic / ridge regression and the
+  MLP, whose layers are written like `128,64`), each with its own control: a dropdown for a choice (boosting type, loss, class weights),
   a number with its range, an on/off switch. They change with the model and are grouped (run, trees, learning,
   sampling, regularization, then settings for class targets and for number targets, shown only when the export has
   such a target), and every other parameter that changes the
@@ -610,6 +630,19 @@ experiment, and its manifest's `config` the `source` (`recipe` or `assessment`),
   error numbers above -1) is refused for a target whose training minimum breaks it. The panel remembers each model's last settings per export
   in your browser. A run stores the settings that differ from the defaults; its detail lists them, with *Train again
   with these settings*, which fills the panel with them.
+* **Trying several values:** under the settings, *Try several values* takes up to two settings and the values to try
+  for each (`15, 31, 63` leaves; `0.03, 0.1` learning rate). *Train* becomes *Train N runs* and starts one run per
+  combination, at most 50, each a normal run of the experiment, so the runs table and its ★ compare them. Every
+  combination is checked like a single run before any starts.
+* **Choosing a model:** each run has a note its author or a lead can write (why this run, what it showed). A lead can
+  *Mark as the chosen model*, one per experiment; the runs table shows *Chosen* beside it and who chose it.
+* **Derived fields:** *Bulk edit → Derived fields* adds columns computed from the dataset's own: a formula over number
+  fields (`water / (cement + blast_furnace_slag + fly_ash)`; `log`, `sqrt`, `min`, `clip` and others), a field's values
+  put into named groups by exact values or ranges (ICD-9 codes into chapters, `390-459, 785` → *Circulatory*), or how
+  many of chosen fields hold given values (medications marked `Up` or `Down`). *Preview* shows the type, missing count
+  and first values. A derived field is profiled, reviewed, exported and trained on like any other; it is added or
+  removed while the baseline is still being set up, or once it is finalized (then start a new version so it gets
+  assessed), never mid-assessment.
 * **On the page:** the *Train a model* panel picks the export (the newest finished one unless you choose another),
   the model, CPU or GPU, the cross-validation folds, which of the export's targets to train in which chain order (tick one target for a single
   model, or several and order them) and the model's settings. Each export has *Train ↓* (points the panel at it),

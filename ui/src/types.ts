@@ -449,6 +449,11 @@ export interface ModelRun {
     mlflow_pending?: boolean;
   };
   experiment_id: number;
+  created_by?: number | null;
+  note?: string | null;
+  /** Set when a lead marked this run as the experiment's chosen model. */
+  chosen_at?: string | null;
+  chosen_by_name?: string | null;
   mlflow_run_id: string | null;
   /** The run in the MLflow UI (served at /mlflow/); null when it wasn't logged. */
   mlflow_url: string | null;
@@ -822,3 +827,10 @@ export interface LibraryEntry {
   source_url: string;
   citation: string;
 }
+
+export type DerivedInput =
+  | { kind: "formula"; spec: { expr: string } }
+  | { kind: "groups"; spec: { source: string; other: string; groups: { label: string; values?: string[]; ranges?: [number, number][] }[] } }
+  | { kind: "count"; spec: { fields: string[]; values: string[] } };
+export type DerivedField = { id: number; name: string } & DerivedInput;
+export interface DerivedPreview { type: "number" | "text"; missing: number; rows: number; sample: (string | number | null)[]; distinct: number }

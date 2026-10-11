@@ -16,7 +16,7 @@ export const PRESETS: Preset[] = [
   { key: "edited", label: "Edited by you", filters: [{ column: "decision_source", op: "in", value: ["user"] }] },
 ];
 
-export interface FinderState { tab: "fields" | "sql"; preset: string | null; modified: boolean; filters: FieldFilter[]; sort: string }
+export interface FinderState { tab: "fields" | "sql" | "derived"; preset: string | null; modified: boolean; filters: FieldFilter[]; sort: string }
 
 /** Finder state from the URL: explicit filters (`f`) win over a preset; an unreadable `f` falls back to it. */
 export function finderState(params: URLSearchParams): FinderState {
@@ -31,7 +31,7 @@ export function finderState(params: URLSearchParams): FinderState {
   }
   const named = PRESETS.find((p) => p.key === preset);
   return {
-    tab: params.get("tab") === "sql" ? "sql" : "fields",
+    tab: params.get("tab") === "sql" ? "sql" : params.get("tab") === "derived" ? "derived" : "fields",
     preset: preset ?? (raw ? null : "unreviewed"),
     modified: Boolean(raw),
     filters: filters ?? (named ?? PRESETS[0]).filters,

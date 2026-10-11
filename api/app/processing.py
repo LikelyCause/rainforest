@@ -169,28 +169,31 @@ def _apply_pending_recipe(dataset_id: int) -> None:
                 (f"Could not start from the recipe: {exc.detail}", dataset_id))
 
 
-def _persist_profiles(dataset_id: int, profiles: list[profiling.FieldProfile], db_cols: list[str]) -> list[int]:
+def insert_field(conn, dataset_id: int, p: profiling.FieldProfile, db_col: str, derived: dict | None = None) -> int:
+    """A profiled column as a field, with its suggestions seeded into the working decisions."""
     cols = [
         "dataset_id", "ordinal", "name", "db_column", "physical_dtype", "inferred_type",
         "inference_confidence", "inference_reasons", "is_target", *SUMMARY_COLS, "stats", "charts", "suggestion",
+        "derived",
     ]
     insert = sql.SQL("INSERT INTO meta.fields ({}) VALUES ({}) RETURNING id").format(
         sql.SQL(", ").join(map(sql.Identifier, cols)), sql.SQL(", ").join(sql.Placeholder() * len(cols))
     )
-    ids: list[int] = []
+    by_family = suggest_all(p.inferred_type, p.summary, p.is_target)
+    row = [
+        dataset_id, p.ordinal, p.name, db_col, p.physical_dtype, p.inferred_type, p.confidence,
+        p.reasons, p.is_target, *[json_safe(p.summary.get(c)) for c in SUMMARY_COLS],
+        jsonb(p.stats), jsonb(p.charts), jsonb(by_family), jsonb(derived) if derived else None,
+    ]
+    fid = conn.execute(insert, row).fetchone()["id"]
+    seed_decision(conn, dataset_id, fid, by_family)
+    return fid
+
+
+def _persist_profiles(dataset_id: int, profiles: list[profiling.FieldProfile], db_cols: list[str]) -> list[int]:
     with connection() as conn:
         conn.execute("DELETE FROM meta.fields WHERE dataset_id = %s", (dataset_id,))
-        for p, db_col in zip(profiles, db_cols):
-            by_family = suggest_all(p.inferred_type, p.summary, p.is_target)
-            row = [
-                dataset_id, p.ordinal, p.name, db_col, p.physical_dtype, p.inferred_type, p.confidence,
-                p.reasons, p.is_target, *[json_safe(p.summary.get(c)) for c in SUMMARY_COLS],
-                jsonb(p.stats), jsonb(p.charts), jsonb(by_family),
-            ]
-            fid = conn.execute(insert, row).fetchone()["id"]
-            ids.append(fid)
-            seed_decision(conn, dataset_id, fid, by_family)
-    return ids
+        return [insert_field(conn, dataset_id, p, db_col) for p, db_col in zip(profiles, db_cols)]
 
 
 def seed_decision(conn, dataset_id: int, field_id: int, by_family: dict[str, dict]) -> None:
