@@ -72,7 +72,7 @@ def test_quantile_alpha_must_be_below_one():
 def test_catalog_serializes():
     import json
     json.dumps([s.to_json() for s in LGB])
-    assert settings_for("mlp") is None and set(CATALOG) == {"lightgbm"}
+    assert settings_for("mlp") is None and set(CATALOG) == {"lightgbm", "xgboost"}
 
 
 import time  # noqa: E402
@@ -104,7 +104,8 @@ def test_dry_fit_is_quick_with_many_trees():
 
 
 def test_regressor_gets_routed_settings():
-    assert regressor_params(MODELS["lightgbm"], {"class_weight": "balanced", "objective": "huber"}) == {"objective": "huber"}
+    reg = regressor_params(MODELS["lightgbm"], {"class_weight": "balanced", "objective": "huber"})
+    assert "class_weight" not in reg and reg["objective"] == "huber" and reg["alpha"] == 0.9
 
 
 def test_goss_works_with_the_default_bagging_settings():
@@ -123,3 +124,115 @@ def test_whole_numbers_sent_as_floats_become_ints():
 
 def test_dry_fit_tries_a_binary_link_in_a_mixed_chain():
     assert dry_fit_problem(MODELS["lightgbm"], {"is_unbalance": True, "scale_pos_weight": 2.0}, ["binary", "multiclass"])
+
+
+XGB = settings_for("xgboost")
+xgboost = pytest.importorskip("xgboost")
+
+
+def _active(settings, s):
+    """Params that switch on `s`'s dependencies, so the library sees the setting in use."""
+    return {k: allowed[0] for k, allowed in (s.when or {}).items()}
+
+
+def test_every_xgboost_setting_is_one_xgboost_uses():
+    import warnings
+    import numpy as np
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(64, 3))
+    for s in XGB:
+        if s.group == "run":
+            continue
+        est = xgboost.XGBClassifier if s.applies == "classes" else xgboost.XGBRegressor
+        y = (X[:, 0] > 0).astype(int) if s.applies == "classes" else np.abs(X[:, 0]) + 1
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            est(**{"n_estimators": 2, "verbosity": 1, **_active(XGB, s), s.name: s.default}).fit(X, y)
+        assert not [w for w in caught if "not used" in str(w.message)], s.name
+
+
+def test_xgboost_defaults_are_what_trains():
+    """A setting's shown default is the library's own unless the registry sets it, or the setting is filled in when
+    it becomes active."""
+    import json
+    import numpy as np
+    X = np.random.default_rng(0).normal(size=(64, 3))
+    config = json.loads(xgboost.XGBRegressor(n_estimators=1, verbosity=0).fit(X, np.abs(X[:, 0]) + 1)
+                        .get_booster().save_config())
+
+    def flat(d, out):
+        for k, v in d.items():
+            flat(v, out) if isinstance(v, dict) else out.setdefault(k, v)
+        return out
+    values = flat(config, {})
+    values["booster"] = config["learner"]["gradient_booster"]["name"]
+    values["objective"] = config["learner"]["objective"]["name"]
+    registry = MODELS["xgboost"].default_params
+    for s in XGB:
+        if s.group == "run" or s.when or s.name in registry or s.name == "n_estimators":
+            continue
+        assert s.name in values, s.name
+        shown = str(int(s.default)) if isinstance(s.default, bool) else str(s.default)
+        assert values[s.name] == shown or float(values[s.name]) == float(s.default), (s.name, values[s.name])
+    for k, v in registry.items():
+        if s := next((x for x in XGB if x.name == k), None):
+            assert s.default == v, k
+
+
+def test_xgboost_left_out_parameters_are_absent():
+    names = {s.name for s in XGB}
+    assert not names & {"n_jobs", "verbosity", "random_state", "device", "tree_method", "base_score", "missing",
+                        "importance_type", "eval_metric", "early_stopping_rounds", "enable_categorical",
+                        "max_cat_to_onehot", "monotone_constraints", "interaction_constraints", "updater"}
+    booster = next(s for s in XGB if s.name == "booster")
+    assert [o["value"] for o in booster.options] == ["gbtree", "dart"]
+
+
+def test_xgboost_routing_by_applies():
+    clf, reg = route("xgboost", {"max_depth": 4, "scale_pos_weight": 3.0, "objective": "reg:pseudohubererror",
+                                 "huber_slope": 2.0})
+    assert clf == {"max_depth": 4, "scale_pos_weight": 3.0}
+    assert reg == {"max_depth": 4, "objective": "reg:pseudohubererror", "huber_slope": 2.0}
+
+
+def test_xgboost_objectives_that_need_a_minimum():
+    assert objective_problem({"objective": "count:poisson"}, -1.0) and objective_problem({"objective": "reg:gamma"}, 0)
+    assert objective_problem({"objective": "reg:tweedie"}, -0.1)
+    assert "> -1" in objective_problem({"objective": "reg:squaredlogerror"}, -1.0)
+    assert objective_problem({"objective": "reg:squaredlogerror"}, -0.5) is None
+
+
+def test_active_dependent_settings_are_filled_in():
+    from app.modeling.params import effective
+    assert effective("xgboost", {"objective": "reg:quantileerror"})["quantile_alpha"] == 0.5
+    assert "quantile_alpha" not in effective("xgboost", {"objective": "reg:squarederror"})
+    assert effective("xgboost", {"booster": "dart"})["rate_drop"] == 0.1
+    assert effective("xgboost", {"booster": "dart", "rate_drop": 0.3})["rate_drop"] == 0.3
+
+
+def test_xgboost_settings_pass_the_parameter_check():
+    from app.modeling.registry import param_problems
+    assert param_problems(MODELS["xgboost"], {"objective": "reg:tweedie", "tweedie_variance_power": 1.2,
+                                              "booster": "dart", "rate_drop": 0.2}) == []
+    assert param_problems(MODELS["xgboost"], {"not_a_setting": 1})
+
+
+def test_xgboost_regressor_gets_its_loss_settings():
+    reg = regressor_params(MODELS["xgboost"], {"objective": "reg:pseudohubererror", "huber_slope": 2.0,
+                                               "scale_pos_weight": 3.0})
+    assert reg == {"objective": "reg:pseudohubererror", "huber_slope": 2.0}
+
+
+def test_xgboost_dry_fit():
+    spec = MODELS["xgboost"]
+    assert dry_fit_problem(spec, {"objective": "reg:quantileerror"}, ["binary", "regression"]) is None
+    assert dry_fit_problem(spec, {"booster": "dart", "multi_strategy": "multi_output_tree"},
+                           ["multiclass", "regression"]) is None
+    assert dry_fit_problem(spec, {"max_depth": 0, "grow_policy": "lossguide", "max_leaves": 0}, ["binary"]) is None
+
+
+def test_xgboost_bad_values_are_named():
+    assert "tweedie_variance_power" in setting_problems("xgboost", {"objective": "reg:tweedie",
+                                                                    "tweedie_variance_power": 2.0})[0]
+    assert "objective" in setting_problems("xgboost", {"huber_slope": 2.0})[0]
+    assert setting_problems("xgboost", {"booster": "gblinear"})

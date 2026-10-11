@@ -15,9 +15,10 @@ def test_every_model_builds_a_regressor_that_fits(key):
 
 def test_classifier_only_parameters_are_left_out():
     assert "C" not in regressor_params(MODELS["logistic_regression"], {"C": 2.0, "max_iter": 50})
-    assert regressor_params(MODELS["lightgbm"], {"class_weight": "balanced", "is_unbalance": True,
-                                                 "objective": "huber", "application": "binary",
-                                                 "min_data_in_leaf": 5}) == {"objective": "huber", "min_data_in_leaf": 5}
+    reg = regressor_params(MODELS["lightgbm"], {"class_weight": "balanced", "is_unbalance": True, "objective": "huber",
+                                                "application": "binary", "min_data_in_leaf": 5})
+    assert not reg.keys() & {"class_weight", "is_unbalance", "application"}
+    assert reg["objective"] == "huber" and reg["min_data_in_leaf"] == 5
     if MODELS["xgboost"].available:
         assert regressor_params(MODELS["xgboost"], {"scale_pos_weight": 3, "max_depth": 4}) == {"max_depth": 4}
 

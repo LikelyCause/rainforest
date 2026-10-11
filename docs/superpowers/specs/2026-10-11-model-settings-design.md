@@ -45,6 +45,32 @@ estimator parameters; the form shows them first.
 Left out on purpose: `n_jobs`, `verbose`, `random_state` and `importance_type`, which the app sets itself or which
 don't change the model.
 
+## 2b. XGBoost's settings
+
+Same run settings and groups. Defaults are the registry's (`n_estimators` 600, `learning_rate` 0.05, `max_depth` 6,
+`subsample` 0.8, `colsample_bytree` 0.7), else XGBoost's own.
+
+| Group | Parameters |
+|---|---|
+| Trees | `booster` (gbtree, dart), `n_estimators`, `max_depth` (no limit = 0, or 1–64), `grow_policy` (depth-wise, loss-guided), `max_leaves` (no limit = 0, or 2–4,096), `min_child_weight` |
+| Learning | `learning_rate` |
+| Sampling | `subsample`, `colsample_bytree` |
+| Regularization | `reg_alpha`, `reg_lambda`, `gamma` (min split loss) |
+| For class targets | `scale_pos_weight` (binary targets; multiclass ignores it) |
+| For number targets | `objective` (squared, absolute, pseudo-Huber, quantile, squared log, Poisson, gamma, Tweedie), with `huber_slope`, `quantile_alpha` (0.01–0.99) or `tweedie_variance_power` (1–1.99) for its loss |
+| Advanced | `max_bin`, `max_delta_step`, `colsample_bylevel`, `colsample_bynode`, `sampling_method` (uniform, gradient-based), `num_parallel_tree`, `multi_strategy` (one tree per class, or one for all) for class targets, and DART's `rate_drop`, `skip_drop`, `one_drop`, `sample_type`, `normalize_type` |
+
+Left out on purpose: the `gblinear` booster (deprecated in XGBoost 3.4; logistic regression and ridge cover linear
+models), `tree_method` (the app uses `hist`, which the GPU needs, so CPU and GPU runs stay comparable), `base_score`
+(estimated from the data), `missing`, the categorical settings (exports send numbers), per-feature lists
+(`monotone_constraints`, `interaction_constraints`, `feature_weights`), and what the app sets or what doesn't change
+the model (`n_jobs`, `verbosity`, `random_state`, `device`, `importance_type`, `eval_metric`,
+`early_stopping_rounds`).
+
+A setting that another switches on trains with its shown default when unchanged: XGBoost's quantile loss has no
+default quantile of its own, and DART's drop rate shows 0.1 rather than XGBoost's 0 (which would make DART plain
+boosting).
+
 ## 3. Checks
 
 - Each value is checked against its entry (kind, range, options, `when`) before a run starts; `422` names the setting

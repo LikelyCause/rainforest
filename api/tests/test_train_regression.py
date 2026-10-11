@@ -155,3 +155,15 @@ def test_a_prediction_that_isnt_a_number_fails_the_run_clearly():
     pred = np.array([1.0, 2.0, 3.0, 4.0, 5.0, np.nan])
     with pytest.raises(ValueError, match="1 of 6 rows"):
         evaluate_regression(y, pred, edges=[2.5, 4.5])
+
+
+def test_xgboost_trains_a_quantile_with_its_default_alpha(tmp_path):
+    from app.modeling.registry import MODELS
+    if not MODELS["xgboost"].available:
+        pytest.skip("xgboost not installed")
+    report = train(_export(tmp_path, {"g3": "regression"}), "xgboost",
+                   params={"n_estimators": 20, "objective": "reg:quantileerror"}, cv=None, out_dir=tmp_path / "m")
+    assert np.isfinite(report["metrics"]["test"]["g3"]["mae"])
+    import joblib
+    trained = joblib.load(tmp_path / "m" / "classifier_chain.joblib").estimators_[0].get_xgb_params()
+    assert trained["objective"] == "reg:quantileerror" and trained["quantile_alpha"] == 0.5

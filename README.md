@@ -576,16 +576,17 @@ experiment, and its manifest's `config` the `source` (`recipe` or `assessment`),
   also scored on ranges: actual and predicted values put in up to 5 ranges of roughly equal count, cut on the training rows (tied values can make fewer), with
   `band_accuracy`, `band_f1_macro`, a confusion matrix and per-range precision, recall and F1.
 * **Model settings:** the *Train a model* panel, between the exports and the runs, lays out the chosen model's
-  parameters (LightGBM so far), each with its own control: a dropdown for a choice (boosting type, loss, class weights),
+  parameters (LightGBM and XGBoost so far), each with its own control: a dropdown for a choice (boosting type, loss, class weights),
   a number with its range, an on/off switch. They change with the model and are grouped (run, trees, learning,
   sampling, regularization, then settings for class targets and for number targets, shown only when the export has
   such a target), and every other parameter that changes the
   model sits under a folded, searchable *Advanced*. Each shows its default and a one-line explanation; a changed one is
   marked and has ↺. Settings that depend on another appear only when it calls for them (DART's drop settings with
-  DART, alpha with the Huber or quantile loss). A value outside its range blocks *Train*, and a combination LightGBM
-  refuses (random forest without bagging or a feature sample, say) is caught when the run is asked for, by fitting the
-  settings on 64 synthetic rows. A loss that needs non-negative numbers (Poisson, Tweedie; gamma needs positive ones)
-  is refused for a target whose training minimum breaks it. The panel remembers each model's last settings per export
+  DART, a loss's own setting such as the quantile with that loss), and then train with the value shown even if you
+  leave it unchanged. A value outside its range blocks *Train*, and a combination the library refuses (LightGBM's random
+  forest without bagging or a feature sample, say) is caught when the run is asked for, by fitting the settings on 64
+  synthetic rows. A loss that needs non-negative numbers (Poisson, Tweedie; gamma needs positive ones, squared log
+  error numbers above -1) is refused for a target whose training minimum breaks it. The panel remembers each model's last settings per export
   in your browser. A run stores the settings that differ from the defaults; its detail lists them, with *Train again
   with these settings*, which fills the panel with them.
 * **On the page:** the *Train a model* panel picks the export (the newest finished one unless you choose another),
