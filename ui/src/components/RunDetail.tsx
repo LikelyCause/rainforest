@@ -179,7 +179,7 @@ function RegressionCard({ target, m, ev }: { target: string; m: Record<string, n
       </div>
       {ev && scatter && residuals ? (
         <>
-          <div className="segmented soft" role="tablist" aria-label={`Results for ${target}`}>
+          <div className="segmented soft" role="tablist" aria-label={`Results for ${target}`} style={{ alignSelf: "flex-start" }}>
             {tabs.map((x) => (
               <button key={x.key} type="button" role="tab" aria-selected={shown === x.key} className={shown === x.key ? "on" : ""}
                 onClick={() => setTab(x.key)}>{x.label}</button>
