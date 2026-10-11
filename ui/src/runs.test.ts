@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bestRuns, metricFor, pickExport } from "./runs";
+import { bestRuns, metricFor, pickExport, starTitle } from "./runs";
 import type { ModelRun } from "./types";
 
 const run = (id: number, valid: Record<string, Record<string, number>>, test: Record<string, Record<string, number>> = valid) =>
@@ -52,5 +52,15 @@ describe("pickExport", () => {
     expect(pickExport(xs, null)?.id).toBe(9);
     expect(pickExport(xs, 42)?.id).toBe(9);
     expect(pickExport([], null)).toBeNull();
+  });
+});
+
+describe("starTitle", () => {
+  const r = run(1, { a: { roc_auc: 0.9 } }, { a: { roc_auc: 0.8 } });
+  it("on the validation split, the star is simply the best number", () => {
+    expect(starTitle(r, "valid", "a", "primary")).toBe("Best on the validation split");
+  });
+  it("on the test split, it says where the star was picked and the score there", () => {
+    expect(starTitle(r, "test", "a", "primary")).toMatch(/validation split \(0\.900\).*Validation/);
   });
 });

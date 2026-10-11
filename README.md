@@ -593,9 +593,10 @@ experiment, and its manifest's `config` the `source` (`recipe` or `assessment`),
   model, or several and order them) and the model's settings. Each export has *Train ↓* (points the panel at it),
   *Files ▾* (Parquet, preprocessor, manifest) and
   *Use from code* (the CLI command and class mappings). Runs are listed per export, with that export's targets as
-  columns, showing test-split AUC and macro-F1 (R² and RMSE for a number). In each of these columns ★ marks the run
-  that scored best on the validation split for that target and metric (lowest for RMSE), so choosing it doesn't use
-  the test split. A run expands into, per target, its headline metrics (precision, recall and F1 are the positive
+  columns, showing AUC and macro-F1 (R² and RMSE for a number) on the test split, or on the validation split with the
+  *Test / Validation* switch. In each of these columns ★ marks the run that scored best on the validation split for
+  that target and metric (lowest for RMSE), so choosing it doesn't use the test split; on *Test* the star can sit on a
+  lower number than another run's, and its tooltip gives the validation score it was picked on. A run expands into, per target, its headline metrics (precision, recall and F1 are the positive
   class's for a binary target and macro averages otherwise), a confusion matrix (correct predictions shaded in blue,
   errors in red), its ROC curves and one per-class table ending in the macro and weighted averages; for a number, R²,
   RMSE, MAE and MAPE tiles over three tabs: the predicted-vs-actual scatter, the error histogram, and *Ranges* (the

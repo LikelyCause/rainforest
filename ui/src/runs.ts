@@ -1,3 +1,4 @@
+import { fmtMetric } from "./format";
 import type { ModelRun } from "./types";
 
 /** The two numbers the runs table shows per target: AUC and macro F1 for classes, R² and RMSE for a number. */
@@ -43,4 +44,12 @@ export function columnLabels(kind: string | undefined): [string, string] {
 /** The export the Train panel works on: the chosen one while it's finished, else the newest finished one. */
 export function pickExport<E extends { id: number }>(done: E[], chosen: number | null): E | null {
   return done.find((e) => e.id === chosen) ?? done.reduce<E | null>((a, b) => (a && a.id > b.id ? a : b), null);
+}
+
+/** The ★'s tooltip. The star is always picked on the validation split, so on the test split it can sit on a lower
+ * number than another run's; the tooltip says why. */
+export function starTitle(r: ModelRun, split: Split, target: string, m: RunMetric): string {
+  if (split === "valid") return "Best on the validation split";
+  return `Best on the validation split (${fmtMetric(metricFor(r, "valid", target, m))}). The ★ is picked there so the `
+    + "test split stays an honest check; switch to Validation to see the scores it was picked on.";
 }

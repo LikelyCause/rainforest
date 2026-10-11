@@ -8,7 +8,7 @@ import { RunDetail } from "../components/RunDetail";
 import { TrainPanel, type TrainRequest } from "../components/TrainPanel";
 import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtInt, fmtMetric, fmtNum, fmtPct } from "../format";
 import { toast } from "../toast";
-import { bestRuns, columnLabels, metricFor, type RunMetric } from "../runs";
+import { bestRuns, columnLabels, metricFor, starTitle, type RunMetric, type Split } from "../runs";
 import { sourceLabel } from "../experiments";
 import type { Dataset, Experiment, ExportJob, ModelRun, TrainPrefill } from "../types";
 
@@ -282,8 +282,8 @@ function MlflowCell({ r }: { r: ModelRun }) {
 }
 
 /** One export's runs as their own table: its targets are its columns, and ★ compares only runs on its features. */
-function RunsGroup({ e, runs, fresh, onTrainAgain }: {
-  e: ExportJob; runs: ModelRun[]; fresh: number | null; onTrainAgain: ((p: TrainPrefill) => void) | null;
+function RunsGroup({ e, runs, fresh, onTrainAgain, split }: {
+  e: ExportJob; runs: ModelRun[]; fresh: number | null; onTrainAgain: ((p: TrainPrefill) => void) | null; split: Split;
 }) {
   const [open, setOpen] = useState<number | null>(null);
   const targets: string[] = e.summary?.targets ?? [];
@@ -298,12 +298,12 @@ function RunsGroup({ e, runs, fresh, onTrainAgain }: {
     }
   }, [runs, fresh]);
   const cell = (r: ModelRun, t: string, m: RunMetric) => {
-    const v = metricFor(r, "test", t, m);
+    const v = metricFor(r, split, t, m);
     if (v === undefined) return <td className="num muted">—</td>;
     const isBest = best[`${t}:${m}`] === r.id;
     return (
       <td className="num" style={isBest ? { fontWeight: 700 } : undefined}
-        title={isBest ? `Best on the validation split (${fmtMetric(metricFor(r, "valid", t, m))})` : undefined}>
+        title={isBest ? starTitle(r, split, t, m) : undefined}>
         {fmtMetric(v)}{isBest ? " ★" : ""}
       </td>
     );
@@ -372,6 +372,7 @@ export function ExperimentWorkspace({ ds, x, canAdd }: { ds: Dataset; x: Experim
     refetchInterval: (q) => ((q.state.data as ModelRun[] | undefined)?.some((r) => isActive(r.status)) ? 1500 : false),
   });
   const [request, setRequest] = useState<TrainRequest | null>(null);
+  const [split, setSplit] = useState<Split>("test");
   const panel = useRef<HTMLElement>(null);
   const train = (exportId: number, prefill?: TrainPrefill) => {
     setRequest({ exportId, prefill, nonce: Date.now() });
@@ -401,12 +402,21 @@ export function ExperimentWorkspace({ ds, x, canAdd }: { ds: Dataset; x: Experim
       <section className="card stack">
         <div className="card-head">
           <h2>Model runs</h2>
-          <span className="muted small-text">test split · ★ best on the validation split within an export · click a run for its full results</span>
+          <div className="row" style={{ gap: 10 }}>
+            <span className="muted small-text">★ best on the validation split within an export · click a run for its full results</span>
+            <div className="segmented soft" role="radiogroup" aria-label="Scores shown">
+              {(["test", "valid"] as const).map((s) => (
+                <button key={s} type="button" role="radio" aria-checked={split === s} className={split === s ? "on" : ""}
+                  title={s === "test" ? "Scores on the held-out test split" : "Scores on the validation split, where the ★ is picked"}
+                  onClick={() => setSplit(s)}>{s === "test" ? "Test" : "Validation"}</button>
+              ))}
+            </div>
+          </div>
         </div>
         <ErrorAlert error={runs.error} />
         {groups.length ? (
           <div className="table-wrap stack" style={{ maxHeight: "none" }}>
-            {groups.map((g) => <RunsGroup key={g.e.id} e={g.e} runs={g.runs} fresh={fresh}
+            {groups.map((g) => <RunsGroup key={g.e.id} e={g.e} runs={g.runs} fresh={fresh} split={split}
               onTrainAgain={canAdd ? (p) => train(p.exportId, p) : null} />)}
           </div>
         ) : (
