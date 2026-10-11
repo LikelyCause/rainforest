@@ -70,7 +70,8 @@ The session cookie is `HttpOnly`, `SameSite=Strict`, lasts 7 days and is `Secure
 | Method | Path | Purpose | Key params |
 |---|---|---|---|
 | GET | `/api/auth/config` | *Open.* What the sign-in page needs: `mode` (`pick`, `oidc`), `provider_name`, `lead_group`, `member_group`, `problem` (why OIDC can't work yet, else null) and `accounts_from_env` (pick mode with `RAINFOREST_USERS` set). | |
-| GET | `/api/auth/me` | The signed-in user: `id`, `name`, `email`, `role` (`lead`, `member`, `viewer`), `key` (an account from `RAINFOREST_USERS`, else null), `avatar_url` (null without a picture), `mode`. | |
+| GET | `/api/auth/me` | The signed-in user: `id`, `name`, `email`, `role` (`lead`, `member`, `viewer`), `key` (an account from `RAINFOREST_USERS`, else null), `avatar_url` (null without a picture), `mode`, and `can_rename` (whether `PATCH` below is allowed). | |
+| PATCH | `/api/auth/me` | Change your own display name; returns you as `GET` does. Anyone may, Viewers included, in pick mode without `RAINFOREST_USERS`; otherwise `409` (names come from `.env` or the identity provider). `422` for a blank name. | body: `name` (1–200 characters, trimmed) |
 | GET, HEAD, POST, PUT, PATCH, DELETE | `/api/auth/check` | `204` when the session is valid, `401` otherwise, for nginx `auth_request` on `/mlflow/` (no body needed; a cross-origin unsafe method still gets `403`). A Viewer gets `403` when the method, or the `X-Original-Method` header nginx sends, is unsafe. | |
 | POST | `/api/auth/logout` | *Open.* Clear the session cookie. Returns `{logout_url}`: in `oidc` mode the provider's end-session URL (with `client_id` and `post_logout_redirect_uri` = `<origin>/login`) for the browser to visit next, else null. | |
 | GET | `/api/auth/users` | *Open, pick mode* (`404` otherwise). Active users for the picker, leads first, then members, then Viewers, each by name: `id`, `name`, `role`, `key`, `avatar_url` only. | |

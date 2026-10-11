@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -43,11 +43,11 @@ AVATAR_PREFIX = "/api/auth/avatars/"  # open to GET: the picker shows pictures b
 DEV_ORIGINS = {"http://localhost:5173", "http://127.0.0.1:5173"}
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-# A viewer reads only. These writes are reads in disguise (Explore, the field finder) or their own picture; every
+# A viewer reads only. These writes are reads in disguise (Explore, the field finder) or their own profile; every
 # other write is refused, the SQL console included (it reads every table) and any route added later.
 VIEWER_ALLOWED = [(m, re.compile(p)) for m, p in (
     ("POST", r"/api/datasets/\d+/analyses"), ("POST", r"/api/datasets/\d+/fields/query"),
-    ("PUT", r"/api/users/\d+/avatar"), ("DELETE", r"/api/users/\d+/avatar"),
+    ("PUT", r"/api/users/\d+/avatar"), ("DELETE", r"/api/users/\d+/avatar"), ("PATCH", r"/api/auth/me"),
 )]
 # MLflow's UI loads runs, models and traces with POSTs that only search; a viewer may make those and no other.
 MLFLOW_SEARCH = re.compile(r"/mlflow/(ajax-)?api/2\.0/mlflow/"
@@ -299,9 +299,34 @@ def auth_config() -> dict:
             "accounts_from_env": users.managed_by_env()}
 
 
+def _rename_refused() -> str | None:
+    """Why nobody can rename themselves here, or None: names come from .env or the identity provider otherwise."""
+    if users.managed_by_env():
+        return users.ENV_MANAGED
+    if get_settings().auth_mode == "oidc":
+        return "Your name comes from the identity provider; change it there."
+    return None
+
+
 @router.get("/me")
 def me(user: CurrentUser) -> dict:
-    return {**user, "mode": get_settings().auth_mode}
+    return {**user, "mode": get_settings().auth_mode, "can_rename": _rename_refused() is None}
+
+
+class ProfileIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
+@router.patch("/me")
+def update_me(body: ProfileIn, user: CurrentUser) -> dict:
+    """Change your own display name (pick mode without RAINFOREST_USERS; anyone, Viewers included)."""
+    if problem := _rename_refused():
+        raise HTTPException(409, problem)
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(422, "A name can't be blank.")
+    users.update(user["id"], {"name": name})
+    return me({**user, "name": name})
 
 
 @router.api_route("/check", methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"], status_code=204)
@@ -358,7 +383,8 @@ def pick(body: PickIn, request: Request, response: Response) -> dict:
         raise HTTPException(404, "No active user with that id")
     users.touch(user["id"])
     _sign_in(response, request, user)
-    return {k: user.get(k) for k in ("id", "name", "email", "role", "key", "avatar_url")} | {"mode": "pick"}
+    shown = {k: user.get(k) for k in ("id", "name", "email", "role", "key", "avatar_url")}
+    return shown | {"mode": "pick", "can_rename": _rename_refused() is None}
 
 
 # OIDC mode ---------------------------------------------------------------------------------------

@@ -66,3 +66,32 @@ export function useChartTheme(): ChartTheme {
   }, []);
   return theme;
 }
+
+/** The colour scheme someone chose: follow the OS, or pin light or dark. Kept per browser. */
+export type ThemePref = "system" | "light" | "dark";
+const THEME_KEY = "rainforest.theme";
+
+export function getThemePref(): ThemePref {
+  try {
+    const v = localStorage.getItem(THEME_KEY);
+    return v === "light" || v === "dark" ? v : "system";
+  } catch {
+    return "system";
+  }
+}
+
+/** Pins the scheme with data-theme on <html> (styles.css and useChartTheme follow it), or unpins it for "system". */
+export function applyThemePref(pref: ThemePref = getThemePref()): void {
+  if (pref === "system") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = pref;
+}
+
+export function setThemePref(pref: ThemePref): void {
+  try {
+    if (pref === "system") localStorage.removeItem(THEME_KEY);
+    else localStorage.setItem(THEME_KEY, pref);
+  } catch {
+    // Storage blocked (private window): the choice still applies until the page reloads.
+  }
+  applyThemePref(pref);
+}

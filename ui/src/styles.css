@@ -642,3 +642,20 @@ table.data tr.clickable:focus-visible { outline: 2px solid var(--accent); outlin
   white-space: pre-wrap; text-transform: none; letter-spacing: 0; text-align: left; }
 th .th-sort { all: unset; cursor: pointer; }
 th .th-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ------------------------------------------------------------------ settings */
+.page.settings { flex-direction: row; align-items: flex-start; gap: 32px; max-width: 1100px; }
+.settings-nav { position: sticky; top: 16px; flex: 0 0 180px; display: flex; flex-direction: column; gap: 2px; }
+.settings-nav-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); padding: 0 10px 8px; }
+.settings-nav-link { display: flex; align-items: center; height: 32px; padding: 0 10px; border-radius: var(--radius-sm); color: var(--text-secondary); text-decoration: none; }
+.settings-nav-link:hover { background: var(--surface-hover); text-decoration: none; }
+.settings-nav-link.active { background: var(--accent-weak); color: var(--text-primary); font-weight: 600; }
+.settings-body { flex: 1 1 auto; min-width: 0; }
+.settings-value { font-size: 13px; color: var(--text-primary); font-weight: 400; }
+.settings-placeholder { border-style: dashed; box-shadow: none; }
+@media (max-width: 759px) {
+  .page.settings { flex-direction: column; gap: 16px; }
+  .settings-nav { position: static; flex: none; flex-direction: row; overflow-x: auto; width: 100%; }
+  .settings-nav-title { display: none; }
+  .settings-nav-link { flex: none; }
+}

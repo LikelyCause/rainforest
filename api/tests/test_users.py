@@ -184,3 +184,29 @@ def test_writes_record_the_acting_user(app_, lead, member, login_as):
         assert r.status_code == 403 and "lead" in r.json()["detail"]
     finally:
         assert lead.delete(f"/api/datasets/{ds['id']}").status_code == 200
+
+
+def test_anyone_renames_themselves_in_pick_mode(app_, lead):
+    viewer = _new_user(lead, role="viewer")
+    c = _as(app_, viewer["id"])
+    assert c.get("/api/auth/me").json()["can_rename"] is True
+    r = c.patch("/api/auth/me", json={"name": "  Renamed Viewer  "})
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "Renamed Viewer" and r.json()["role"] == "viewer"
+    assert "session_version" not in r.json()
+    assert c.get("/api/auth/me").json()["name"] == "Renamed Viewer"  # same session, not signed out
+    assert c.patch("/api/auth/me", json={"name": "   "}).status_code == 422
+    assert c.patch("/api/auth/me", json={"name": "x", "role": "lead"}).json()["role"] == "viewer"  # only the name
+
+
+def test_renaming_yourself_is_refused_when_names_come_from_elsewhere(app_, lead, monkeypatch):
+    from app.config import get_settings
+    monkeypatch.setenv("RAINFOREST_USERS", "admin#1:Admin:lead")
+    get_settings.cache_clear()
+    try:
+        assert lead.get("/api/auth/me").json()["can_rename"] is False
+        r = lead.patch("/api/auth/me", json={"name": "Nope"})
+        assert r.status_code == 409 and "RAINFOREST_USERS" in r.json()["detail"]
+    finally:
+        monkeypatch.undo()
+        get_settings.cache_clear()

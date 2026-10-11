@@ -11,6 +11,7 @@ import { DatasetsPage } from "./pages/DatasetsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ForbiddenPage } from "./pages/ForbiddenPage";
 import { TeamPage } from "./pages/TeamPage";
+import { SettingsPage } from "./pages/SettingsPage";
 import { BaselinesPage } from "./pages/BaselinesPage";
 import { ReviewPage } from "./pages/ReviewPage";
 import { BulkEditPage } from "./pages/BulkEditPage";
@@ -211,6 +212,7 @@ function UserMenu() {
             </div>
           </div>
           <button type="button" role="menuitem" className="ghost menu-item" onClick={() => { setOpen(false); setPicture(true); }}>Change picture…</button>
+          <NavLink role="menuitem" className="menu-item" to="/settings" onClick={() => setOpen(false)}>Settings</NavLink>
           <NavLink role="menuitem" className="menu-item" to="/team" onClick={() => setOpen(false)}>Team</NavLink>
           {system.data?.mlflow && (
             <a role="menuitem" className="menu-item" href="/mlflow/" target="_blank" rel="noopener noreferrer" onClick={() => setOpen(false)}>MLflow ↗</a>
@@ -263,6 +265,7 @@ export default function App() {
         <Route element={<RequireAuth />}>
           <Route path="/" element={<DatasetsPage />} />
           <Route path="/team" element={<TeamPage />} />
+          <Route path="/settings/:section?" element={<SettingsPage />} />
           <Route path="/d/:datasetId" element={<DatasetLayout />}>
             <Route index element={<Navigate to="review" replace />} />
             <Route path="review/:fieldId?" element={<ReviewPage />} />

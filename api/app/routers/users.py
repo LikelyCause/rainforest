@@ -8,6 +8,7 @@ from .. import avatars, users
 from ..auth import CurrentUser, LeadUser
 from ..config import get_settings
 from ..schemas import UserIn, UserPatch
+from ..users import ENV_MANAGED
 
 router = APIRouter(prefix="/api/users", tags=["users"])
 
@@ -15,9 +16,6 @@ router = APIRouter(prefix="/api/users", tags=["users"])
 @router.get("")
 def list_users(_: CurrentUser) -> list[dict]:
     return users.list_all()
-
-
-ENV_MANAGED = "Accounts come from RAINFOREST_USERS in .env; change them there and restart."
 
 
 def _shown(row: dict) -> dict:

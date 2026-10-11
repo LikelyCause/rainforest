@@ -18,6 +18,7 @@ The top bar has, from left to right:
 Your profile opens a menu with:
 
 - *Change picture…*
+- *Settings*
 - *Team*
 - *MLflow ↗*, in a new tab, when MLflow is on
 - *Switch profile* in pick mode, or *Sign out* with OIDC sign-in
@@ -35,6 +36,21 @@ Your profile opens a menu with:
 Rainforest turns the picture upright, crops it to a centred square and saves it as a 256 × 256 WebP. Nothing of
 the file is kept but its pixels. Pictures are stored in `DATA_DIR/avatars`. They appear on the sign-in page, the top
 bar and the *Team* page. Without a picture, your initials stand in.
+
+## Settings
+
+*Settings*, in your profile menu, has a section per topic:
+
+| Section | What you can do |
+|---|---|
+| *Profile* | Change your picture and your name. Your email and role are shown read-only. |
+| *Appearance* | Choose the *System*, *Light* or *Dark* theme. *System* follows your device. The choice is kept in this browser. |
+| *Team* | Leads only: the user list, as on the *Team* page. |
+| *Integrations* | See whether runs are logged to the built-in MLflow server. Connecting your own MLflow deployment, or pulling data from S3 or other storage, is coming soon. |
+| *Application* | Coming soon: app settings that today live in `.env`. |
+
+You can rename yourself in pick mode without `RAINFOREST_USERS`. When accounts come from `RAINFOREST_USERS`, a lead
+changes names in `.env`. With OIDC sign-in, names come from the identity provider.
 
 ## Datasets
 

@@ -589,6 +589,8 @@ export interface Me {
   mode: AuthMode;
   key?: string | null;
   avatar_url?: string | null;
+  /** Whether you can rename yourself: not when names come from RAINFOREST_USERS or the identity provider. */
+  can_rename?: boolean;
 }
 
 export interface AuthConfig {

@@ -127,7 +127,8 @@ function UserRow({ u, meId, canEdit, sso, lead }: { u: TeamUser; meId: number; c
   );
 }
 
-export function TeamPage() {
+/** The user list; `embedded` drops the page frame and title, for the Team section of Settings. */
+export function TeamPage({ embedded = false }: { embedded?: boolean }) {
   const me = useMe();
   const users = useQuery({ queryKey: ["users"], queryFn: api.users });
   const cfg = useQuery({ queryKey: ["authConfig"], queryFn: api.authConfig, staleTime: Infinity });
@@ -136,10 +137,12 @@ export function TeamPage() {
   const sso = me.data.mode === "oidc";
   const fromEnv = Boolean(cfg.data?.accounts_from_env);
   return (
-    <div className="page">
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <h1>Team</h1>
-      </div>
+    <div className={embedded ? "stack" : "page"} style={embedded ? { gap: 16 } : undefined}>
+      {!embedded && (
+        <div className="row" style={{ justifyContent: "space-between" }}>
+          <h1>Team</h1>
+        </div>
+      )}
       <p className="secondary" style={{ margin: 0 }}>
         {sso
           ? "People appear here after they first sign in. Names, emails and roles come from the identity provider (its lead and member groups); here a lead can deactivate or reactivate someone."

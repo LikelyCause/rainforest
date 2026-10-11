@@ -60,6 +60,7 @@ const json = (method: string, data: unknown): RequestInit => ({ method, body: JS
 
 export const api = {
   me: () => request<Me>("/api/auth/me"),
+  updateMe: (data: { name: string }) => request<Me>("/api/auth/me", json("PATCH", data)),
   authConfig: () => request<AuthConfig>("/api/auth/config"),
   pickUsers: () => request<PickUser[]>("/api/auth/users"),
   pick: (userId: number) => request<Me>("/api/auth/pick", json("POST", { user_id: userId })),

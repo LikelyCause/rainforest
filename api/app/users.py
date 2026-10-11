@@ -54,6 +54,9 @@ def parse_accounts(text: str) -> list[Account]:
     return out
 
 
+ENV_MANAGED = "Accounts come from RAINFOREST_USERS in .env; change them there and restart."
+
+
 def managed_by_env() -> bool:
     return get_settings().auth_mode == "pick" and bool(get_settings().users.strip())
 

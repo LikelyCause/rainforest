@@ -90,7 +90,8 @@ def test_pick_me_logout(client):
     assert cookie.startswith(f"{auth.COOKIE}=") and "HttpOnly" in cookie and "SameSite=strict" in cookie
     assert "Max-Age=604800" in cookie and "Path=/" in cookie and "Secure" not in cookie
     assert client.get("/api/auth/me").json() == {"id": 2, "name": "Dana", "email": "dana@example.com",
-                                                 "role": "member", "mode": "pick"}
+                                                 "role": "member", "mode": "pick",
+                                                 "can_rename": True}
     assert client.get("/api/options").status_code == 200
     assert client.get("/api/auth/check").status_code == 204
 
