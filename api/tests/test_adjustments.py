@@ -94,7 +94,7 @@ def test_adjustments_stay_in_their_experiment_and_exports_freeze_them(people):
     names = {f["name"] for f in man["fields"]}
     assert "w" not in names and "x" in names
     assert e["config"]["adjustments"]["count"] == 1 and e["config"]["adjustments"]["fields"] == ["w"]
-    assert e["config"]["baseline"] == {"recipe_id": rid, "family": "tree", "version": 1, "label": "Trees baseline v1"}
+    assert e["config"]["baseline"] == {"recipe_id": rid, "family": "tree", "version": 1, "name": None, "label": "Trees baseline v1"}
     info = a.get(f"/api/experiments/{x1['id']}").json()
     assert info["adjustments"]["count"] == 2 and info["can_adjust"]
     assert {f["name"] for f in info["adjustments"]["fields"]} == {"w", "x"}

@@ -26,6 +26,9 @@ import type { Dataset, ExportJob, ModelRun } from "./types";
 
 /** The baseline the dataset is working on (or last worked), linking to all of them. Replaces choosing a model type:
  * that is fixed per baseline. */
+/** "Tries · Dropout risk v1", or just the name when it already says which baseline ("Team · Dropout risk v1"). */
+const withBaseline = (name: string, label: string) => (name.includes(label) ? name : `${name} · ${label}`);
+
 function BaselineChip({ ds }: { ds: Dataset }) {
   const v = parseView(useView());
   const x = useExperiment(v?.kind === "experiment" ? v.id : null);
@@ -33,13 +36,13 @@ function BaselineChip({ ds }: { ds: Dataset }) {
   if (v?.kind === "experiment" && x.data) {
     return (
       <Link to={`/d/${ds.id}/experiments/${x.data.id}`} className="baseline-chip" title={`Adjusting ${x.data.name}, built from ${baselineLabel(x.data.recipe_family, x.data.recipe_version, false, x.data.recipe_name)}`}>
-        <span className="muted">Experiment</span> <b>{x.data.name} · {baselineLabel(x.data.recipe_family, x.data.recipe_version, true, x.data.recipe_name)}</b>
+        <span className="muted">Experiment</span> <b>{withBaseline(x.data.name, baselineLabel(x.data.recipe_family, x.data.recipe_version, true, x.data.recipe_name))}</b>
       </Link>
     );
   }
   if (!b) return null;
   return (
-    <Link to={`/d/${ds.id}/baselines`} className="baseline-chip" title={b.setup ? "No baseline yet: a lead sets one up on the Team page. All baselines →" : `${b.label}. All baselines →`}>
+    <Link to={`/d/${ds.id}/baselines`} className="baseline-chip baseline" title={b.setup ? "No baseline yet: a lead sets one up on the Team page. All baselines →" : `${b.label}. All baselines →`}>
       <span className="muted">Baseline</span> <b>{b.setup ? "none yet" : baselineLabel(b.family, b.version, true, b.name)}</b>
     </Link>
   );
@@ -166,6 +169,7 @@ function UserMenu() {
   const me = useMe();
   const [open, setOpen] = useState(false);
   const [picture, setPicture] = useState(false);
+  const system = useQuery({ queryKey: ["system"], queryFn: api.system, staleTime: Infinity });
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -206,7 +210,9 @@ function UserMenu() {
           </div>
           <button type="button" role="menuitem" className="ghost menu-item" onClick={() => { setOpen(false); setPicture(true); }}>Change picture…</button>
           <NavLink role="menuitem" className="menu-item" to="/team" onClick={() => setOpen(false)}>Team</NavLink>
-          <a role="menuitem" className="menu-item" href="/mlflow/" target="_blank" rel="noopener noreferrer" onClick={() => setOpen(false)}>MLflow ↗</a>
+          {system.data?.mlflow && (
+            <a role="menuitem" className="menu-item" href="/mlflow/" target="_blank" rel="noopener noreferrer" onClick={() => setOpen(false)}>MLflow ↗</a>
+          )}
           <button type="button" role="menuitem" className="ghost menu-item" disabled={out.isPending} onClick={() => out.mutate()}>
             {pick ? "Switch profile" : "Sign out"}
           </button>

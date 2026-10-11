@@ -62,7 +62,7 @@ export function sourceOptions(
   const finalized = versions.filter((v) => v.phase === "finalized")
     .sort((a, b) => FAMILY_ORDER.indexOf(a.family) - FAMILY_ORDER.indexOf(b.family) || b.version - a.version);
   for (const v of finalized) {
-    out.push({ value: `recipe:${v.id}`, label: `${baselineLabel(v.family, v.version, false, v.name)} (finalized)` });
+    out.push({ value: `recipe:${v.id}`, label: `${baselineLabel(v.family, v.version, false, v.name)} · finalized` });
   }
   return out;
 }

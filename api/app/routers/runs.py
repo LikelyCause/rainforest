@@ -37,8 +37,9 @@ def list_models() -> list[dict]:
 
 @router.get("/system")
 def system() -> dict:
-    """Training hardware. `gpu` is null when no NVIDIA GPU is visible to the API container."""
-    return {"gpu": gpu.detect()}
+    """Training hardware (`gpu` is null when no NVIDIA GPU is visible to the API container), and whether runs are
+    logged to MLflow."""
+    return {"gpu": gpu.detect(), "mlflow": mlflow_log.enabled()}
 
 
 def _export_manifest(export_id: int, user: dict) -> tuple[dict, dict]:

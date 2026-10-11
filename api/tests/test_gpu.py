@@ -38,7 +38,7 @@ def test_no_nvidia_smi_means_no_gpu(monkeypatch):
     monkeypatch.setattr(gpu.shutil, "which", lambda name: None)
     assert gpu.detect() is None
     assert gpu.gpu_available() is False
-    assert runs.system() == {"gpu": None}
+    assert runs.system()["gpu"] is None
 
 
 def test_warm_up_detects_in_the_background_once(monkeypatch):

@@ -174,7 +174,7 @@ class StartBaselineIn(BaseModel):
 
 
 class RenameBaselineIn(BaseModel):
-    name: str | None = Field(None, max_length=200, description="Blank removes the name")
+    name: str = Field(..., max_length=200, description="Blank removes the name")
 
 
 class NewVersionIn(BaseModel):

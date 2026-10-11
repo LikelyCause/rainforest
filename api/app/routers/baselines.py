@@ -26,10 +26,13 @@ def list_baselines(dataset_id: int, _: CurrentUser) -> list[dict]:
             """SELECT r.id, r.family, r.version, r.phase, r.scope, r.parent_id, p.family AS parent_family,
                       p.version AS parent_version, p.dataset_id AS parent_dataset_id, r.created_at, r.finalized_at,
                       meta.baseline_name(r.dataset_id, r.family) AS name,
-                      meta.baseline_name(p.dataset_id, p.family) AS parent_name,
+                      meta.baseline_name(p.dataset_id, p.family) AS parent_name, pd.name AS parent_dataset_name,
+                      r.reuse, CASE WHEN r.scope = 'reopened'
+                           THEN (SELECT count(*) FROM meta.recipe_reopened o WHERE o.recipe_id = r.id) END AS reopened,
                       cu.name AS created_by_name, fu.name AS finalized_by_name
                  FROM meta.recipes r
                  LEFT JOIN meta.recipes p ON p.id = r.parent_id
+                 LEFT JOIN meta.datasets pd ON pd.id = p.dataset_id
                  LEFT JOIN meta.users cu ON cu.id = r.created_by
                  LEFT JOIN meta.users fu ON fu.id = r.finalized_by
                 WHERE r.dataset_id = %s ORDER BY r.version DESC""",

@@ -19,8 +19,8 @@ versions share it; it's optional; a Team Lead can rename it later.
 
 | Where | Unnamed | Named |
 |---|---|---|
-| Short (top bar chip, dataset list badge, export badges, version pickers) | Trees v2 | Dropout risk v2 |
-| Long (toasts, "built from …", reuse notes) | Trees baseline v2 | Dropout risk v2 (Trees) |
+| Short (top bar chip, dataset list badge, export badges) | Trees v2 | Dropout risk v2 |
+| Long (pickers, toasts, "built from …", reuse notes) | Trees baseline v2 | Dropout risk v2 (Trees) |
 | Baselines page card heading | Trees | Dropout risk, with a *Trees* tag |
 
 - The top bar chip and the dataset list badge cap a long name with an ellipsis; the full label is in the tooltip.

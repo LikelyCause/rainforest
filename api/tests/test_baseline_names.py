@@ -68,7 +68,8 @@ def test_every_baseline_payload_shows_the_name(people):
     assert next(r for r in lead.get("/api/recipes").json() if r["id"] == rid)["name"] == "Dropout risk"
     assert lead.get(f"/api/datasets/{i}/recipes").json()[0]["label"] == "Dropout risk v1 (Trees)"
     assert lead.get(f"/api/datasets/{i}/recipes/diff?a={rid}&b={rid}").json()["a"]["label"] == "Dropout risk v1 (Trees)"
-    assert lead.get(f"/api/datasets/{i}/export-preview").json()["recipe"]["label"] == "Dropout risk v1 (Trees)"
+    pv = lead.get(f"/api/datasets/{i}/export-preview").json()["recipe"]
+    assert pv["label"] == "Dropout risk v1 (Trees)" and pv["name"] == "Dropout risk"
     r = lead.post(f"/api/datasets/{i}/exports", json={})
     assert r.status_code == 202, r.text
     assert r.json()["experiment_name"] == "Team · Dropout risk v1"
@@ -80,6 +81,9 @@ def test_every_baseline_payload_shows_the_name(people):
     assert st["recipe"]["reuse"]["source"]["name"] == "Dropout risk"
     v = next(v for v in lead.get(f"/api/datasets/{other['id']}/recipes").json() if v["reuse"])
     assert v["reuse"]["source"]["name"] == "Dropout risk"
+    line = lead.get(f"/api/datasets/{other['id']}/baselines").json()[0]["versions"][0]
+    assert line["reuse"]["source"]["name"] == "Dropout risk" and line["parent_dataset_name"] == ds["name"]
+    assert "reopened" in line
 
 
 def _start(lead, ds, family, name=None, expect=200):
@@ -160,3 +164,42 @@ def test_deleting_a_dataset_deletes_its_names(people):
     assert lead.delete(f"/api/datasets/{ds['id']}").status_code == 200
     with connection() as conn:
         assert conn.execute("SELECT 1 FROM meta.baseline_names WHERE dataset_id = %s", (ds["id"],)).fetchone() is None
+
+
+def test_a_names_case_survives_in_lowercased_messages(people):
+    from app import recipes
+
+    assert recipes.label({"family": "tree", "version": 2, "name": "Dropout risk"}, lower=True) == "Dropout risk v2 (Trees)"
+    assert recipes.label({"family": "tree", "version": 2, "name": None}, lower=True) == "trees baseline v2"
+
+
+def test_a_taken_name_is_reported_as_stored_and_patch_needs_a_name(people):
+    from .team_helpers import submit_and_finalize
+
+    lead = people["lead"]
+    ds = upload(lead)
+    _start(lead, ds, "linear", "Dropout risk")
+    submit_and_finalize(lead, ds)
+    r = lead.post(f"/api/datasets/{ds['id']}/baselines", json={
+        "family": "tree", "start": "scratch", "targets": ["y"], "assessors": [lead.user["id"]], "name": "dropout RISK"})
+    assert r.status_code == 422 and "'Dropout risk'" in r.json()["detail"]
+    assert lead.patch(f"/api/datasets/{ds['id']}/baselines/linear", json={}).status_code == 422
+    assert _names(lead, ds) == {"linear": "Dropout risk"}
+
+
+def test_a_name_left_by_a_model_type_without_versions_never_blocks(people):
+    lead = people["lead"]
+    ds = upload(lead)
+    _start(lead, ds, "tree")
+    _name(ds["id"], "neural", "Dropout risk")
+    r = lead.patch(f"/api/datasets/{ds['id']}/baselines/tree", json={"name": "Dropout risk"})
+    assert r.status_code == 200, r.text
+    from app.db import connection
+
+    with connection() as conn:
+        rows = conn.execute("SELECT family FROM meta.baseline_names WHERE dataset_id = %s", (ds["id"],)).fetchall()
+    assert [r["family"] for r in rows] == ["tree"]
+
+
+def test_system_says_whether_mlflow_is_on(people):
+    assert isinstance(people["lead"].get("/api/system").json()["mlflow"], bool)

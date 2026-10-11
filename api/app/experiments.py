@@ -113,7 +113,7 @@ def create(conn, dataset_id: int, name: str, source: str, user: dict, notes: str
             raise HTTPException(403, "A personal experiment can only be built from your own assessment.")
         if conn.execute("SELECT 1 FROM meta.assessments WHERE recipe_id = %s AND user_id = %s LIMIT 1",
                         (recipe_id, assessor_id)).fetchone() is None:
-            raise HTTPException(403, f"You don't assess {recipes.label(recipe).lower()}.")
+            raise HTTPException(403, f"You don't assess {recipes.label(recipe, lower=True)}.")
     row = conn.execute(
         """INSERT INTO meta.experiments (dataset_id, name, owner, recipe_id, assessor_id, source, notes)
            VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",

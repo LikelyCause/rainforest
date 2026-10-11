@@ -130,7 +130,7 @@ The top bar shows the dataset switcher, the workflow steps **Review · Bulk edit
 *Finalized*), the **Baseline** chip (the current baseline, e.g. *Trees v2*, linking to the dataset's **Baselines**
 page; while you adjust an experiment, that experiment), *Next unreviewed* (`U`) while fields are left, and on the
 right **Team** (the user list) and your profile: picture, name and role, opening a menu with *Change picture…*,
-*Team*, *MLflow ↗* (in a new tab) and *Switch profile* (pick mode; *Sign out* with OIDC).
+*Team*, *MLflow ↗* (in a new tab, when MLflow is on) and *Switch profile* (pick mode; *Sign out* with OIDC).
 
 ### Predicting numbers and bands
 
@@ -353,8 +353,8 @@ decision directly (recorded in each field's history) and finalizes.
 
 **Baseline names.** A baseline can have a name, given when it starts (the form's optional *Name*, shown for a model
 type without a baseline yet) and changed by a lead with *Rename* (or *Name it*) on its Baselines page card; blank
-removes it. Its versions share it: a named baseline reads "Dropout risk v2" in the top bar, the dataset list and the
-pickers, and "Dropout risk v2 (Trees)" where the model type matters; an unnamed one reads "Trees v2" and "Trees
+removes it. Its versions share it: a named baseline reads "Dropout risk v2" in the top bar, the dataset list and
+export badges, and "Dropout risk v2 (Trees)" in pickers and messages; an unnamed one reads "Trees v2" and "Trees
 baseline v2". Names are up to 60 characters and differ between a dataset's baselines (ignoring case). Renaming
 doesn't touch a finalized version's decisions, and what was named at the time keeps its name: an export's manifest
 and a Team experiment's default name ("Team · Dropout risk v1"). A long name is cut in the top bar and badges, in full

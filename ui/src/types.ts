@@ -361,6 +361,8 @@ export interface GpuInfo {
 
 export interface SystemInfo {
   gpu: GpuInfo | null;
+  /** Whether runs are logged to MLflow (the profile menu links it only then). */
+  mlflow: boolean;
 }
 
 export interface ModelOption {

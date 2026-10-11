@@ -74,9 +74,9 @@ describe("sourceOptions", () => {
   it("offers my assessment first while I assess, then finalized versions newest first", () => {
     expect(sourceOptions(versions, team("assessing", true), me)).toEqual([
       { value: "assessment:12:2", label: "My assessment (Trees v3)" },
-      { value: "recipe:11", label: "Trees baseline v2 (finalized)" },
-      { value: "recipe:10", label: "Trees baseline v1 (finalized)" },
-      { value: "recipe:13", label: "Linear baseline v1 (finalized)" },
+      { value: "recipe:11", label: "Trees baseline v2 · finalized" },
+      { value: "recipe:10", label: "Trees baseline v1 · finalized" },
+      { value: "recipe:13", label: "Linear baseline v1 · finalized" },
     ]);
   });
 
