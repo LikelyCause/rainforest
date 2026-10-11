@@ -206,7 +206,9 @@ def param_problems(spec: ModelSpec, params: dict[str, Any]) -> list[str]:
     if unknown:
         return [f"{spec.label} has no parameter {k!r}" for k in unknown]
     try:
-        est.set_params(**{k: v for k, v in params.items() if k in known})
+        # Catalogued names a regressor takes (ridge's alpha) aren't the classifier's to check.
+        own = set(est.get_params())
+        est.set_params(**{k: v for k, v in params.items() if k in own})
         if hasattr(est, "_parameter_constraints"):  # sklearn's own type and range checks
             est._validate_params()
     except (ValueError, TypeError) as exc:

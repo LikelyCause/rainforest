@@ -66,3 +66,9 @@ def test_xgboost_balanced_class_weights_lift_a_rare_class_in_three():
     weighted = MODELS["xgboost"].build({"n_estimators": 50, "verbosity": 0, "class_weight": "balanced"}, 0).fit(X, y)
     assert weighted.get_params()["class_weight"] == "balanced"
     assert (weighted.predict(X) == 2).sum() > (plain.predict(X) == 2).sum()
+
+
+def test_ridge_alpha_passes_the_parameter_check():
+    from app.modeling.registry import param_problems
+
+    assert param_problems(MODELS["logistic_regression"], {"alpha": 10.0, "C": 0.5}) == []
