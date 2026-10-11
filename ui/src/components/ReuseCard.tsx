@@ -1,42 +1,45 @@
 import { baselineLabel } from "../format";
 import { reuseGroups } from "../recipes";
 import type { ReuseSummary } from "../types";
+import { Banner, Chip } from "./kit";
 
 /** How a reused recipe matched this dataset: carried, reopened (with why), missing, and the targets. */
 export function ReuseCard({ reuse, label }: { reuse: ReuseSummary; label: string }) {
   const g = reuseGroups(reuse);
   const list = (names: string[]) => names.length ? names.map((n) => <code key={n} className="target-code">{n}</code>) : <span className="muted">none</span>;
   return (
-    <section className="card stack" aria-label="Reuse summary">
+    <section className="card stack reuse-card" aria-label="Reuse summary">
       <div className="card-head">
         <h2>Started from {reuse.source.dataset_name ?? `dataset #${reuse.source.dataset_id}`} · {reuse.source.family ? baselineLabel(reuse.source.family, reuse.source.version, false, reuse.source.name) : `v${reuse.source.version}`}</h2>
         <span className="muted small-text">{label} of this dataset</span>
       </div>
-      <div className="stack" style={{ gap: 6 }}>
-        <div><b className="num">{g.carried.length}</b> carried over and locked: <span className="chips" style={{ display: "inline-flex" }}>{list(g.carried)}</span></div>
+      <div className="stack" style={{ gap: 8 }}>
+        <div><b className="num">{g.carried.length}</b> carried over and locked: <span className="chips inline-chips">{list(g.carried)}</span></div>
         {g.reopened.length === 0 ? (
-          <div className="alert info"><span className="grow">Nothing needs assessing. A lead confirms by finalizing on the Team page.</span></div>
+          <Banner tone="info">Nothing needs assessing. A lead confirms by finalizing it in the team review.</Banner>
         ) : (
           <div className="stack" style={{ gap: 4 }}>
             <span><b className="num">{reuse.reopened.length}</b> reopened for assessment:</span>
-            <table className="data team" aria-label="Reopened fields">
-              <thead><tr><th>Reason</th><th>Field</th><th>Details</th></tr></thead>
-              <tbody>
-                {g.reopened.flatMap((grp) => grp.fields.map((f, i) => (
-                  <tr key={f.name}>
-                    <td>{i === 0 ? <span className="badge warn">{grp.label}</span> : null}</td>
-                    <td className="mono">{f.name}</td>
-                    <td className="secondary">{f.detail}</td>
-                  </tr>
-                )))}
-              </tbody>
-            </table>
+            <div className="table-wrap">
+              <table className="data" aria-label="Reopened fields">
+                <thead><tr><th>Reason</th><th>Field</th><th>Details</th></tr></thead>
+                <tbody>
+                  {g.reopened.flatMap((grp) => grp.fields.map((f, i) => (
+                    <tr key={f.name}>
+                      <td>{i === 0 ? <Chip tone="warn">{grp.label}</Chip> : null}</td>
+                      <td className="mono">{f.name}</td>
+                      <td className="secondary">{f.detail}</td>
+                    </tr>
+                  )))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
-        <div><b className="num">{g.missing.length}</b> in the recipe but not in this data: <span className="chips" style={{ display: "inline-flex" }}>{list(g.missing)}</span></div>
-        <div>Targets carried over: <span className="chips" style={{ display: "inline-flex" }}>{list(g.targets)}</span></div>
+        <div><b className="num">{g.missing.length}</b> in the recipe but not in this data: <span className="chips inline-chips">{list(g.missing)}</span></div>
+        <div>Targets carried over: <span className="chips inline-chips">{list(g.targets)}</span></div>
         {g.targetsNotCarried.map((t) => (
-          <div key={t.name} className="alert warn"><span className="grow">Target <code>{t.name}</code> not carried over: {t.problem}</span></div>
+          <Banner key={t.name} tone="warn">Target <code>{t.name}</code> not carried over: {t.problem}</Banner>
         ))}
       </div>
     </section>

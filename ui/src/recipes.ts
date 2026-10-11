@@ -1,7 +1,7 @@
-import { fmtInt, fmtPct } from "./format";
+import { baselineLabel, fmtInt, fmtPct } from "./format";
 import { attentionOf } from "./signals";
 import { bandsText, taskLabel } from "./decision";
-import type { DiffChange, FieldListItem, ReopenReason, ReopenedField, ReuseSummary, TargetBins, TargetTask } from "./types";
+import type { DiffChange, FieldListItem, RecipeVersion, ReopenReason, ReopenedField, ReuseSummary, TargetBins, TargetTask } from "./types";
 
 const typeName = (t: string | undefined) => (t ?? "?").replace("_", " ");
 
@@ -99,4 +99,14 @@ export function pickable(fields: FieldListItem[], f: PickFilter): FieldListItem[
 /** The label of the button that starts the next version. */
 export function startLabel(next: number, reopen: number): string {
   return reopen === 0 ? `Start v${next} and edit directly` : `Start v${next}, reopening ${reopen} field${reopen === 1 ? "" : "s"}`;
+}
+
+/** What a version was built from: a reused baseline of another dataset, the version or baseline before, or the suggestions. */
+export function builtFrom(v: Pick<RecipeVersion, "reuse" | "parent_id" | "parent_version" | "parent_family" | "parent_name">): string {
+  if (v.reuse) {
+    const s = v.reuse.source;
+    return `Reused ${s.family ? baselineLabel(s.family, s.version, false, s.name) : `v${s.version}`} of ${s.dataset_name ?? `dataset #${s.dataset_id}`}${v.parent_id === null ? " (since deleted)" : ""}`;
+  }
+  if (v.parent_version && v.parent_family) return baselineLabel(v.parent_family, v.parent_version, false, v.parent_name);
+  return "the suggestions";
 }

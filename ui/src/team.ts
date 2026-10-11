@@ -22,12 +22,12 @@ export function accessOf(ds: Pick<Dataset, "phase"> & { baseline: (Pick<NonNulla
       : "You're a Viewer: you can look at everything the team shares but not change it." };
   }
   if (ds.baseline?.setup) {
-    return { source: "team", canEdit: false, note: "This dataset's first baseline isn't set up yet; it is read-only until a lead sets it up on the Team page." };
+    return { source: "team", canEdit: false, note: "This dataset's first baseline isn't set up yet; it is read-only until a lead sets it up on the Baseline tab." };
   }
   if (ds.phase === "assessing") {
     if (team?.me) {
       return team.me.submitted
-        ? { source: "mine", canEdit: false, note: "You submitted your assessment. Unsubmit it on the Team page to make changes." }
+        ? { source: "mine", canEdit: false, note: "You submitted your assessment. Unsubmit it on the Baseline tab to make changes." }
         : { source: "mine", canEdit: true, note: "Your assessment. Nobody else sees your choices until team review." };
     }
     return { source: "team", canEdit: false, note: `${v} is being assessed. You can browse the fields and their suggestions; only assigned assessors make choices.` };
@@ -35,9 +35,9 @@ export function accessOf(ds: Pick<Dataset, "phase"> & { baseline: (Pick<NonNulla
   if (ds.phase === "review") {
     return me.role === "lead"
       ? { source: "team", canEdit: true, note: "Team review: changes here set the team decision." }
-      : { source: "team", canEdit: false, note: "Team review: a lead sets the team decision. You can comment on the Team page." };
+      : { source: "team", canEdit: false, note: "Team review: a lead sets the team decision. You can comment in the team review queue." };
   }
-  if (ds.phase === "finalized") return { source: "team", canEdit: false, note: `${v} is finalized; its decisions are frozen. A lead can start a new version on the Baselines page.` };
+  if (ds.phase === "finalized") return { source: "team", canEdit: false, note: `${v} is finalized; its decisions are frozen. A lead can start a new version on the Baseline tab.` };
   return { source: "team", canEdit: true, note: "" };
 }
 
@@ -76,4 +76,58 @@ export function nextOpen(queue: Pick<QueueItem, "field_id" | "resolved">[], curr
   const at = queue.findIndex((q) => q.field_id === current);
   const order = [...queue.slice(at + 1), ...queue.slice(0, at + 1)];
   return order.find((q) => !q.resolved && q.field_id !== current)?.field_id ?? null;
+}
+
+/** Assessors grouped by the value they chose, most common first (ties keep the assessors' order). */
+export interface ValueGroup { value: string | null; who: string[]; at: number[] }
+export function valueGroups(values: (string | null | undefined)[], names: string[]): ValueGroup[] {
+  const groups: ValueGroup[] = [];
+  values.forEach((v, i) => {
+    const value = v ?? null;
+    const g = groups.find((x) => x.value === value);
+    if (g) { g.who.push(names[i]); g.at.push(i); } else groups.push({ value, who: [names[i]], at: [i] });
+  });
+  return groups.sort((a, b) => b.who.length - a.who.length);
+}
+
+/** The assessors whose value is the odd one out: those outside a strict majority. None when there's no majority. */
+export function oddOnes(values: (string | null | undefined)[]): Set<number> {
+  const groups = valueGroups(values, values.map(String));
+  if (groups.length < 2 || groups[0].who.length === groups[1].who.length) return new Set();
+  return new Set(groups.slice(1).flatMap((g) => g.at));
+}
+
+const firstName = (n: string) => n.trim().split(/\s+/)[0] ?? n;
+
+/** How the assessors voted on one part of the decision, for the team decision panel: "All 3 chose keep", or
+ * "2 Maya, Dana · 1 Priya: number", naming the value wherever it isn't the team decision's current one. */
+export function voteLine(values: (string | null | undefined)[], names: string[], current?: string | null): string | null {
+  const groups = valueGroups(values, names).filter((g) => g.value !== null);
+  if (groups.length === 0) return null;
+  if (groups.length === 1) {
+    const n = values.length;
+    if (groups[0].who.length < n) return `${groups[0].who.map(firstName).join(", ")} chose ${groups[0].value}`;
+    return `${n === 1 ? "The assessor" : n === 2 ? "Both" : `All ${n}`} chose ${groups[0].value}`;
+  }
+  return groups.map((g) => `${g.who.length} ${g.who.map(firstName).join(", ")}${g.value === current ? "" : `: ${g.value}`}`).join(" · ");
+}
+
+/** Splits the compared settings into the ones where the assessors differ and the ones they all share. */
+export function splitAgreement<T extends { values: (string | null | undefined)[] }>(rows: T[]): { differ: T[]; agree: T[] } {
+  const differ: T[] = [];
+  const agree: T[] = [];
+  for (const r of rows) (new Set(r.values.map((v) => v ?? null)).size > 1 ? differ : agree).push(r);
+  return { differ, agree };
+}
+
+/** "Submitted. 2 of 3 are in. Team review opens when Priya Raman submits (21/37)." */
+export function submittedText(assessors: { name: string; submitted_at: string | null; reviewed: number; total: number }[]): string {
+  const n = assessors.length;
+  const waiting = assessors.filter((a) => !a.submitted_at);
+  const k = n - waiting.length;
+  if (waiting.length === 0) return `${k} of ${n} are in. Team review is opening.`;
+  const who = waiting.length <= 2
+    ? waiting.map((a) => `${a.name} (${a.reviewed}/${a.total})`).join(" and ")
+    : `${waiting.length} more people`;
+  return `${k} of ${n} ${k === 1 ? "is" : "are"} in. Team review opens when ${who} submit${waiting.length === 1 ? "s" : ""}.`;
 }

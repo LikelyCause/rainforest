@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accessOf, differing, finalizeQuestion, nextOpen, spread } from "./team";
+import { accessOf, differing, finalizeQuestion, nextOpen, oddOnes, splitAgreement, spread, submittedText, valueGroups, voteLine } from "./team";
 import type { Assessment } from "./types";
 
 const lead = { id: 1, role: "lead" as const };
@@ -12,7 +12,7 @@ describe("accessOf", () => {
     expect(accessOf(ds("assessing"), member, mine(false))).toMatchObject({ source: "mine", canEdit: true });
     const done = accessOf(ds("assessing"), member, mine(true));
     expect(done).toMatchObject({ source: "mine", canEdit: false });
-    expect(done.note).toMatch(/Unsubmit/);
+    expect(done.note).toMatch(/Unsubmit it on the Baseline tab/);
   });
 
   it("shows everyone else the suggestions, read-only, while assessing (leads too)", () => {
@@ -27,6 +27,16 @@ describe("accessOf", () => {
     expect(accessOf(ds("review"), lead, undefined)).toMatchObject({ source: "team", canEdit: true });
     expect(accessOf(ds("review"), member, undefined)).toMatchObject({ source: "team", canEdit: false });
     expect(accessOf(ds("finalized"), lead, undefined)).toMatchObject({ canEdit: false });
+  });
+
+  it("names the places by their new names", () => {
+    const notes = [
+      accessOf(ds("assessing"), member, mine(true)).note, accessOf(ds("review"), member, undefined).note,
+      accessOf(ds("finalized"), lead, undefined).note,
+      accessOf({ phase: "assessing", baseline: { label: "Trees baseline v1", setup: true } }, member, undefined).note,
+    ];
+    for (const n of notes) expect(n).not.toMatch(/Team page|Baselines page/);
+    expect(notes[3]).toMatch(/Baseline tab/);
   });
 });
 
@@ -71,5 +81,53 @@ describe("nextOpen", () => {
     expect(nextOpen(q, 3)).toBe(1);
     expect(nextOpen([{ field_id: 1, resolved: false }], 1)).toBeNull();
     expect(nextOpen(q, null)).toBe(1);
+  });
+});
+
+describe("valueGroups and oddOnes", () => {
+  it("groups assessors by value, most common first", () => {
+    expect(valueGroups(["a", "b", "a"], ["Maya", "Priya", "Dana"])).toEqual([
+      { value: "a", who: ["Maya", "Dana"], at: [0, 2] }, { value: "b", who: ["Priya"], at: [1] },
+    ]);
+  });
+  it("marks only those outside a strict majority", () => {
+    expect([...oddOnes(["a", "b", "a"])]).toEqual([1]);
+    expect(oddOnes(["a", "b"]).size).toBe(0);
+    expect(oddOnes(["a", "a"]).size).toBe(0);
+  });
+});
+
+describe("voteLine", () => {
+  const names = ["Maya Chen", "Dana Okafor", "Priya Raman"];
+  it("says when everyone agrees", () => {
+    expect(voteLine(["keep", "keep", "keep"], names, "keep")).toBe("All 3 chose keep");
+    expect(voteLine(["keep", "keep"], names.slice(0, 2))).toBe("Both chose keep");
+  });
+  it("names who chose what, and the value where it isn't the current one", () => {
+    expect(voteLine(["category", "category", "number"], names, "category")).toBe("2 Maya, Dana · 1 Priya: number");
+    expect(voteLine(["category", "category", "number"], names, "number")).toBe("2 Maya, Dana: category · 1 Priya");
+  });
+  it("has nothing to say when nobody set it", () => {
+    expect(voteLine([null, undefined], names.slice(0, 2))).toBeNull();
+    expect(voteLine([null, "none"], names.slice(0, 2), "none")).toBe("Dana chose none");
+  });
+});
+
+describe("splitAgreement", () => {
+  it("separates differing settings from shared ones", () => {
+    const rows = [{ k: "type", values: ["a", "b"] }, { k: "scale", values: ["x", "x"] }, { k: "flag", values: [null, undefined] }];
+    const { differ, agree } = splitAgreement(rows);
+    expect(differ.map((r) => r.k)).toEqual(["type"]);
+    expect(agree.map((r) => r.k)).toEqual(["scale", "flag"]);
+  });
+});
+
+describe("submittedText", () => {
+  const p = (name: string, done: boolean, reviewed = 37) => ({ name, submitted_at: done ? "2026-10-10T00:00:00Z" : null, reviewed, total: 37 });
+  it("says who review waits on", () => {
+    expect(submittedText([p("Dana", true), p("Maya", true), p("Priya", false, 21)]))
+      .toBe("2 of 3 are in. Team review opens when Priya (21/37) submits.");
+    expect(submittedText([p("Dana", true), p("Maya", false, 3), p("Priya", false, 21), p("Ann", false, 0)]))
+      .toBe("1 of 4 is in. Team review opens when 3 more people submit.");
   });
 });

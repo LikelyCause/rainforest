@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fmtChange, fmtValue, pickable, reasonDetail, reuseGroups, startLabel } from "./recipes";
+import { builtFrom, fmtChange, fmtValue, pickable, reasonDetail, reuseGroups, startLabel } from "./recipes";
 import type { FieldListItem, ReuseSummary } from "./types";
 
 const summary: ReuseSummary = {
@@ -90,5 +90,15 @@ describe("target task changes", () => {
   it("reads as Predict as", () => {
     expect(fmtChange({ key: "target_task", family: null, before: "classes", after: "regression" })).toBe("Predict as: Classes → Number");
     expect(fmtChange({ key: "target_bins", family: null, before: null, after: { k: 4 } })).toBe("Bands: — → 4 equal-sized");
+  });
+});
+
+describe("builtFrom", () => {
+  const v = { reuse: null, parent_id: null, parent_version: null, parent_family: null, parent_name: null };
+  it("names the version, the reused baseline or the suggestions", () => {
+    expect(builtFrom(v)).toBe("the suggestions");
+    expect(builtFrom({ ...v, parent_id: 3, parent_version: 1, parent_family: "tree" })).toBe("Trees baseline v1");
+    expect(builtFrom({ ...v, parent_id: 3, parent_version: 2, parent_family: "tree", parent_name: "Dropout risk" })).toBe("Dropout risk v2 (Trees)");
+    expect(builtFrom({ ...v, reuse: { ...summary, source: { ...summary.source, family: "linear" } } })).toBe("Reused Linear baseline v3 of Churn (since deleted)");
   });
 });

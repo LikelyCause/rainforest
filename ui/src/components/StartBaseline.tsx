@@ -10,10 +10,11 @@ import { useInvalidateTeam } from "../pages/DatasetTeamPage";
 import { toast } from "../toast";
 import type { Dataset, FamilyKey } from "../types";
 import { ErrorAlert } from "./ui";
+import { Segmented } from "./kit";
 
 /** A lead starts a baseline: its model type (fixed from then on), what it starts from, its targets and who
  * assesses it. On a new dataset this sets up the first baseline. */
-export function StartBaseline({ ds, onCancel }: { ds: Dataset; onCancel?: () => void }) {
+export function StartBaseline({ ds, onCancel, family }: { ds: Dataset; onCancel?: () => void; family?: FamilyKey }) {
   const nav = useNavigate();
   const me = useMe().data;
   const { data: catalog } = useOptions();
@@ -26,8 +27,11 @@ export function StartBaseline({ ds, onCancel }: { ds: Dataset; onCancel?: () => 
   const invalidate = useInvalidateTeam(ds.id);
   const [form, setForm] = useState<StartBaselineForm | null>(null);
   useEffect(() => {
-    if (!form && me && fields.data) setForm(startBaselineDefaults(ds, me, fields.data));
-  }, [form, me, fields.data, ds]);
+    if (!form && me && fields.data) {
+      const d = startBaselineDefaults(ds, me, fields.data);
+      setForm(family ? { ...d, family } : d);
+    }
+  }, [form, me, fields.data, ds, family]);
   const own = useMemo(() => (lines.data ?? []).flatMap((l) => l.versions.filter((v) => v.phase === "finalized")), [lines.data]);
   const fromOther = (others.data ?? []).filter((r) => r.dataset_id !== ds.id);
   const start = useMutation({
@@ -56,21 +60,14 @@ export function StartBaseline({ ds, onCancel }: { ds: Dataset; onCancel?: () => 
     <form className="card stack start-baseline" aria-label="Start a baseline"
       onSubmit={(e) => { e.preventDefault(); if (!blocked) start.mutate(form); }}>
       <div className="card-head">
-        <h2>{setup ? "Set up the first baseline" : "Start a baseline"}</h2>
+        {setup ? <h1>Set up the first baseline</h1> : <h2>Start a baseline</h2>}
         <span className="muted small-text">The model type is fixed once it starts.</span>
       </div>
 
-      <fieldset className="bare stack" style={{ gap: 6 }}>
+      <fieldset className="bare stack sb-section" style={{ gap: 6 }}>
         <legend className="field-label">Model type</legend>
-        <div className="segmented" role="radiogroup" aria-label="Model type">
-          {FAMILIES.map((f) => (
-            <button key={f} type="button" role="radio" aria-checked={form.family === f} className={form.family === f ? "on" : ""}
-              disabled={form.start === "recipe"} onClick={() => set({ family: f })}
-              title={catalog?.families.find((x) => x.value === f)?.examples}>
-              {familyShort(f)}
-            </button>
-          ))}
-        </div>
+        <Segmented label="Model type" value={form.family} onChange={(f) => set({ family: f })} className="sb-family"
+          options={FAMILIES.map((f) => ({ value: f, label: familyShort(f), disabled: form.start === "recipe", title: catalog?.families.find((x) => x.value === f)?.examples }))} />
         <span className="muted small-text">
           {form.start === "recipe" ? "Takes the model type of the baseline it reuses."
             : `${baselineLabel(form.family, nextVersion(form.family), false, nameFor(form.family))} · for ${catalog?.families.find((x) => x.value === form.family)?.examples ?? familyShort(form.family)}`}
@@ -78,17 +75,17 @@ export function StartBaseline({ ds, onCancel }: { ds: Dataset; onCancel?: () => 
       </fieldset>
 
       {isNew(form.family) ? (
-        <label className="field">
+        <label className="field sb-section">
           <span>Name <span className="muted">(optional)</span></span>
           <input value={form.name} maxLength={60} placeholder="e.g. Dropout risk" onChange={(e) => set({ name: e.target.value })} />
         </label>
       ) : (
         <span className="muted small-text">
-          {nameFor(form.family) ? `This baseline is called ${nameFor(form.family)}` : "This baseline has no name"}; rename it on the Baselines page.
+          {nameFor(form.family) ? `This baseline is called ${nameFor(form.family)}` : "This baseline has no name"}; rename it under Baseline · Versions.
         </span>
       )}
 
-      <fieldset className="bare stack" style={{ gap: 6 }}>
+      <fieldset className="bare stack sb-section" style={{ gap: 6 }}>
         <legend className="field-label">Start from</legend>
         <label className="check"><input type="radio" name="start" checked={form.start === "scratch"} onChange={() => set({ start: "scratch" })} />
           The suggestions for {familyShort(form.family).toLowerCase()} models</label>
@@ -118,8 +115,9 @@ export function StartBaseline({ ds, onCancel }: { ds: Dataset; onCancel?: () => 
       </fieldset>
 
       {form.start !== "recipe" && (
-        <fieldset className="bare stack" style={{ gap: 4 }}>
-          <legend className="field-label">Targets <span className="muted small-text">· fixed for this baseline; experiments can change them. Each is predicted as shown; change it to a number or bands per field in Review</span></legend>
+        <fieldset className="bare stack sb-section" style={{ gap: 4 }}>
+          <legend className="field-label">Targets <span className="muted small-text">· {form.targets.length} chosen</span></legend>
+          <span className="muted small-text">Fixed for this baseline; experiments can change them. Each is predicted as shown; change it to a number or bands per field in Fields.</span>
           <div className="check-grid">
             {(fields.data ?? []).map((f) => {
               const why = eligibleTarget(f);
@@ -137,8 +135,9 @@ export function StartBaseline({ ds, onCancel }: { ds: Dataset; onCancel?: () => 
         </fieldset>
       )}
 
-      <fieldset className="bare stack" style={{ gap: 4 }}>
-        <legend className="field-label">Assessors <span className="muted small-text">· each assesses every field blind; review opens when all have submitted</span></legend>
+      <fieldset className="bare stack sb-section" style={{ gap: 4 }}>
+        <legend className="field-label">Assessors <span className="muted small-text">· {form.assessors.length} chosen</span></legend>
+        <span className="muted small-text">Each assesses every field blind; team review opens when all have submitted.</span>
         <div className="check-grid">
           {people.map((u) => (
             <label key={u.id} className="check">
@@ -150,7 +149,8 @@ export function StartBaseline({ ds, onCancel }: { ds: Dataset; onCancel?: () => 
       </fieldset>
 
       <ErrorAlert error={users.error ?? lines.error ?? start.error} />
-      <div className="row" style={{ justifyContent: "flex-end" }}>
+      <div className="row sb-actions">
+        {blocked && <span className="muted small-text grow">{blocked}</span>}
         {onCancel && <button type="button" className="ghost" onClick={onCancel}>Cancel</button>}
         <button type="submit" className="primary" disabled={Boolean(blocked) || start.isPending} title={blocked ?? undefined}>
           {form.start === "recipe" ? "Start from this baseline" : `Start ${baselineLabel(form.family, nextVersion(form.family), false, nameFor(form.family))}`}
