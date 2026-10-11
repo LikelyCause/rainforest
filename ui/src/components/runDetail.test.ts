@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fmtMetric } from "../format";
-import { cellShade, headlineTiles, regressionTabs, regressionTiles } from "./RunDetail";
+import { cellShade, classTabs, headlineTiles, regressionTabs, regressionTiles } from "./RunDetail";
 import type { RegressionEvaluation } from "../types";
 
 describe("fmtMetric", () => {
@@ -56,5 +56,11 @@ describe("regressionTabs", () => {
     expect(regressionTabs(ev).map((t) => t.key)).toEqual(["scatter", "errors"]);
     expect(regressionTabs({ ...ev, bands: { labels: ["< 1", "≥ 1"], edges: [1], confusion_matrix: [[1, 0], [0, 1]], per_class: [] } })
       .map((t) => t.key)).toEqual(["scatter", "errors", "bands"]);
+  });
+});
+
+describe("classTabs", () => {
+  it("offers the matrix, the ROC curves and the per-class table", () => {
+    expect(classTabs().map((t) => t.key)).toEqual(["matrix", "roc", "classes"]);
   });
 });

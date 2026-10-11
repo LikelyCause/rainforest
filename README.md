@@ -598,8 +598,9 @@ experiment, and its manifest's `config` the `source` (`recipe` or `assessment`),
   that target and metric (lowest for RMSE), so choosing it doesn't use the test split; on *Test* the star can sit on a
   lower number than another run's, and its tooltip gives the validation score it was picked on. A run expands into,
   per target, its headline metrics (precision, recall and F1 are the positive class's for a binary target and macro
-  averages otherwise), a confusion matrix (correct predictions shaded in blue,
-  errors in red), its ROC curves and one per-class table ending in the macro and weighted averages; for a number, R²,
+  averages otherwise), then tabs for the confusion matrix (correct predictions
+  shaded in blue, errors in red), the ROC curves and the per-class table ending in the macro and weighted averages; for
+  a number, R²,
   RMSE, MAE and MAPE tiles over three tabs: the predicted-vs-actual scatter, the error histogram, and *Ranges* (the
   confusion matrix and per-range precision, recall and F1 described above). *Download model* and a test /
   validation switch apply to every target. A failed run expands into its settings, why it failed in a sentence (the full
