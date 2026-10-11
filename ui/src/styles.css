@@ -98,6 +98,9 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .step:hover { background: var(--surface-hover); text-decoration: none; }
 .step.active { background: var(--surface-2); color: var(--text-primary); font-weight: 600; }
 .step .count { color: var(--text-muted); font-weight: 400; margin-left: 4px; }
+.running-dot { display: inline-block; width: 7px; height: 7px; margin: 0 0 1px 7px; border-radius: 50%; background: var(--accent-fill);
+  vertical-align: middle; animation: running-pulse 1.4s ease-in-out infinite; }
+@keyframes running-pulse { 50% { opacity: 0.3; } }
 .topbar .spacer { flex: 1; }
 .baseline-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 10px; border: 1px solid var(--border);
   border-radius: 999px; color: var(--text-primary); text-decoration: none; white-space: nowrap; }
