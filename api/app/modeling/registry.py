@@ -200,7 +200,8 @@ def param_problems(spec: ModelSpec, params: dict[str, Any]) -> list[str]:
     if "random_state" in params:
         return ["random_state is set from the run's seed; pass seed instead"]
     est = spec.build({}, 0)
-    known = set(est.get_params())
+    # XGBoost takes its booster's settings (huber_slope, rate_drop, ...) as keyword arguments, not named parameters.
+    known = set(est.get_params()) | {s.name for s in model_params.settings_for(spec.key) or []}
     unknown = sorted(set(params) - known - (_lightgbm_native_params() if spec.key == "lightgbm" else set()))
     if unknown:
         return [f"{spec.label} has no parameter {k!r}" for k in unknown]
@@ -241,8 +242,7 @@ def regressor_params(spec: ModelSpec, params: dict[str, Any]) -> dict[str, Any]:
         # A catalogued model says which settings reach a regressor; the rest (class weights, ...) stay with classifiers.
         catalogued = {s.name for s in model_params.settings_for(spec.key) or []}
         routed = model_params.route(spec.key, model_params.effective(spec.key, params))[1]
-        return {k: v for k, v in routed.items()
-                if k in known and (k in catalogued or k not in _classifier_only(spec))}
+        return {k: v for k, v in routed.items() if k in catalogued or (k in known and k not in _classifier_only(spec))}
     return {k: v for k, v in params.items() if k in known and k not in _classifier_only(spec)}
 
 

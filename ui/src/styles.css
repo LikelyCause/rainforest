@@ -612,8 +612,10 @@ table.data tr.clickable:focus-visible { outline: 2px solid var(--accent); outlin
 .train-footer { justify-content: flex-end; gap: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
 .ms-title { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14px; }
 .ms-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 4px 28px; align-items: start; }
-.ms-summary { display: flex; justify-content: space-between; align-items: center; width: 100%; height: 30px; padding: 0 8px; background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-primary); font-weight: 600; font-size: 13px; }
-.ms-group h4 { margin: 4px 0 2px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+.ms-groups { gap: 12px; align-items: stretch; }
+.ms-group { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; }
+.ms-summary { display: flex; justify-content: space-between; align-items: center; width: 100%; height: 30px; padding: 0; background: transparent; border: 0; color: var(--text-primary); font-weight: 600; font-size: 13px; }
+.ms-group h4 { margin: 2px 0 2px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
 .ms-row { gap: 1px; padding-top: 4px; padding-bottom: 4px; }
 .ms-line { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 190px) 28px; align-items: center; gap: 8px; min-height: 30px; }
 .ms-line label { font-size: 13px; color: var(--text-secondary); }
