@@ -546,7 +546,7 @@ def test_no_read_path_shows_another_assessors_choices(people, blind, viewer, rea
         assert blind["b_analysis"]["id"] not in ids and blind["b_export_analysis"] not in ids
     elif read == "datasets list":
         mine = next(x for x in body if x["id"] == ds)
-        assert (mine["export_count"], mine["run_count"], mine["last_export"], mine["last_run"]) == (0, 0, None, None)
+        assert (mine["export_count"], mine["run_count"], mine["last_export"], mine["last_run"], mine["best_run"]) == (0, 0, None, None, None)
     elif read in ("experiments", "exports of experiment", "runs", "runs of experiment"):
         assert body == []
     elif read.startswith("sql ") and read[4:] in ("experiments", "exports", "model runs", "model metrics"):
