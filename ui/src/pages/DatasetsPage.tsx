@@ -343,9 +343,17 @@ function waitingOn(rows: Dataset[], me: ReturnType<typeof useMe>["data"]): Waiti
         body: <>Every assessment is in. Compare them side by side, settle where they differ, then finalize.</>,
       });
     }
+    const best = ds.best_run;
+    if (best && !best.chosen && can(me, "chooseModel")) {
+      out.push({
+        key: `choose-${ds.id}`, ds, edge: "var(--good)", chip: <Chip tone="good">{fmtInt(ds.run_count ?? 0)} run{ds.run_count === 1 ? "" : "s"}</Chip>,
+        title: "Mark a chosen model", to: `/d/${ds.id}/experiments/${best.experiment_id}?tab=runs&run=${best.run_id}`, action: "Compare runs",
+        body: <>Best on validation: {best.model_label}{best.value !== null ? <>, {metricLabel(best.metric ?? "")} {fmtNum(best.value, 3)}</> : null}. No model chosen yet.</>,
+      });
+    }
   }
   // Your own assessment first, then what only a lead can move.
-  const rank = (w: Waiting) => ["assess", "review", "setup"].indexOf(w.key.split("-")[0]);
+  const rank = (w: Waiting) => ["assess", "review", "setup", "choose"].indexOf(w.key.split("-")[0]);
   return out.sort((a, b) => rank(a) - rank(b));
 }
 
@@ -434,30 +442,32 @@ function AssessmentCell({ ds }: { ds: Dataset }) {
   );
 }
 
-/** The latest model run's headline score, linking to the dataset's experiments. */
+/** The run that stands for the dataset: its chosen model, else its best on validation; else the latest run's state. */
 function ResultCell({ ds, compact }: { ds: Dataset; compact?: boolean }) {
+  const best = ds.best_run;
   const run = ds.last_run;
   const exp = ds.last_export ? `Latest export v${ds.last_export.id} · ${ds.last_export.status}` : undefined;
+  if (best && best.value !== null) {
+    const score = <span className="num home-score">{fmtNum(best.value, 3)} <span>{metricLabel(best.metric ?? "")}</span></span>;
+    if (compact) return score;
+    return (
+      <div className="stack" style={{ gap: 2 }} title={`${best.chosen ? "Chosen model" : "Best on validation"} · validation score`}>
+        <span className="row" style={{ gap: 6 }}>{score}{best.chosen && <Chip tone="good">Chosen</Chip>}</span>
+        <Link className="small-text" to={`/d/${ds.id}/experiments/${best.experiment_id}?tab=runs&run=${best.run_id}`} onClick={(e) => e.stopPropagation()}>
+          {best.model_label} · {best.experiment_name}
+        </Link>
+      </div>
+    );
+  }
   if (!run) {
     if (compact || !ds.last_export) return compact ? null : <span className="muted">—</span>;
     return <Link className="small-text" to={`/d/${ds.id}/experiments`} title={exp} onClick={(e) => e.stopPropagation()}>Export v{ds.last_export.id}</Link>;
-  }
-  const label = run.model_label ?? run.model;
-  if (run.status === "done" && run.value !== null) {
-    const score = <span className="num home-score">{fmtNum(run.value, 3)} <span>{metricLabel(run.metric ?? "")}</span></span>;
-    if (compact) return score;
-    return (
-      <div className="stack" style={{ gap: 2 }} title={exp}>
-        {score}
-        <Link className="small-text" to={`/d/${ds.id}/experiments`} onClick={(e) => e.stopPropagation()}>{label}</Link>
-      </div>
-    );
   }
   if (compact) return null;
   return (
     <div className="stack" style={{ gap: 2, alignItems: "flex-start" }} title={exp}>
       <StatusBadge status={run.status} />
-      <Link className="small-text" to={`/d/${ds.id}/experiments`} onClick={(e) => e.stopPropagation()}>{label}</Link>
+      <Link className="small-text" to={`/d/${ds.id}/experiments`} onClick={(e) => e.stopPropagation()}>{run.model_label ?? run.model}</Link>
     </div>
   );
 }
@@ -725,7 +735,7 @@ export function DatasetsPage() {
                 <thead>
                   <tr>
                     <th scope="col">Dataset</th><th scope="col">Stage</th><th scope="col">Target</th><th scope="col">Assessment</th>
-                    <th scope="col" title="The latest model run's score on the test split">Latest result</th>
+                    <th scope="col" title="The chosen model, else the best run on the validation split">Best result</th>
                     <th scope="col" className="num">Updated</th><th scope="col"><span className="sr-only">Actions</span></th>
                   </tr>
                 </thead>

@@ -106,7 +106,48 @@ def list_datasets(user: CurrentUser) -> list[dict]:
              ORDER BY d.created_at DESC""",
         {"user": user["id"]},
     )
-    return with_baselines([_with_latest(row) for row in rows])
+    best = best_by_dataset([r["id"] for r in rows], visible)
+    return with_baselines([{**_with_latest(row), "best_run": best.get(row["id"])} for row in rows])
+
+
+def best_by_dataset(ids: list[int], visible: str) -> dict[int, dict]:
+    """Per dataset, the run that stands for it: the chosen model (the most recently chosen, when several experiments
+    have one), else the best finished run on the validation split by the same rule as `experiments.best_by_experiment`.
+    Only runs in experiments the viewer may see."""
+    if not ids:
+        return {}
+    runs = fetch_all(
+        f"""SELECT r.id, r.dataset_id, r.experiment_id, r.model, r.report ->> 'model_label' AS label,
+                   r.report -> 'order' AS run_order, r.metrics -> 'valid' AS valid, r.chosen_at,
+                   x.name AS experiment_name
+              FROM meta.model_runs r JOIN meta.experiments x ON x.id = r.experiment_id
+             WHERE r.dataset_id = ANY(%s) AND r.status = 'done' AND r.experiment_id IN ({visible})""",
+        (ids,),
+    )
+    by_ds: dict[int, list[dict]] = {}
+    for r in runs:
+        order, valid = r["run_order"] or [], r["valid"] or {}
+        scores = valid.get(order[0]) if order else None
+        by_ds.setdefault(r["dataset_id"], []).append({**r, "scores": scores if isinstance(scores, dict) else {}})
+
+    def entry(r: dict, chosen: bool) -> dict:
+        metric = next((m for m in experiments.HEADLINE_METRICS if isinstance(r["scores"].get(m), (int, float))), None)
+        return {"run_id": r["id"], "experiment_id": r["experiment_id"], "experiment_name": r["experiment_name"],
+                "model": r["model"], "model_label": r["label"] or (MODELS[r["model"]].label if r["model"] in MODELS else r["model"]),
+                "chosen": chosen, "metric": metric, "value": None if metric is None else float(r["scores"][metric])}
+
+    out: dict[int, dict] = {}
+    for ds_id, scored in by_ds.items():
+        chosen = [r for r in scored if r["chosen_at"] is not None]
+        if chosen:
+            out[ds_id] = entry(max(chosen, key=lambda r: r["chosen_at"]), True)
+            continue
+        for metric in experiments.HEADLINE_METRICS:
+            have = [r for r in scored if isinstance(r["scores"].get(metric), (int, float))]
+            if have:
+                out[ds_id] = entry(max(have, key=lambda r: r["scores"][metric]), False)
+                break
+    return out
 
 
 def _with_latest(row: dict) -> dict:

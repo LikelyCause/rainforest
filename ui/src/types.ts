@@ -39,6 +39,8 @@ export interface Dataset {
   run_count?: number;
   last_export?: { id: number; model_family: string; status: ExportJob["status"]; created_at: string; n_features: number | null } | null;
   last_run?: { id: number; model: string; model_label: string | null; status: ModelRun["status"]; metric: string | null; value: number | null } | null;
+  /** Datasets list only: the chosen model, else the best finished run on validation. */
+  best_run?: { run_id: number; experiment_id: number; experiment_name: string; model: string; model_label: string; chosen: boolean; metric: string | null; value: number | null } | null;
 }
 
 export type Action = "keep" | "drop" | "target";
