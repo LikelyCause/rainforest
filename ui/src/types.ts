@@ -49,7 +49,7 @@ export type TargetBins = { k: number } | { edges: number[] };
 export type SettingValue = string | number | boolean | null;
 
 /** A run's model, chain order and settings, to fill the Train menu again. */
-export interface TrainPrefill { exportId: number; model: string; order: string[]; values: Record<string, SettingValue> }
+export interface TrainPrefill { exportId: number; model: string; order: string[]; values: Record<string, SettingValue>; cvFolds?: number }
 
 /** One model setting, as GET /api/models publishes it. */
 export interface ModelSetting {
@@ -383,6 +383,16 @@ export interface ModelOption {
 
 export type Metrics = Record<string, Record<string, Record<string, number>>>; // split -> target -> metric
 
+/** K-fold scores on a run's training rows: per target and metric, the mean, spread and each fold's value. */
+export interface CrossValidation {
+  folds: number;
+  stratified_on: string | null;
+  /** Why K or the folds differ from what was asked, or why CV was skipped. */
+  note: string | null;
+  seconds?: number;
+  targets: Record<string, Record<string, { mean: number; std: number; folds: (number | null)[] }>>;
+}
+
 export interface TargetEvaluation {
   kind?: undefined;
   labels: string[];
@@ -417,7 +427,7 @@ export interface ModelRun {
   status: "pending" | "running" | "done" | "failed";
   status_message: string | null;
   error: string | null;
-  config: { order?: string[] | null; cv?: number; seed?: number; params?: Record<string, unknown>; device?: Device };
+  config: { order?: string[] | null; cv?: number; cv_folds?: number; seed?: number; params?: Record<string, unknown>; device?: Device };
   metrics: Metrics;
   report: {
     order?: string[];
@@ -429,6 +439,7 @@ export interface ModelRun {
     evaluation?: Record<string, Record<string, TargetEvaluation | RegressionEvaluation>>; // split -> target
     target_kinds?: Record<string, string>;
     mlflow_error?: string;
+    cross_validation?: CrossValidation | null;
     /** Run of a private experiment: logged to MLflow once its recipe version reaches review. */
     mlflow_pending?: boolean;
   };

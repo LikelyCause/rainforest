@@ -62,6 +62,7 @@ export const TrainPanel = forwardRef<HTMLElement, {
   const system = useQuery({ queryKey: ["system"], queryFn: api.system, staleTime: Infinity });
   const [model, setModel] = useState("");
   const [gpuOn, setGpuOn] = useState(true);
+  const [cvFolds, setCvFolds] = useState(5);
   const [order, setOrder] = useState<string[]>(targets);
   const [valuesByModel, setValuesByModel] = useState<Record<string, Record<string, SettingValue>>>({});
   const [dropped, setDropped] = useState<string[]>([]);
@@ -88,6 +89,7 @@ export const TrainPanel = forwardRef<HTMLElement, {
     if (!pending || !e || pending.exportId !== e.id || !models.data) return;
     const catalog = models.data.find((m) => m.key === pending.model)?.settings;
     setModel(pending.model);
+    if (pending.cvFolds !== undefined) setCvFolds(pending.cvFolds);
     setOrder(pending.order.filter((t) => targets.includes(t)));
     if (catalog) {
       const { values: v, dropped: d } = prefillValues(pending.values, catalog);
@@ -122,7 +124,7 @@ export const TrainPanel = forwardRef<HTMLElement, {
   const useGpu = gpuChoice && gpuOn;
   const start = useMutation({
     mutationFn: () => api.startRun(e!.id, {
-      model, order, device: useGpu ? "cuda" : "cpu",
+      model, order, device: useGpu ? "cuda" : "cpu", cv_folds: cvFolds,
       ...(catalog ? { params: changed(values, catalog, kinds), ...runFields(values, catalog) } : { cv: 5 }),
     }),
     onSuccess: (run) => {
@@ -176,6 +178,15 @@ export const TrainPanel = forwardRef<HTMLElement, {
             <span className="muted small-text num">{gpu.name}{gpu.memory_mb ? ` · ${fmtInt(Math.round(gpu.memory_mb / 1024))} GB` : ""}</span>
           </div>
         )}
+        <label className="field">Cross-validation
+          <select value={cvFolds} onChange={(ev) => setCvFolds(Number(ev.target.value))}>
+            <option value={0}>Off</option>
+            {Array.from({ length: 19 }, (_, i) => i + 2).map((k) => <option key={k} value={k}>{k} folds</option>)}
+          </select>
+          <span className="muted small-text">
+            {cvFolds ? `Scores ${cvFolds} folds of the training rows too: about ${cvFolds + 1}× the time` : "Validation and test scores only"}
+          </span>
+        </label>
       </div>
       {models.data?.some((m) => !m.compatible) && (
         <div className="row" style={{ justifyContent: "flex-end" }}>

@@ -45,7 +45,8 @@ for one run.
 | `bands.py` | Cutting a numeric target into bands: equal-count edges, chosen cut points, labels (`< 10`, `[10, 25)`, `≥ 80`), assignment and the fewer-than-2-rows check. |
 | `parquet_rows.py` | `read_rows`: selected rows of a Parquet file, read a few column chunks at a time (export fit sample, Explore samples). |
 | `modeling/params.py` | Each model's settings as data (LightGBM's and XGBoost's so far): groups, kinds, ranges, options, defaults, which links a value reaches (`applies`) and which settings another depends on (`when`, filled with their default once switched on); the checks and routing a run's `params` go through. |
-| `modeling/registry.py`, `modeling/train.py` | Model catalog (a classifier and a regressor per model, with the classifier-only parameters left out of regressors), compatibility and device params; training (`ClassifierChain` when every target is classes, `TargetChain` when any is a number), classification and regression evaluation, CLI. |
+| `modeling/registry.py`, `modeling/train.py` | Model catalog (a classifier and a regressor per model, with the classifier-only parameters left out of regressors), compatibility and device params; training (`ClassifierChain` when every target is classes, `TargetChain` when any is a number; `make_chain` and `score` serve the final fit and every cross-validation fold), classification and regression evaluation, CLI. |
+| `modeling/crossval.py` | Cross-validation folds of a run's training rows (stratified on the chain's first class target when its rarest class has K rows) and the per-target, per-metric mean, spread and fold values. |
 | `modeling/mlflow_log.py`, `modeling/mlflow_backfill.py` | Logging a finished model run to MLflow (experiment per dataset, params, metrics, tags, artifacts), and the CLI that logs runs that have no MLflow run yet. |
 | `gpu.py` | NVIDIA GPU detection (`nvidia-smi` plus an XGBoost CUDA test fit in a subprocess), started in a background thread at startup and cached per process. |
 | `analysis/prep.py`, `analysis/compute.py`, `analysis/runner.py` | Explore jobs: sampling and typing, the numeric work, caching and job lifecycle. |
@@ -184,7 +185,11 @@ the UI polls (`pending → running → done | failed`, with `progress` and `stat
    checks first (`exports._numeric_target_problems`), so values that don't read as numbers block before queueing.
 8. **Training.** `POST /api/exports/{id}/runs` checks model compatibility and the requested device (see `gpu.py`) and submits `runs._run`, which calls
    `modeling.train.train` and writes `models/run<id>_…/{classifier_chain.joblib, report.json}` (the joblib holds a
-   `ClassifierChain` or a `TargetChain`, named by `report.chain_kind`); metrics and the
+   `ClassifierChain` or a `TargetChain`, named by `report.chain_kind`). With `cv_folds` K, after the final fit and
+   its validation and test scores, `train` fits the same chain K more times on folds of the training rows
+   (`crossval.folds`), scores each held-out fold and keeps the summary (`crossval.summarize`) as
+   `report.cross_validation` and the means as `metrics.cv`; a fold that can't be fit skips cross-validation with a
+   note rather than failing the run. Metrics and the
    report go to `meta.model_runs`. With `MLFLOW_TRACKING_URI` set, `mlflow_log.log_model_run` then logs the run
    before it is marked done (status message *Logging to MLflow*), unless its experiment is private: then the run is
    marked done with `report.mlflow_pending` instead, in the same transaction that checked (see

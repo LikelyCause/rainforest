@@ -98,6 +98,8 @@ class RunRequest(BaseModel):
     model: str = "lightgbm"
     order: list[str] | None = None
     cv: int = Field(5, ge=0, le=10, description="0 chains the ground truth; otherwise 2-10 folds")
+    cv_folds: int = Field(5, ge=0, le=20, description="Cross-validation on the training rows: 0 for none, else 2-20 "
+                                                      "folds")
     seed: int = 42
     params: dict[str, Any] = Field(default_factory=dict)
     device: Literal["cpu", "cuda"] = "cpu"
@@ -107,6 +109,8 @@ class RunRequest(BaseModel):
     def _check(self) -> RunRequest:
         if self.cv == 1:
             raise ValueError("cv must be 0 (chain the ground truth) or 2-10 folds")
+        if self.cv_folds == 1:
+            raise ValueError("cv_folds must be 0 (no cross-validation) or 2-20 folds")
         return self
 
 

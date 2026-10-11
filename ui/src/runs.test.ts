@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bestRuns, metricFor, pickExport, starTitle, whyFailed } from "./runs";
+import { bestRuns, metricFor, pickExport, spreadFor, starTitle, whyFailed } from "./runs";
 import type { ModelRun } from "./types";
 
 const run = (id: number, valid: Record<string, Record<string, number>>, test: Record<string, Record<string, number>> = valid) =>
@@ -77,5 +77,28 @@ describe("whyFailed", () => {
     expect(whyFailed("ValueError: Target 'y' has a single value in the training split; there is nothing to predict.\n\nTraceback ..."))
       .toBe("Target 'y' has a single value in the training split; there is nothing to predict.");
     expect(whyFailed(null)).toBe("The run failed without a message.");
+  });
+});
+
+describe("cross-validation", () => {
+  const cvRun = {
+    id: 9,
+    metrics: { valid: { a: { roc_auc: 0.8 }, n: { r2: 0.7 } }, cv: { a: { roc_auc: 0.82, f1_macro: 0.6 }, n: { r2: 0.71, rmse: 3 } } },
+    report: { cross_validation: { folds: 3, stratified_on: "a", note: null, targets: {
+      a: { roc_auc: { mean: 0.82, std: 0.02, folds: [0.8, 0.82, 0.84] }, f1_macro: { mean: 0.6, std: 0.05, folds: [0.55, null, 0.65] } },
+      n: { r2: { mean: 0.71, std: 0.01, folds: [0.7, 0.71, 0.72] }, rmse: { mean: 3, std: 0.2, folds: [2.8, 3, 3.2] } },
+    } } },
+  } as unknown as ModelRun;
+  it("reads the CV mean like a split, and its spread for the same metric", () => {
+    expect(metricFor(cvRun, "cv", "a", "primary")).toBe(0.82);
+    expect(spreadFor(cvRun, "a", "primary")).toBe(0.02);
+    expect(spreadFor(cvRun, "a", "secondary")).toBe(0.05);
+    expect(spreadFor(cvRun, "n", "secondary")).toBe(0.2);
+    expect(spreadFor(run(1, { a: { roc_auc: 0.9 } }), "a", "primary")).toBeUndefined();
+  });
+  it("says the star is still picked on validation, without the test-split sentence", () => {
+    const t = starTitle(cvRun, "cv", "a", "primary");
+    expect(t).toContain("validation split (0.800)");
+    expect(t).not.toContain("test split");
   });
 });

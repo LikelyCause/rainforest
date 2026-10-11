@@ -51,6 +51,7 @@ from sklearn.multioutput import ClassifierChain
 
 from .. import bands
 from ..gpu import effective_device
+from . import crossval
 from .registry import (DEFAULT_MODEL, MODELS, ModelSpec, catalog, compatibility, device_params, get_model,
                        classifier_params, importances, order_problem, param_problems, regression_problem,
                        regressor_params)
@@ -336,12 +337,14 @@ def evaluate_regression(y: np.ndarray, pred: np.ndarray, seed: int = 42,
 
 def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] | None = None, seed: int = 42,
           params: dict | None = None, cv: int | None = 5, out_dir: Path | None = None,
-          progress: Callable[[str], None] | None = None, device: str = "cpu") -> dict[str, Any]:
+          progress: Callable[[str], None] | None = None, device: str = "cpu", cv_folds: int = 0) -> dict[str, Any]:
     spec = get_model(model)
     if problems := param_problems(spec, params or {}):
         raise ValueError("; ".join(problems))
     if cv == 1:
         raise ValueError("cv must be 0 (chain the ground truth) or 2 or more folds")
+    if cv_folds == 1 or cv_folds < 0:
+        raise ValueError("cv_folds must be 0 (no cross-validation) or 2 or more folds")
     params = {**(params or {}), **device_params(spec, device)}
     manifest, df = load_export(export_dir)
     export_family = manifest.get("model_family", "tree")
@@ -381,7 +384,10 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
             missing_from_train[t] = absent
     say(f"Fitting {spec.label} chain {' → '.join(order_names)} on {X_tr.shape[0]:,} rows × {X_tr.shape[1]:,} features"
         + (" on the GPU" if device == "cuda" else ""))
-    if any(numeric):
+
+    def make_chain():
+        if not any(numeric):
+            return build_chain(spec, kinds, order, seed, params, cv)
         merged = {**spec.default_params, **(params or {})}
         regressor = spec.build_regressor({**spec.regressor_defaults, **regressor_params(spec, merged)}, seed)
         if spec.family != "tree":
@@ -391,12 +397,15 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
             from sklearn.preprocessing import StandardScaler
 
             regressor = TransformedTargetRegressor(regressor=regressor, transformer=StandardScaler())
-        chain = TargetChain(spec.build(classifier_params(spec, merged), seed), regressor, kinds, order, cv,
-                            spec.handles_nan, seed)
-    else:
-        chain = build_chain(spec, kinds, order, seed, params, cv)
+        return TargetChain(spec.build(classifier_params(spec, merged), seed), regressor, kinds, order, cv,
+                           spec.handles_nan, seed)
+
+    def fit(chain, X: np.ndarray, Y: np.ndarray):
+        return chain.fit(X, Y if any(numeric) else Y.astype(np.int64))
+
+    chain = make_chain()
     t0 = time.time()
-    chain.fit(X_tr, Y_tr if any(numeric) else Y_tr.astype(np.int64))
+    fit(chain, X_tr, Y_tr)
     fit_seconds = time.time() - t0
     if device == "cuda":
         # XGBoost quietly drops to the CPU when it can't reach the GPU; don't report that as a GPU run.
@@ -406,30 +415,62 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
 
     # Ranges for scoring a number as classes too, cut on the training rows like an export's equal-sized bands.
     band_edges = [_band_edges(Y_tr[:, i]) if num else None for i, num in enumerate(numeric)]
+
+    def score(chain, X: np.ndarray, Y: np.ndarray) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Each target's metrics and evaluation details on rows (X, Y)."""
+        m, d = {}, {}
+        if isinstance(chain, TargetChain):
+            outs = chain.predict_all(X, n_classes)
+            for i, t in enumerate(targets):
+                m[t], d[t] = (evaluate_regression(Y[:, i], outs[i], seed, band_edges[i]) if numeric[i]
+                              else evaluate(Y[:, i].astype(int), outs[i], manifest["target_classes"].get(t)))
+            return m, d
+        with config_context(assume_finite=spec.handles_nan):
+            probas = chain_predict_proba(chain, X, n_classes)
+            predicted = chain.predict(X).astype(int)
+        for i, t in enumerate(targets):
+            m[t], d[t] = evaluate(Y[:, i].astype(int), probas[i], manifest["target_classes"].get(t))
+        # Sanity check: the manual walk must agree with sklearn's own chain prediction
+        if not np.array_equal(np.column_stack([p.argmax(1) for p in probas]), predicted):
+            raise RuntimeError("chain_predict_proba diverged from ClassifierChain.predict")
+        return m, d
+
     say("Evaluating on validation and test splits")
     metrics: dict[str, Any] = {}
     details: dict[str, Any] = {}
     for split in ("valid", "test"):
         X, Y = xy(split)
-        if len(X) == 0:
-            continue
-        metrics[split], details[split] = {}, {}
-        if isinstance(chain, TargetChain):
-            outs = chain.predict_all(X, n_classes)
-            for i, t in enumerate(targets):
-                metrics[split][t], details[split][t] = (
-                    evaluate_regression(Y[:, i], outs[i], seed, band_edges[i]) if numeric[i]
-                    else evaluate(Y[:, i].astype(int), outs[i], manifest["target_classes"].get(t)))
-            continue
-        with config_context(assume_finite=spec.handles_nan):
-            probas = chain_predict_proba(chain, X, n_classes)
-            predicted = chain.predict(X).astype(int)
-        for i, t in enumerate(targets):
-            metrics[split][t], details[split][t] = evaluate(Y[:, i].astype(int), probas[i],
-                                                            manifest["target_classes"].get(t))
-        # Sanity check: the manual walk must agree with sklearn's own chain prediction
-        if not np.array_equal(np.column_stack([p.argmax(1) for p in probas]), predicted):
-            raise RuntimeError("chain_predict_proba diverged from ClassifierChain.predict")
+        if len(X) > 0:
+            metrics[split], details[split] = score(chain, X, Y)
+
+    cross_validation = None
+    if cv_folds:
+        strat = next((i for i in order if not numeric[i]), None)
+        splits, note, stratified = crossval.folds(None if strat is None else Y_tr[:, strat], len(X_tr), cv_folds,
+                                                  seed, None if strat is None else targets[strat])
+        per_fold: list[dict[str, Any]] = []
+        t1 = time.time()
+        # CV only adds scores: whatever stops a fold skips it with a note, and the run keeps its model and scores.
+        for k, (rows, _) in enumerate(splits, 1):
+            if lone := [t for i, t in enumerate(targets) if np.unique(Y_tr[rows, i]).size < 2]:
+                splits, note = [], (f"Cross-validation skipped: fold {k}'s training rows have a single value of "
+                                    f"{', '.join(lone)}")
+                break
+        for k, (rows, held) in enumerate(splits, 1):
+            say(f"Cross-validating: fold {k} of {len(splits)}")
+            try:
+                fold_chain = make_chain()
+                fit(fold_chain, X_tr[rows], Y_tr[rows])
+                per_fold.append(score(fold_chain, X_tr[held], Y_tr[held])[0])
+            except Exception as exc:  # noqa: BLE001 - any failure skips CV, not the run
+                log.warning("cross-validation fold %s of %s failed", k, len(splits), exc_info=True)
+                per_fold, note = [], f"Cross-validation skipped: fold {k} of {len(splits)} failed ({exc})"
+                break
+        summary = crossval.summarize(per_fold)
+        cross_validation = {"folds": len(per_fold), "stratified_on": targets[strat] if stratified and per_fold else None,
+                            "note": note, "seconds": round(time.time() - t1, 1), "targets": summary}
+        if summary:
+            metrics["cv"] = {t: {m: v["mean"] for m, v in ms.items()} for t, ms in summary.items()}
 
     top_features = {}
     for pos, est in enumerate(chain.estimators_):
@@ -469,6 +510,7 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
         "metrics": metrics,
         "evaluation": details,
         "top_features": top_features,
+        **({"cv_folds": cv_folds, "cross_validation": cross_validation} if cv_folds else {}),
     }
     (out_dir / "report.json").write_text(json.dumps(report, indent=2))
     report["model_dir"] = str(out_dir)
@@ -488,6 +530,8 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--cv", type=int, default=5,
                     help="folds for out-of-fold chain features: 0 chains the ground truth, else 2 or more")
+    ap.add_argument("--cv-folds", type=int, default=0, choices=[0, *range(2, 21)], metavar="K",
+                    help="cross-validate on K folds of the training rows: 0 for none (default), else 2-20")
     ap.add_argument("--param", action="append", default=[], metavar="KEY=VALUE",
                     help="override a model parameter, e.g. --param n_estimators=1000 (repeatable)")
     ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"], help="cuda needs the GPU image (XGBoost only)")
@@ -513,7 +557,7 @@ def main() -> None:
         except json.JSONDecodeError:
             overrides[k] = v
     report = train(export_dir, args.model, args.order.split(",") if args.order else None, args.seed, overrides,
-                   args.cv or None, device=args.device)
+                   args.cv or None, device=args.device, cv_folds=args.cv_folds)
     print(json.dumps({k: report[k] for k in ("model_dir", "model", "device", "order", "chain_method", "n_train",
                                              "metrics")},
                      indent=2))
