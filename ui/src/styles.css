@@ -191,7 +191,7 @@ input, select, textarea {
 }
 textarea { resize: vertical; min-height: 64px; }
 input[type="checkbox"] { min-height: auto; accent-color: var(--accent); width: 16px; height: 16px; }
-label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-secondary); font-weight: 500; }
+label.field, div.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-secondary); font-weight: 500; }
 label.check { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
 
 .segmented { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); overflow: hidden; }

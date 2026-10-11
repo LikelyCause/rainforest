@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import { describeSettings } from "../settings";
@@ -159,6 +159,7 @@ function RangesView({ ev, m }: { ev: RegressionEvaluation; m: Record<string, num
 function RegressionCard({ target, m, ev }: { target: string; m: Record<string, number>; ev?: RegressionEvaluation }) {
   const t = useChartTheme();
   const [tab, setTab] = useState<"scatter" | "errors" | "bands">("scatter");
+  const steady = useSteadyHeight();
   const scatter = useMemo(() => (ev ? scatterOption(t, ev.scatter.actual, ev.scatter.predicted) : null), [t, ev]);
   const residuals = useMemo(() => (ev ? histogramOption(t, { kind: "histogram", edges: ev.residuals.edges, counts: ev.residuals.counts } as HistogramChart,
     { xLabel: "Error (predicted − actual)" }) : null), [t, ev]);
@@ -180,7 +181,8 @@ function RegressionCard({ target, m, ev }: { target: string; m: Record<string, n
       </div>
       {ev && scatter && residuals ? (
         <>
-          <ResultTabs tabs={tabs} value={shown} onChange={setTab} label={`Results for ${target}`} />
+          <ResultTabs tabs={tabs} value={shown} onChange={(k) => { steady.hold(); setTab(k); }} label={`Results for ${target}`} />
+          <div ref={steady.box} className="stack" style={{ gap: 8 }}>
           {shown === "scatter" && (
             <div className="stack" style={{ gap: 4 }}>
               <span className="muted small-text">
@@ -196,6 +198,7 @@ function RegressionCard({ target, m, ev }: { target: string; m: Record<string, n
             </div>
           )}
           {shown === "bands" && <RangesView ev={ev} m={m} />}
+          </div>
           {!ev.bands && <span className="muted small-text">This run predates range scores; train it again to see them.</span>}
         </>
       ) : <div className="muted small-text">No evaluation details for this split.</div>}
@@ -205,6 +208,14 @@ function RegressionCard({ target, m, ev }: { target: string; m: Record<string, n
 
 export function classTabs(): { key: "matrix" | "roc" | "classes"; label: string }[] {
   return [{ key: "matrix", label: "Confusion matrix" }, { key: "roc", label: "ROC curves" }, { key: "classes", label: "Per class" }];
+}
+
+/** Keeps a box from shrinking when its content is swapped, so a page scrolled to the bottom doesn't jump up when a
+ * shorter tab or split replaces a taller one. */
+function useSteadyHeight() {
+  const box = useRef<HTMLDivElement>(null);
+  const hold = () => { if (box.current) box.current.style.minHeight = `${box.current.offsetHeight}px`; };
+  return { box, hold };
 }
 
 /** A card's views, one at a time, under its tiles. */
@@ -226,6 +237,7 @@ function TargetCard({ target, m, ev }: { target: string; m: Record<string, numbe
   const total = ev?.per_class.reduce((a, c) => a + c.support, 0);
   const tiles = headlineTiles(m, binary);
   const [tab, setTab] = useState<"matrix" | "roc" | "classes">("matrix");
+  const steady = useSteadyHeight();
   return (
     <section className="card stack target-card">
       <div className="card-head" style={{ marginBottom: 0 }}>
@@ -240,7 +252,8 @@ function TargetCard({ target, m, ev }: { target: string; m: Record<string, numbe
           </div>
         ))}
       </div>
-      <ResultTabs tabs={classTabs()} value={tab} onChange={setTab} label={`Results for ${target}`} />
+      <ResultTabs tabs={classTabs()} value={tab} onChange={(k) => { steady.hold(); setTab(k); }} label={`Results for ${target}`} />
+      <div ref={steady.box} className="stack" style={{ gap: 8 }}>
       {tab === "matrix" && (ev ? <ConfusionMatrix ev={ev} accuracy={m.accuracy} /> : (
         <div className="muted small-text">This run predates confusion matrices — train it again to see them.</div>
       ))}
@@ -280,6 +293,7 @@ function TargetCard({ target, m, ev }: { target: string; m: Record<string, numbe
           </tfoot>
         </table>
       )}
+      </div>
     </section>
   );
 }
@@ -311,6 +325,7 @@ export function RunDetail({ run, targets, onTrainAgain = null }: {
   run: ModelRun; targets: string[]; onTrainAgain?: ((p: TrainPrefill) => void) | null;
 }) {
   const [split, setSplit] = useState<Split>("test");
+  const steady = useSteadyHeight();
   const metrics = run.metrics?.[split];
   if (run.status === "failed") {
     return (
@@ -341,7 +356,7 @@ export function RunDetail({ run, targets, onTrainAgain = null }: {
           <a className="small-text" href={`/api/runs/${run.id}/files/model`}>Download model ↓</a>
           <div className="segmented" role="group" aria-label="Split">
             {(["test", "valid"] as Split[]).map((s) => (
-              <button key={s} className={`small${split === s ? " on" : ""}`} onClick={() => setSplit(s)}>{s === "valid" ? "validation" : "test"}</button>
+              <button key={s} className={`small${split === s ? " on" : ""}`} onClick={() => { steady.hold(); setSplit(s); }}>{s === "valid" ? "validation" : "test"}</button>
             ))}
           </div>
         </div>
@@ -349,6 +364,7 @@ export function RunDetail({ run, targets, onTrainAgain = null }: {
       {!run.mlflow_url && run.report?.mlflow_error && (
         <div className="alert warn">Not logged to MLflow: {run.report.mlflow_error} (log it later with make mlflow-backfill)</div>
       )}
+      <div ref={steady.box}>
       {metrics ? (
         <div className="grid-2">
           {targets.filter((t) => metrics[t]).map((t) => {
@@ -361,6 +377,7 @@ export function RunDetail({ run, targets, onTrainAgain = null }: {
       ) : (
         <div className="muted">No {split} split in this export.</div>
       )}
+      </div>
     </div>
   );
 }
