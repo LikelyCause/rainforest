@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bestRuns, metricFor, pickExport, spreadFor, starTitle, whyFailed } from "./runs";
+import { bestRuns, metricFor, pickExport, runColumns, spreadFor, starTitle, whyFailed } from "./runs";
 import type { ModelRun } from "./types";
 
 const run = (id: number, valid: Record<string, Record<string, number>>, test: Record<string, Record<string, number>> = valid) =>
@@ -12,6 +12,17 @@ describe("metricFor", () => {
     expect(metricFor(r, "valid", "b", "primary")).toBe(0.7);
     expect(metricFor(r, "test", "a", "secondary")).toBe(0.6);
     expect(metricFor(r, "test", "missing", "primary")).toBeUndefined();
+  });
+});
+
+describe("PR AUC", () => {
+  it("is a column for class targets only, read as pr_auc or its macro and starred like the others", () => {
+    expect(runColumns("binary").map((c) => c.label)).toEqual(["AUC", "PR AUC", "F1 (macro)"]);
+    expect(runColumns("regression").map((c) => c.metric)).toEqual(["primary", "secondary"]);
+    expect(metricFor(run(1, { a: { roc_auc: 0.6, pr_auc: 0.18 } }), "test", "a", "pr")).toBe(0.18);
+    expect(metricFor(run(1, { b: { roc_auc_ovr_macro: 0.6, pr_auc_macro: 0.3 } }), "test", "b", "pr")).toBe(0.3);
+    expect(metricFor(run(1, { p: { r2: 0.8, rmse: 3 } }), "test", "p", "pr")).toBeUndefined();
+    expect(bestRuns([run(1, { a: { pr_auc: 0.1 } }), run(2, { a: { pr_auc: 0.2 } })], ["a"])).toEqual({ "a:pr": 2 });
   });
 });
 

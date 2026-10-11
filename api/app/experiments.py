@@ -26,7 +26,10 @@ COLS = """x.id, x.dataset_id, x.name, x.owner, x.recipe_id, x.assessor_id, x.sou
           x.archived_at, x.is_default, x.target_order, xr.family AS recipe_family, xr.version AS recipe_version,
           xr.phase AS recipe_phase, meta.baseline_name(xr.dataset_id, xr.family) AS recipe_name,
           (x.assessor_id IS NOT NULL AND xr.phase = 'assessing') AS private,
-          (SELECT name FROM meta.users u WHERE u.id = coalesce(x.owner, x.assessor_id)) AS owner_name"""
+          (SELECT name FROM meta.users u WHERE u.id = coalesce(x.owner, x.assessor_id)) AS owner_name,
+          (SELECT json_build_object('run_id', r.id, 'model', r.model, 'model_label', r.report ->> 'model_label',
+                                    'by', (SELECT name FROM meta.users u WHERE u.id = r.chosen_by))
+             FROM meta.model_runs r WHERE r.experiment_id = x.id AND r.chosen_at IS NOT NULL) AS chosen"""
 FROM = "meta.experiments x JOIN meta.recipes xr ON xr.id = x.recipe_id"
 # Metric that stands for a run when comparing experiments, in order of preference (validation split).
 HEADLINE_METRICS = ("roc_auc", "roc_auc_ovr_macro", "r2", "accuracy")

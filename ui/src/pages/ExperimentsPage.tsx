@@ -28,6 +28,12 @@ export function PrivateBadge({ x }: { x: Experiment }) {
 }
 
 /** How a team experiment differs from its baseline, in a badge or two. */
+function ChosenBadge({ x }: { x: Experiment }) {
+  if (!x.chosen) return null;
+  return <span className="badge good" title={`Run #${x.chosen.run_id}${x.chosen.by ? `, chosen by ${x.chosen.by}` : ""}`}>
+    Chosen: {x.chosen.model_label ?? x.chosen.model}</span>;
+}
+
 export function AdjustedBadges({ x }: { x: Experiment }) {
   return (
     <>
@@ -126,7 +132,7 @@ export function ExperimentsPage() {
                   <tr key={x.id}>
                     <td>
                       <Link to={`/d/${ds.id}/experiments/${x.id}`}><b>{x.name}</b></Link>{" "}
-                      <PrivateBadge x={x} /><AdjustedBadges x={x} />{x.archived_at && <span className="badge">archived</span>}
+                      <PrivateBadge x={x} /><AdjustedBadges x={x} /><ChosenBadge x={x} />{x.archived_at && <span className="badge">archived</span>}
                     </td>
                     <td className="secondary">{sourceLabel(x, me)}</td>
                     <td className="secondary">{x.owner_name ?? <span className="muted">team</span>}</td>
@@ -205,6 +211,7 @@ function Header({ ds, x, me }: { ds: Dataset; x: Experiment; me: Me }) {
       <div className="secondary small-text">
         Built from <b>{sourceLabel(x, me)}</b> · {x.owner_name ? `by ${x.owner_name}` : "team"} · created {fmtAgo(x.created_at)}
         {x.best && <> · best {fmtNum(x.best.value, 3)} {metricLabel(x.best.metric)} on validation (run #{x.best.run_id})</>}
+        {x.chosen && <> · chosen: {x.chosen.model_label ?? x.chosen.model} (run #{x.chosen.run_id}){x.chosen.by ? `, by ${x.chosen.by}` : ""}</>}
       </div>
       {note && <div className="alert info" style={{ margin: 0 }}>{note}</div>}
       {editable ? (

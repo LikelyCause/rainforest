@@ -8,9 +8,10 @@ import { RunDetail } from "../components/RunDetail";
 import { TrainPanel, type TrainRequest } from "../components/TrainPanel";
 import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtInt, fmtMetric, fmtNum, fmtPct } from "../format";
 import { toast } from "../toast";
-import { bestRuns, columnLabels, metricFor, spreadFor, starTitle, whyFailed, type RunMetric, type Split } from "../runs";
-import { sourceLabel } from "../experiments";
-import type { Dataset, Experiment, ExportJob, ModelRun, TrainPrefill } from "../types";
+import { bestRuns, metricFor, runColumns, spreadFor, starTitle, whyFailed, type RunMetric, type Split } from "../runs";
+import { lastRowRules, NO_RULES, sourceLabel, type RowRules } from "../experiments";
+import { describeSettings } from "../settings";
+import type { Dataset, Experiment, ExportJob, ModelRun, SettingValue, TrainPrefill } from "../types";
 
 const FAMILY_EXPLAINER: Record<string, string> = {
   tree: "Missing values stay as NaN for the trees to route; no scaling or log transforms; mid/high-cardinality categoricals become compact ordinal codes.",
@@ -60,17 +61,10 @@ function SplitBar({ valid, test, rows }: { valid: number; test: number; rows: nu
   );
 }
 
-interface RowRules {
-  dedupe: boolean;
-  exclude: { field: string; values: string[] }[];
-  first_per: { key: string; order: string | null } | null;
-  group_by: string | null;
-}
-const NO_RULES: RowRules = { dedupe: false, exclude: [], first_per: null, group_by: null };
 const rulesBody = (r: RowRules) => ({ ...r, exclude: r.exclude.filter((e) => e.field && e.values.length) });
 
 /** Which rows go into the export and how the split keeps related rows together. */
-function RowRulesEditor({ rules, onChange, names }: { rules: RowRules; onChange: (r: RowRules) => void; names: string[] }) {
+function RowRulesEditor({ rules, onChange, from, names }: { rules: RowRules; onChange: (r: RowRules) => void; from: number | null; names: string[] }) {
   const set = (patch: Partial<RowRules>) => onChange({ ...rules, ...patch });
   const pick = (value: string | null, onPick: (v: string | null) => void, none: string, label: string) => (
     <select aria-label={label} value={value ?? ""} onChange={(e) => onPick(e.target.value || null)}>
@@ -81,7 +75,7 @@ function RowRulesEditor({ rules, onChange, names }: { rules: RowRules; onChange:
   const active = rules.dedupe || rules.exclude.length > 0 || rules.first_per !== null || rules.group_by !== null;
   return (
     <details className="advanced" open={active || undefined}>
-      <summary className="small-text secondary">Rows{active ? " · rules set" : ""}</summary>
+      <summary className="small-text secondary">Rows{active ? (from ? ` · same rules as Export #${from}` : " · rules set") : ""}</summary>
       <div className="stack" style={{ gap: 8, marginTop: 8 }}>
         <label className="check small-text">
           <input type="checkbox" checked={rules.dedupe} onChange={(e) => set({ dedupe: e.target.checked })} /> Leave out exact duplicate rows
@@ -121,6 +115,15 @@ function BuildPanel({ datasetId, family, rows, x }: { datasetId: number; family:
   const [fitRows, setFitRows] = useState<number | null>(null);
   const [fitText, setFitText] = useState<string | null>(null);
   const [rules, setRules] = useState<RowRules>(NO_RULES);
+  // Start from the rules the dataset's last export used, until someone changes them here.
+  const allExports = useQuery({ queryKey: ["exports", datasetId, "all"], queryFn: () => api.exports(datasetId) });
+  const [rulesFrom, setRulesFrom] = useState<number | null>(null);
+  const touched = useRef(false);
+  useEffect(() => {
+    const last = touched.current ? null : lastRowRules(allExports.data ?? []);
+    if (last && last.from !== rulesFrom) { setRules(last.rules); setRulesFrom(last.from); }
+  }, [allExports.data]);
+  const changeRules = (r: RowRules) => { touched.current = true; setRulesFrom(null); setRules(r); };
   const v = Number(valid) / 100, t = Number(test) / 100;
   const train = 1 - v - t;
   const splitError = !Number.isFinite(v) || !Number.isFinite(t) || v < 0 || t < 0 ? "Shares must be numbers of 0% or more."
@@ -197,7 +200,7 @@ function BuildPanel({ datasetId, family, rows, x }: { datasetId: number; family:
           </label>
         </div>
         {splitError && <span className="small-text" style={{ color: "var(--bad)" }} role="alert">{splitError}</span>}
-        <RowRulesEditor rules={rules} onChange={setRules} names={(fields.data ?? []).map((f) => f.name)} />
+        <RowRulesEditor rules={rules} onChange={changeRules} from={rulesFrom} names={(fields.data ?? []).map((f) => f.name)} />
         <details className="advanced">
           <summary className="small-text secondary">Advanced</summary>
           <div className="row" style={{ gap: 12, marginTop: 8 }}>
@@ -348,6 +351,9 @@ function RunsGroup({ e, runs, fresh, onTrainAgain, split }: {
   const best = useMemo(() => bestRuns(runs, targets), [runs, targets]);
   const models = useQuery({ queryKey: ["exportModels", e.id], queryFn: () => api.modelsForExport(e.id), staleTime: 60_000 });
   const labels = Object.fromEntries((models.data ?? []).map((m) => [m.key, m.label]));
+  const settingsOf = (model: string) => models.data?.find((m) => m.key === model)?.settings;
+  const cols = (["primary", "pr", "secondary"] as const).flatMap((m) => targets.flatMap((t) =>
+    runColumns(kinds[t]).filter((c) => c.metric === m).map((c) => ({ t, m, label: c.label }))));
   // A finished run opens on its results; a failed one on why it failed.
   const opens = (r: ModelRun) => r.status === "done" || r.status === "failed";
   // Open a run's detail as soon as the run you just started finishes.
@@ -375,15 +381,14 @@ function RunsGroup({ e, runs, fresh, onTrainAgain, split }: {
     <table className="data runs">
       <thead>
         <tr className="group-head">
-          <td colSpan={6 + targets.length * 2}>
+          <td colSpan={6 + cols.length}>
             Export #{e.id} · {e.recipe_version != null ? baselineLabel(e.recipe_family ?? e.model_family, e.recipe_version, true, e.recipe_name) : familyShort(e.model_family)}
             {adjustedNote(e)}{sc ? ` · ${fmtInt(sc.train)} / ${fmtInt(sc.valid)} / ${fmtInt(sc.test)}` : ""}
           </td>
         </tr>
         <tr>
           <th>Model</th><th>Chain order</th><th>Status</th>
-          {targets.map((t) => <th key={"a" + t} className="num">{t} {columnLabels(kinds[t])[0]}</th>)}
-          {targets.map((t) => <th key={"f" + t} className="num">{t} {columnLabels(kinds[t])[1]}</th>)}
+          {cols.map((c) => <th key={c.t + c.m} className="num">{c.t} {c.label}</th>)}
           <th className="num">Fit</th><th>Device</th><th>MLflow</th>
         </tr>
       </thead>
@@ -396,21 +401,23 @@ function RunsGroup({ e, runs, fresh, onTrainAgain, split }: {
               onClick={() => opens(r) && setOpen(open === r.id ? null : r.id)} aria-expanded={opens(r) ? open === r.id : undefined}>
               <td>{opens(r) ? (open === r.id ? "▾" : "▸") : ""} {r.report?.model_label ?? labels[r.model] ?? r.model}
                 {r.chosen_at && <> <span className="badge good" title={r.chosen_by_name ? `Chosen by ${r.chosen_by_name}` : undefined}>Chosen</span></>}
-                {r.note && <span className="muted small-text" title={r.note}> ✎</span>}</td>
+                {r.note && <span className="muted small-text" title={r.note}> ✎</span>}
+                {Object.keys(r.config?.params ?? {}).length > 0 && (
+                  <div className="muted small-text run-params">{describeSettings(r.config.params as Record<string, SettingValue>, settingsOf(r.model))}</div>
+                )}</td>
               <td className="secondary">{order.join(" → ")}</td>
               <td>
                 {r.status === "done" ? <span className="badge good">✓ done</span>
                   : r.status === "failed" ? <span className="badge bad" title={whyFailed(r.error)}>✕ failed</span>
                   : <span className="row" style={{ flexWrap: "nowrap" }}><span className="badge accent"><span className="spinner" aria-hidden="true" /> {r.status_message ?? r.status}</span></span>}
               </td>
-              {targets.map((t) => <Fragment key={t + "a"}>{cell(r, t, "primary")}</Fragment>)}
-              {targets.map((t) => <Fragment key={t + "f"}>{cell(r, t, "secondary")}</Fragment>)}
+              {cols.map((c) => <Fragment key={c.t + c.m}>{cell(r, c.t, c.m)}</Fragment>)}
               <td className="num">{r.report?.fit_seconds !== undefined ? `${fmtNum(r.report.fit_seconds, 2)}s` : "—"}</td>
               <td>{(r.report?.device ?? r.config?.device) === "cuda" ? <span className="badge accent">GPU</span> : <span className="muted small-text">CPU</span>}</td>
               <td><MlflowCell r={r} /></td>
             </tr>
             {open === r.id && (
-              <tr className="run-detail"><td colSpan={6 + targets.length * 2}><RunDetail run={r} targets={order} onTrainAgain={onTrainAgain} /></td></tr>
+              <tr className="run-detail"><td colSpan={6 + cols.length}><RunDetail run={r} targets={order} onTrainAgain={onTrainAgain} /></td></tr>
             )}
           </Fragment>
         );

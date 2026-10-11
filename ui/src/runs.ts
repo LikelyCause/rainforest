@@ -2,14 +2,15 @@ import { fmtMetric } from "./format";
 import type { ModelRun } from "./types";
 
 /** The two numbers the runs table shows per target: AUC and macro F1 for classes, R² and RMSE for a number. */
-export type RunMetric = "primary" | "secondary";
+export type RunMetric = "primary" | "pr" | "secondary";
 export type Split = "valid" | "test" | "cv";
 
 const isNumber = (x: Record<string, unknown> | undefined) => !!x && ("r2" in x || "rmse" in x);
 
 /** Which metric a column shows for a target's metrics: AUC (binary, else one-vs-rest) and macro F1, or R² and RMSE. */
 function keyFor(x: Record<string, unknown>, m: RunMetric): string {
-  if (isNumber(x)) return m === "primary" ? "r2" : "rmse";
+  if (isNumber(x)) return m === "primary" ? "r2" : m === "pr" ? "" : "rmse";
+  if (m === "pr") return "pr_auc" in x ? "pr_auc" : "pr_auc_macro";
   return m === "primary" ? ("roc_auc" in x ? "roc_auc" : "roc_auc_ovr_macro") : "f1_macro";
 }
 
@@ -38,7 +39,7 @@ const lowerIsBetter = (r: ModelRun, target: string, m: RunMetric) => m === "seco
 export function bestRuns(runs: ModelRun[], targets: string[]): Record<string, number> {
   const out: Record<string, number> = {};
   for (const t of targets) {
-    for (const m of ["primary", "secondary"] as const) {
+    for (const m of ["primary", "pr", "secondary"] as const) {
       const scored = runs.flatMap((r) => {
         const v = metricFor(r, "valid", t, m);
         return v === undefined ? [] : [{ id: r.id, v, low: lowerIsBetter(r, t, m) }];
@@ -49,9 +50,10 @@ export function bestRuns(runs: ModelRun[], targets: string[]): Record<string, nu
   return out;
 }
 
-/** Column headings for a target's two numbers. */
-export function columnLabels(kind: string | undefined): [string, string] {
-  return kind === "regression" ? ["R²", "RMSE"] : ["AUC", "F1 (macro)"];
+/** A target's columns in the runs table; PR AUC is the score to compare when the positive class is rare. */
+export function runColumns(kind: string | undefined): { metric: RunMetric; label: string }[] {
+  return kind === "regression" ? [{ metric: "primary", label: "R²" }, { metric: "secondary", label: "RMSE" }]
+    : [{ metric: "primary", label: "AUC" }, { metric: "pr", label: "PR AUC" }, { metric: "secondary", label: "F1 (macro)" }];
 }
 
 /** The export the Train panel works on: the chosen one while it's finished, else the newest finished one. */

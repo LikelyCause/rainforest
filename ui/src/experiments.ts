@@ -98,3 +98,21 @@ export function baselineDiff(draft: DecisionInput, base: FieldResponse["baseline
 export function revertedInput(draft: DecisionInput, base: BaselineField): DecisionInput {
   return { ...baselineInput(base, draft.family ?? ""), notes: draft.notes, reviewed: true };
 }
+
+export interface RowRules {
+  dedupe: boolean;
+  exclude: { field: string; values: string[] }[];
+  first_per: { key: string; order: string | null } | null;
+  group_by: string | null;
+}
+export const NO_RULES: RowRules = { dedupe: false, exclude: [], first_per: null, group_by: null };
+
+/** The row rules of the dataset's newest export that set any, so the next export starts from them. */
+export function lastRowRules(exports: { id: number; config: Record<string, any> | null }[]): { from: number; rules: RowRules } | null {
+  for (const e of [...exports].sort((a, b) => b.id - a.id)) {
+    const c = e.config ?? {};
+    const rules: RowRules = { dedupe: Boolean(c.dedupe), exclude: c.exclude ?? [], first_per: c.first_per ?? null, group_by: c.group_by ?? null };
+    if (rules.dedupe || rules.exclude.length || rules.first_per || rules.group_by) return { from: e.id, rules };
+  }
+  return null;
+}

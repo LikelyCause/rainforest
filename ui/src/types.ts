@@ -305,6 +305,8 @@ export interface Experiment {
   mlflow_experiment_id?: string | null;
   /** Its best finished run on the validation split. */
   best?: { metric: string; value: number; run_id: number; target: string } | null;
+  /** The run a lead marked as the experiment's chosen model. */
+  chosen?: { run_id: number; model: string; model_label: string | null; by: string | null } | null;
   /** The experiment's targets in chain order (team experiments). */
   target_order?: string[] | null;
   /** List rows and detail: fields that differ from the baseline, and whether the targets do. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addBlocked, baselineDiff, metricLabel, canEdit, filterExperiments, mlflowExperimentUrl, privacyNote, revertedInput, sourceLabel, sourceOptions } from "./experiments";
+import { lastRowRules, addBlocked, baselineDiff, metricLabel, canEdit, filterExperiments, mlflowExperimentUrl, privacyNote, revertedInput, sourceLabel, sourceOptions } from "./experiments";
 import type { Experiment } from "./types";
 
 const me = { id: 2, role: "member" as const };
@@ -126,5 +126,18 @@ describe("metricLabel", () => {
   it("names AUC and R²", () => {
     expect(metricLabel("roc_auc_ovr_macro")).toBe("AUC");
     expect(metricLabel("r2")).toBe("R²");
+  });
+});
+
+describe("lastRowRules", () => {
+  const ex = (id: number, config: Record<string, unknown>) => ({ id, config });
+  it("takes the newest export that set row rules, whatever experiment it was in", () => {
+    const rules = { dedupe: true, exclude: [{ field: "d", values: ["11"] }], first_per: { key: "p", order: "e" }, group_by: "p" };
+    expect(lastRowRules([ex(3, { seed: 42 }), ex(2, rules), ex(1, { dedupe: true })])).toEqual({ from: 2, rules });
+  });
+  it("fills what an older export didn't record, and is null when none set rules", () => {
+    expect(lastRowRules([ex(1, { group_by: "p" })])).toEqual({ from: 1, rules: { dedupe: false, exclude: [], first_per: null, group_by: "p" } });
+    expect(lastRowRules([ex(1, { dedupe: false, exclude: [] })])).toBeNull();
+    expect(lastRowRules([])).toBeNull();
   });
 });

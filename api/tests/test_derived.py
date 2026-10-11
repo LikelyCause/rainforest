@@ -98,4 +98,7 @@ def test_a_lead_marks_one_chosen_run_per_experiment_and_authors_note_runs(people
     first = lead.get(f"/api/runs/{ids[0]}").json()
     assert second["chosen_at"] and first["chosen_at"] is None and first["note"] == "best CV"
     assert second["chosen_by_name"] == lead.get("/api/auth/me").json()["name"]
+    listed = {x["id"]: x for x in lead.get(f"/api/datasets/{ds['id']}/experiments").json()}[second["experiment_id"]]
+    assert listed["chosen"]["run_id"] == ids[1] and listed["chosen"]["model"] == "lightgbm"
+    assert lead.get(f"/api/experiments/{second['experiment_id']}").json()["chosen"]["run_id"] == ids[1]
     assert member.patch(f"/api/runs/{ids[0]}", json={"note": "mine?"}).status_code == 403
