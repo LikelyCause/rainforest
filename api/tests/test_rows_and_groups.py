@@ -3,6 +3,8 @@ import numpy as np
 import polars as pl
 import pytest
 
+from .team_helpers import app_, people  # noqa: F401  (fixtures)
+
 from app.modeling.crossval import folds
 from app.profiling import infer_type
 from app.semantics import validate_decision
@@ -69,3 +71,17 @@ def test_coded_columns_are_inferred_as_codes_and_keys():
     assert infer_type(adm, "admission_type_id", adm.n_unique(), adm.len())[0] == "categorical"
     count = pl.Series(rng.integers(1, 80, 5000))
     assert infer_type(count, "num_medications", count.n_unique(), count.len())[0] == "numeric_discrete"
+
+
+def test_the_database_keeps_a_one_vs_rest_target(people):
+    from .team_helpers import fields, save, start, upload
+
+    lead = people["lead"]
+    csv = "x,y\n" + "".join(f"{i % 7},{'abc'[i % 3]}\n" for i in range(300))
+    ds = upload(lead, csv, targets="y")
+    start(lead, ds, "tree", [lead])
+    r = save(lead, fields(lead, ds)["y"]["id"], action="target", target_task="bins", target_bins={"positive": ["a"]})
+    assert r.status_code == 200, r.text
+    d = fields(lead, ds)
+    got = lead.get(f"/api/fields/{d['y']['id']}").json()["decision"]
+    assert (got["target_task"], got["target_bins"]) == ("bins", {"positive": ["a"]})
