@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { accessOf, type Access } from "./team";
 import type { Dataset } from "./types";
@@ -57,3 +57,20 @@ export function useDebounced<T>(value: T, ms: number): T {
   }, [value, ms]);
   return v;
 }
+
+/** Everything that reads the decisions or the team state goes stale when the phase or an assessment changes. */
+export function useInvalidateTeam(datasetId: number) {
+  const qc = useQueryClient();
+  return () => {
+    for (const k of ["team", "reviewQueue", "dataset", "fields", "fieldQuery", "exportPreview", "corrMatrix", "analysis",
+      "versions", "baselines", "recipeDiff", "experiments", "exports", "runs"]) {
+      qc.invalidateQueries({ queryKey: [k, datasetId] });
+    }
+    qc.invalidateQueries({ queryKey: ["datasets"] });
+    qc.invalidateQueries({ queryKey: ["finalizedRecipes"] });
+    qc.invalidateQueries({ queryKey: ["field"] });
+    qc.invalidateQueries({ queryKey: ["fieldReview"] });
+    qc.invalidateQueries({ queryKey: ["experiment"] });
+  };
+}
+

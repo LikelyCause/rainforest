@@ -15,21 +15,8 @@ import { differing, finalizeQuestion, nextOpen, PHASE_LABEL, spread } from "../t
 import { showError, toast } from "../toast";
 import type { Dataset, FieldReview, OptionCatalog, QueueItem, SettingsRow, TeamState } from "../types";
 
-/** Everything that reads the decisions or the team state goes stale when the phase or an assessment changes. */
-export function useInvalidateTeam(datasetId: number) {
-  const qc = useQueryClient();
-  return () => {
-    for (const k of ["team", "reviewQueue", "dataset", "fields", "fieldQuery", "exportPreview", "corrMatrix", "analysis",
-      "versions", "baselines", "recipeDiff", "experiments", "exports", "runs"]) {
-      qc.invalidateQueries({ queryKey: [k, datasetId] });
-    }
-    qc.invalidateQueries({ queryKey: ["datasets"] });
-    qc.invalidateQueries({ queryKey: ["finalizedRecipes"] });
-    qc.invalidateQueries({ queryKey: ["field"] });
-    qc.invalidateQueries({ queryKey: ["fieldReview"] });
-    qc.invalidateQueries({ queryKey: ["experiment"] });
-  };
-}
+export { useInvalidateTeam } from "../hooks";
+import { useInvalidateTeam } from "../hooks";
 
 /** The phase of a baseline version, with its short label ("Trees v2") when given; a long one is cut, in full on hover. */
 export function PhaseBadge({ phase, label }: { phase: Dataset["phase"]; label?: string | null }) {
