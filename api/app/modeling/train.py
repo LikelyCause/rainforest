@@ -149,13 +149,14 @@ class TargetChain:
                 X_aug = np.hstack((X, feats[:, :pos]))
                 if self.kinds[t] == "regression":
                     out[t] = est.predict(X_aug).astype(float)
-                else:
-                    p = est.predict_proba(X_aug)
-                    full = np.zeros((p.shape[0], n_classes[t]))
-                    full[:, np.asarray(est.classes_, dtype=int)] = p
-                    out[t] = full
-                out_t = self._output(est, X_aug, self.kinds[t])
-                feats[:, pos] = self._scaled(t, out_t) if self.kinds[t] == "regression" else out_t
+                    feats[:, pos] = self._scaled(t, out[t])
+                    continue
+                p = est.predict_proba(X_aug)
+                full = np.zeros((p.shape[0], n_classes[t]))
+                full[:, np.asarray(est.classes_, dtype=int)] = p
+                out[t] = full
+                # The same output _output gives at fit time: P(class 1) for binary, else the predicted class.
+                feats[:, pos] = p[:, 1] if self.kinds[t] == "binary" else np.asarray(est.classes_)[p.argmax(1)]
         return out  # type: ignore[return-value]
 
 

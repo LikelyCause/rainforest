@@ -327,7 +327,7 @@ function ParamInput({ id, title, step, value, rule, onChange }: {
   const [text, setText] = useState(value === undefined ? "" : String(value));
   useEffect(() => {
     if (value !== undefined && Number(text) !== value) setText(String(value));
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only an outside change (revert, retype) resyncs
+    // Deliberately narrow deps: only an outside change (revert, retype) resyncs.
   }, [value]);
   const problem = paramProblem(text, rule);
   return (

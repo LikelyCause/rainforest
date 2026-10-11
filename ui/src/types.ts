@@ -646,7 +646,7 @@ export interface BaselineLine {
 
 export interface Recipe {
   id: number;
-  dataset_id: number;
+  dataset_id?: number;
   family: FamilyKey;
   /** The baseline's name, shared by its versions; null when unnamed. */
   name?: string | null;
@@ -659,11 +659,10 @@ export interface Recipe {
   /** "all": every field is open; "reopened": only the reopened ones, the rest are carried over and locked. */
   scope: "all" | "reopened";
   parent_id: number | null;
-  created_by: number | null;
+  created_by?: number | null;
   created_at: string;
-  finalized_by: number | null;
+  finalized_by?: number | null;
   finalized_at: string | null;
-  schema_fingerprint: string | null;
   created_by_name?: string | null;
   finalized_by_name?: string | null;
   /** How many fields this version reopened; null when every field is open. */

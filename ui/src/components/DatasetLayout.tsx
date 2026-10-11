@@ -18,7 +18,7 @@ export function useDatasetContext(): Dataset {
 
 export function DatasetLayout() {
   const datasetId = Number(useParams().datasetId);
-  const ds = useDataset(datasetId);
+  const ds = useDataset(datasetId, !Number.isNaN(datasetId));
   const me = useMe().data;
   const qc = useQueryClient();
   const nav = useNavigate();
@@ -36,7 +36,7 @@ export function DatasetLayout() {
     );
   }
   if (!ds.data || Number.isNaN(datasetId)) {
-    const notFound = !ds.error || (ds.error as { status?: number }).status === 404;
+    const notFound = Number.isNaN(datasetId) || !ds.error || (ds.error as { status?: number }).status === 404;
     return (
       <div className="state-card card">
         {notFound ? <h1>Dataset #{params(datasetId)} doesn't exist</h1> : <ErrorAlert error={ds.error} title="Couldn't load the dataset." />}

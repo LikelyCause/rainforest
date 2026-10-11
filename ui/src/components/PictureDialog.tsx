@@ -30,11 +30,16 @@ export function PictureDialog({ user, onClose }: {
     setFile(f);
     setPreview(URL.createObjectURL(f));
   };
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [onClose]);
   return (
-    <div className="overlay" onClick={onClose} onKeyDown={(e) => e.key === "Escape" && onClose()}>
+    <div className="overlay" onClick={onClose}>
       <div className="dialog stack picture-dialog" role="dialog" aria-modal="true" aria-label="Change picture" onClick={(e) => e.stopPropagation()}>
         <h2>{user.name}'s picture</h2>
-        <button type="button" className="dropzone picture-drop" onClick={() => input.current?.click()}
+        <button type="button" className="dropzone picture-drop" autoFocus onClick={() => input.current?.click()}
           onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); choose(e.dataTransfer.files[0]); }}>
           {preview ? <img className="avatar" src={preview} alt="New picture" /> : <Avatar user={user} size={112} />}
           <span className="muted small-text">Drop a picture here or click to choose one · JPEG, PNG or WebP, up to 5 MB.

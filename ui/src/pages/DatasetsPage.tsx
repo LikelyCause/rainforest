@@ -2,13 +2,13 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, uploadDataset } from "../api";
-import { PROCESSING, useMe } from "../hooks";
+import { PROCESSING, useFields, useMe } from "../hooks";
 import { eligibleTarget } from "../baselines";
 import { can } from "../can";
 import { metricLabel } from "../experiments";
 import { defaultTask, taskLabel } from "../decision";
 import { baselineLabel, fmtAgo, fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
-import { ErrorAlert } from "../components/ui";
+import { ErrorAlert, InfoTip } from "../components/ui";
 import { PhaseBadge } from "./DatasetTeamPage";
 import { showError, toast } from "../toast";
 import type { Dataset } from "../types";
@@ -55,7 +55,7 @@ function useUpload() {
 
 function TargetPicker({ ds, onClose }: { ds: Dataset; onClose: () => void }) {
   const qc = useQueryClient();
-  const fields = useQuery({ queryKey: ["fields", ds.id], queryFn: () => api.fields(ds.id) });
+  const fields = useFields(ds.id);
   const [q, setQ] = useState("");
   const [chosen, setChosen] = useState<Set<string>>(new Set(ds.target_columns));
   const save = useMutation({
@@ -396,7 +396,7 @@ export function DatasetsPage() {
       window.removeEventListener("dragover", over);
       window.removeEventListener("drop", drop);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const browse = () => fileInput.current?.click();
   const editor = can(me.data, "upload");
@@ -454,7 +454,7 @@ export function DatasetsPage() {
                       onClick={() => ready && renaming !== ds.id && open(ds)}
                       onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && ready && open(ds)}
                       tabIndex={ready ? 0 : -1} aria-label={ready ? `Open ${ds.name}` : undefined}>
-                      <td className="name-cell">
+                      <td className="dataset-name">
                         {renaming === ds.id ? (
                           <input defaultValue={ds.name} autoFocus aria-label="Dataset name" onClick={(e) => e.stopPropagation()}
                             onKeyDown={(e) => {
@@ -473,7 +473,7 @@ export function DatasetsPage() {
                           {ready && <BaselineChips ds={ds} />}
                           {ds.my_assessment?.submitted && <span className="badge good" title="You submitted your assessment">✓ submitted</span>}
                           {ds.warnings.length > 0 && (
-                            <span className="badge warn" title={ds.warnings.join("\n")}>⚠ {ds.warnings.length}</span>
+                            <InfoTip className="badge warn" label={`⚠ ${ds.warnings.length}`} text={ds.warnings.join("\n")} />
                           )}
                         </div>
                         {ds.status === "failed" && ds.error && (

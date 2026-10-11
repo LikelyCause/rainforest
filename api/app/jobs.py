@@ -136,6 +136,9 @@ def sweep(owner: int | None = None) -> None:
 def start() -> None:
     """Take this process's owner lock, then fail jobs left behind by processes that are gone."""
     _stop.clear()
+    # Once per process, never restored: jobs share these native thread pools, so one ending mustn't widen them while
+    # another runs.
+    threadpool_limits(cpu_threads())
     owner_id()
     sweep()
 
@@ -193,14 +196,14 @@ def _get() -> ThreadPoolExecutor:
 
 def submit(fn: Callable[..., Any], *args: Any) -> None:
     """Queue `fn(*args)`. Its job row must carry `owner = owner_id()` so a restart can tell it was interrupted."""
-    ticket = _take_ticket()
-
     def run() -> None:
         try:
+            # Taken here, not at submit: a job waiting for one of this process's threads mustn't hold a place in the
+            # global queue that it can't use.
+            ticket = _take_ticket()
             with _slot(ticket) as ok:
                 if ok:
-                    with threadpool_limits(cpu_threads()):
-                        fn(*args)
+                    fn(*args)
         except Exception:  # noqa: BLE001 - the job itself records failures; this is a backstop
             log.exception("background job %s%r crashed", getattr(fn, "__name__", fn), args)
 

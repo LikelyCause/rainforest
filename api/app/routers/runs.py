@@ -46,7 +46,10 @@ def _export_manifest(export_id: int, user: dict) -> tuple[dict, dict]:
     exp = visible_export(export_id, user)
     if exp["status"] != "done":
         raise HTTPException(409, "Export is not finished")
-    manifest = json.loads((Path(exp["output_dir"]) / "manifest.json").read_text())
+    try:
+        manifest = json.loads((Path(exp["output_dir"]) / "manifest.json").read_text())
+    except (OSError, ValueError) as exc:
+        raise HTTPException(410, "Export files were removed") from exc
     return exp, manifest
 
 
@@ -144,8 +147,10 @@ def get_run(run_id: int, user: CurrentUser) -> dict:
 def download(run_id: int, kind: str, user: CurrentUser) -> FileResponse:
     run = get_run(run_id, user)
     files = {"model": ("classifier_chain.joblib", "application/octet-stream"), "report": ("report.json", "application/json")}
-    if kind not in files or run["status"] != "done":
-        raise HTTPException(404, "File not available")
+    if kind not in files:
+        raise HTTPException(404, f"Unknown file {kind!r}")
+    if run["status"] != "done":
+        raise HTTPException(409, "Run is not finished")
     name, media = files[kind]
     path = Path(run["model_dir"]) / name
     if not path.exists():

@@ -20,6 +20,11 @@ def list_users(_: CurrentUser) -> list[dict]:
 ENV_MANAGED = "Accounts come from RAINFOREST_USERS in .env; change them there and restart."
 
 
+def _shown(row: dict) -> dict:
+    """The user as GET /api/users lists them (the session counter stays inside sign-in)."""
+    return {k: v for k, v in row.items() if k != "session_version"}
+
+
 def _may_change_picture(user: dict, user_id: int) -> None:
     if user["id"] != user_id and user["role"] != "lead":
         raise HTTPException(403, "You can change your own picture; a lead can change anyone's.")
@@ -37,14 +42,14 @@ def set_avatar(user_id: int, request: Request, user: CurrentUser, file: UploadFi
     if len(data) > avatars.MAX_BYTES:
         raise HTTPException(413, "Pictures can be 5 MB at most.")
     avatars.store(user_id, data)
-    return users.get(user_id)
+    return _shown(users.get(user_id))
 
 
 @router.delete("/{user_id}/avatar")
 def remove_avatar(user_id: int, user: CurrentUser) -> dict:
     _may_change_picture(user, user_id)
     avatars.remove(user_id)
-    return users.get(user_id)
+    return _shown(users.get(user_id))
 
 
 @router.post("", status_code=201)

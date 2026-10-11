@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { describeError } from "../toast";
 
 /** The one way to show a failed request: message plus the API's per-field details. */
@@ -14,6 +14,16 @@ export function ErrorAlert({ error, title, children }: { error: unknown; title?:
         {children}
       </div>
     </div>
+  );
+}
+
+/** An explanation behind a tappable label: hover shows it on desktop, a tap opens it anywhere. */
+export function InfoTip({ label, text, className, style }: { label: ReactNode; text: string; className?: string; style?: CSSProperties }) {
+  return (
+    <details className={`info-tip${className ? ` ${className}` : ""}`} style={style}>
+      <summary title={text}>{label}</summary>
+      <div className="info-tip-body" role="note">{text}</div>
+    </details>
   );
 }
 

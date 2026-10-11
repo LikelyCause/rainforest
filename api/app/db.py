@@ -197,6 +197,9 @@ def bootstrap() -> None:
             conn.execute(sql.SQL("REVOKE ALL ON {} FROM {}").format(
                 sql.SQL(", ").join(sql.Identifier("meta", t) for t in PRIVATE_TABLES), role))
             conn.commit()
+        except BaseException:
+            conn.rollback()  # an aborted transaction can't run the unlock below
+            raise
         finally:
             conn.execute("SELECT pg_advisory_unlock(%s)", (_SCHEMA_LOCK_KEY,))
             conn.commit()

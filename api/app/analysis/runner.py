@@ -71,9 +71,8 @@ def find_or_create(conn, dataset_id: int, kind: str, params: dict, recompute: bo
     conn.execute(
         """UPDATE meta.analyses SET status = 'failed', error = 'Superseded', status_message = 'Superseded',
                   finished_at = now(), updated_at = now()
-            WHERE dataset_id = %s AND kind = %s AND status IN ('pending', 'running')
-              AND coalesce(params ->> 'decisions', 'team') = %s""",
-        (dataset_id, kind, params.get("decisions", "team")),
+            WHERE dataset_id = %s AND kind = %s AND params_key = %s AND status IN ('pending', 'running')""",
+        (dataset_id, kind, key),
     )
     row = conn.execute(
         f"""INSERT INTO meta.analyses (dataset_id, kind, params, params_key, data_version, status_message, owner,

@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { can } from "../can";
-import { useAccess, useDebounced, useMe, useOptions } from "../hooks";
+import { useAccess, useDebounced, useMe, useOptions, useFields } from "../hooks";
 import { JoinAssessment } from "../components/JoinAssessment";
 import { ExperimentModeBar } from "../components/ExperimentModeBar";
 import { useView, type View, viewKey, withView } from "../view";
@@ -67,7 +67,7 @@ function enumValues(col: string, catalog: OptionCatalog | undefined): { value: s
 function useFinderState() {
   const [params, setParams] = useSearchParams();
   const key = params.toString();
-  const state = useMemo(() => finderState(params), [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  const state = useMemo(() => finderState(params), [key]);
   const set = (patch: Record<string, string | null>) => {
     const next = new URLSearchParams(params);
     for (const [k, v] of Object.entries(patch)) v === null ? next.delete(k) : next.set(k, v);
@@ -175,7 +175,7 @@ function FieldFinder({ datasetId, presetLabel, canEdit, view }: {
   }, [pending, apply]);
 
   const label = presetLabel(st.preset) + (st.modified ? " (modified)" : "");
-  const reviewSet = () => openSet(label || "Bulk edit selection", selected);
+  const reviewSet = () => openSet(label, selected);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
@@ -271,7 +271,7 @@ function FieldFinder({ datasetId, presetLabel, canEdit, view }: {
                           setExcluded(n);
                         }} />
                       </td>
-                      <td><button type="button" className="link" onClick={() => openSet(label || "Bulk edit selection", selected, r.field_id)}>{r.name}</button></td>
+                      <td><button type="button" className="link" onClick={() => openSet(label, selected, r.field_id)}>{r.name}</button></td>
                       <td><span className="type-tag">{TYPE_SHORT[r.semantic_type] ?? r.semantic_type}</span></td>
                       <td>
                         {r.action === "target" ? <span className="badge accent">◎ target</span> : (
@@ -384,7 +384,7 @@ const NAME_COLUMNS = new Set(["name", "field_name", "other_field_name"]);
 
 function SqlConsole({ datasetId }: { datasetId: number }) {
   const examples = useQuery({ queryKey: ["sqlExamples"], queryFn: api.sqlExamples, staleTime: Infinity });
-  const { data: fields } = useQuery({ queryKey: ["fields", datasetId], queryFn: () => api.fields(datasetId) });
+  const { data: fields } = useFields(datasetId);
   const openSet = useOpenWorkingSet(datasetId);
   const storeKey = `sql:${datasetId}`;
   const [sql, setSqlState] = useState(() => {
@@ -399,7 +399,7 @@ function SqlConsole({ datasetId }: { datasetId: number }) {
   useEffect(() => {
     // Re-run on return only for metadata queries; raw-data scans can be slow.
     if (!ranOnce.current && sql && !/raw\./i.test(sql)) { ranOnce.current = true; m.mutate(sql); }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const byName = useMemo(() => new Map((fields ?? []).map((f) => [f.name, f])), [fields]);
   const nameCols = m.data?.columns.map((c, i) => (NAME_COLUMNS.has(c) ? i : -1)).filter((i) => i >= 0) ?? [];
@@ -492,7 +492,7 @@ export function BulkEditPage() {
       {access.note && <div className={`alert ${access.canEdit ? "info" : "warn"}`}>{access.note}</div>}
       <div className="tabs-inline" role="tablist">
         <button type="button" role="tab" aria-selected={st.tab === "fields"} className={st.tab === "fields" ? "on" : ""} onClick={() => st.setTab("fields")}>Fields</button>
-        {sql && <button type="button" role="tab" aria-selected={st.tab === "sql"} className={st.tab === "sql" ? "on" : ""} onClick={() => st.setTab("sql")}>SQL</button>}
+        {sql && !view && <button type="button" role="tab" aria-selected={st.tab === "sql"} className={st.tab === "sql" ? "on" : ""} onClick={() => st.setTab("sql")}>SQL</button>}
       </div>
       {st.tab === "fields" || view || !sql ? <FieldFinder datasetId={ds.id} presetLabel={presetLabel} canEdit={access.canEdit} view={view} /> : <SqlConsole datasetId={ds.id} />}
     </div>

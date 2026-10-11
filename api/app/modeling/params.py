@@ -252,7 +252,8 @@ def setting_problems(model: str, params: dict) -> list[str]:
             current = params.get(other, catalog[other].default)
             if current not in allowed:
                 out.append(f"{name} applies only when {other} is {' or '.join(map(str, allowed))}")
-    if params.get("objective") == "quantile" and not 0 < params.get("alpha", 0.9) < 1:
+    alpha = params.get("alpha", 0.9)
+    if params.get("objective") == "quantile" and isinstance(alpha, (int, float)) and not 0 < alpha < 1:
         out.append("alpha must be between 0 and 1 for the quantile loss")
     return out
 

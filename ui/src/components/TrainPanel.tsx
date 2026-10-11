@@ -80,11 +80,11 @@ export const TrainPanel = forwardRef<HTMLElement, {
   // Once shown, the panel stays on its export: a newer one finishing mustn't move the run being set up.
   useEffect(() => {
     if (exportId === null && e) setExportId(e.id);
-  }, [exportId, e?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [exportId, e?.id]);
   // Each export starts with all its targets; Train again's order (applied below) comes after.
   useEffect(() => {
     if (e) setOrder(targets);
-  }, [e?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [e?.id]);
   useEffect(() => {
     if (!pending || !e || pending.exportId !== e.id || !models.data) return;
     const catalog = models.data.find((m) => m.key === pending.model)?.settings;
@@ -98,7 +98,7 @@ export const TrainPanel = forwardRef<HTMLElement, {
       setDropped(d);
     }
     setPending(null);
-  }, [pending, models.data, e?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pending, models.data, e?.id]);
   useEffect(() => {
     if (!models.data || pending) return;
     const current = models.data.find((m) => m.key === model);

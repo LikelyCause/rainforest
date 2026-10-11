@@ -9,5 +9,6 @@ export default defineConfig({
     // xfwd passes the browser's host on, which the API's same-origin check compares with Origin.
     proxy: { "/api": { target: process.env.API_URL ?? "http://localhost:8000", changeOrigin: true, xfwd: true } },
   },
-  build: { chunkSizeWarningLimit: 1500 },
+  // ECharts is most of the bundle and changes rarely; its own chunk stays cached across app releases.
+  build: { rollupOptions: { output: { manualChunks: { echarts: ["echarts"] } } } },
 });

@@ -481,6 +481,9 @@ def adopt(assessments: list[dict], suggestion: Callable[[str, str], dict]) -> di
     settings = {}
     for fam in families:
         choices = [a["settings"][fam] for a in assessments if fam in a["settings"]]
+        if not choices:
+            settings[fam] = {k: suggestion(first["semantic_type"], fam).get(k) for k in SETTING_KEYS}
+            continue
         counts = Counter(settings_key(c) for c in choices)
         top = max(counts.values())
         winners = [k for k, n in counts.items() if n == top]

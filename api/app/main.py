@@ -6,7 +6,6 @@ import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 from . import auth, db, experiments, gpu, jobs, processing
@@ -34,7 +33,7 @@ async def lifespan(app: FastAPI):
         log.warning("Sign-in mode is 'pick': anyone who can reach the UI can sign in as any user. "
                     "Use RAINFOREST_AUTH_MODE=oidc for team deployments.")
     if os.environ.get("RAINFOREST_ADMIN_PASSWORD"):
-        log.warning("RAINFOREST_ADMIN_PASSWORD is no longer used; see README › Sign-in (RAINFOREST_AUTH_MODE).")
+        log.warning("RAINFOREST_ADMIN_PASSWORD has no effect; remove it. Sign-in is set by RAINFOREST_AUTH_MODE.")
     db.bootstrap()
     jobs.start()
     processing.sweep_uploads()
@@ -61,13 +60,6 @@ class JsonGZip(GZipMiddleware):
 app = FastAPI(title="Rainforest API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(JsonGZip, minimum_size=2048, compresslevel=5)
 app.add_middleware(auth.SecurityMiddleware)
-# The UI is served same-origin through nginx; CORS only matters for `npm run dev` on :5173.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 app.include_router(auth.router)
 app.include_router(datasets.router)

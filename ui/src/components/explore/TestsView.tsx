@@ -41,9 +41,10 @@ function TestsTable({ ds, r }: { ds: Dataset; r: TestsResult }) {
   }, [r, sort]);
   const significant = r.rows.filter((x) => x.p_adj !== null && x.p_adj < ALPHA).length;
   const th = (key: SortKey, text: string, num = false) => (
-    <th className={`sortable${num ? " num" : ""}`} aria-sort={sort.key === key ? (sort.desc ? "descending" : "ascending") : "none"}
-      onClick={() => setSort({ key, desc: sort.key === key ? !sort.desc : key === "effect" || key === "n" })}>
-      {text}{sort.key === key ? (sort.desc ? " ▼" : " ▲") : ""}
+    <th className={`sortable${num ? " num" : ""}`} aria-sort={sort.key === key ? (sort.desc ? "descending" : "ascending") : "none"}>
+      <button type="button" className="th-sort" onClick={() => setSort({ key, desc: sort.key === key ? !sort.desc : key === "effect" || key === "n" })}>
+        {text}{sort.key === key ? (sort.desc ? " ▼" : " ▲") : ""}
+      </button>
     </th>
   );
   const selected = sel !== null ? r.rows[sel] : null;
