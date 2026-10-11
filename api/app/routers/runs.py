@@ -134,7 +134,8 @@ def list_runs(dataset_id: int, user: CurrentUser, experiment_id: int | None = No
 def run_row(run_id: int, user_id: int | None = None) -> dict | None:
     """One run with its MLflow link; with `user_id`, only if that user may see its experiment."""
     visible = "" if user_id is None else f" AND experiment_id IN ({experiments.visible_ids(user_id)})"
-    return fetch_one(f"SELECT *, {MLFLOW_URL} FROM meta.model_runs WHERE id = %s{visible}", (run_id,))
+    return fetch_one(f"""SELECT *, {MLFLOW_URL}, (SELECT name FROM meta.users u WHERE u.id = chosen_by) AS chosen_by_name
+                          FROM meta.model_runs WHERE id = %s{visible}""", (run_id,))
 
 
 @router.get("/runs/{run_id}")
