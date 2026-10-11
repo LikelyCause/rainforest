@@ -302,7 +302,6 @@ export function RunDetail({ run, targets, onTrainAgain = null }: {
         <div className="alert bad" role="note">
           <span aria-hidden="true">✕</span>
           <div className="grow stack" style={{ gap: 6 }}>
-            <b>Why it failed</b>
             <span>{whyFailed(run.error)}</span>
             {run.error && run.error.includes("\n") && (
               <details><summary className="small-text">Details</summary><pre style={{ whiteSpace: "pre-wrap" }}>{run.error}</pre></details>

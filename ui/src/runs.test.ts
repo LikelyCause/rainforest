@@ -66,8 +66,9 @@ describe("starTitle", () => {
 });
 
 describe("whyFailed", () => {
-  it("explains a restart without blaming the settings", () => {
-    expect(whyFailed("Interrupted by an API restart.")).toMatch(/restarted while it was training.*settings weren't the problem/);
+  it("explains a restart", () => {
+    expect(whyFailed("Interrupted by an API restart.")).toBe(
+      "The API restarted while it was training (an update or a restart of the server), which stops running jobs.");
   });
   it("explains running out of memory", () => {
     expect(whyFailed("MemoryError: Unable to allocate 3.1 GiB")).toMatch(/memory/i);

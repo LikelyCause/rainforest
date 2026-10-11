@@ -603,8 +603,7 @@ experiment, and its manifest's `config` the `source` (`recipe` or `assessment`),
   RMSE, MAE and MAPE tiles over three tabs: the predicted-vs-actual scatter, the error histogram, and *Ranges* (the
   confusion matrix and per-range precision, recall and F1 described above). *Download model* and a test /
   validation switch apply to every target. A failed run expands into its settings, why it failed in a sentence (the full
-  message under *Details*) and *Train again with these settings*; a run stopped by an API restart says so, since its
-  settings weren't the problem.
+  message under *Details*) and *Train again with these settings*.
 
 ```bash
 make train EXPORT=1                          # LightGBM
