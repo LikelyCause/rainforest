@@ -80,3 +80,83 @@ def test_every_baseline_payload_shows_the_name(people):
     assert st["recipe"]["reuse"]["source"]["name"] == "Dropout risk"
     v = next(v for v in lead.get(f"/api/datasets/{other['id']}/recipes").json() if v["reuse"])
     assert v["reuse"]["source"]["name"] == "Dropout risk"
+
+
+def _start(lead, ds, family, name=None, expect=200):
+    body = {"family": family, "start": "scratch", "targets": ["y"], "assessors": [lead.user["id"]]}
+    if name is not None:
+        body["name"] = name
+    r = lead.post(f"/api/datasets/{ds['id']}/baselines", json=body)
+    assert r.status_code == expect, r.text
+    return r.json()
+
+
+def _names(lead, ds) -> dict:
+    return {b["family"]: b["name"] for b in lead.get(f"/api/datasets/{ds['id']}/baselines").json()}
+
+
+def test_a_name_given_at_setup_goes_with_the_chosen_model_type(people):
+    from .team_helpers import submit_and_finalize
+
+    lead = people["lead"]
+    ds = upload(lead)
+    st = _start(lead, ds, "linear", "  Dropout risk ")
+    assert st["recipe"]["label"] == "Dropout risk v1 (Linear)"
+    assert _names(lead, ds) == {"linear": "Dropout risk"}
+    submit_and_finalize(lead, ds)
+    _start(lead, ds, "tree", "dropout RISK", expect=422)
+    _start(lead, ds, "tree", "x" * 61, expect=422)
+    _start(lead, ds, "tree", "   ")
+    assert _names(lead, ds) == {"linear": "Dropout risk", "tree": None}
+
+
+def test_an_existing_baseline_keeps_its_name_when_a_version_starts(people):
+    from .team_helpers import submit_and_finalize
+
+    lead = people["lead"]
+    ds = upload(lead)
+    _start(lead, ds, "tree", "Dropout risk")
+    submit_and_finalize(lead, ds)
+    _start(lead, ds, "tree", "Something else", expect=422)
+    st = _start(lead, ds, "tree", "Dropout risk")
+    assert st["recipe"]["label"] == "Dropout risk v2 (Trees)"
+
+
+def test_a_lead_renames_a_finalized_baseline_without_touching_its_snapshot(people, login_as, app_):
+    from fastapi.testclient import TestClient
+
+    from app.db import connection
+
+    from .team_helpers import submit_and_finalize
+
+    lead, member = people["lead"], people["a"]
+    ds = upload(lead)
+    _start(lead, ds, "tree")
+    rid = submit_and_finalize(lead, ds)["recipe"]["id"]
+    with connection() as conn:
+        before = conn.execute("SELECT snapshot::text AS s FROM meta.recipes WHERE id = %s", (rid,)).fetchone()["s"]
+    url = f"/api/datasets/{ds['id']}/baselines/tree"
+    r = lead.patch(url, json={"name": "Dropout risk"})
+    assert r.status_code == 200, r.text
+    assert r.json()[0]["name"] == "Dropout risk" and r.json()[0]["versions"][0]["label"] == "Dropout risk v1 (Trees)"
+    with connection() as conn:
+        after = conn.execute("SELECT snapshot::text AS s FROM meta.recipes WHERE id = %s", (rid,)).fetchone()["s"]
+    assert after == before
+    assert member.patch(url, json={"name": "Mine"}).status_code == 403
+    viewer = login_as(TestClient(app_), "viewer")
+    assert viewer.patch(url, json={"name": "Mine"}).status_code == 403
+    assert lead.patch(f"/api/datasets/{ds['id']}/baselines/linear", json={"name": "Nope"}).status_code == 404
+    assert lead.patch(url, json={"name": "y" * 61}).status_code == 422
+    assert lead.patch(url, json={"name": ""}).status_code == 200 and _names(lead, ds) == {"tree": None}
+
+
+def test_deleting_a_dataset_deletes_its_names(people):
+    from app.db import connection
+
+    lead = people["lead"]
+    ds = upload(lead)
+    _start(lead, ds, "tree", "Dropout risk")
+    assert _names(lead, ds) == {"tree": "Dropout risk"}
+    assert lead.delete(f"/api/datasets/{ds['id']}").status_code == 200
+    with connection() as conn:
+        assert conn.execute("SELECT 1 FROM meta.baseline_names WHERE dataset_id = %s", (ds["id"],)).fetchone() is None

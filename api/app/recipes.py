@@ -204,6 +204,18 @@ def short_label(family: str, version: int, name: str | None) -> str:
     return f"{name or FAMILY_LABEL[family]} v{version}"
 
 
+def set_name(conn, dataset_id: int, family: str, name: str | None) -> None:
+    if name is None:
+        conn.execute("DELETE FROM meta.baseline_names WHERE dataset_id = %s AND family = %s", (dataset_id, family))
+        return
+    taken = conn.execute("SELECT family FROM meta.baseline_names WHERE dataset_id = %s AND family <> %s "
+                         "AND lower(name) = lower(%s)", (dataset_id, family, name)).fetchone()
+    if taken:
+        raise HTTPException(422, f"This dataset's {FAMILY_LABEL[taken['family']]} baseline is already called {name!r}")
+    conn.execute("""INSERT INTO meta.baseline_names (dataset_id, family, name) VALUES (%s, %s, %s)
+                    ON CONFLICT (dataset_id, family) DO UPDATE SET name = excluded.name""", (dataset_id, family, name))
+
+
 def clean_name(raw: str | None) -> str | None:
     name = (raw or "").strip()
     if len(name) > NAME_MAX:
