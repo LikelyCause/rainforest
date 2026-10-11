@@ -167,7 +167,7 @@ export const TrainPanel = forwardRef<HTMLElement, {
         {gpuChoice && gpu && (
           <div className="field">
             <span id="train-device">Train on</span>
-            <div className="segmented soft" role="radiogroup" aria-labelledby="train-device">
+            <div className="segmented soft full" role="radiogroup" aria-labelledby="train-device">
               {([false, true] as const).map((on) => (
                 <button key={String(on)} type="button" role="radio" aria-checked={gpuOn === on} className={gpuOn === on ? "on" : ""}
                   onClick={() => setGpuOn(on)}>{on ? "GPU" : "CPU"}</button>
@@ -177,12 +177,11 @@ export const TrainPanel = forwardRef<HTMLElement, {
           </div>
         )}
       </div>
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <span className="muted small-text">{selected?.description}</span>
-        {models.data?.some((m) => !m.compatible) && (
+      {models.data?.some((m) => !m.compatible) && (
+        <div className="row" style={{ justifyContent: "flex-end" }}>
           <label className="check small-text"><input type="checkbox" checked={showAll} onChange={(ev) => setShowAll(ev.target.checked)} /> show incompatible models</label>
-        )}
-      </div>
+        </div>
+      )}
       {targets.length > 1 && <TargetOrder targets={targets} order={order} onChange={setOrder} />}
       {catalog && selected?.compatible ? (
         <ModelSettings settings={catalog} values={values} onChange={setValues} kinds={kinds} />

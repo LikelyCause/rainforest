@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import { describeSettings } from "../settings";
@@ -159,6 +159,7 @@ function RangesView({ ev, m }: { ev: RegressionEvaluation; m: Record<string, num
 function RegressionCard({ target, m, ev }: { target: string; m: Record<string, number>; ev?: RegressionEvaluation }) {
   const t = useChartTheme();
   const [tab, setTab] = useState<"scatter" | "errors" | "bands">("scatter");
+  const steady = useSteadyHeight();
   const scatter = useMemo(() => (ev ? scatterOption(t, ev.scatter.actual, ev.scatter.predicted) : null), [t, ev]);
   const residuals = useMemo(() => (ev ? histogramOption(t, { kind: "histogram", edges: ev.residuals.edges, counts: ev.residuals.counts } as HistogramChart,
     { xLabel: "Error (predicted − actual)" }) : null), [t, ev]);
@@ -180,12 +181,8 @@ function RegressionCard({ target, m, ev }: { target: string; m: Record<string, n
       </div>
       {ev && scatter && residuals ? (
         <>
-          <div className="segmented soft" role="tablist" aria-label={`Results for ${target}`} style={{ alignSelf: "flex-start" }}>
-            {tabs.map((x) => (
-              <button key={x.key} type="button" role="tab" aria-selected={shown === x.key} className={shown === x.key ? "on" : ""}
-                onClick={() => setTab(x.key)}>{x.label}</button>
-            ))}
-          </div>
+          <ResultTabs tabs={tabs} value={shown} onChange={(k) => { steady.hold(); setTab(k); }} label={`Results for ${target}`} />
+          <div ref={steady.box} className="stack" style={{ gap: 8 }}>
           {shown === "scatter" && (
             <div className="stack" style={{ gap: 4 }}>
               <span className="muted small-text">
@@ -201,6 +198,7 @@ function RegressionCard({ target, m, ev }: { target: string; m: Record<string, n
             </div>
           )}
           {shown === "bands" && <RangesView ev={ev} m={m} />}
+          </div>
           {!ev.bands && <span className="muted small-text">This run predates range scores; train it again to see them.</span>}
         </>
       ) : <div className="muted small-text">No evaluation details for this split.</div>}
@@ -208,10 +206,38 @@ function RegressionCard({ target, m, ev }: { target: string; m: Record<string, n
   );
 }
 
+export function classTabs(): { key: "matrix" | "roc" | "classes"; label: string }[] {
+  return [{ key: "matrix", label: "Confusion matrix" }, { key: "roc", label: "ROC curves" }, { key: "classes", label: "Per class" }];
+}
+
+/** Keeps a box from shrinking when its content is swapped, so a page scrolled to the bottom doesn't jump up when a
+ * shorter tab or split replaces a taller one. */
+function useSteadyHeight() {
+  const box = useRef<HTMLDivElement>(null);
+  const hold = () => { if (box.current) box.current.style.minHeight = `${box.current.offsetHeight}px`; };
+  return { box, hold };
+}
+
+/** A card's views, one at a time, under its tiles. */
+function ResultTabs<K extends string>({ tabs, value, onChange, label }: {
+  tabs: { key: K; label: string }[]; value: K; onChange: (k: K) => void; label: string;
+}) {
+  return (
+    <div className="segmented soft" role="tablist" aria-label={label} style={{ alignSelf: "flex-start" }}>
+      {tabs.map((x) => (
+        <button key={x.key} type="button" role="tab" aria-selected={value === x.key} className={value === x.key ? "on" : ""}
+          onClick={() => onChange(x.key)}>{x.label}</button>
+      ))}
+    </div>
+  );
+}
+
 function TargetCard({ target, m, ev }: { target: string; m: Record<string, number>; ev?: TargetEvaluation }) {
   const binary = ev ? ev.labels.length === 2 : "precision" in m;
   const total = ev?.per_class.reduce((a, c) => a + c.support, 0);
   const tiles = headlineTiles(m, binary);
+  const [tab, setTab] = useState<"matrix" | "roc" | "classes">("matrix");
+  const steady = useSteadyHeight();
   return (
     <section className="card stack target-card">
       <div className="card-head" style={{ marginBottom: 0 }}>
@@ -226,43 +252,48 @@ function TargetCard({ target, m, ev }: { target: string; m: Record<string, numbe
           </div>
         ))}
       </div>
-      {ev ? <ConfusionMatrix ev={ev} accuracy={m.accuracy} /> : (
+      <ResultTabs tabs={classTabs()} value={tab} onChange={(k) => { steady.hold(); setTab(k); }} label={`Results for ${target}`} />
+      <div ref={steady.box} className="stack" style={{ gap: 8 }}>
+      {tab === "matrix" && (ev ? <ConfusionMatrix ev={ev} accuracy={m.accuracy} /> : (
         <div className="muted small-text">This run predates confusion matrices — train it again to see them.</div>
-      )}
-      {ev?.roc?.length ? <RocChart curves={ev.roc} binary={binary} /> : ev && (
+      ))}
+      {tab === "roc" && (ev?.roc?.length ? <RocChart curves={ev.roc} binary={binary} /> : (
         <div className="muted small-text">
-          {ev.roc ? "No ROC curve: this split has only one class." : "This run predates ROC curves — train it again to see them."}
+          {ev?.roc ? "No ROC curve: this split has only one class." : "This run predates ROC curves — train it again to see them."}
         </div>
-      )}
-      <table className="data class-metrics">
-        <thead>
-          <tr><th>Class</th><th className="num">Precision</th><th className="num">Recall</th><th className="num">F1</th><th className="num">Support</th></tr>
-        </thead>
-        {ev && (
-          <tbody>
-            {ev.per_class.map((c) => (
-              <tr key={c.label}>
-                <td>{c.label}{binary && c.label === ev.positive_label && <span className="muted small-text"> · positive</span>}</td>
-                <td className="num">{fmtMetric(c.precision)}</td>
-                <td className="num">{fmtMetric(c.recall)}</td>
-                <td className="num">{fmtMetric(c.f1)}</td>
-                <td className="num">{fmtInt(c.support)}</td>
+      ))}
+      {tab === "classes" && (
+        <table className="data class-metrics">
+          <thead>
+            <tr><th>Class</th><th className="num">Precision</th><th className="num">Recall</th><th className="num">F1</th><th className="num">Support</th></tr>
+          </thead>
+          {ev && (
+            <tbody>
+              {ev.per_class.map((c) => (
+                <tr key={c.label}>
+                  <td>{c.label}{binary && c.label === ev.positive_label && <span className="muted small-text"> · positive</span>}</td>
+                  <td className="num">{fmtMetric(c.precision)}</td>
+                  <td className="num">{fmtMetric(c.recall)}</td>
+                  <td className="num">{fmtMetric(c.f1)}</td>
+                  <td className="num">{fmtInt(c.support)}</td>
+                </tr>
+              ))}
+            </tbody>
+          )}
+          <tfoot>
+            {(["macro", "weighted"] as const).map((a) => (
+              <tr key={a}>
+                <td>{a === "macro" ? "Macro avg" : "Weighted avg"}</td>
+                <td className="num">{fmtMetric(m[`precision_${a}`])}</td>
+                <td className="num">{fmtMetric(m[`recall_${a}`])}</td>
+                <td className="num">{fmtMetric(m[`f1_${a}`])}</td>
+                <td className="num">{total !== undefined ? fmtInt(total) : ""}</td>
               </tr>
             ))}
-          </tbody>
-        )}
-        <tfoot>
-          {(["macro", "weighted"] as const).map((a) => (
-            <tr key={a}>
-              <td>{a === "macro" ? "Macro avg" : "Weighted avg"}</td>
-              <td className="num">{fmtMetric(m[`precision_${a}`])}</td>
-              <td className="num">{fmtMetric(m[`recall_${a}`])}</td>
-              <td className="num">{fmtMetric(m[`f1_${a}`])}</td>
-              <td className="num">{total !== undefined ? fmtInt(total) : ""}</td>
-            </tr>
-          ))}
-        </tfoot>
-      </table>
+          </tfoot>
+        </table>
+      )}
+      </div>
     </section>
   );
 }
@@ -294,6 +325,7 @@ export function RunDetail({ run, targets, onTrainAgain = null }: {
   run: ModelRun; targets: string[]; onTrainAgain?: ((p: TrainPrefill) => void) | null;
 }) {
   const [split, setSplit] = useState<Split>("test");
+  const steady = useSteadyHeight();
   const metrics = run.metrics?.[split];
   if (run.status === "failed") {
     return (
@@ -324,7 +356,7 @@ export function RunDetail({ run, targets, onTrainAgain = null }: {
           <a className="small-text" href={`/api/runs/${run.id}/files/model`}>Download model ↓</a>
           <div className="segmented" role="group" aria-label="Split">
             {(["test", "valid"] as Split[]).map((s) => (
-              <button key={s} className={`small${split === s ? " on" : ""}`} onClick={() => setSplit(s)}>{s === "valid" ? "validation" : "test"}</button>
+              <button key={s} className={`small${split === s ? " on" : ""}`} onClick={() => { steady.hold(); setSplit(s); }}>{s === "valid" ? "validation" : "test"}</button>
             ))}
           </div>
         </div>
@@ -332,6 +364,7 @@ export function RunDetail({ run, targets, onTrainAgain = null }: {
       {!run.mlflow_url && run.report?.mlflow_error && (
         <div className="alert warn">Not logged to MLflow: {run.report.mlflow_error} (log it later with make mlflow-backfill)</div>
       )}
+      <div ref={steady.box}>
       {metrics ? (
         <div className="grid-2">
           {targets.filter((t) => metrics[t]).map((t) => {
@@ -344,6 +377,7 @@ export function RunDetail({ run, targets, onTrainAgain = null }: {
       ) : (
         <div className="muted">No {split} split in this export.</div>
       )}
+      </div>
     </div>
   );
 }
