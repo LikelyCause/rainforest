@@ -549,7 +549,7 @@ export function DatasetsPage() {
 
 /** Each baseline of a dataset, by model type: its latest version and phase. */
 function BaselineChips({ ds }: { ds: Dataset }) {
-  if (ds.baseline?.setup) return <span className="badge accent" title="A lead sets up its first baseline: model type, targets and assessors">Baseline to set up</span>;
+  if (ds.baseline?.setup) return <span className="badge accent" title="No baseline yet: a lead sets one up on the Team page (model type, targets and assessors)">Needs a baseline</span>;
   return (
     <>
       {ds.baselines.map((b) => (
