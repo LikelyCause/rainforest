@@ -173,7 +173,7 @@ def test_writes_record_the_acting_user(app_, lead, member, login_as):
         assert _wait(lambda: (x := writer.get(f"/api/exports/{exp['id']}").json())["status"] in ("done", "failed")
                      and x)["status"] == "done"
         run = writer.post(f"/api/exports/{exp['id']}/runs", json={"model": "random_forest", "cv": 0,
-                                                                   "params": {"n_estimators": 5}}).json()
+                                                                   "params": {"n_estimators": 10}}).json()
         assert run["created_by"] == uid
         assert _wait(lambda: (x := writer.get(f"/api/runs/{run['id']}").json())["status"] in ("done", "failed")
                      and x)["status"] == "done"

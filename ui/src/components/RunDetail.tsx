@@ -88,6 +88,8 @@ export function headlineTiles(m: Record<string, number>, binary: boolean): [stri
     ["Accuracy", m.accuracy],
     ["Bal. acc.", m.balanced_accuracy, "Balanced accuracy: the mean of each class's recall"],
     ["ROC AUC", m.roc_auc ?? m.roc_auc_ovr_macro, binary ? undefined : "One-vs-rest, macro-averaged over classes"],
+    ["PR AUC", binary ? m.pr_auc : m.pr_auc_macro, binary ? "Average precision of the positive class; a rare class's baseline is its share of rows"
+      : "Average precision, one-vs-rest, macro-averaged over classes"],
     ["Log loss", m.log_loss],
     ["Precision", binary ? m.precision : m.precision_macro, avg ?? "Positive class"],
     ["Recall", binary ? m.recall : m.recall_macro, avg ?? "Positive class"],
@@ -205,8 +207,33 @@ function RegressionCard({ target, m, ev }: { target: string; m: Record<string, n
   );
 }
 
-export function classTabs(): { key: "matrix" | "roc" | "classes"; label: string }[] {
-  return [{ key: "matrix", label: "Confusion matrix" }, { key: "roc", label: "ROC curves" }, { key: "classes", label: "Per class" }];
+export function classTabs(threshold = false): { key: "matrix" | "roc" | "classes" | "threshold"; label: string }[] {
+  return [{ key: "matrix", label: "Confusion matrix" }, { key: "roc", label: "ROC curves" }, { key: "classes", label: "Per class" },
+    ...(threshold ? [{ key: "threshold" as const, label: "Threshold" }] : [])];
+}
+
+/** What moving a binary target's cut-off from 0.5 would trade: precision against recall, at each threshold. */
+function ThresholdView({ rows, positive }: { rows: NonNullable<TargetEvaluation["thresholds"]>; positive: string | null }) {
+  const [t, setT] = useState(0.5);
+  const at = rows.reduce((a, r) => (Math.abs(r.threshold - t) < Math.abs(a.threshold - t) ? r : a));
+  const best = rows.reduce((a, r) => (r.f1 > a.f1 ? r : a));
+  return (
+    <div className="stack" style={{ gap: 8 }}>
+      <label className="field">
+        <span>Flag as <b>{positive ?? "positive"}</b> when its probability is at least <b>{fmtNum(at.threshold)}</b></span>
+        <input type="range" min={0.05} max={0.95} step={0.05} value={t} onChange={(e) => setT(Number(e.target.value))} aria-label="Threshold" />
+      </label>
+      <div className="stats metric-tiles">
+        {([["Precision", at.precision], ["Recall", at.recall], ["F1", at.f1], ["Rows flagged", at.flagged]] as const).map(([label, v]) => (
+          <div key={label} className="stat"><div className="label">{label}</div><div className="value">{label === "Rows flagged" ? fmtPct(v, 1) : fmtMetric(v)}</div></div>
+        ))}
+      </div>
+      <span className="muted small-text">
+        Best F1 is {fmtMetric(best.f1)} at {fmtNum(best.threshold)}{best.threshold !== 0.5 ? " (the scores above use 0.5)" : ""}.
+        Scores here are for this split; pick a threshold on validation, then check it on test.
+      </span>
+    </div>
+  );
 }
 
 /** Keeps a box from shrinking when its content is swapped, so a page scrolled to the bottom doesn't jump up when a
@@ -235,7 +262,7 @@ function TargetCard({ target, m, ev }: { target: string; m: Record<string, numbe
   const binary = ev ? ev.labels.length === 2 : "precision" in m;
   const total = ev?.per_class.reduce((a, c) => a + c.support, 0);
   const tiles = headlineTiles(m, binary);
-  const [tab, setTab] = useState<"matrix" | "roc" | "classes">("matrix");
+  const [tab, setTab] = useState<"matrix" | "roc" | "classes" | "threshold">("matrix");
   const steady = useSteadyHeight();
   return (
     <section className="card stack target-card">
@@ -251,7 +278,8 @@ function TargetCard({ target, m, ev }: { target: string; m: Record<string, numbe
           </div>
         ))}
       </div>
-      <ResultTabs tabs={classTabs()} value={tab} onChange={(k) => { steady.hold(); setTab(k); }} label={`Results for ${target}`} />
+      <ResultTabs tabs={classTabs(Boolean(ev?.thresholds))} value={tab} onChange={(k) => { steady.hold(); setTab(k); }} label={`Results for ${target}`} />
+      {tab === "threshold" && ev?.thresholds && <ThresholdView rows={ev.thresholds} positive={ev.positive_label} />}
       <div ref={steady.box} className="stack" style={{ gap: 8 }}>
       {tab === "matrix" && (ev ? <ConfusionMatrix ev={ev} accuracy={m.accuracy} /> : (
         <div className="muted small-text">This run predates confusion matrices — train it again to see them.</div>
@@ -433,6 +461,35 @@ export function RunDetail({ run, targets, onTrainAgain = null }: {
         <div className="muted">No {split} split in this export.</div>
       )}
       </div>
+      {run.report?.top_features && Object.keys(run.report.top_features).length > 0 && <TopFeatures top={run.report.top_features} />}
     </div>
+  );
+}
+
+/** The features each target's model leaned on most (gain or impurity importance, scaled to the largest). */
+function TopFeatures({ top }: { top: Record<string, { feature: string; source: string; importance: number }[]> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="card stack" open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
+      <summary><b>Top features</b> <span className="muted small-text">what each target's model relied on most</span></summary>
+      <div className="grid-2" style={{ marginTop: 8 }}>
+        {Object.entries(top).map(([target, rows]) => {
+          const max = Math.max(...rows.map((r) => r.importance), 1e-12);
+          return (
+            <div key={target} className="stack" style={{ gap: 3 }}>
+              <span className="small-text"><b>◎ {target}</b></span>
+              {rows.slice(0, 15).map((r) => (
+                <div key={r.feature} className="row small-text" style={{ gap: 8 }} title={r.source !== r.feature ? `from ${r.source}` : undefined}>
+                  <span className="mono" style={{ width: "45%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.feature}</span>
+                  <span style={{ flex: 1, background: "var(--surface-2)", borderRadius: 3, height: 10 }}>
+                    <span style={{ display: "block", width: `${(100 * r.importance) / max}%`, height: 10, borderRadius: 3, background: "var(--series-1)" }} />
+                  </span>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </details>
   );
 }

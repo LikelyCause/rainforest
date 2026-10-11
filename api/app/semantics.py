@@ -190,7 +190,8 @@ def grouped_target(spec: dict | None) -> list[str] | None:
     return list(bins["positive"]) if (spec or {}).get("task") == "bins" and "positive" in bins else None
 
 
-GROUP_REST = "rest"
+# Sorts before any class name, so the chosen classes stay the positive class (encoded 1) of a binary target.
+GROUP_REST = "(rest)"
 
 
 def bins_problem(bins: dict | None) -> str | None:

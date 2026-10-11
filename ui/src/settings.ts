@@ -1,8 +1,8 @@
 import type { ModelSetting, SettingValue } from "./types";
 
-export const GROUP_ORDER = ["run", "trees", "learning", "sampling", "regularization", "classes", "numbers", "advanced"] as const;
+export const GROUP_ORDER = ["run", "network", "trees", "learning", "sampling", "regularization", "classes", "numbers", "advanced"] as const;
 export const GROUP_LABEL: Record<string, string> = {
-  run: "Run", trees: "Trees", learning: "Learning", sampling: "Sampling", regularization: "Regularization",
+  run: "Run", network: "Network", trees: "Trees", learning: "Learning", sampling: "Sampling", regularization: "Regularization",
   classes: "For class targets", numbers: "For number targets", advanced: "Advanced",
 };
 

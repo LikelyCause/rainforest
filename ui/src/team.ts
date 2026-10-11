@@ -13,13 +13,16 @@ export interface Access {
   note: string;
 }
 
-export function accessOf(ds: Pick<Dataset, "phase"> & { baseline: Pick<NonNullable<Dataset["baseline"]>, "label"> | null },
+export function accessOf(ds: Pick<Dataset, "phase"> & { baseline: (Pick<NonNullable<Dataset["baseline"]>, "label"> & { setup?: boolean }) | null },
   me: Pick<Me, "id" | "role">, team: Pick<TeamState, "me"> | undefined): Access {
   const v = ds.baseline?.label ?? "baseline";
   if (me.role === "viewer") {
     return { source: "team", canEdit: false, note: ds.phase === "assessing"
       ? `${v} is being assessed; as a Viewer you see its decisions from team review on. Shown: the latest finalized baseline, or the suggestions.`
       : "You're a Viewer: you can look at everything the team shares but not change it." };
+  }
+  if (ds.baseline?.setup) {
+    return { source: "team", canEdit: false, note: "This dataset's first baseline isn't set up yet; it is read-only until a lead sets it up on the Team page." };
   }
   if (ds.phase === "assessing") {
     if (team?.me) {

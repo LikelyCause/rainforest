@@ -6,7 +6,7 @@ import math
 from dataclasses import asdict, dataclass
 from typing import Any
 
-GROUPS = ("run", "trees", "learning", "sampling", "regularization", "classes", "numbers", "advanced")
+GROUPS = ("run", "network", "trees", "learning", "sampling", "regularization", "classes", "numbers", "advanced")
 
 
 @dataclass(frozen=True)
@@ -162,6 +162,9 @@ XGBOOST = RUN + [
     Setting("scale_pos_weight", "Positive-class weight", "Weight of a binary target's positive class; above 1 "
             "trades precision for recall. Multiclass targets ignore it.", "classes", "float", 1.0, 0.01, 1000.0, 0.1,
             applies="classes"),
+    Setting("class_weight", "Class weights", "Balanced weights every class by its rarity, for any number of classes; "
+            "don't combine with the positive-class weight.", "classes", "choice", None,
+            options=(_opt(None, "None"), _opt("balanced", "Balanced")), applies="classes"),
     Setting("objective", "Loss", "What a number target is fitted to minimise.", "numbers", "choice",
             "reg:squarederror", options=(
                 _opt("reg:squarederror", "Squared error", "The usual choice; large errors count most."),
@@ -208,7 +211,109 @@ XGBOOST = RUN + [
             when=XGB_DART),
 ]
 
-CATALOG: dict[str, list[Setting]] = {"lightgbm": LIGHTGBM, "xgboost": XGBOOST}
+RF_BOOTSTRAP = {"bootstrap": (True,)}
+RANDOM_FOREST = RUN + [
+    Setting("n_estimators", "Trees", "More trees steady the average; past a few hundred they rarely help.", "trees", "int",
+            400, 10, 5000, 50),
+    Setting("max_depth", "Max depth", "Caps how deep a tree grows; unlimited trees are held back by the leaf size.",
+            "trees", "int_or_none", None, 1, 100, none_value=None, none_label="No limit"),
+    Setting("min_samples_leaf", "Min rows per leaf", "Larger leaves make smoother, more conservative trees.", "trees",
+            "int", 3, 1, 1000),
+    Setting("min_samples_split", "Min rows to split", "A node needs this many rows before it may split.", "trees",
+            "int", 2, 2, 1000),
+    Setting("max_features", "Features per split", "How many features each split may choose from; fewer makes trees "
+            "more different from each other.", "sampling", "choice", "sqrt", options=(
+                _opt("sqrt", "Square root of all"), _opt("log2", "Log2 of all"), _opt(0.5, "Half"),
+                _opt(0.33, "A third"), _opt(1.0, "All"))),
+    Setting("bootstrap", "Bootstrap", "Each tree sees a resample of the rows.", "sampling", "bool", True),
+    Setting("max_samples", "Row sample", "Share of rows each tree's resample draws.", "sampling", "float", 1.0, 0.05,
+            1.0, 0.05, when=RF_BOOTSTRAP),
+    Setting("class_weight", "Class weights", "Balanced weights rare classes up; per tree reweights each resample.",
+            "classes", "choice", None, options=(_opt(None, "None"), _opt("balanced", "Balanced"),
+                                                _opt("balanced_subsample", "Balanced, per tree")), applies="classes"),
+    Setting("criterion", "Split quality", "How a class split is scored.", "classes", "choice", "gini", options=(
+        _opt("gini", "Gini"), _opt("entropy", "Entropy"), _opt("log_loss", "Log loss")), applies="classes"),
+    Setting("max_leaf_nodes", "Max leaves", "Caps the leaves per tree.", "advanced", "int_or_none", None, 2, 100_000,
+            none_value=None, none_label="No limit"),
+    Setting("min_impurity_decrease", "Min split gain", "A split must reduce impurity by at least this much.",
+            "advanced", "float", 0.0, 0.0, 10.0, 0.001),
+    Setting("ccp_alpha", "Pruning", "Cost-complexity pruning; larger prunes more.", "advanced", "float", 0.0, 0.0, 10.0,
+            0.001),
+]
+
+HGB_QUANTILE = {"loss": ("quantile",)}
+HIST_GBM = RUN + [
+    Setting("max_iter", "Trees", "Boosting rounds. More fits more closely, and slower.", "trees", "int", 400, 10, 10_000,
+            50),
+    Setting("max_leaf_nodes", "Leaves per tree", "The main complexity control.", "trees", "int_or_none", 63, 2, 4096,
+            none_value=None, none_label="No limit"),
+    Setting("max_depth", "Max depth", "Caps how deep a tree grows.", "trees", "int_or_none", None, 1, 64,
+            none_value=None, none_label="No limit"),
+    Setting("min_samples_leaf", "Min rows per leaf", "Larger values make smoother, more conservative trees.", "trees",
+            "int", 20, 1, 10_000),
+    Setting("learning_rate", "Learning rate", "How much each tree counts. Lower needs more trees and usually "
+            "generalizes better.", "learning", "float", 0.06, 0.001, 1.0, 0.005),
+    Setting("max_features", "Feature sample per split", "Share of features tried at each split.", "sampling", "float",
+            1.0, 0.1, 1.0, 0.05),
+    Setting("l2_regularization", "L2 penalty", "Shrinks leaf values; steadies noisy targets.", "regularization",
+            "float", 1.0, 0.0, 100.0, 0.1),
+    Setting("class_weight", "Class weights", "Balanced weights rare classes up, trading precision for recall.",
+            "classes", "choice", None, options=(_opt(None, "None"), _opt("balanced", "Balanced")), applies="classes"),
+    Setting("loss", "Loss", "What a number target is fitted to minimise.", "numbers", "choice", "squared_error",
+            options=(_opt("squared_error", "Squared error"), _opt("absolute_error", "Absolute error"),
+                     _opt("quantile", "Quantile"), _opt("poisson", "Poisson", "Counts; needs targets ≥ 0."),
+                     _opt("gamma", "Gamma", "Positive, skewed amounts; needs targets > 0.")), applies="numbers"),
+    Setting("quantile", "Quantile", "The quantile to predict; 0.5 is the median.", "numbers", "float", 0.5, 0.01, 0.99,
+            0.05, applies="numbers", when=HGB_QUANTILE),
+    Setting("max_bins", "Max bins", "Value buckets per feature; more is finer and slower.", "advanced", "int", 255, 2,
+            255),
+    Setting("early_stopping", "Early stopping", "Stop adding trees when a held-out tenth of the training rows stops "
+            "improving.", "advanced", "bool", False),
+]
+
+MLP_LAYERS = ("64", "128", "64,32", "128,64", "256,128", "128,64,32", "256,128,64")
+MLP = RUN + [
+    Setting("hidden_layer_sizes", "Hidden layers", "Units per hidden layer; more and wider fit more complex patterns "
+            "and need more data.", "network", "choice", "128,64",
+            options=tuple(_opt(v, " × ".join(v.split(",")) + (" units" if "," not in v else "")) for v in MLP_LAYERS)),
+    Setting("activation", "Activation", "The units' non-linearity.", "network", "choice", "relu", options=(
+        _opt("relu", "ReLU"), _opt("tanh", "tanh"), _opt("logistic", "Logistic"))),
+    Setting("learning_rate_init", "Learning rate", "Step size of the optimizer.", "learning", "float", 0.001, 0.00001,
+            1.0, 0.0005),
+    Setting("solver", "Optimizer", "Adam suits most data; L-BFGS can be better on small datasets.", "learning",
+            "choice", "adam", options=(_opt("adam", "Adam"), _opt("lbfgs", "L-BFGS"), _opt("sgd", "SGD"))),
+    Setting("max_iter", "Max epochs", "Passes over the training rows.", "learning", "int", 200, 10, 10_000, 50),
+    Setting("alpha", "L2 penalty", "Weight decay; larger values make a smoother function.", "regularization", "float",
+            0.0001, 0.0, 10.0, 0.0001),
+    Setting("early_stopping", "Early stopping", "Stop when a held-out tenth of the training rows stops improving.",
+            "regularization", "bool", True),
+    Setting("batch_size", "Batch size", "Rows per gradient step (Adam and SGD).", "advanced", "int_or_none", None, 8,
+            4096, none_value=None, none_label="Automatic"),
+]
+
+LOGREG_ELASTIC = {"penalty": ("elasticnet",)}
+LOGISTIC = RUN + [
+    Setting("C", "Inverse penalty (C)", "Smaller C regularizes more strongly.", "regularization", "float", 1.0, 0.0001,
+            10_000.0, 0.1, applies="classes"),
+    Setting("penalty", "Penalty", "L1 drops weak features, L2 shrinks them, elastic net mixes both (L1 and elastic net "
+            "need the SAGA or liblinear optimizer).", "regularization", "choice", "l2", options=(
+                _opt("l2", "L2"), _opt("l1", "L1"), _opt("elasticnet", "Elastic net"), _opt(None, "None")),
+            applies="classes"),
+    Setting("l1_ratio", "L1 share", "Share of the elastic-net penalty that is L1.", "regularization", "float", 0.5, 0.0,
+            1.0, 0.05, applies="classes", when=LOGREG_ELASTIC),
+    Setting("class_weight", "Class weights", "Balanced weights rare classes up, trading precision for recall.",
+            "classes", "choice", None, options=(_opt(None, "None"), _opt("balanced", "Balanced")), applies="classes"),
+    Setting("solver", "Optimizer", "L-BFGS for L2 or none; SAGA for any penalty; liblinear for small data.", "advanced",
+            "choice", "lbfgs", options=(_opt("lbfgs", "L-BFGS"), _opt("saga", "SAGA"), _opt("liblinear", "liblinear"),
+                                        _opt("newton-cg", "Newton-CG")), applies="classes"),
+    Setting("max_iter", "Max iterations", "Raise it if the optimizer doesn't converge.", "advanced", "int", 3000, 100,
+            100_000, 500, applies="classes"),
+    Setting("alpha", "Ridge penalty", "For number targets, which train ridge regression: larger shrinks more.",
+            "numbers", "float", 1.0, 0.0, 10_000.0, 0.1, applies="numbers"),
+]
+
+CATALOG: dict[str, list[Setting]] = {"lightgbm": LIGHTGBM, "xgboost": XGBOOST, "random_forest": RANDOM_FOREST,
+                                     "hist_gradient_boosting": HIST_GBM, "mlp": MLP, "logistic_regression": LOGISTIC}
 # The lowest training target a loss accepts: (bound, whether the bound itself is allowed).
 TARGET_FLOOR = {"poisson": (0, True), "tweedie": (0, True), "gamma": (0, False), "count:poisson": (0, True),
                 "reg:tweedie": (0, True), "reg:gamma": (0, False), "reg:squaredlogerror": (-1, False)}
@@ -276,6 +381,8 @@ def effective(model: str, params: dict) -> dict:
             out[s.name] = s.default
     if model == "lightgbm" and out.get("data_sample_strategy") == "goss":
         out.update(subsample=1.0, subsample_freq=0)
+    if isinstance(out.get("hidden_layer_sizes"), str):
+        out["hidden_layer_sizes"] = tuple(int(v) for v in out["hidden_layer_sizes"].split(","))
     return out
 
 
@@ -295,11 +402,12 @@ def route(model: str, params: dict) -> tuple[dict, dict]:
 def objective_problem(params: dict, target_min: float | None) -> str | None:
     """A loss that needs targets above a floor (Poisson ≥ 0, gamma > 0, ...), against a number target's training
     minimum."""
-    floor = TARGET_FLOOR.get(params.get("objective", ""))
+    loss = params.get("objective") or params.get("loss") or ""
+    floor = TARGET_FLOOR.get(loss)
     if floor is None or target_min is None:
         return None
     bound, allowed = floor
     if target_min < bound or (target_min == bound and not allowed):
         rule = f"{'≥' if allowed else '>'} {bound:g}"
-        return f"The {params['objective']} loss needs targets {rule}; this target's training minimum is {target_min:g}"
+        return f"The {loss} loss needs targets {rule}; this target's training minimum is {target_min:g}"
     return None

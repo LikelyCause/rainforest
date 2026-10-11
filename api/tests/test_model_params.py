@@ -71,8 +71,9 @@ def test_quantile_alpha_must_be_below_one():
 
 def test_catalog_serializes():
     import json
-    json.dumps([s.to_json() for s in LGB])
-    assert settings_for("mlp") is None and set(CATALOG) == {"lightgbm", "xgboost"}
+    for key in CATALOG:
+        json.dumps([s.to_json() for s in CATALOG[key]])
+    assert set(CATALOG) == set(MODELS)
 
 
 import time  # noqa: E402
@@ -82,7 +83,7 @@ from app.modeling.registry import catalog, dry_fit_problem, regressor_params  # 
 
 def test_models_list_carries_settings():
     rows = {m["key"]: m for m in catalog()}
-    assert rows["lightgbm"]["settings"][0]["name"] == "seed" and rows["mlp"]["settings"] is None
+    assert rows["lightgbm"]["settings"][0]["name"] == "seed" and rows["mlp"]["settings"][0]["name"] == "seed"
     assert rows["knn"]["settings"] is None
 
 
@@ -169,8 +170,8 @@ def test_xgboost_defaults_are_what_trains():
     values["objective"] = config["learner"]["objective"]["name"]
     registry = MODELS["xgboost"].default_params
     for s in XGB:
-        if s.group == "run" or s.when or s.name in registry or s.name == "n_estimators":
-            continue
+        if s.group == "run" or s.when or s.name in registry or s.name in ("n_estimators", "class_weight"):
+            continue  # class_weight is the wrapper's (row weights at fit), not a booster parameter
         assert s.name in values, s.name
         shown = str(int(s.default)) if isinstance(s.default, bool) else str(s.default)
         assert values[s.name] == shown or float(values[s.name]) == float(s.default), (s.name, values[s.name])

@@ -402,6 +402,8 @@ export interface TargetEvaluation {
   per_class: { label: string; precision: number; recall: number; f1: number; support: number }[];
   /** One-vs-rest ROC curve per class (only the positive class for binary targets); absent on older runs. */
   roc?: RocCurve[];
+  /** Binary targets: the positive class's precision, recall and F1, and the share flagged, at each cut-off. */
+  thresholds?: { threshold: number; precision: number; recall: number; f1: number; flagged: number }[];
 }
 
 export interface RocCurve { label: string; auc: number; fpr: number[]; tpr: number[] }
@@ -441,6 +443,8 @@ export interface ModelRun {
     target_kinds?: Record<string, string>;
     mlflow_error?: string;
     cross_validation?: CrossValidation | null;
+    /** Per target (chain order), the features the model leaned on most. */
+    top_features?: Record<string, { feature: string; source: string; importance: number }[]>;
     /** Run of a private experiment: logged to MLflow once its recipe version reaches review. */
     mlflow_pending?: boolean;
   };

@@ -40,6 +40,7 @@ import polars as pl
 from sklearn import config_context
 from sklearn.metrics import (
     accuracy_score,
+    average_precision_score,
     balanced_accuracy_score,
     confusion_matrix,
     log_loss,
@@ -259,7 +260,10 @@ def evaluate(y_true: np.ndarray, proba: np.ndarray, labels: list[str] | None = N
         try:
             if k == 2:
                 out["roc_auc"] = float(roc_auc_score(y_true, proba[:, 1]))
+                out["pr_auc"] = float(average_precision_score(y_true == 1, proba[:, 1]))
             else:
+                present = [c for c in classes if (y_true == c).any()]
+                out["pr_auc_macro"] = float(np.mean([average_precision_score(y_true == c, proba[:, c]) for c in present]))
                 out["roc_auc_ovr_macro"] = float(roc_auc_score(y_true, proba, multi_class="ovr", average="macro"))
         except ValueError:  # a class absent from this split
             pass
@@ -275,7 +279,23 @@ def evaluate(y_true: np.ndarray, proba: np.ndarray, labels: list[str] | None = N
         ],
         "roc": roc_curves(y_true, proba, names),
     }
+    if k == 2:
+        details["thresholds"] = threshold_table(y_true, proba[:, 1])
     return out, details
+
+
+def threshold_table(y_true: np.ndarray, p1: np.ndarray) -> list[dict[str, float]]:
+    """Precision, recall and F1 of the positive class, and the share flagged, at each threshold from 0.05 to 0.95:
+    what moving the cut-off from 0.5 would trade."""
+    out = []
+    for t in np.round(np.arange(0.05, 0.951, 0.05), 2):
+        flagged = p1 >= t
+        tp = int((flagged & (y_true == 1)).sum())
+        prec = tp / int(flagged.sum()) if flagged.any() else 0.0
+        rec = tp / int((y_true == 1).sum()) if (y_true == 1).any() else 0.0
+        out.append({"threshold": float(t), "precision": prec, "recall": rec,
+                    "f1": 2 * prec * rec / (prec + rec) if prec + rec else 0.0, "flagged": float(flagged.mean())})
+    return out
 
 
 SCATTER_MAX_POINTS = 1000

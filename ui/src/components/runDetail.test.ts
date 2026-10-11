@@ -32,7 +32,7 @@ describe("headlineTiles", () => {
   const value = (rows: ReturnType<typeof headlineTiles>, label: string) => rows.find((r) => r[0] === label)?.[1];
   it("shows the positive class for binary targets", () => {
     const rows = headlineTiles(m, true);
-    expect(rows.map((r) => r[0])).toEqual(["Accuracy", "Bal. acc.", "ROC AUC", "Log loss", "Precision", "Recall", "F1", "Specificity"]);
+    expect(rows.map((r) => r[0])).toEqual(["Accuracy", "Bal. acc.", "ROC AUC", "PR AUC", "Log loss", "Precision", "Recall", "F1", "Specificity"]);
     expect([value(rows, "Precision"), value(rows, "Recall"), value(rows, "F1"), value(rows, "Specificity")]).toEqual([0.7, 0.6, 0.65, 0.9]);
   });
   it("shows macro averages for multiclass targets, and no specificity", () => {

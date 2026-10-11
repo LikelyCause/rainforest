@@ -157,7 +157,7 @@ MODELS: dict[str, ModelSpec] = {
         ),
         ModelSpec(
             "mlp", "MLP", "neural", False, _mlp,
-            {"hidden_layer_sizes": (128, 64), "alpha": 1e-4, "early_stopping": True, "max_iter": 200},
+            {"hidden_layer_sizes": "128,64", "alpha": 1e-4, "early_stopping": True, "max_iter": 200},
             importance="none",
             description="Small feed-forward network; needs a neural-family export.",
             build_regressor=_mlp_reg,
@@ -285,6 +285,7 @@ LIBRARY_RULES = {
               "below 1",
     "goss.hpp": "the GOSS top and other shares must add up to at most 1",
     "is_unbalance and scale_pos_weight": "set Unbalanced or a positive-class weight, not both",
+    "supports only": "this optimizer doesn't support that penalty: L1 needs SAGA or liblinear, elastic net needs SAGA",
 }
 
 

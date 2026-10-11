@@ -57,7 +57,7 @@ def test_a_class_target_can_be_predicted_one_vs_rest(visits):
     assert validate_decision({**d, "target_bins": {"k": 4}}, "tree", n_unique=3)
     assert validate_decision({**d, "semantic_type": "numeric_continuous"}, "tree", n_unique=300)
     _, _, classes, _, _, info = prepare_targets(p, ["y"], {"y": {"task": "bins", "bins": {"positive": ["<30"]}}}, {}, 1)
-    assert classes["y"] == ["<30", "rest"] and info["target_tasks"]["y"] == "classes"
+    assert classes["y"] == ["(rest)", "<30"] and info["target_tasks"]["y"] == "classes"  # <30 is the positive class
     assert info["target_bins"]["y"] == {"positive": ["<30"]}
 
 
@@ -85,3 +85,17 @@ def test_the_database_keeps_a_one_vs_rest_target(people):
     d = fields(lead, ds)
     got = lead.get(f"/api/fields/{d['y']['id']}").json()["decision"]
     assert (got["target_task"], got["target_bins"]) == ("bins", {"positive": ["a"]})
+
+
+def test_binary_scores_carry_pr_auc_and_a_threshold_table():
+    import numpy as np
+
+    from app.modeling.train import evaluate
+
+    rng = np.random.default_rng(0)
+    y = (rng.random(2000) < 0.1).astype(int)
+    p1 = np.clip(0.1 + 0.3 * y + rng.normal(0, 0.15, 2000), 0, 1)
+    m, d = evaluate(y, np.column_stack([1 - p1, p1]), ["no", "yes"])
+    assert 0.1 < m["pr_auc"] <= 1 and len(d["thresholds"]) == 19
+    best = max(d["thresholds"], key=lambda r: r["f1"])
+    assert best["f1"] > m["f1"]  # the 0.5 cut-off isn't the best one for a rare class
