@@ -195,7 +195,6 @@ function UserMenu() {
   const pick = u.mode === "pick";
   return (
     <div ref={ref} className="user-menu" style={{ position: "relative" }} onKeyDown={(e) => e.key === "Escape" && setOpen(false)}>
-      <NavLink to="/team" className="team-link">Team</NavLink>
       <button type="button" className="ghost profile-button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}
         title={u.email ?? undefined}>
         <Avatar user={u} size={28} />

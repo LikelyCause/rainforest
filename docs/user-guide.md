@@ -13,7 +13,7 @@ The top bar has, from left to right:
 - The *Baseline* chip. It names the current baseline, such as *Trees v2*, and links to the dataset's *Baselines*
   page. While you adjust an experiment, it names that experiment instead.
 - *Next unreviewed* (`U`), while fields are left to review.
-- On the right, *Team* (the user list) and your profile: picture, name and role.
+- On the right, your profile: picture, name and role.
 
 Your profile opens a menu with:
 
@@ -184,7 +184,7 @@ The dataset's *Team* step runs the team process for the baseline version in prog
 - A lead finalizes here.
 - When a baseline started from another dataset's baseline, its summary stays here.
 
-The *Team* page in the top bar is different: it lists users. Leads manage users there. See
+The *Team* page in your profile menu is different: it lists users. Leads manage users there. See
 [Managing people](team-workflow.md#managing-people).
 
 See [Team workflow](team-workflow.md) for each step.

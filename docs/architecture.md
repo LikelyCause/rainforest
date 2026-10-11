@@ -60,7 +60,7 @@ for one run.
 
 | Path | Responsibility |
 |---|---|
-| `App.tsx` | Routes, the sign-in gate (`RequireAuth`), and the top bar (dataset switcher, workflow steps, the baseline chip, which names the experiment instead in experiment mode, Team, and `UserMenu`: picture, name and role, opening *Change picture…*, *Team* and *Switch profile* / *Sign out*). |
+| `App.tsx` | Routes, the sign-in gate (`RequireAuth`), and the top bar (dataset switcher, workflow steps, the baseline chip, which names the experiment instead in experiment mode, and `UserMenu`: picture, name and role, opening *Change picture…*, *Settings*, *Team*, *MLflow ↗* and *Switch profile* / *Sign out*). `pages/SettingsPage.tsx` is the Settings page. |
 | `can.ts`, `avatar.ts` | `can(me, action)`: what a role may do, behind the edit controls outside Review, Bulk edit and experiments, where `accessOf` and the experiment helpers refuse a Viewer the same way (a Viewer only changes their own picture); initials and a stable colour slot for an account without a picture. |
 | `api.ts`, `types.ts` | Typed fetch client for every endpoint; response types. Any `401` (fetch or the upload XHR) sends the user to `/login?next=<current path>`. |
 | `hooks.ts` | Shared queries (`useMe`, `useDataset`, `useFields` (per view), `useOptions`, `useTeam`, `useExperiment`), `useAccess(ds, view)` (wraps `accessOf`; in an experiment or a finalized baseline it answers from the view), `PROCESSING` (the dataset statuses still processing) and `useDebounced`. |

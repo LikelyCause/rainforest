@@ -113,9 +113,6 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .check-grid label.check .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .start-baseline { gap: 14px; }
 .user-menu { display: flex; align-items: center; gap: 8px; margin-left: auto; }
-.team-link { padding: 4px 8px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500; color: var(--text-secondary); }
-.team-link:hover { background: var(--surface-hover); text-decoration: none; }
-.team-link.active { background: var(--surface-2); color: var(--text-primary); font-weight: 600; }
 .main { flex: 1; min-height: 0; overflow: auto; position: relative; }
 .login { min-height: 100%; display: grid; place-items: center; padding: 24px 16px; }
 .login-card { width: min(360px, 100%); gap: 14px; padding: 24px; }
