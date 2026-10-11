@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
+import { can } from "../can";
 import { useFields, useMe, useTeam } from "../hooks";
 import { useDatasetContext } from "../components/DatasetLayout";
 import { Empty, ErrorAlert } from "../components/ui";
@@ -52,21 +53,33 @@ export function BaselinesPage() {
         </div>
       )}
       {(lines.data ?? []).map((l) => (
-        <BaselineCard key={l.family} ds={ds} line={l} canChange={Boolean(lead && t?.recipe.phase === "finalized" && l.latest_finalized_id)} />
+        <BaselineCard key={l.family} ds={ds} line={l} canChange={Boolean(lead && t?.recipe.phase === "finalized" && l.latest_finalized_id)}
+          canRename={can(me, "renameBaseline") && !cur?.setup} />
       ))}
       {all.length > 1 && <Diff ds={ds} versions={all} />}
     </div>
   );
 }
 
-function BaselineCard({ ds, line, canChange }: { ds: Dataset; line: BaselineLine; canChange: boolean }) {
+function BaselineCard({ ds, line, canChange, canRename }: { ds: Dataset; line: BaselineLine; canChange: boolean; canRename: boolean }) {
   const [changing, setChanging] = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const latest = line.versions.find((v) => v.id === line.latest_finalized_id);
   return (
-    <section className="card stack" aria-label={`${line.label} baseline`}>
+    <section className="card stack" aria-label={`${line.name ?? line.label} baseline`}>
       <div className="card-head">
-        <h2>{line.label} baseline</h2>
-        <span className="muted small-text">{line.versions.length} version{line.versions.length === 1 ? "" : "s"}</span>
+        {renaming ? <RenameBaseline ds={ds} line={line} onDone={() => setRenaming(false)} /> : (
+          <h2 className="row" style={{ gap: 8 }}>
+            {line.name ?? `${line.label} baseline`}
+            {line.name && <span className="badge">{line.label}</span>}
+          </h2>
+        )}
+        <span className="row" style={{ gap: 12 }}>
+          {canRename && !renaming && (
+            <button type="button" className="link small-text" onClick={() => setRenaming(true)}>{line.name ? "Rename" : "Name it"}</button>
+          )}
+          <span className="muted small-text">{line.versions.length} version{line.versions.length === 1 ? "" : "s"}</span>
+        </span>
       </div>
       <History versions={line.versions} />
       {canChange && latest && (changing ? <NewVersion ds={ds} parent={latest} onCancel={() => setChanging(false)} /> : (
@@ -76,6 +89,32 @@ function BaselineCard({ ds, line, canChange }: { ds: Dataset; line: BaselineLine
         </div>
       ))}
     </section>
+  );
+}
+
+/** A lead names or renames a baseline in place; blank removes the name. Labels everywhere follow. */
+function RenameBaseline({ ds, line, onDone }: { ds: Dataset; line: BaselineLine; onDone: () => void }) {
+  const qc = useQueryClient();
+  const [name, setName] = useState(line.name ?? "");
+  const save = useMutation({
+    mutationFn: () => api.renameBaseline(ds.id, line.family, name),
+    onSuccess: () => {
+      qc.invalidateQueries();
+      toast({ message: name.trim() ? `${line.label} baseline renamed to ${name.trim()}` : `${line.label} baseline's name removed` });
+      onDone();
+    },
+  });
+  return (
+    <form className="stack grow" style={{ gap: 6 }} onSubmit={(e) => { e.preventDefault(); save.mutate(); }}
+      onKeyDown={(e) => e.key === "Escape" && onDone()}>
+      <div className="row" style={{ gap: 8 }}>
+        <input autoFocus aria-label={`Name of the ${line.label} baseline`} value={name} maxLength={60} placeholder={`${line.label} baseline`}
+          onChange={(e) => setName(e.target.value)} style={{ maxWidth: 360 }} />
+        <button type="submit" className="primary" disabled={save.isPending}>Save</button>
+        <button type="button" className="ghost" onClick={onDone}>Cancel</button>
+      </div>
+      <ErrorAlert error={save.error} />
+    </form>
   );
 }
 

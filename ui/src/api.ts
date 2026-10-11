@@ -143,8 +143,10 @@ export const api = {
     request<TeamState>(`/api/datasets/${datasetId}/finalize`, json("POST", { accept_open: acceptOpen })),
   versions: (datasetId: number) => request<RecipeVersion[]>(`/api/datasets/${datasetId}/recipes`),
   baselines: (datasetId: number) => request<BaselineLine[]>(`/api/datasets/${datasetId}/baselines`),
-  startBaseline: (datasetId: number, data: StartBaselineForm) =>
+  startBaseline: (datasetId: number, data: Omit<StartBaselineForm, "name"> & { name?: string }) =>
     request<TeamState>(`/api/datasets/${datasetId}/baselines`, json("POST", data)),
+  renameBaseline: (datasetId: number, family: string, name: string) =>
+    request<BaselineLine[]>(`/api/datasets/${datasetId}/baselines/${family}`, json("PATCH", { name })),
   finalizedRecipes: () => request<FinalizedRecipe[]>("/api/recipes"),
   /** `a` and `b` are recipe ids. */
   recipeDiff: (datasetId: number, a: number, b: number) =>

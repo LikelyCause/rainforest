@@ -11,6 +11,8 @@ export interface StartBaselineForm {
   source_recipe_id: number | null;
   targets: string[];
   assessors: number[];
+  /** The baseline's name, for a model type that has no baseline yet. */
+  name: string;
 }
 
 /** Why a field can't be a target (the API's own rule), or null when it can. */
@@ -33,6 +35,6 @@ export function startBaselineDefaults(
   const source = finalized.length ? Math.max(...finalized.map((b) => b.latest_finalized_id as number)) : null;
   return {
     family, start: source === null ? "scratch" : "baseline", source_recipe_id: source,
-    targets: fields.filter((f) => f.action === "target").map((f) => f.name), assessors: [me.id],
+    targets: fields.filter((f) => f.action === "target").map((f) => f.name), assessors: [me.id], name: "",
   };
 }

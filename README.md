@@ -53,8 +53,8 @@ and the only assessor.
 
 1. Sign in as **Admin** (a lead) and upload a file or generate a sample on **Datasets**.
 2. On the dataset's **Team** step, set up its first baseline: pick the model type (*Trees* for LightGBM, XGBoost and
-   random forests), keep *the suggestions* as the starting point, tick the targets, and leave yourself as the only
-   assessor. *Start* opens **Review**, where a target's *Predict as* says whether it is classes, a number or bands.
+   random forests), optionally give it a name, keep *the suggestions* as the starting point, tick the targets, and
+   leave yourself as the only assessor. *Start* opens **Review**, where a target's *Predict as* says whether it is classes, a number or bands.
 3. Walk the fields in **Review** (or mark them in bulk in **Bulk edit**: *Accept suggestions*, *Mark reviewed*) until
    every field is reviewed.
 4. On the **Team** step, *Submit assessment*. With one assessor there is nothing to settle, so team review opens with
@@ -349,7 +349,18 @@ blind assessment and team review again with the assessors the lead assigns: asse
 assessment* needs just those reviewed, and the review queue holds only disagreements among them. Every other field is
 **carried over and locked** (🔒 in the Review list; the decision panel says why): nobody changes it in that version,
 the lead included. With nothing reopened the version opens straight in team review and the lead edits the team
-decision directly (recorded in each field's history) and finalizes. The Baselines page lists every version of every
+decision directly (recorded in each field's history) and finalizes.
+
+**Baseline names.** A baseline can have a name, given when it starts (the form's optional *Name*, shown for a model
+type without a baseline yet) and changed by a lead with *Rename* (or *Name it*) on its Baselines page card; blank
+removes it. Its versions share it: a named baseline reads "Dropout risk v2" in the top bar, the dataset list and the
+pickers, and "Dropout risk v2 (Trees)" where the model type matters; an unnamed one reads "Trees v2" and "Trees
+baseline v2". Names are up to 60 characters and differ between a dataset's baselines (ignoring case). Renaming
+doesn't touch a finalized version's decisions, and what was named at the time keeps its name: an export's manifest
+and a Team experiment's default name ("Team · Dropout risk v1"). A long name is cut in the top bar and badges, in full
+on hover.
+
+The Baselines page lists every version of every
 baseline (who started and finalized it and when, its phase, how many fields it reopened, what it was built from) and
 compares any two: the fields whose decision or settings differ (decisions only between baselines of different model
 types). Only team decisions are compared; a version still being worked is compared as its team decision stands, never
@@ -763,6 +774,7 @@ ORDER BY target, metric, value DESC;
 | `meta.users` | users: name, email, role (`lead` / `member` / `viewer`), active, `key` (an account from `RAINFOREST_USERS`), `avatar` (the picture's hash), OIDC subject, last seen |
 | `meta.recipes` | baseline versions per dataset: `family` (`tree` / `linear` / `neural`), `version` (counted per family), phase (`assessing` / `review` / `finalized`), `scope` (`all` / `reopened`), who finalized it, the frozen `snapshot`, and `reuse` (the summary when it started from another dataset's baseline) |
 | `meta.recipe_reopened` | the fields a `reopened` version works on |
+| `meta.baseline_names` | a baseline's name: one per dataset and model family (`meta.baseline_name(dataset_id, family)` reads it) |
 | `meta.experiments` | experiments per dataset: name, owner, `source` (`recipe:<id>` or `assessment:<recipe id>:<user id>`), `is_default` (a baseline version's **Team ·** experiment), `target_order`, notes, archived |
 | `meta.experiment_decisions`, `meta.experiment_settings`, `meta.experiment_batches` | each team experiment's own copy of its baseline (decisions, its model family's settings) and its bulk edits; fields that differ from the baseline's snapshot are its adjustments |
 | `meta.exports`, `meta.model_runs` | export jobs; training runs with metrics and report; each with its `experiment_id` |
