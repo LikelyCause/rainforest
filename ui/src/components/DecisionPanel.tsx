@@ -1,15 +1,28 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ChangeEvent } from "react";
+import { forwardRef, Fragment, useEffect, useImperativeHandle, useRef, useState, type ChangeEvent } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import { pendingDraft, queueSave } from "../saveQueue";
-import { bandCount, defaultTask, NUMERIC, paramProblem, parseEdges, retype, taskLabel, toInput, withEncoding, type ParamRule } from "../decision";
+import { bandCount, bandsText, defaultTask, NUMERIC, paramProblem, parseEdges, retype, taskLabel, toInput, withEncoding, type ParamRule } from "../decision";
 import { baselineDiff, revertedInput } from "../experiments";
 import type { DecisionInput, Dim, FieldResponse, OptionCatalog, TargetBins, TargetTask } from "../types";
-import type { View } from "../view";
+import { parseView, type View } from "../view";
+import { useDataset } from "../hooks";
+import { Chip, Icon, LensChip, Segmented } from "./kit";
+import { InfoTip } from "./ui";
 
 const DIMS: Dim[] = ["imputation", "transform", "scaling", "encoding"];
 const DIM_LABEL: Record<Dim, string> = { imputation: "Missing values", transform: "Transform", scaling: "Scaling", encoding: "Encoding" };
 const SAVE_DEBOUNCE_MS = 400;
+
+/** Whose decision the panel shows; the same colour as the lens chip in the bar above. */
+export type PanelLens = "private" | "team" | "experiment" | "frozen" | "suggestions";
+const LENS_WORD: Record<PanelLens, string> = { private: "Private", team: "Shared", experiment: "Experiment", frozen: "Frozen", suggestions: "Read-only" };
+const LENS_TITLE: Record<PanelLens, string> = {
+  private: "Your assessment", team: "Team decision", experiment: "This experiment", frozen: "Frozen snapshot", suggestions: "Suggestions",
+};
+
+/** What each assessor chose for a setting, in team review: shown in small text under that setting. */
+export type VoteKey = "action" | "semantic_type" | "target" | "imputation" | "transform" | "scaling" | "encoding" | "impute_value" | "add_missing_indicator";
 
 export interface DecisionPanelHandle {
   confirm: () => void;
@@ -32,12 +45,22 @@ interface Props {
   typing: boolean;
   onConfirmed: (c: Confirmed) => void;
   onShowShortcuts: () => void;
-  /** Why this decision can't be changed here; the panel then only shows it. */
+  /** Why this decision can't be changed here; the panel then shows plain values and this reason. */
   readOnly?: string | null;
-  /** Whose decision this is, when it isn't simply the team's ("Your assessment"). */
+  /** Whose decision this is, as the header names it ("Your assessment", an experiment's name). */
   owner?: string;
   /** The decision source (see view.ts); null for the baseline in progress. */
   view?: View;
+  /** The header's lens; derived from owner, view and phase when left out. */
+  lens?: PanelLens;
+  /** Each assessor's choice per setting, in team review. */
+  votes?: Partial<Record<VoteKey, string>>;
+  /** Team review: the confirm button settles the field ("Settle as keep, category"); a string replaces "Settle". */
+  settleLabel?: boolean | string;
+  /** Read-only: moves on to the next field (the footer button). */
+  onNext?: () => void;
+  /** A carried-over field: moves on to the next field still to do. */
+  onNextTodo?: () => void;
 }
 
 function retypeWarning(type: string, data: FieldResponse): string | null {
@@ -52,9 +75,10 @@ function retypeWarning(type: string, data: FieldResponse): string | null {
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function DecisionPanel(
-  { data, catalog, familyLabel, typing, onConfirmed, onShowShortcuts, readOnly, owner, view = null }, ref,
+  { data, catalog, familyLabel, typing, onConfirmed, onShowShortcuts, readOnly, owner, view = null, lens: lensProp, votes, settleLabel, onNext, onNextTodo }, ref,
 ) {
   const f = data.field;
   const sugg = f.suggestion;
@@ -65,6 +89,11 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
   const before = useRef(server);
   const noteRef = useRef<HTMLTextAreaElement>(null);
   const [noteOpen, setNoteOpen] = useState(Boolean(draft.notes));
+  const ds = useDataset(f.dataset_id);
+  const v = parseView(view);
+  const lens: PanelLens = lensProp ?? (owner === "Your assessment" ? "private" : v?.kind === "experiment" ? "experiment"
+    : v?.kind === "baseline" || ds.data?.phase === "finalized" ? "frozen" : "team");
+  const title = owner ?? LENS_TITLE[lens];
 
   const commit = (next: DecisionInput, delay = SAVE_DEBOUNCE_MS) => {
     if (readOnly) return;
@@ -81,20 +110,23 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
   const allowed = catalog.allowed[family][draft.semantic_type];
   const notes = catalog.family_notes[family] ?? {};
   const labels = catalog.labels;
+  const typeLabel = (t: string) => catalog.types.find((x) => x.value === t)?.label ?? t;
+  const optLabel = (dim: Dim, o: string) => labels[dim][o] ?? o;
 
   const editableDims = draft.action === "keep" ? DIMS.filter((d) => allowed[d].length > 1 || draft[d] !== allowed[d][0]) : [];
   const lockedDims = draft.action === "keep" ? DIMS.filter((d) => !editableDims.includes(d) && notes[d]) : [];
   const edited = (["action", "semantic_type", ...editableDims, ...(NUMERIC.has(draft.semantic_type) && draft.action === "keep" ? ["add_missing_indicator" as const] : [])] as const)
     .filter((k) => differs(k));
 
+  const verb = { keep: "keep", drop: "drop", target: "target" }[draft.action];
   const confirmLabel = (() => {
+    if (settleLabel) return `${settleLabel === true ? "Settle" : settleLabel} as ${verb}, ${typeLabel(draft.semantic_type).toLowerCase()}`;
     const unchanged = same({ ...draft, notes: null }, { ...server, notes: null }) && draft.reviewed;
-    if (unchanged) return "Next";
-    const verb = { keep: "keep", drop: "drop", target: "target" }[draft.action];
+    if (unchanged) return "Next field";
     const parts = edited.filter((k) => k !== "action").map((k) =>
-      k === "semantic_type" ? catalog.types.find((t) => t.value === draft.semantic_type)?.label.toLowerCase() ?? draft.semantic_type
+      k === "semantic_type" ? typeLabel(draft.semantic_type).toLowerCase()
         : k === "add_missing_indicator" ? "missing flag"
-        : `${(labels[k as Dim][draft[k as Dim]] ?? draft[k as Dim]).split(" (")[0].toLowerCase()}${k === "imputation" ? " fill" : ""}`);
+        : `${optLabel(k as Dim, draft[k as Dim]).split(" (")[0].toLowerCase()}${k === "imputation" ? " fill" : ""}`);
     const shown = parts.slice(0, 2).join(", ");
     return `Confirm · ${verb}${shown ? `, ${shown}` : ""}${parts.length > 2 ? ` +${parts.length - 2}` : ""}`;
   })();
@@ -117,6 +149,7 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
     update({ action: d.action === "keep" ? "drop" : "keep" }, 0);
   };
   const focusNote = () => {
+    if (readOnly) return;
     setNoteOpen(true);
     window.setTimeout(() => noteRef.current?.focus(), 0);
   };
@@ -127,11 +160,15 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
     fn(e);
     e.currentTarget.blur();
   };
-  const revert = (patch: Partial<DecisionInput>) => (
-    <button type="button" className="ghost" onClick={() => update(patch, 0)} title="Revert this setting to the suggestion">↺</button>
-  );
-  const suggestedLine = (k: Dim | "semantic_type" | "action", text: string) =>
-    differs(k) ? <div className="suggested">suggested: {text} {revert({ [k]: suggested[k] } as Partial<DecisionInput>)}</div> : null;
+  const vote = (k: VoteKey) => (votes?.[k] ? <span className="vote">{votes[k]}</span> : null);
+  const suggestedLine = (k: Dim | "semantic_type" | "action" | "add_missing_indicator", name: string, text: string) =>
+    differs(k) ? (
+      <span className="suggested">
+        Suggested: {text}
+        <button type="button" className="link" aria-label={`Reset ${name.toLowerCase()} to the suggestion, ${text}`}
+          onClick={() => update({ [k]: suggested[k] } as Partial<DecisionInput>, 0)}>Reset</button>
+      </span>
+    ) : null;
 
   const param = (key: string, title: string, step = 1) => (
     <ParamInput key={`${draft.encoding}-${key}`} id={`p-${key}`} title={title} step={step}
@@ -139,73 +176,151 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
       rule={catalog.param_rules?.[draft.encoding]?.[key]}
       onChange={(n) => update({ params: { ...draftRef.current.params, [key]: n } })} />
   );
+  const paramValue = (key: string) => draft.params?.[key] ?? catalog.default_params[draft.encoding]?.[key];
+  const PARAMS: Record<string, [string, string][]> = {
+    onehot: [["max_categories", "Max categories"], ["min_frequency", "Min frequency"]],
+    ordinal: [["min_frequency", "Min frequency"]],
+    tfidf_svd: [["svd_components", "SVD components"], ["max_features", "Max vocabulary"]],
+  };
 
   const warning = retypeWarning(draft.semantic_type, data);
-  const typeLabel = (v: string) => catalog.types.find((t) => t.value === v)?.label ?? v;
+  const carried = Boolean(readOnly && data.locked && readOnly === data.locked);
+  const fallbackTask = defaultTask(draft.semantic_type, f.n_unique);
+  const fillLabel = ["categorical", "binary"].includes(draft.semantic_type) ? "Missing label" : "Fill value";
+  const lockedLine = lockedDims.length > 0 && (
+    <div className="locked-line">
+      {lockedDims.map((d) => DIM_LABEL[d]).join(", ")}: not used for {familyLabel.toLowerCase()}
+      <InfoTip label={<Icon name="info" size={14} />} ariaLabel={`Why ${lockedDims.map((d) => DIM_LABEL[d].toLowerCase()).join(" and ")} aren't used`}
+        text={lockedDims.map((d) => notes[d]).join("\n")} />
+    </div>
+  );
+  const why = sugg.reasons.length > 0 && (
+    <details className="why" open>
+      <summary>Why these suggestions</summary>
+      <ul>{sugg.reasons.map((r) => <li key={r}><Reason text={r} /></li>)}</ul>
+    </details>
+  );
+  const experimentBox = data.baseline !== undefined && (
+    <ExperimentBox draft={draft} data={data} readOnly={Boolean(readOnly)} typeLabel={typeLabel}
+      onRevert={() => data.baseline && commit(revertedInput(draftRef.current, data.baseline), 0)} />
+  );
+
+  const header = (
+    <div className="decision-head">
+      <h2>{title}</h2>
+      <LensChip lens={lens}>{LENS_WORD[lens]}</LensChip>
+      <span className="spacer" />
+      <Chip title="Keep / drop, type and notes are shared; the settings below are for this model">{familyLabel}</Chip>
+    </div>
+  );
+
+  if (readOnly) {
+    const task = draft.target_task ?? fallbackTask;
+    return (
+      <aside className="decision" aria-label={`${title}, read-only`} data-lens={lens}>
+        <div className="decision-body">
+          {header}
+          {carried && (
+            <div className="carried-box">
+              <Icon name="lock" />
+              <p><b>Carried over from the version before.</b> <span className="secondary">Only reopened fields are assessed in this version.</span></p>
+            </div>
+          )}
+          {experimentBox}
+          <dl className="plain-values num">
+            <div className="setting-row"><dt>Decision</dt><dd>{cap(draft.action)}{vote("action")}</dd></div>
+            {isTarget && task && <div className="setting-row"><dt>Predict as</dt><dd>{bandsText(task, draft.target_bins)}{vote("target")}</dd></div>}
+            <div className="setting-row"><dt>Type</dt><dd>{typeLabel(draft.semantic_type)}{vote("semantic_type")}</dd></div>
+            {editableDims.map((dim) => (
+              <Fragment key={dim}>
+                <div className="setting-row"><dt>{DIM_LABEL[dim]}</dt><dd>{optLabel(dim, draft[dim])}{vote(dim)}</dd></div>
+                {dim === "imputation" && draft.imputation === "constant" && (
+                  <div className="setting-row"><dt>{fillLabel}</dt><dd className="mono">{draft.impute_value ?? "—"}{vote("impute_value")}</dd></div>
+                )}
+                {dim === "encoding" && (PARAMS[draft.encoding] ?? []).map(([k, l]) => (
+                  <div key={k} className="setting-row"><dt>{l}</dt><dd>{String(paramValue(k) ?? "—")}</dd></div>
+                ))}
+              </Fragment>
+            ))}
+            {draft.action === "keep" && NUMERIC.has(draft.semantic_type) && (
+              <div className="setting-row"><dt>Missing flag</dt><dd className={draft.add_missing_indicator ? "" : "off"}>{draft.add_missing_indicator ? "On" : "Off"}{vote("add_missing_indicator")}</dd></div>
+            )}
+          </dl>
+          {lockedLine}
+          {draft.notes && (
+            <div className="plain-note">
+              <span className="field-label">Note</span>
+              <p>{draft.notes}</p>
+            </div>
+          )}
+          {why}
+        </div>
+        <div className="decision-foot">
+          <span className="foot-line">{readOnly}</span>
+          {carried && onNextTodo ? (
+            <button type="button" className="primary large confirm" onClick={onNextTodo}><span>Next to-do field</span><kbd>U</kbd></button>
+          ) : onNext && (
+            <button type="button" className="large confirm" onClick={onNext}><span>Next field</span><kbd>J</kbd></button>
+          )}
+        </div>
+      </aside>
+    );
+  }
 
   return (
-    <aside className="decision" aria-label="Decision">
+    <aside className="decision" aria-label={title} data-lens={lens}>
       <div className="decision-body">
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <h3>{owner ?? "Decision"}</h3>
-          <span className="badge" title="Keep / drop, type and notes are shared; the settings below are for this model">{familyLabel}</span>
+        {header}
+
+        <div className={`setting action-setting${differs("action") ? " edited" : ""}`}>
+          <Segmented full label="Keep, drop or target" value={draft.action}
+            options={(["keep", "drop", "target"] as const).map((a) => ({
+              value: a, label: cap(a), disabled: a === "keep" && nonFeature && !isTarget,
+              title: a === "keep" && nonFeature ? `${draft.semantic_type} fields can't be model features` : a === "target" ? "Use as a target column" : "X toggles keep / drop",
+            }))}
+            onChange={(a) => update({ action: a }, 0)} />
+          {suggestedLine("action", "Keep, drop or target", sugg.action)}
+          {vote("action")}
         </div>
-        <fieldset className="bare" disabled={Boolean(readOnly)}>
 
-          <div className={`setting${differs("action") ? " edited" : ""}`}>
-            <div className="segmented" role="radiogroup" aria-label="Keep, drop or target">
-              {(["keep", "drop", "target"] as const).map((a) => (
-                <button key={a} type="button" role="radio" aria-checked={draft.action === a}
-                  className={draft.action === a ? `on ${a}` : ""}
-                  disabled={a === "keep" && nonFeature && !isTarget}
-                  title={a === "keep" && nonFeature ? `${draft.semantic_type} fields can't be model features` : a === "target" ? "Use as a target column" : "X toggles keep / drop"}
-                  onClick={() => update({ action: a }, 0)}>
-                  {a[0].toUpperCase() + a.slice(1)}
-                </button>
-              ))}
+        {experimentBox}
+
+        {isTarget && (() => {
+          const task = draft.target_task ?? fallbackTask;
+          const classField = draft.semantic_type === "binary" || draft.semantic_type === "categorical";
+          const levels = f.charts.distribution?.kind === "bars" ? f.charts.distribution.labels : [];
+          const allowedTask = (t: TargetTask) => (t === "classes"
+            ? draft.semantic_type !== "numeric_continuous" && (!NUMERIC.has(draft.semantic_type) || (f.n_unique ?? 0) <= catalog.target_rule.max_levels)
+            : t === "bins" ? NUMERIC.has(draft.semantic_type) || (classField && levels.length > 1) : NUMERIC.has(draft.semantic_type));
+          const hint = (t: TargetTask) => (allowedTask(t) ? undefined
+            : t === "classes" ? (draft.semantic_type === "numeric_continuous" ? "A continuous field is predicted as a number or as bands"
+              : `More than ${catalog.target_rule.max_levels} distinct values`)
+            : "Only numeric fields can be predicted as a number or as bands");
+          return (
+            <div className={`setting predict-as${task !== fallbackTask ? " edited" : ""}`}>
+              <span className="setting-label" id="d-predict">Predict as</span>
+              <Segmented full label="Predict as" value={task ?? ("" as TargetTask)}
+                options={(["classes", "regression", "bins"] as const).map((t) => ({
+                  value: t, label: t === "bins" && classField ? "One vs rest" : taskLabel(t), disabled: !allowedTask(t), title: hint(t),
+                }))}
+                onChange={(t) => update({ target_task: t, target_bins: t !== "bins" ? null
+                  : classField ? (draftRef.current.target_bins && "positive" in draftRef.current.target_bins ? draftRef.current.target_bins : { positive: [levels[levels.length - 1]] })
+                  : draftRef.current.target_bins ?? { k: catalog.target_rule.default_k } }, 0)} />
+              {task !== fallbackTask && fallbackTask && <span className="suggested">Default for this type: {taskLabel(fallbackTask).toLowerCase()}</span>}
+              {vote("target")}
+              {task === "bins" && classField && (
+                <PositivePicker levels={levels} positive={draft.target_bins && "positive" in draft.target_bins ? draft.target_bins.positive : []}
+                  readOnly={false} onChange={(positive) => update({ target_task: "bins", target_bins: { positive } }, 0)} />
+              )}
+              {task === "bins" && !classField && (
+                <BandSettings fieldId={f.id} bins={draft.target_bins ?? { k: catalog.target_rule.default_k }} readOnly={false}
+                  onChange={(b) => update({ target_task: "bins", target_bins: b }, 0)} />
+              )}
             </div>
-            {suggestedLine("action", sugg.action)}
-          </div>
+          );
+        })()}
 
-          {isTarget && (() => {
-            const fallback = defaultTask(draft.semantic_type, f.n_unique);
-            const task = draft.target_task ?? fallback;
-            const classField = draft.semantic_type === "binary" || draft.semantic_type === "categorical";
-            const levels = f.charts.distribution?.kind === "bars" ? f.charts.distribution.labels : [];
-            const allowedTask = (t: TargetTask) => (t === "classes"
-              ? draft.semantic_type !== "numeric_continuous" && (!NUMERIC.has(draft.semantic_type) || (f.n_unique ?? 0) <= catalog.target_rule.max_levels)
-              : t === "bins" ? NUMERIC.has(draft.semantic_type) || (classField && levels.length > 1) : NUMERIC.has(draft.semantic_type));
-            const hint = (t: TargetTask) => (allowedTask(t) ? undefined
-              : t === "classes" ? (draft.semantic_type === "numeric_continuous" ? "A continuous field is predicted as a number or as bands"
-                : `More than ${catalog.target_rule.max_levels} distinct values`)
-              : "Only numeric fields can be predicted as a number or as bands");
-            return (
-              <div className={`setting predict-as${task !== fallback ? " edited" : ""}`}>
-                <span className="setting-label">Predict as</span>
-                <div className="segmented full" role="radiogroup" aria-label="Predict as">
-                    {(["classes", "regression", "bins"] as const).map((t) => (
-                      <button key={t} type="button" role="radio" aria-checked={task === t} className={task === t ? "on" : ""}
-                        disabled={!allowedTask(t)} title={hint(t)}
-                        onClick={() => update({ target_task: t, target_bins: t !== "bins" ? null
-                          : classField ? (draftRef.current.target_bins && "positive" in draftRef.current.target_bins ? draftRef.current.target_bins : { positive: [levels[levels.length - 1]] })
-                          : draftRef.current.target_bins ?? { k: catalog.target_rule.default_k } }, 0)}>
-                        {t === "bins" && classField ? "One vs rest" : taskLabel(t)}
-                      </button>
-                    ))}
-                </div>
-                {task !== fallback && fallback && <div className="suggested">default for this type: {taskLabel(fallback).toLowerCase()}</div>}
-                {task === "bins" && classField && (
-                  <PositivePicker levels={levels} positive={draft.target_bins && "positive" in draft.target_bins ? draft.target_bins.positive : []}
-                    readOnly={Boolean(readOnly)} onChange={(positive) => update({ target_task: "bins", target_bins: { positive } }, 0)} />
-                )}
-                {task === "bins" && !classField && (
-                  <BandSettings fieldId={f.id} bins={draft.target_bins ?? { k: catalog.target_rule.default_k }} readOnly={Boolean(readOnly)}
-                    onChange={(b) => update({ target_task: "bins", target_bins: b }, 0)} />
-                )}
-              </div>
-            );
-          })()}
-
+        <div className="settings">
           <div className={`setting${differs("semantic_type") ? " edited" : ""}`}>
             <div className="setting-row">
               <label htmlFor="d-type">Type</label>
@@ -215,14 +330,15 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
               </select>
             </div>
             {warning && (
-              <div className="inline-warn">
+              <span className="inline-warn">
                 {warning}{" "}
-                <button type="button" className="link small-text" onClick={() => commit(retype(draftRef.current, f.inferred_type, catalog, sugg), 0)}>
+                <button type="button" className="link" onClick={() => commit(retype(draftRef.current, f.inferred_type, catalog, sugg), 0)}>
                   Undo retype
                 </button>
-              </div>
+              </span>
             )}
-            {!warning && suggestedLine("semantic_type", typeLabel(sugg.semantic_type))}
+            {!warning && suggestedLine("semantic_type", "Type", typeLabel(sugg.semantic_type))}
+            {vote("semantic_type")}
           </div>
 
           {editableDims.map((dim) => (
@@ -234,22 +350,29 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
                     onChange={blurAfter((e) => dim === "encoding"
                       ? commit(withEncoding(draftRef.current, e.target.value, catalog), 0)
                       : update({ [dim]: e.target.value } as Partial<DecisionInput>, 0))}>
-                    {allowed[dim].map((o) => <option key={o} value={o}>{labels[dim][o] ?? o}</option>)}
+                    {allowed[dim].map((o) => <option key={o} value={o}>{optLabel(dim, o)}</option>)}
                   </select>
                 </div>
               ) : (
                 <div className="setting-row">
                   <span>{DIM_LABEL[dim]}</span>
-                  <span className="secondary" title={notes[dim]}>{labels[dim][draft[dim]] ?? draft[dim]} (fixed for {familyLabel.toLowerCase()}) {notes[dim] && "ⓘ"}</span>
+                  <span className="secondary fixed-value">
+                    {optLabel(dim, draft[dim])} (fixed for {familyLabel.toLowerCase()})
+                    {notes[dim] && <InfoTip label={<Icon name="info" size={14} />} ariaLabel={`Why ${DIM_LABEL[dim].toLowerCase()} is fixed`} text={notes[dim]!} />}
+                  </span>
                 </div>
               )}
-              {suggestedLine(dim, (labels[dim][sugg[dim]] ?? sugg[dim]).split(" (")[0])}
+              {suggestedLine(dim, DIM_LABEL[dim], optLabel(dim, sugg[dim]).split(" (")[0])}
+              {vote(dim)}
               {dim === "imputation" && draft.imputation === "constant" && (
-                <div className="setting-row">
-                  <label htmlFor="d-fill">{["categorical", "binary"].includes(draft.semantic_type) ? "Missing label" : "Fill value"}</label>
-                  <input id="d-fill" value={draft.impute_value ?? ""} inputMode={NUMERIC.has(draft.semantic_type) ? "decimal" : undefined}
-                    onChange={(e) => update({ impute_value: e.target.value })} />
-                </div>
+                <>
+                  <div className="setting-row">
+                    <label htmlFor="d-fill">{fillLabel}</label>
+                    <input id="d-fill" value={draft.impute_value ?? ""} inputMode={NUMERIC.has(draft.semantic_type) ? "decimal" : undefined}
+                      onChange={(e) => update({ impute_value: e.target.value })} />
+                  </div>
+                  {vote("impute_value")}
+                </>
               )}
               {dim === "encoding" && draft.encoding === "onehot" && <>{param("max_categories", "Max categories")}{param("min_frequency", "Min frequency", 0.005)}</>}
               {dim === "encoding" && draft.encoding === "ordinal" && param("min_frequency", "Min frequency", 0.001)}
@@ -260,68 +383,60 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
           {draft.action === "keep" && NUMERIC.has(draft.semantic_type) && (
             <div className={`setting${differs("add_missing_indicator") ? " edited" : ""}`}>
               <div className="setting-row">
-                <span>Missing flag</span>
+                <label htmlFor="d-flag">Missing flag</label>
                 <label className="check">
-                  <input type="checkbox" checked={draft.add_missing_indicator}
+                  <input id="d-flag" type="checkbox" checked={draft.add_missing_indicator}
                     onChange={(e) => update({ add_missing_indicator: e.target.checked }, 0)} />
-                  add indicator column
+                  Add an indicator column
                 </label>
               </div>
+              {suggestedLine("add_missing_indicator", "Missing flag", suggested.add_missing_indicator ? "on" : "off")}
+              {vote("add_missing_indicator")}
             </div>
           )}
 
-          {lockedDims.length > 0 && (
-            <div className="locked-line" title={lockedDims.map((d) => notes[d]).join("\n")}>
-              {lockedDims.map((d) => DIM_LABEL[d]).join(", ")}: not used for {familyLabel.toLowerCase()} ⓘ
-            </div>
-          )}
+          {lockedLine}
+        </div>
 
-          {data.baseline !== undefined && <BaselineLine draft={draft} data={data} readOnly={Boolean(readOnly)}
-            onRevert={() => data.baseline && commit(revertedInput(draftRef.current, data.baseline), 0)} />}
+        {why}
 
-          {sugg.reasons.length > 0 && (
-            <div className="why">
-              <h3>Why these suggestions</h3>
-              <ul>{sugg.reasons.map((r) => <li key={r}><Reason text={r} /></li>)}</ul>
-            </div>
-          )}
-
-          {noteOpen ? (
-            <label className="field">Note
-              <textarea ref={noteRef} value={draft.notes ?? ""} placeholder="Why this choice?"
-                onChange={(e) => update({ notes: e.target.value || null })} />
-            </label>
-          ) : (
-            <button type="button" className="link" style={{ justifyContent: "space-between", width: "100%" }} onClick={focusNote}>
-              + add a note <kbd>N</kbd>
-            </button>
-          )}
-        </fieldset>
+        {noteOpen ? (
+          <label className="field note-field">Note
+            <textarea ref={noteRef} value={draft.notes ?? ""} placeholder="Why this choice?"
+              onChange={(e) => update({ notes: e.target.value || null })} />
+          </label>
+        ) : (
+          <button type="button" className="ghost small add-note" onClick={focusNote} aria-keyshortcuts="N">
+            <Icon name="plus" size={14} /> Add a note <kbd>N</kbd>
+          </button>
+        )}
       </div>
 
-      {readOnly ? (
-        <div className="decision-foot"><span className="secondary small-text">{readOnly}</span></div>
-      ) : (
-        <div className="decision-foot">
-          <div className="foot-line">
-            <span>
-              {typing ? "Esc to return to review"
-                : draft.reviewed && server.reviewed ? "Reviewed ✓"
-                : edited.length ? `${edited.length} setting${edited.length === 1 ? "" : "s"} differ${edited.length === 1 ? "s" : ""} from the suggestion`
-                : "Matches the suggestion"}
-            </span>
-            <button type="button" className="link small-text" onClick={onShowShortcuts}>? shortcuts</button>
-          </div>
-          <button type="button" className="primary confirm" onClick={confirm}>
-            <span>{confirmLabel}</span><kbd>↵</kbd>
+      <div className="decision-foot">
+        <span className="foot-line">
+          {typing ? "Esc to return to review" : [
+            draft.reviewed && server.reviewed ? "Reviewed" : "Not reviewed yet",
+            edited.length ? `${edited.length} change${edited.length === 1 ? "" : "s"} from the suggestion` : "matches the suggestion",
+            "saved as you go",
+          ].join(" · ")}
+        </span>
+        <button type="button" className="primary large confirm" onClick={confirm} aria-keyshortcuts="Enter">
+          <span>{confirmLabel}</span><kbd>↵</kbd>
+        </button>
+        {edited.length > 0 && (
+          <button type="button" className="ghost small revert-all" onClick={() => commit({ ...suggested, notes: draftRef.current.notes, reviewed: draftRef.current.reviewed }, 0)}>
+            <Icon name="reset" size={14} /> Revert all to the suggestion
           </button>
-          {edited.length > 0 && (
-            <button type="button" onClick={() => commit({ ...suggested, notes: draftRef.current.notes, reviewed: draftRef.current.reviewed }, 0)}>
-              Revert all to suggestion ↺
-            </button>
-          )}
-        </div>
-      )}
+        )}
+        {!settleLabel && (
+          <div className="key-hints">
+            <span><kbd>X</kbd> keep or drop</span>
+            <span><kbd>A</kbd> accept suggestion</span>
+            <span><kbd>Z</kbd> undo</span>
+            <button type="button" className="link" onClick={onShowShortcuts}><kbd>?</kbd> all keys</button>
+          </div>
+        )}
+      </div>
     </aside>
   );
 });
@@ -358,20 +473,23 @@ function Reason({ text }: { text: string }) {
   return m ? <><b>{m[1]}</b>: {m[2]}</> : <>{text}</>;
 }
 
-/** In an experiment: whether this field differs from its baseline, and a way back. */
-function BaselineLine({ draft, data, readOnly, onRevert }: {
-  draft: DecisionInput; data: FieldResponse; readOnly: boolean; onRevert: () => void;
+/** In an experiment: what its baseline says about this field, and a way back to it. */
+function ExperimentBox({ draft, data, readOnly, typeLabel, onRevert }: {
+  draft: DecisionInput; data: FieldResponse; readOnly: boolean; typeLabel: (t: string) => string; onRevert: () => void;
 }) {
-  if (!data.baseline) return <div className="baseline-line small-text muted">Not in the baseline.</div>;
+  if (!data.baseline) return <div className="experiment-box"><span className="grow">Not in the baseline.</span></div>;
   const changed = baselineDiff(draft, data.baseline);
+  const b = data.baseline;
   return (
-    <div className={`baseline-line small-text${changed.length ? " changed" : ""}`}>
-      {changed.length === 0 ? <span className="muted">Same as the baseline</span> : (
-        <>
-          <span className="grow">Changed from the baseline: <b>{changed.join(", ")}</b></span>
-          {!readOnly && <button type="button" className="link" onClick={onRevert}>Revert to baseline</button>}
-        </>
-      )}
+    <div className={`experiment-box${changed.length ? " changed" : ""}`}>
+      <span className="grow">
+        {changed.length === 0 ? "Same as the baseline" : <>
+          Baseline says <b>{b.action}</b>{b.semantic_type !== draft.semantic_type && <>, <b>{typeLabel(b.semantic_type).toLowerCase()}</b></>}
+          <span className="small-text secondary"> · changed here: {changed.join(", ")}</span>
+        </>}
+        {!readOnly && <span className="small-text secondary block">Changes apply to this experiment only; the baseline stays as the team agreed it.</span>}
+      </span>
+      {changed.length > 0 && !readOnly && <button type="button" className="small" onClick={onRevert}>Revert</button>}
     </div>
   );
 }
@@ -419,12 +537,9 @@ function BandSettings({ fieldId, bins, readOnly, onChange }: {
   };
   return (
     <div className="stack band-settings" style={{ gap: 6 }}>
-      <div className="segmented full soft" role="radiogroup" aria-label="Bands">
-        {(["k", "edges"] as const).map((m) => (
-          <button key={m} type="button" role="radio" aria-checked={mode === m} className={mode === m ? "on" : ""} disabled={readOnly}
-            onClick={() => pick(m)}>{m === "k" ? "Equal-sized" : "Cut points"}</button>
-        ))}
-      </div>
+      <Segmented full size="small" label="Bands" value={mode}
+        options={(["k", "edges"] as const).map((m) => ({ value: m, label: m === "k" ? "Equal-sized" : "Cut points", disabled: readOnly }))}
+        onChange={pick} />
       {mode === "k" ? (
         <div className="setting-row">
           <label htmlFor="d-bands-k">Bands</label>

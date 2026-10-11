@@ -1,18 +1,47 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import type { FieldListItem } from "../types";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useNavigate } from "react-router-dom";
+import type { Dataset, FieldListItem } from "../types";
 import { TYPE_SHORT } from "../format";
 import { attentionOf } from "../signals";
-import type { View } from "../view";
+import { withView, type View } from "../view";
 import { useFailedSaves } from "../saveQueue";
-import { Empty, StatusGlyph, glyphFor } from "./ui";
+import { useMe } from "../hooks";
+import { can } from "../can";
+import { Icon, Segmented, useDismiss } from "./kit";
+import { Empty, ReviewMeter, StatusGlyph, glyphFor } from "./ui";
 
 export type StatusFilter = "todo" | "kept" | "dropped" | "all";
 
 export interface WorkingSet { key: string; label: string; ids: number[] }
 
+export type FieldsView = "queue" | "focus" | "table" | "sql" | "derived";
+
+/** Focus · Table · SQL · Derived: the ways into a dataset's fields, at the top of each. In team review the queue
+ * comes first. SQL and Derived follow the Table page's own rules: not in a view, and only for those allowed. */
+export function FieldsViewSwitch({ ds, current, view }: { ds: Dataset; current: FieldsView; view: View }) {
+  const me = useMe().data;
+  const nav = useNavigate();
+  const base = `/d/${ds.id}`;
+  const to: Record<FieldsView, string> = {
+    queue: `${base}/team`, focus: withView(`${base}/review`, view), table: withView(`${base}/bulk`, view),
+    sql: `${base}/bulk?tab=sql`, derived: `${base}/bulk?tab=derived`,
+  };
+  const options: { value: FieldsView; label: string; title?: string }[] = [
+    ...(ds.phase === "review" && !view ? [{ value: "queue" as const, label: "Queue", title: "Team review queue" }] : []),
+    { value: "focus", label: "Focus", title: "One field at a time" },
+    { value: "table", label: "Table", title: "Every field in a table, with bulk actions" },
+    ...(can(me, "querySql") && !view ? [{ value: "sql" as const, label: "SQL", title: "Read-only SQL console" }] : []),
+    ...(can(me, "editDataset") && !view ? [{ value: "derived" as const, label: "Derived", title: "Derived fields" }] : []),
+  ];
+  return <Segmented pressed full label="Fields view" className="fields-view" value={current} options={options}
+    onChange={(v) => v !== current && nav(to[v])} />;
+}
+
 interface Props {
   /** The decision source the list shows (view.ts), for its failed-save marks. */
   view?: View;
+  /** The dataset, for the view switch at the top; without it the switch is left out. */
+  ds?: Dataset;
   fields: FieldListItem[];
   visible: FieldListItem[];
   settled: Set<number>;
@@ -30,14 +59,21 @@ interface Props {
   onClearFilters: () => void;
   onSelect: (id: number) => void;
   searchRef: React.RefObject<HTMLInputElement>;
+  /** Closes the list where it is a drawer (narrow screens); shown only there. */
+  onClose?: () => void;
 }
 
 const ATT_MARK = {
-  leak: { text: "⚠", cls: "bad", title: "Possible target leakage" },
-  missing: { text: "∅", cls: "warn", title: "Mostly missing or constant" },
-  confidence: { text: "?", cls: "warn", title: "Low type confidence" },
-  edited: { text: "✎", cls: "edited", title: "Edited, not yet confirmed" },
+  leak: { text: "possible leak", cls: "bad", title: "Possible target leakage" },
+  missing: { text: "needs a look", cls: "warn", title: "Mostly missing or constant" },
+  confidence: { text: "needs a look", cls: "warn", title: "Low type confidence" },
+  edited: { text: "edited", cls: "edited", title: "Edited, not yet confirmed" },
 } as const;
+
+const TYPE_WORD: Record<string, string> = {
+  numeric_continuous: "number", numeric_discrete: "count", categorical: "category", binary: "yes/no",
+  text: "text", datetime: "date", identifier: "id", constant: "constant",
+};
 
 export const statusCounts = (fields: FieldListItem[]) => ({
   todo: fields.filter((f) => !f.reviewed).length,
@@ -50,7 +86,10 @@ export function FieldList(p: Props) {
   const { fields, visible, activeId, onSelect } = p;
   const listRef = useRef<HTMLDivElement>(null);
   const activeEl = useRef<HTMLDivElement>(null);
+  const typesRef = useRef<HTMLDivElement>(null);
   const [typesOpen, setTypesOpen] = useState(false);
+  const closeTypes = useCallback(() => setTypesOpen(false), []);
+  useDismiss(typesRef, typesOpen, closeTypes);
   const failed = useFailedSaves(p.view ?? null);
   useEffect(() => {
     activeEl.current?.scrollIntoView({ block: "nearest" });
@@ -60,6 +99,7 @@ export function FieldList(p: Props) {
   fields.forEach((f) => typeCounts.set(f.semantic_type, (typeCounts.get(f.semantic_type) ?? 0) + 1));
   const counts = statusCounts(fields);
   const attentionCount = fields.filter((f) => !f.reviewed && (attentionOf(f) && attentionOf(f) !== "edited" || failed.has(f.id))).length;
+  const targets = fields.filter((f) => f.reviewed && f.action === "target").length;
 
   const onSearchKey = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Escape") {
@@ -90,42 +130,60 @@ export function FieldList(p: Props) {
     else if (e.key === "End") to(visible.length - 1);
   };
 
+  const statusChip = (k: StatusFilter, label: string) => (
+    <button key={k} type="button" role="radio" aria-checked={p.status === k} className={`filter-chip${p.status === k ? " on" : ""}`}
+      onClick={() => p.onStatus(k)}>
+      {label} <b className="num">{counts[k]}</b>
+    </button>
+  );
+
   return (
-    <aside className="sidebar" aria-label="Fields">
+    <aside className="sidebar field-sidebar" aria-label="Fields">
       <div className="sidebar-head">
-        <input ref={p.searchRef} type="search" placeholder="Search fields   /" value={p.search} aria-label="Search fields"
-          onChange={(e) => p.onSearch(e.target.value)} onKeyDown={onSearchKey} />
+        {p.onClose && (
+          <div className="drawer-head">
+            <b>Fields</b>
+            <button type="button" className="ghost small" aria-label="Close the field list" onClick={p.onClose}><Icon name="x" /></button>
+          </div>
+        )}
+        {p.ds && <FieldsViewSwitch ds={p.ds} current="focus" view={p.view ?? null} />}
+        <label className="search-box">
+          <Icon name="search" />
+          <input ref={p.searchRef} type="search" placeholder="Search fields" value={p.search} aria-label="Search fields"
+            aria-keyshortcuts="/" onChange={(e) => p.onSearch(e.target.value)} onKeyDown={onSearchKey} />
+          <kbd aria-hidden="true">/</kbd>
+        </label>
         {p.workingSet ? (
-          <div className="set-pill" title={`Working set from Bulk edit: ${p.workingSet.label}`}>
-            <span aria-hidden="true">◆</span>
+          <div className="set-pill" title={`Working set from the table: ${p.workingSet.label}`}>
+            <Icon name="table" />
             <span className="grow">
               <b>{p.workingSet.label}</b> · {p.workingSet.ids.length} fields · {fields.filter((f) => !f.reviewed).length} left
             </span>
-            <button type="button" className="ghost small" aria-label="Leave working set" onClick={p.onClearSet}>✕</button>
+            <button type="button" className="ghost small" aria-label="Leave working set" onClick={p.onClearSet}><Icon name="x" /></button>
           </div>
         ) : (
-          <>
-            <div className="status-seg" role="radiogroup" aria-label="Status">
-              {([["todo", "To do"], ["kept", "Kept"], ["dropped", "Dropped"], ["all", "All"]] as const).map(([k, label]) => (
-                <button key={k} type="button" role="radio" aria-checked={p.status === k} className={p.status === k ? "on" : ""}
-                  onClick={() => p.onStatus(k)}>
-                  <b>{counts[k]}</b>{label}
-                </button>
-              ))}
+          <div className="filter-chips" ref={typesRef}>
+            <div role="radiogroup" aria-label="Status" className="filter-group">
+              {statusChip("todo", "To do")}
+              {statusChip("all", "All")}
+              {(p.status === "kept" || p.status === "dropped") && statusChip(p.status, p.status === "kept" ? "Kept" : "Dropped")}
             </div>
-            <div className="sidebar-tools">
-              <button type="button" className={`chip attention${p.attention ? " on" : ""}`} aria-pressed={p.attention}
-                title="Leakage, mostly missing or constant, low type confidence, failed saves"
-                onClick={() => p.onAttention(!p.attention)}>
-                ⚑ Needs attention <b className="num">{attentionCount}</b>
-              </button>
-              <button type="button" className={`chip${p.types.size ? " on" : ""}`} aria-expanded={typesOpen}
-                onClick={() => setTypesOpen(!typesOpen)}>
-                {p.types.size ? `Type: ${p.types.size}` : "Type"} ▾
-              </button>
-              {typesOpen && (
-                <div className="popover" role="group" aria-label="Filter by type"
-                  onKeyDown={(e) => e.key === "Escape" && setTypesOpen(false)}>
+            <button type="button" className={`filter-chip attention${p.attention ? " on" : ""}`} aria-pressed={p.attention}
+              title="Leakage, mostly missing or constant, low type confidence, failed saves"
+              onClick={() => p.onAttention(!p.attention)}>
+              Needs a look <b className="num">{attentionCount}</b>
+            </button>
+            <button type="button" className={`filter-chip${p.types.size ? " on" : ""}`} aria-expanded={typesOpen} aria-haspopup="true"
+              title="Kept or dropped fields, and fields by type" onClick={() => setTypesOpen(!typesOpen)}>
+              {p.types.size ? `Type: ${p.types.size}` : "Type"} <Icon name="chevron-down" size={12} />
+            </button>
+            {typesOpen && (
+              <div className="popover filter-popover">
+                <div role="radiogroup" aria-label="Status" className="popover-chips">
+                  {(["todo", "all", "kept", "dropped"] as const).map((k) => statusChip(k, { todo: "To do", all: "All", kept: "Kept", dropped: "Dropped" }[k]))}
+                </div>
+                <hr />
+                <div role="group" aria-label="Filter by type" className="stack" style={{ gap: 2 }}>
                   <button type="button" className="link small-text" style={{ alignSelf: "flex-start", padding: "4px 6px" }}
                     onClick={() => { p.onTypes([]); setTypesOpen(false); }}>All types</button>
                   {[...typeCounts.entries()].sort((a, b) => b[1] - a[1]).map(([t, n]) => (
@@ -139,10 +197,17 @@ export function FieldList(p: Props) {
                     </label>
                   ))}
                 </div>
-              )}
-            </div>
-          </>
+              </div>
+            )}
+          </div>
         )}
+        <div className="review-progress">
+          <ReviewMeter kept={counts.kept} dropped={counts.dropped} targets={targets} total={counts.all}
+            keptColor="var(--lens, var(--good))" label={`${counts.all - counts.todo} of ${counts.all} fields reviewed`} />
+          <span className="num small-text muted">
+            {counts.kept} kept · {counts.dropped} dropped · {targets} target{targets === 1 ? "" : "s"} · {counts.todo} to do
+          </span>
+        </div>
       </div>
       <div ref={listRef} className="field-list" role="listbox" aria-label="Field list" tabIndex={0}
         aria-activedescendant={activeId !== null && visible.some((f) => f.id === activeId) ? `fl-${activeId}` : undefined}
@@ -150,15 +215,20 @@ export function FieldList(p: Props) {
         {visible.map((f) => {
           const active = f.id === activeId;
           const att = attentionOf(f);
-          const mark = failed.has(f.id) ? null : att ? ATT_MARK[att] : null;
+          const isFailed = failed.has(f.id);
+          const mark = isFailed || f.locked ? null : att ? ATT_MARK[att] : null;
+          const right = isFailed ? { text: "not saved", cls: "bad", title: "This field's last change didn't save" }
+            : f.action === "target" ? { text: "target", cls: "target", title: undefined }
+            : mark ?? (f.reviewed && f.action === "drop" ? { text: "dropped", cls: "", title: undefined } : null);
           return (
             <div key={f.id} id={`fl-${f.id}`} ref={active ? activeEl : undefined} role="option" aria-selected={active}
               className={`field-item${active ? " active" : ""}${f.action === "drop" ? " dropped" : ""}${p.settled.has(f.id) && !active ? " settled" : ""}`}
               onClick={() => onSelect(f.id)} title={`${f.name} — ${f.semantic_type}${f.reviewed ? " · reviewed" : ""}${f.locked ? " · carried over, locked" : ""}`}>
-              <StatusGlyph kind={glyphFor(f, failed.has(f.id))} reviewed={f.reviewed} />
+              <StatusGlyph kind={f.locked && !isFailed ? "locked" : glyphFor(f, isFailed)} reviewed={f.reviewed} />
               <span className="name">{f.name}</span>
-              <span className={`att${mark ? ` ${mark.cls}` : ""}`} title={f.locked ? "Carried over from the version before; locked" : mark?.title}>{f.locked ? "🔒" : mark?.text}</span>
-              <span className="type-tag">{TYPE_SHORT[f.semantic_type]}</span>
+              <span className={`type-tag${right ? ` ${right.cls}` : ""}`} title={right?.title ?? f.semantic_type.replace("_", " ")}>
+                {right?.text ?? TYPE_WORD[f.semantic_type] ?? TYPE_SHORT[f.semantic_type] ?? f.semantic_type}
+              </span>
             </div>
           );
         })}

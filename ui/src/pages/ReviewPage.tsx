@@ -2,20 +2,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { useAccess, useFields, useOptions } from "../hooks";
+import { useAccess, useExperiment, useFields, useOptions } from "../hooks";
 import { JoinAssessment } from "../components/JoinAssessment";
-import { ExperimentModeBar } from "../components/ExperimentModeBar";
-import { useView, viewKey, withView } from "../view";
+import { parseView, useView, viewKey, withView, type View } from "../view";
 import { useDatasetContext } from "../components/DatasetLayout";
 import { FieldList, type StatusFilter, type WorkingSet } from "../components/FieldList";
 import { FieldDetailView } from "../components/FieldDetailView";
-import { DecisionPanel, type Confirmed, type DecisionPanelHandle } from "../components/DecisionPanel";
+import { DecisionPanel, type Confirmed, type DecisionPanelHandle, type PanelLens } from "../components/DecisionPanel";
 import { Empty, ErrorAlert } from "../components/ui";
+import { Banner, Dialog, Icon } from "../components/kit";
 import { attentionOf } from "../signals";
 import { queueSave, useFailedSaves } from "../saveQueue";
-import { familyShort } from "../format";
+import { baselineLabel, familyShort, fmtInt } from "../format";
 import { toast } from "../toast";
-import type { FieldListItem } from "../types";
+import type { Access } from "../team";
+import type { Dataset, FieldListItem } from "../types";
 
 function useSessionState<T>(key: string, initial: T): [T, (v: T) => void] {
   const [v, setV] = useState<T>(() => {
@@ -54,6 +55,22 @@ const SHORTCUTS: [string[], string][] = [
   [["N"], "add a note"], [["/"], "search fields"], [["Esc"], "leave a control, back to review"], [["?"], "show or hide this list"],
 ];
 
+/** Whose decisions are on screen, and the name the decision panel gives them; matches the lens in the bar above. */
+function usePanelLens(ds: Dataset, view: View, access: Access): { lens: PanelLens; owner: string } {
+  const v = parseView(view);
+  const x = useExperiment(v?.kind === "experiment" ? v.id : null);
+  if (v?.kind === "experiment") return { lens: "experiment", owner: x.data?.name ?? "This experiment" };
+  if (v?.kind === "baseline") {
+    const line = ds.baselines.find((l) => l.latest_finalized_id === v.id || l.id === v.id);
+    return { lens: "frozen", owner: line ? baselineLabel(line.family, line.version, true, line.name) : "Finalized baseline" };
+  }
+  if (access.source === "mine") return { lens: "private", owner: "Your assessment" };
+  const b = ds.baseline;
+  if (ds.phase === "finalized") return { lens: "frozen", owner: b ? baselineLabel(b.family, b.version, true, b.name) : "Finalized baseline" };
+  if (ds.phase === "review" && !b?.setup) return { lens: "team", owner: "Team decision" };
+  return { lens: "suggestions", owner: "Suggestions" };
+}
+
 type Finish = null | { kind: "end"; left: number } | { kind: "complete" } | { kind: "setdone" };
 
 export function ReviewPage() {
@@ -72,17 +89,18 @@ export function ReviewPage() {
   const view = useView();
   const failed = useFailedSaves(view);
   const access = useAccess(ds, view);
-  // Where finishing leads: an assessor submits on the Team page; everyone else goes on to Experiments.
-  const finishTo = access.source === "mine" ? `/d/${datasetId}/team` : `/d/${datasetId}/experiments`;
+  // Finishing an assessment leads to Submit, in the bar above; for everyone else that bar holds the next step.
+  const assessor = access.source === "mine";
   const fields = useFields(datasetId, true, view);
   const options = useOptions();
+  const { lens, owner } = usePanelLens(ds, view, access);
 
   const setKey = query.get("set");
   const workingSet = useMemo(() => readWorkingSet(setKey), [setKey]);
   const [search, setSearch] = useSessionState(`search:${datasetId}`, "");
   const [typeList, setTypeList] = useSessionState<string[]>(`types:${datasetId}`, []);
   // In an experiment or a finalized baseline every field counts as reviewed, so the list starts with all of them.
-  const [status, setStatus] = useSessionState<StatusFilter>(`status:${datasetId}:${viewKey(view)}`, view ? "all" : "todo");
+  const [status, setStatus] = useSessionState<StatusFilter>(`status:${datasetId}:${viewKey(view)}`, view || ds.phase === "finalized" ? "all" : "todo");
   const [attention, setAttention] = useSessionState(`attention:${datasetId}`, false);
   const types = useMemo(() => new Set(typeList), [typeList]);
   // Confirmed while "To do" is showing: stays in place (faded) until the filter changes, so K still reaches it.
@@ -233,7 +251,6 @@ export function ReviewPage() {
         if (e.target instanceof Element && e.target.closest(ACTIVATES_ON_ENTER)) return;
         e.preventDefault();
         if (finish?.kind === "end") return goFirstUnreviewed();
-        if (finish?.kind === "complete") return nav(finishTo);
         if (!finish) panel.current?.confirm();
         return;
       }
@@ -268,9 +285,13 @@ export function ReviewPage() {
   const position = idx >= 0 ? { index: scope.findIndex((f) => f.id === fieldId), total: scope.length } : null;
   const missingField = detail.error && (detail.error as { status?: number }).status === 404;
 
+  const typeLabel = (t: string) => options.data?.types.find((x) => x.value === t)?.label ?? t.replace("_", " ");
+  const panelReady = Boolean(current && options.data && !detail.isPlaceholderData && !finish);
+  const confirmable = panelReady && access.canEdit && !current?.locked;
+
   return (
-    <div className={`review${!typing && !overlay && !finish && current ? " mode" : ""}${drawer ? " drawer-open" : ""}`}>
-      <FieldList view={view}
+    <div className={`review${!typing && !overlay && !finish && current ? " mode" : ""}${drawer ? " drawer-open" : ""}`} data-lens={lens}>
+      <FieldList view={view} ds={ds}
         fields={scope} visible={visible} settled={settled} activeId={fieldId}
         search={search} onSearch={setSearch}
         types={types} onTypes={setTypeList}
@@ -278,21 +299,14 @@ export function ReviewPage() {
         attention={attention} onAttention={setAttention}
         workingSet={workingSet} onClearSet={clearSet}
         onClearFilters={clearFilters} onSelect={go} searchRef={searchRef}
+        onClose={() => setDrawer(false)}
       />
       <div className="drawer-scrim" onClick={() => setDrawer(false)} aria-hidden="true" />
-      <section className="detail" aria-busy={detail.isFetching}>
-        <div className="narrow-bar">
-          <button type="button" onClick={() => setDrawer(true)} aria-expanded={drawer}>
-            ☰ Fields {position ? `${position.index + 1}/${position.total}` : scope.length}
-          </button>
-          <span className="spacer" style={{ flex: 1 }} />
-          <button type="button" className="small" onClick={prev} aria-label="Previous field">‹ <kbd>K</kbd></button>
-          <button type="button" className="small" onClick={next} aria-label="Next field"><kbd>J</kbd> ›</button>
-        </div>
-        {view ? <ExperimentModeBar ds={ds} view={view} /> : <JoinAssessment ds={ds} />}
+      <section className="detail" aria-busy={detail.isFetching} aria-label="Field">
+        {!view && <JoinAssessment ds={ds} />}
         {detail.isFetching && detail.isPlaceholderData && <div className="loading-bar" aria-hidden="true" />}
         {finish ? (
-          <FinishCard finish={finish} scope={scope} datasetId={datasetId} workingSet={workingSet} finishTo={finishTo}
+          <FinishCard finish={finish} scope={scope} datasetId={datasetId} workingSet={workingSet} assessor={assessor}
             onFirstUnreviewed={goFirstUnreviewed} onStay={() => setFinish(null)} onClearSet={clearSet}
             onOpen={go} />
         ) : missingField ? (
@@ -301,7 +315,8 @@ export function ReviewPage() {
         ) : detail.error ? (
           <ErrorAlert error={detail.error} />
         ) : current ? (
-          <FieldDetailView data={current} position={position} stale={detail.isPlaceholderData} onOpenField={go} />
+          <FieldDetailView data={current} position={position} stale={detail.isPlaceholderData} onOpenField={go}
+            onPrev={prev} onNext={next} onOpenList={() => setDrawer(true)} typeLabel={options.data ? typeLabel : undefined} />
         ) : visible.length === 0 && all.length > 0 ? (
           <Empty title="No fields match these filters" action={<button type="button" onClick={clearFilters}>Clear filters</button>} />
         ) : (
@@ -312,22 +327,33 @@ export function ReviewPage() {
           </div>
         )}
       </section>
-      {current && options.data && !detail.isPlaceholderData && !finish ? (
+      {current && options.data && panelReady ? (
         <DecisionPanel key={`${current.field.id}:${current.family}:${viewKey(view)}:${panelVersion}`} ref={panel} data={current}
           catalog={options.data} familyLabel={familyShort(current.family)} typing={typing} view={view}
           onConfirmed={onConfirmed} onShowShortcuts={() => setOverlay(true)}
           readOnly={access.canEdit ? (current.locked ?? null) : access.note}
-          owner={access.source === "mine" ? "Your assessment" : access.source === "experiment" ? "This experiment" : undefined} />
+          owner={owner} lens={lens} onNext={next} onNextTodo={nextUnreviewed} />
       ) : (
-        <aside className="decision" />
+        <aside className="decision" data-lens={lens} aria-label="Decision" />
       )}
+      <div className="phone-bar">
+        <button type="button" className="phone-prev" onClick={prev} aria-label="Previous field"><Icon name="chevron-left" /></button>
+        <button type="button" className="phone-list" onClick={() => setDrawer(true)} aria-expanded={drawer}>
+          Fields · {position ? `${fmtInt(position.index + 1)} of ${fmtInt(position.total)}` : fmtInt(scope.length)}
+        </button>
+        {confirmable ? (
+          <button type="button" className="primary phone-confirm" onClick={() => panel.current?.confirm()}>Confirm</button>
+        ) : (
+          <button type="button" className="phone-confirm" onClick={next} aria-label="Next field">Next <Icon name="chevron-right" /></button>
+        )}
+      </div>
       {overlay && <ShortcutsOverlay onClose={() => setOverlay(false)} />}
     </div>
   );
 }
 
-function FinishCard({ finish, scope, datasetId, workingSet, finishTo, onFirstUnreviewed, onStay, onClearSet, onOpen }: {
-  finish: NonNullable<Finish>; scope: FieldListItem[]; datasetId: number; workingSet: WorkingSet | null; finishTo: string;
+function FinishCard({ finish, scope, datasetId, workingSet, assessor, onFirstUnreviewed, onStay, onClearSet, onOpen }: {
+  finish: NonNullable<Finish>; scope: FieldListItem[]; datasetId: number; workingSet: WorkingSet | null; assessor: boolean;
   onFirstUnreviewed: () => void; onStay: () => void; onClearSet: () => void; onOpen: (id: number) => void;
 }) {
   const firstTodo = scope.find((f) => !f.reviewed);
@@ -335,7 +361,7 @@ function FinishCard({ finish, scope, datasetId, workingSet, finishTo, onFirstUnr
   if (finish.kind === "end") {
     return (
       <div className="finish card">
-        <h2>End of list — {finish.left} field{finish.left === 1 ? "" : "s"} still to review.</h2>
+        <h2>End of the list: {finish.left} field{finish.left === 1 ? "" : "s"} still to review</h2>
         <div className="row">
           <button type="button" className="primary" onClick={onFirstUnreviewed} autoFocus>
             Jump to first unreviewed{firstTodo ? ` · ${firstTodo.name}` : ""} <kbd>↵</kbd>
@@ -350,7 +376,7 @@ function FinishCard({ finish, scope, datasetId, workingSet, finishTo, onFirstUnr
       <div className="finish card">
         <h2>{scope.length} of {scope.length} reviewed in {workingSet.label}.</h2>
         <div className="row">
-          <Link className="btn" to={withView(`/d/${datasetId}/bulk`, finishView)}>Back to Bulk edit</Link>
+          <Link className="btn" to={withView(`/d/${datasetId}/bulk`, finishView)}>Back to the table</Link>
           <button type="button" onClick={onClearSet}>Clear set</button>
         </div>
       </div>
@@ -368,19 +394,19 @@ function FinishCard({ finish, scope, datasetId, workingSet, finishTo, onFirstUnr
         <span>Kept <b>{kept}</b></span><span>Dropped <b>{dropped}</b></span><span>Targets <b>{targets}</b></span>
       </div>
       {leaks.length > 0 && (keptLeaks.length ? (
-        <div className="alert bad">
-          {keptLeaks.length} leaky field{keptLeaks.length === 1 ? "" : "s"} kept —{" "}
+        <Banner tone="bad" title={`${keptLeaks.length} leaky field${keptLeaks.length === 1 ? "" : "s"} kept:`}>
           {keptLeaks.map((f, i) => (
             <span key={f.id}>{i > 0 && ", "}<button type="button" className="link" onClick={() => onOpen(f.id)}>{f.name}</button></span>
           ))}
-        </div>
+        </Banner>
       ) : (
         <span className="secondary">Leakage flags: {leaks.length} dropped, 0 kept.</span>
       ))}
+      <p className="secondary">
+        {assessor ? "Every field is reviewed. Submit your assessment with the button at the top right; until then you can still change any field."
+          : "Every field is reviewed. The next step is at the top right."}
+      </p>
       <div className="row">
-        <Link className="btn primary" to={finishTo} style={{ background: "var(--accent-fill)", color: "var(--accent-ink)", borderColor: "var(--accent-fill)" }}>
-          {finishTo.endsWith("/team") ? "Submit your assessment" : "Continue to Experiments"} → <kbd>↵</kbd>
-        </Link>
         <button type="button" onClick={onStay}>Back to the field</button>
       </div>
     </div>
@@ -389,18 +415,13 @@ function FinishCard({ finish, scope, datasetId, workingSet, finishTo, onFirstUnr
 
 function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
   return (
-    <div className="overlay" onClick={onClose}>
-      <div className="dialog" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" onClick={(e) => e.stopPropagation()}>
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <h2>Keyboard shortcuts</h2>
-          <button type="button" className="ghost small" onClick={onClose} aria-label="Close" autoFocus>✕</button>
-        </div>
-        <div className="shortcut-grid">
-          {SHORTCUTS.map(([keys, label]) => (
-            <div key={label}>{keys.map((k) => <kbd key={k}>{k}</kbd>)}<span>{label}</span></div>
-          ))}
-        </div>
+    <Dialog title="Keyboard shortcuts" onClose={onClose} labelledBy="shortcuts-title"
+      actions={<button type="button" onClick={onClose} data-autofocus>Close</button>}>
+      <div className="shortcut-grid">
+        {SHORTCUTS.map(([keys, label]) => (
+          <div key={label}>{keys.map((k) => <kbd key={k}>{k}</kbd>)}<span>{label}</span></div>
+        ))}
       </div>
-    </div>
+    </Dialog>
   );
 }

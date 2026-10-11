@@ -28,7 +28,7 @@ export function base(t: ChartTheme): EChartsCoreOption {
 export const axisCommon = (t: ChartTheme) => ({
   axisLine: { lineStyle: { color: t.grid } },
   axisTick: { show: false },
-  axisLabel: { color: t.textMuted, fontSize: 11 },
+  axisLabel: { color: t.textMuted, fontSize: 12 },
   splitLine: { lineStyle: { color: t.grid, type: "solid" as const, width: 1 } },
 });
 
@@ -67,11 +67,11 @@ export function histogramOption(
       name: opts.xLabel,
       nameLocation: "middle",
       nameGap: 28,
-      nameTextStyle: { color: t.textMuted, fontSize: 11 },
+      nameTextStyle: { color: t.textMuted, fontSize: 12 },
       ...axisCommon(t),
-      axisLabel: { color: t.textMuted, fontSize: 11, hideOverlap: true },
+      axisLabel: { color: t.textMuted, fontSize: 12, hideOverlap: true },
     },
-    yAxis: { type: "value", ...axisCommon(t), axisLabel: { color: t.textMuted, fontSize: 11, formatter: (v: number) => fmtCompact(v) } },
+    yAxis: { type: "value", ...axisCommon(t), axisLabel: { color: t.textMuted, fontSize: 12, formatter: (v: number) => fmtCompact(v) } },
     tooltip: {
       ...(base(t) as any).tooltip,
       formatter: (p: any) => {
@@ -98,7 +98,7 @@ export function barsOption(t: ChartTheme, b: BarsChart, opts: { total?: number }
     ...base(t),
     grid: { left: 8, right: 56, top: 4, bottom: 4, containLabel: true },
     xAxis: { type: "value", show: false },
-    yAxis: { type: "category", data: labels, inverse: true, ...axisCommon(t), axisLabel: { color: t.textSecondary, fontSize: 11.5 } },
+    yAxis: { type: "category", data: labels, inverse: true, ...axisCommon(t), axisLabel: { color: t.textSecondary, fontSize: 12 } },
     tooltip: {
       ...(base(t) as any).tooltip,
       formatter: (p: any) => `<b>${esc(b.labels[p.dataIndex])}</b><br/>${fmtInt(b.counts[p.dataIndex])} rows · ${fmtPct(b.counts[p.dataIndex] / Math.max(total, 1))}`,
@@ -109,7 +109,7 @@ export function barsOption(t: ChartTheme, b: BarsChart, opts: { total?: number }
       barMaxWidth: 18,
       barCategoryGap: "30%",
       itemStyle: { color: t.series, borderRadius: BAR_RADIUS_RIGHT },
-      label: { show: true, position: "right", color: t.textSecondary, fontSize: 11, formatter: (p: any) => fmtPct(p.value / Math.max(total, 1)) },
+      label: { show: true, position: "right", color: t.textSecondary, fontSize: 12, formatter: (p: any) => fmtPct(p.value / Math.max(total, 1)) },
     }],
   };
 }
@@ -126,9 +126,9 @@ export function correlationOption(t: ChartTheme, rows: Correlation[]): EChartsCo
     grid: { left: anyNegative ? 40 : 8, right: 48, top: 8, bottom: 20, containLabel: true },
     xAxis: {
       type: "value", min: anyNegative ? -1 : 0, max: 1, interval: 0.5, ...axisCommon(t),
-      axisLabel: { color: t.textMuted, fontSize: 11, formatter: (v: number) => v.toFixed(1) },
+      axisLabel: { color: t.textMuted, fontSize: 12, formatter: (v: number) => v.toFixed(1) },
     },
-    yAxis: { type: "category", data: labels, inverse: true, ...axisCommon(t), axisLabel: { color: t.textSecondary, fontSize: 11.5 } },
+    yAxis: { type: "category", data: labels, inverse: true, ...axisCommon(t), axisLabel: { color: t.textSecondary, fontSize: 12 } },
     tooltip: {
       ...(base(t) as any).tooltip,
       formatter: (p: any) => {
@@ -149,7 +149,7 @@ export function correlationOption(t: ChartTheme, rows: Correlation[]): EChartsCo
       barMaxWidth: 16,
       barCategoryGap: "35%",
       cursor: "pointer",
-      label: { show: true, position: "right", color: t.textSecondary, fontSize: 11, formatter: (p: any) => p.value.toFixed(2) },
+      label: { show: true, position: "right", color: t.textSecondary, fontSize: 12, formatter: (p: any) => p.value.toFixed(2) },
       markLine: anyNegative ? { silent: true, symbol: "none", lineStyle: { color: t.textMuted, width: 1, type: "solid" }, label: { show: false }, data: [{ xAxis: 0 }] } : undefined,
     }],
   };
@@ -160,13 +160,13 @@ export function rocOption(t: ChartTheme, curves: RocCurve[]): EChartsCoreOption 
   const single = curves.length === 1;
   const axis = (name: string, nameGap: number) => ({
     ...axisCommon(t), type: "value", min: 0, max: 1, interval: 0.25, name, nameLocation: "middle", nameGap,
-    nameTextStyle: { color: t.textMuted, fontSize: 11 },
+    nameTextStyle: { color: t.textMuted, fontSize: 12 },
   });
   return {
     ...base(t),
     color: single ? [t.series] : t.categorical,
     grid: { left: 48, right: 12, top: single ? 12 : 36, bottom: 40 },
-    legend: single ? undefined : { data: curves.map((c) => `${c.label} · AUC ${c.auc.toFixed(3)}`), top: 0, textStyle: { color: t.textSecondary, fontSize: 11 }, itemWidth: 14 },
+    legend: single ? undefined : { data: curves.map((c) => `${c.label} · AUC ${c.auc.toFixed(3)}`), top: 0, textStyle: { color: t.textSecondary, fontSize: 12 }, itemWidth: 14 },
     tooltip: {
       ...(base(t).tooltip as object), trigger: "item",
       formatter: (p: any) => `${esc(p.seriesName)}<br/>false positive rate ${p.value[0].toFixed(3)}<br/>true positive rate ${p.value[1].toFixed(3)}`,
@@ -194,8 +194,8 @@ export function scatterOption(t: ChartTheme, actual: number[], predicted: number
   const hi = Math.max(...all);
   const axis = (name: string, nameGap: number) => ({
     ...axisCommon(t), type: "value", min: lo, max: hi, name, nameLocation: "middle", nameGap, scale: true,
-    nameTextStyle: { color: t.textMuted, fontSize: 11 },
-    axisLabel: { color: t.textMuted, fontSize: 11, formatter: (v: number) => fmtCompact(v) },
+    nameTextStyle: { color: t.textMuted, fontSize: 12 },
+    axisLabel: { color: t.textMuted, fontSize: 12, formatter: (v: number) => fmtCompact(v) },
   });
   return {
     ...base(t),

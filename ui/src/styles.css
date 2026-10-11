@@ -136,7 +136,7 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
   .dataset-bar .phase-rail li:not(.current), .dataset-bar .phase-rail .conn, .dataset-bar .gate-text { display: none; }
   .ds-name { max-width: 160px; }
   .dataset-tabs .tab { padding: 0 8px; }
-  .dataset-bar .version-switcher .badge, .lens-more, .hide-phone { display: none; }
+  .dataset-bar .version-switcher .badge, .lens-more, .hide-phone, .dataset-bar > button:disabled { display: none; }
   .dataset-bar .spacer { flex-basis: 0; }
 }
 .field-label { font-size: 13px; font-weight: 600; color: var(--text-secondary); padding: 0; margin-bottom: 2px; }

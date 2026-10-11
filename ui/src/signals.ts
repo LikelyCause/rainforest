@@ -9,6 +9,9 @@ export interface Signal {
   value: string;
   tone: Tone;
   rule: string;
+  /** A tighter value for the stat strip, with what it is measured against shown under it. */
+  short?: string;
+  detail?: string;
 }
 
 export const LEAK_AT = 0.95;
@@ -36,6 +39,7 @@ export function fieldSignals(f: FieldDetail, targets: TargetAssoc[], decisionTyp
     const leak = top.strength >= LEAK_AT;
     out.push({
       key: "target", label: leak ? "Leakage" : "Target", value: `${top.strength.toFixed(2)} → ${top.name}`,
+      short: top.strength.toFixed(2), detail: `with ${top.name}`,
       tone: leak ? "bad" : top.strength >= STRONG_TARGET_AT ? "warn" : undefined,
       rule: `Strongest association with a target. Amber at ≥ ${STRONG_TARGET_AT}, red (possible leakage) at ≥ ${LEAK_AT}.\n` +
         targets.map((a) => `${a.name}: ${a.value.toFixed(3)}`).join(" · "),
