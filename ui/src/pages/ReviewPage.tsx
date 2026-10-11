@@ -119,6 +119,8 @@ export function ReviewPage() {
     const byId = new Map(all.map((f) => [f.id, f]));
     return workingSet.ids.map((id) => byId.get(id)).filter((f): f is FieldListItem => Boolean(f));
   }, [all, workingSet]);
+  // With nothing left to do, "To do" would show an empty list: show every field instead.
+  const shown: StatusFilter = status === "todo" && all.length > 0 && all.every((f) => f.reviewed) ? "all" : status;
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     return scope.filter((f) => settled.has(f.id) || (
@@ -126,10 +128,10 @@ export function ReviewPage() {
       (workingSet !== null || (
         (types.size === 0 || types.has(f.semantic_type)) &&
         (!attention || (!f.reviewed && ((attentionOf(f) && attentionOf(f) !== "edited") || failed.has(f.id)))) &&
-        (status === "all" || (status === "todo" ? !f.reviewed : f.reviewed && f.action === (status === "kept" ? "keep" : "drop")))
+        (shown === "all" || (shown === "todo" ? !f.reviewed : f.reviewed && f.action === (shown === "kept" ? "keep" : "drop")))
       ))
     ));
-  }, [scope, search, types, status, attention, settled, workingSet, failed]);
+  }, [scope, search, types, shown, attention, settled, workingSet, failed]);
 
   // No field in the URL: open the first to-do field of the current scope.
   useEffect(() => {

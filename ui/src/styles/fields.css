@@ -75,7 +75,7 @@
 .field-meta { margin: 0; font-size: var(--fs-ui); color: var(--text-secondary); }
 .field-meta .mono { font-size: var(--fs-small); }
 .field-meta .info-tip > summary { text-decoration: underline dotted; text-underline-offset: 3px; }
-.field-meta .target-word { color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
+.field-meta .target-word { color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: 4px; margin-right: 4px; }
 .field-nav { display: flex; gap: 6px; flex: none; }
 .field-nav .list-button { display: none; }
 

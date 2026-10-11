@@ -44,7 +44,8 @@ export function bestRuns(runs: ModelRun[], targets: string[]): Record<string, nu
         const v = metricFor(r, "valid", t, m);
         return v === undefined ? [] : [{ id: r.id, v, low: lowerIsBetter(r, t, m) }];
       });
-      if (scored.length > 1) out[`${t}:${m}`] = scored.reduce((a, b) => ((b.low ? b.v < a.v : b.v > a.v) ? b : a)).id;
+      // A tie goes to the earliest run, as the API's own "best on validation" does, so both name the same run.
+      if (scored.length > 1) out[`${t}:${m}`] = scored.reduce((a, b) => ((b.low ? b.v < a.v : b.v > a.v) || (b.v === a.v && b.id < a.id) ? b : a)).id;
     }
   }
   return out;

@@ -60,7 +60,8 @@ export function ExperimentBar({ ds, experimentId }: { ds: Dataset; experimentId:
       {d ? <ExperimentSwitcher ds={ds} experimentId={experimentId} name={d.name} tab={tab} /> : <b className="version-name">…</b>}
       <Tabs label="Experiment" className="sub exp-tabs" items={[
         { to: `${base}?tab=runs`, label: "Runs", count: runs, active: tab === "runs" },
-        { to: `${base}?tab=train`, label: "Train", active: tab === "train" },
+        // A Viewer can't train, so the tab would hold only a banner.
+        ...(me?.role === "viewer" ? [] : [{ to: `${base}?tab=train`, label: "Train", active: tab === "train" }]),
         { to: `${base}?tab=exports`, label: "Exports", count: exports, active: tab === "exports" },
         { to: `${base}?tab=adjustments`, label: "Adjustments", count: d && d.assessor_id === null && !d.is_default ? adjusted : undefined, active: tab === "adjustments" },
         { to: `${base}?tab=notes`, label: "Notes", active: tab === "notes" },

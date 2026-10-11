@@ -334,7 +334,9 @@ function FieldFinder({ datasetId, presetLabel, canEdit, view }: {
           )}
         </div>
       ) : q.data && (
-        <Empty title="No fields match" action={<button type="button" onClick={() => st.setPreset(PRESETS[0])}>Show unreviewed</button>} />
+        st.preset === PRESETS[0].key && !st.modified
+          ? <Empty title="Every field is reviewed" action={<button type="button" onClick={() => st.setFilters([])}>Show all fields</button>} />
+          : <Empty title="No fields match" action={<button type="button" onClick={() => st.setPreset(PRESETS[0])}>Show unreviewed</button>} />
       )}
     </section>
   );

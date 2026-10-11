@@ -138,6 +138,10 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
   .dataset-tabs .tab { padding: 0 8px; }
   .dataset-bar .version-switcher .badge, .lens-more, .hide-phone, .dataset-bar > button:disabled { display: none; }
   .dataset-bar .spacer { flex-basis: 0; }
+  /* Touch targets: every full-size control is at least 44px tall on a phone. */
+  .main button:not(.small):not(.link), .main .btn:not(.small), .switcher { min-height: 44px; }
+  /* A row of tabs that scrolls says so with a fade at its right edge. */
+  .tabs.sub { mask-image: linear-gradient(to right, #000 85%, transparent); padding-right: 24px; }
 }
 .field-label { font-size: 13px; font-weight: 600; color: var(--text-secondary); padding: 0; margin-bottom: 2px; }
 .check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 2px 12px; max-height: 220px; overflow-y: auto; }

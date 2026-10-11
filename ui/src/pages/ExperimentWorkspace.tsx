@@ -462,7 +462,7 @@ export function RunsTab({ x, exports, runs, error, canAdd, fresh, onTrainAgain }
             <RunsTable e={e} runs={shown} targets={targets} kinds={kinds} split={split} fresh={fresh} selectedId={selected?.id ?? null} onSelect={select} />
             <p className="muted small-text" style={{ margin: 0 }}>
               {x.private ? "Runs are logged to MLflow once this baseline version reaches review. " : "Every run is logged to MLflow with its full preparation. "}
-              Select a run to see it {selected ? "here" : "beside the table"}.
+              Select a run to see its detail{selected ? " here" : ""}.
             </p>
           </>
         )}
