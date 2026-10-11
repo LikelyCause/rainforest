@@ -19,7 +19,7 @@ import { ExplorePage } from "./pages/ExplorePage";
 import { DatasetTeamPage, PhaseBadge } from "./pages/DatasetTeamPage";
 import { DatasetLayout } from "./components/DatasetLayout";
 import { ErrorAlert, ReviewMeter } from "./components/ui";
-import { baselineLabel, familyShort, roleLabel } from "./format";
+import { baselineLabel, roleLabel } from "./format";
 import { ToastRegion, showError } from "./toast";
 import { parseView, useView, withView } from "./view";
 import type { Dataset, ExportJob, ModelRun } from "./types";
@@ -39,8 +39,8 @@ function BaselineChip({ ds }: { ds: Dataset }) {
   }
   if (!b) return null;
   return (
-    <Link to={`/d/${ds.id}/baselines`} className="baseline-chip" title={`${b.label}${b.setup ? " · not set up yet" : ""}. All baselines →`}>
-      <span className="muted">Baseline</span> <b>{b.setup ? `${familyShort(b.family)} · set up` : baselineLabel(b.family, b.version, true)}</b>
+    <Link to={`/d/${ds.id}/baselines`} className="baseline-chip" title={b.setup ? "No baseline yet: a lead sets one up on the Team page. All baselines →" : `${b.label}. All baselines →`}>
+      <span className="muted">Baseline</span> <b>{b.setup ? "none yet" : baselineLabel(b.family, b.version, true)}</b>
     </Link>
   );
 }
