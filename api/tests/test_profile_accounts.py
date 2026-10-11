@@ -249,6 +249,57 @@ def test_avatar_is_stored_square_and_served(member, app_):
     assert TestClient(app_).get(url).status_code == 404
 
 
+def _halves(w=400, h=200, first=(220, 20, 20), second=(20, 200, 20), fmt="PNG", exif=None) -> bytes:
+    """A picture whose left half is `first` and right half `second`."""
+    img = Image.new("RGB", (w, h), second)
+    img.paste(first, (0, 0, w // 2, h))
+    buf = io.BytesIO()
+    img.save(buf, fmt, **({"exif": exif} if exif else {}))
+    return buf.getvalue()
+
+
+def _mean(data: bytes) -> tuple[int, int, int]:
+    small = Image.open(io.BytesIO(data)).convert("RGB").resize((1, 1), Image.Resampling.BOX)
+    return small.getpixel((0, 0))
+
+
+def test_crop_box_clamps_and_refuses():
+    from fastapi import HTTPException
+    from app.avatars import crop_box
+    assert crop_box(400, 200, None) is None
+    assert crop_box(400, 200, (200, 0, 200)) == (200, 0, 400, 200)
+    assert crop_box(400, 200, (201.4, -0.6, 200.3)) == (200, 0, 400, 200)  # a pixel over, from the browser's sums
+    for bad in [(0, 0, 0), (0, 0, float("nan")), (300, 0, 200), (-50, 0, 100), (0, 0, 500)]:
+        with pytest.raises(HTTPException):
+            crop_box(400, 200, bad)
+
+
+@needs_db
+def test_avatar_keeps_the_square_its_owner_framed(member, app_):
+    uid = member.user["id"]
+
+    def framed(data, **crop):
+        r = member.put(f"/api/users/{uid}/avatar", files={"file": ("me.png", data, "image/png")},
+                       data={f"crop_{k}": str(v) for k, v in crop.items()})
+        assert r.status_code == 200, r.text
+        return _mean(TestClient(app_).get(r.json()["avatar_url"]).content)
+
+    red, green = framed(_halves(), x=0, y=0, size=200), framed(_halves(), x=200, y=0, size=200)
+    assert red[0] > 180 > red[1] and green[1] > 160 > green[0]
+    # A phone JPEG stored sideways (EXIF orientation 6): the square is in the upright picture, red on top.
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    sideways = _halves(fmt="JPEG", exif=exif)
+    assert framed(sideways, x=0, y=0, size=200)[0] > 180
+    assert framed(sideways, x=0, y=200, size=200)[1] > 160
+    r = member.put(f"/api/users/{uid}/avatar", files={"file": ("me.png", _halves(), "image/png")},
+                   data={"crop_x": "0", "crop_y": "0"})
+    assert r.status_code == 422 and "together" in r.text
+    r = member.put(f"/api/users/{uid}/avatar", files={"file": ("me.png", _halves(), "image/png")},
+                   data={"crop_x": "300", "crop_y": "0", "crop_size": "200"})
+    assert r.status_code == 422
+
+
 @needs_db
 @pytest.mark.parametrize("data,name,code", [
     (b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>', "x.svg", 400),

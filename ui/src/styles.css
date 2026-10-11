@@ -151,6 +151,17 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .avatar-button { padding: 0; height: auto; border-radius: 50%; }
 .picture-drop { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px; height: auto; }
 .picture-drop .avatar { width: 112px; height: 112px; font-size: 40px; }
+.framer {
+  position: relative; overflow: hidden; border-radius: var(--radius); background: var(--surface-2);
+  cursor: grab; touch-action: none; user-select: none;
+}
+.framer:active { cursor: grabbing; }
+.framer:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.framer img { position: absolute; top: 0; left: 0; max-width: none; transform-origin: 0 0; pointer-events: none; }
+/* Dims what the round picture leaves out. */
+.framer-ring { position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 999px rgb(0 0 0 / 0.45); pointer-events: none; }
+.framer-zoom { width: 240px; gap: 8px; }
+.framer-zoom input { flex: 1; min-height: auto; padding: 0; border: 0; accent-color: var(--accent); }
 .team .name-cell { display: flex; align-items: center; gap: 8px; }
 .user-name { font-size: 13px; font-weight: 500; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inline-edit { width: 100%; min-width: 120px; border-color: transparent; background: transparent; }

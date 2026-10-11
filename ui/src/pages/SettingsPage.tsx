@@ -140,7 +140,7 @@ function Appearance() {
     <Section title="Appearance">
       <div className="card stack">
         <h2>Theme</h2>
-        <div className="segmented" role="radiogroup" aria-label="Theme">
+        <div className="segmented" role="radiogroup" aria-label="Theme" style={{ alignSelf: "flex-start" }}>
           {THEMES.map((t) => (
             <button key={t.key} type="button" role="radio" aria-checked={pref === t.key}
               className={pref === t.key ? "on" : ""} onClick={() => choose(t.key)}>

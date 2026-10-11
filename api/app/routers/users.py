@@ -2,7 +2,7 @@
 provider owns names, emails and roles, so leads can only deactivate or reactivate."""
 from __future__ import annotations
 
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from .. import avatars, users
 from ..auth import CurrentUser, LeadUser
@@ -31,15 +31,21 @@ def _may_change_picture(user: dict, user_id: int) -> None:
 
 
 @router.put("/{user_id}/avatar")
-def set_avatar(user_id: int, request: Request, user: CurrentUser, file: UploadFile = File(...)) -> dict:
-    """Upload a JPEG, PNG or WebP (5 MB at most) as the account's picture: you for yourself, a lead for anyone."""
+def set_avatar(user_id: int, request: Request, user: CurrentUser, file: UploadFile = File(...),
+               crop_x: float | None = Form(None), crop_y: float | None = Form(None),
+               crop_size: float | None = Form(None)) -> dict:
+    """Upload a JPEG, PNG or WebP (5 MB at most) as the account's picture: you for yourself, a lead for anyone.
+    `crop_*` is the square to keep, in the upright picture's pixels; without it, the centred square."""
     _may_change_picture(user, user_id)
     if int(request.headers.get("content-length") or 0) > avatars.MAX_BYTES + 64 * 1024:
         raise HTTPException(413, "Pictures can be 5 MB at most.")
     data = file.file.read(avatars.MAX_BYTES + 1)
     if len(data) > avatars.MAX_BYTES:
         raise HTTPException(413, "Pictures can be 5 MB at most.")
-    avatars.store(user_id, data)
+    parts = (crop_x, crop_y, crop_size)
+    if any(p is not None for p in parts) and None in parts:
+        raise HTTPException(422, "Send crop_x, crop_y and crop_size together.")
+    avatars.store(user_id, data, None if crop_size is None else (crop_x, crop_y, crop_size))
     return _shown(users.get(user_id))
 
 

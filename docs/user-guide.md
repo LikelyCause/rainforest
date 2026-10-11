@@ -33,8 +33,14 @@ Your profile opens a menu with:
 | File size | up to 5 MB |
 | Image size | up to 40 megapixels |
 
-Rainforest turns the picture upright, crops it to a centred square and saves it as a 256 × 256 WebP. Nothing of
-the file is kept but its pixels. Pictures are stored in `DATA_DIR/avatars`. They appear on the sign-in page, the top
+After you choose a picture, frame it in the circle:
+
+- Drag it, or use the arrow keys, to move it. Hold `Shift` to move further.
+- Scroll, pinch, use the slider, or press `+` and `−` to zoom, up to 4×.
+- *Reset* centres it again.
+
+Rainforest turns the picture upright, keeps the square you framed and saves it as a 256 × 256 WebP. Nothing of the
+file is kept but its pixels. Pictures are stored in `DATA_DIR/avatars`. They appear on the sign-in page, the top
 bar and the *Team* page. Without a picture, your initials stand in.
 
 ## Settings

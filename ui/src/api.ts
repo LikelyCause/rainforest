@@ -67,9 +67,15 @@ export const api = {
   /** In OIDC mode `logout_url` ends the provider's session too; the browser should go there next. */
   logout: () => request<{ logout_url: string | null }>("/api/auth/logout", { method: "POST" }),
   users: () => request<TeamUser[]>("/api/users"),
-  setAvatar: (userId: number, file: File) => {
+  /** `crop`: the square to keep, in the upright picture's pixels; without it the server keeps the centred one. */
+  setAvatar: (userId: number, file: File, crop?: { x: number; y: number; size: number }) => {
     const body = new FormData();
     body.append("file", file);
+    if (crop) {
+      body.append("crop_x", String(crop.x));
+      body.append("crop_y", String(crop.y));
+      body.append("crop_size", String(crop.size));
+    }
     return request<TeamUser>(`/api/users/${userId}/avatar`, { method: "PUT", body });
   },
   removeAvatar: (userId: number) => request<TeamUser>(`/api/users/${userId}/avatar`, { method: "DELETE" }),
