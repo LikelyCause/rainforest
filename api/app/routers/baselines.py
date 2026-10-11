@@ -63,10 +63,12 @@ def start_baseline(dataset_id: int, body: StartBaselineIn, user: LeadUser) -> di
             raise HTTPException(404, "Dataset not found")
         if ds["status"] != "ready":
             raise HTTPException(409, "Start a baseline once the dataset is ready")
-        users = {r["id"]: r for r in conn.execute("SELECT id, active FROM meta.users WHERE id = ANY(%s)",
+        users = {r["id"]: r for r in conn.execute("SELECT id, active, role FROM meta.users WHERE id = ANY(%s)",
                                                    (assessors,)).fetchall()}
         if bad := [str(u) for u in assessors if u not in users or not users[u]["active"]]:
             raise HTTPException(422, {"message": "Unknown or deactivated assessor(s)", "errors": bad})
+        if [u for u in assessors if users[u]["role"] == "viewer"]:
+            raise HTTPException(422, "Viewers can't assess; they look but don't change anything.")
         recipes.lock_dataset(conn, dataset_id)
         cur = recipes.current(conn, dataset_id, lock="update")
         setup = recipes.is_setup(conn, cur)

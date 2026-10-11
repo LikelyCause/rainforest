@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, uploadDataset } from "../api";
 import { PROCESSING, useMe } from "../hooks";
 import { eligibleTarget } from "../baselines";
+import { can } from "../can";
 import { metricLabel } from "../experiments";
 import { defaultTask, taskLabel } from "../decision";
 import { baselineLabel, fmtAgo, fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
@@ -320,6 +321,7 @@ export function DatasetsPage() {
   const fileInput = useRef<HTMLInputElement>(null);
   const upload = useUpload();
   const me = useMe();
+  const mayUpload = useRef(false);
   const [dragging, setDragging] = useState(false);
   // ?target=<dataset id> opens that dataset's target picker (linked from Explore).
   const [targetFor, setTargetFor] = useState<number | null>(() => Number(new URLSearchParams(window.location.search).get("target")) || null);
@@ -384,6 +386,7 @@ export function DatasetsPage() {
       e.preventDefault();
       depth = 0;
       setDragging(false);
+      if (!mayUpload.current) return;
       void upload.start(e.dataTransfer?.files[0]).then((ds) => ds && uploaded(ds));
     };
     window.addEventListener("dragenter", enter);
@@ -399,6 +402,8 @@ export function DatasetsPage() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const browse = () => fileInput.current?.click();
+  const editor = can(me.data, "upload");
+  mayUpload.current = editor;
   const rows = useMemo(() => data ?? [], [data]);
 
   return (
@@ -408,15 +413,15 @@ export function DatasetsPage() {
       <div className="row" style={{ justifyContent: "space-between" }}>
         <h1>Datasets</h1>
         <div className="row">
-          <SampleMenu onCreated={(ds) => highlight(ds.id)} />
-          {rows.length > 0 && (
+          {editor && <SampleMenu onCreated={(ds) => highlight(ds.id)} />}
+          {editor && rows.length > 0 && (
             <button type="button" className="primary" onClick={browse} disabled={upload.progress !== null}>↑ Upload CSV / Parquet</button>
           )}
         </div>
       </div>
       <ErrorAlert error={error} />
       {isLoading && <div className="stack"><span className="skeleton" /><span className="skeleton" /></div>}
-      {data && rows.length === 0 && !upload.progress && <FirstRun onBrowse={browse} onDemo={() => demo.mutate()} busy={demo.isPending} />}
+      {data && rows.length === 0 && !upload.progress && editor && <FirstRun onBrowse={browse} onDemo={() => demo.mutate()} busy={demo.isPending} />}
       <ErrorAlert error={demo.error} />
 
       {(rows.length > 0 || upload.progress) && (
@@ -486,7 +491,8 @@ export function DatasetsPage() {
                       <td className="num">{fmtInt(ds.row_count)}</td>
                       <td className="num">{fmtInt(ds.column_count)}</td>
                       <td style={{ position: "relative" }}>
-                        {ready && (ds.target_columns.length ? (
+                        {ready && !editor && ds.target_columns.map((t) => <code key={t}>{t}</code>)}
+                        {ready && editor && (ds.target_columns.length ? (
                           <button type="button" className="ghost target-chips" title="Change targets"
                             onClick={(e) => { e.stopPropagation(); setTargetFor(ds.id); }}>
                             {ds.target_columns.map((t) => <code key={t}>{t}</code>)}
@@ -517,7 +523,7 @@ export function DatasetsPage() {
                       <td className="small-text muted" title={fmtDate(ds.updated_at)}>{fmtAgo(ds.updated_at)}</td>
                       <td onClick={(e) => e.stopPropagation()}>
                         <div className="row" style={{ flexWrap: "nowrap", gap: 2 }}>
-                          <RowMenu ds={ds} canDelete={me.data?.role === "lead"} onRename={() => setRenaming(ds.id)} onDelete={() => setDeleting(ds)} />
+                          {editor && <RowMenu ds={ds} canDelete={can(me.data, "deleteDataset")} onRename={() => setRenaming(ds.id)} onDelete={() => setDeleting(ds)} />}
                           {ready && <span className="chevron" aria-hidden="true">→</span>}
                         </div>
                       </td>
@@ -533,7 +539,7 @@ export function DatasetsPage() {
         </div>
       )}
 
-      {dragging && (
+      {dragging && editor && (
         <div className="drop-overlay" aria-hidden="true"><span>Drop to upload: CSV or Parquet</span></div>
       )}
       {deleting && <DeleteDialog ds={deleting} onClose={() => setDeleting(null)} />}

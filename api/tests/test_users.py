@@ -64,8 +64,8 @@ def test_migration_made_admin_the_first_lead(app_):
 def test_pick_list_is_public_and_minimal(app_, lead):
     u = _new_user(lead, email="private@example.com")
     listed = TestClient(app_).get("/api/auth/users").json()
-    assert {"id": u["id"], "name": u["name"], "role": "member"} in listed
-    assert all(set(x) == {"id", "name", "role"} for x in listed)
+    assert {"id": u["id"], "name": u["name"], "role": "member", "key": None, "avatar_url": None} in listed
+    assert all(set(x) == {"id", "name", "role", "key", "avatar_url"} for x in listed)
 
 
 def test_lead_manages_the_team(app_, lead):

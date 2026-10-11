@@ -44,7 +44,7 @@ export function StartBaseline({ ds, onCancel }: { ds: Dataset; onCancel?: () => 
   const set = (patch: Partial<StartBaselineForm>) => setForm({ ...form, ...patch });
   const toggle = <T,>(list: T[], v: T) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
   const nextVersion = (f: FamilyKey) => (setup ? 1 : (ds.baselines.find((b) => b.family === f)?.version ?? 0) + 1);
-  const people = (users.data ?? []).filter((u) => u.active).sort((a, b) => Number(b.id === me.id) - Number(a.id === me.id) || a.name.localeCompare(b.name));
+  const people = (users.data ?? []).filter((u) => u.active && u.role !== "viewer").sort((a, b) => Number(b.id === me.id) - Number(a.id === me.id) || a.name.localeCompare(b.name));
   const missingSource = form.start !== "scratch" && !form.source_recipe_id;
   const blocked = missingSource ? "Choose what to start from" : form.assessors.length === 0 ? "Choose at least one assessor"
     : form.start !== "recipe" && form.targets.length === 0 ? "Choose at least one target" : null;

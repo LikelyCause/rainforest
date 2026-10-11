@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
+import { can } from "../can";
 import { useMe, useTeam } from "../hooks";
 import { useDatasetContext } from "../components/DatasetLayout";
 import { ErrorAlert } from "../components/ui";
@@ -101,7 +102,7 @@ export function ExperimentsPage() {
     <div className="page">
       <div className="row" style={{ justifyContent: "space-between" }}>
         <h1>Experiments</h1>
-        <button type="button" className="primary" onClick={() => setCreating(true)}>New experiment</button>
+        {can(me, "createExperiment") && <button type="button" className="primary" onClick={() => setCreating(true)}>New experiment</button>}
       </div>
       <p className="secondary" style={{ margin: 0 }}>
         Each experiment holds exports and the models trained on them. Build one from a finalized baseline, or from your own assessment while you assess; that one stays private to you until team review opens.

@@ -41,8 +41,9 @@ Then open `http://localhost:8080` (the Docker host's address from another machin
 Everything `make up` starts is configured in `.env`, which Compose reads on every command; see
 [Configuration](#configuration).
 
-Out of the box sign-in is in *pick* mode: the sign-in page lists the team and you choose who you are, starting with
-the built-in lead **Admin**. That's for one person, dev and demos; it doesn't authenticate anyone. A team sets up OIDC
+Out of the box sign-in is in *pick* mode: the sign-in page shows the team's profiles and you pick yours, starting
+with the built-in lead **Admin** (or the accounts `RAINFOREST_USERS` lists, see [Sign-in](#sign-in)). That's for one
+person, dev and demos; it doesn't authenticate anyone. A team sets up OIDC
 sign-in: see [Deploying for a team](#deploying-for-a-team) (`make up-keycloak` runs a ready-made Keycloak to try it).
 
 ### On your own
@@ -66,8 +67,8 @@ type, start a baseline of that type there (it can start from the one you finaliz
 
 ### As a team
 
-1. A lead adds people (pick mode: the **Team** page; OIDC: the identity provider's groups, see [Sign-in](#sign-in))
-   and uploads the dataset.
+1. A lead adds people (pick mode: the **Team** page, or `RAINFOREST_USERS` in `.env`; OIDC: the identity provider's
+   groups, see [Sign-in](#sign-in)) and uploads the dataset.
 2. The lead sets up the dataset's baseline on its **Team** step: model type, starting point, targets, and the
    assessors (themselves too, if they assess).
 3. Each assessor works through **Review** and **Bulk edit** on their own assessment, which nobody else sees, then
@@ -128,7 +129,8 @@ The top bar shows the dataset switcher, the workflow steps **Review · Bulk edit
 (Review carries the reviewed count, the Team step the current baseline's phase: *Assessing*, *Review* or
 *Finalized*), the **Baseline** chip (the current baseline, e.g. *Trees v2*, linking to the dataset's **Baselines**
 page; while you adjust an experiment, that experiment), *Next unreviewed* (`U`) while fields are left, and on the
-right **Team** (the user list), who you're signed in as with your role, and *Sign out*.
+right **Team** (the user list) and your profile: picture, name and role, opening a menu with *Change picture…*,
+*Team* and *Switch profile* (pick mode; *Sign out* with OIDC).
 
 ### Predicting numbers and bands
 
@@ -184,16 +186,25 @@ strength ships as an `.xls` file, so rebuilding it needs `pip install fastexcel`
 ## Sign-in
 
 Everyone signs in as a user, and everything they change is recorded against them (decision history, bulk edits,
-uploads, exports, model runs, Explore analyses). A user is a **lead** or a **member**:
+uploads, exports, model runs, Explore analyses). A user is a **Team Lead** (`lead`), a **Team Member** (`member`) or
+a **Viewer** (`viewer`):
 
-| | Member | Lead |
-|---|---|---|
-| Upload, Explore, experiment (export a finalized baseline or your own assessment, train) | ✓ | ✓ |
-| Adjust the experiments they own | ✓ | ✓ |
-| Review and bulk edit their own assessment when assigned; comment in team review | ✓ | ✓ |
-| Start baselines and versions, assign assessors, set the team decision in review, finalize | | ✓ |
-| Delete datasets | | ✓ |
-| Manage users on the **Team** page | | ✓ (pick mode: add, rename, edit email, set role, deactivate / reactivate; OIDC: deactivate / reactivate) |
+| | Viewer | Member | Lead |
+|---|---|---|---|
+| Look at datasets, fields, Explore, experiments, runs and MLflow; query with the field finder | ✓ | ✓ | ✓ |
+| Query with the SQL console (it reads every table, assessors' work in progress included) | | ✓ | ✓ |
+| Change their own picture | ✓ | ✓ | ✓ |
+| Upload, recompute Explore results, experiment (export a finalized baseline or your own assessment, train) | | ✓ | ✓ |
+| Adjust the experiments they own | | ✓ | ✓ |
+| Review and bulk edit their own assessment when assigned; comment in team review | | ✓ | ✓ |
+| Start baselines and versions, assign assessors, set the team decision in review, finalize | | | ✓ |
+| Delete datasets | | | ✓ |
+| Manage users on the **Team** page; change anyone's picture | | | ✓ (pick mode without `RAINFOREST_USERS`: add, rename, edit email, set role, deactivate / reactivate; OIDC: deactivate / reactivate) |
+
+A Viewer looks and changes nothing: the API refuses their writes (`403`), MLflow included, and the UI shows them no
+edit controls. They can't be assessors. While a baseline version is being assessed they don't see its work in
+progress: the dataset's pages and Explore show its latest finalized baseline, or each field's suggestion when it has
+none, and field history is empty. From team review on they see the team decision like everyone else.
 
 `RAINFOREST_AUTH_MODE` chooses how people sign in:
 
@@ -201,13 +212,28 @@ uploads, exports, model runs, Explore analyses). A user is a **lead** or a **mem
   with PKCE, run by the API. The sign-in page shows *Sign in with <provider>*. A user is created the first time they
   sign in, and their name, email and role are refreshed from the ID token every time. The role comes from the
   token's groups claim: `RAINFOREST_LEAD_GROUP` (default `rainforest-lead`) makes a lead, `RAINFOREST_MEMBER_GROUP`
-  (default `rainforest-member`) a member. Someone in neither group, or deactivated, gets a *No access* page. *Sign
-  out* also ends the provider's session. Register Rainforest at the provider as a confidential client with the
-  redirect URI `<Rainforest URL>/api/auth/oidc/callback` (and `<Rainforest URL>/login` as a post-logout redirect URI),
-  and configure a groups claim in the ID token.
-* **`pick`** (the default; dev, demos, a single person or a trusted single-team network). The sign-in page lists the
-  active users and choosing one signs you in as them; the page says plainly that this doesn't authenticate. Leads
-  manage the list on the Team page. The first start creates one lead, *Admin*.
+  (default `rainforest-member`) a member; there is no Viewer group. Someone in neither group, or deactivated, gets a
+  *No access* page. *Sign out* also ends the provider's session. Register Rainforest at the provider as a
+  confidential client with the redirect URI `<Rainforest URL>/api/auth/oidc/callback` (and `<Rainforest URL>/login`
+  as a post-logout redirect URI), and configure a groups claim in the ID token.
+* **`pick`** (the default; dev, demos, a single person or a trusted single-team network). The sign-in page is a
+  centred grid of the active users' profiles (picture or initials, name and role); picking one signs you in as them,
+  and the page says plainly that this doesn't authenticate. *Switch profile* in the profile menu goes back to it.
+  Without `RAINFOREST_USERS`, leads manage the list on the Team page and the first start creates one lead, *Admin*.
+
+**Accounts from `.env`.** In pick mode, `RAINFOREST_USERS` defines the accounts as `key[#id]:Name:role;…`, for
+example `tanner:Tanner:lead;test-member:Test Member:member;test-viewer:Test Viewer:viewer`. `key` is a stable slug
+(lowercase letters, digits and dashes) and the list needs at least one lead. It is synced on every start: a listed key
+creates its account or updates its name and role, a key that returns reactivates its account, and every account not
+listed is deactivated (never deleted, so its work stays attached). `#id` gives an existing account without a key this
+key, once, so it keeps its history. A list with a problem (a malformed entry, an unknown role, a repeated key, no
+lead) stops the API from starting with a message naming it, before anything changes. With it set, accounts can't be
+added or edited in the app and the Team page lists them read-only.
+
+**Pictures.** *Change picture…* in the profile menu sets your picture (a lead sets anyone's from the Team page): a
+JPEG, PNG or WebP up to 5 MB and 40 megapixels, turned upright, cropped to a centred square and saved as a 256 × 256
+WebP, which leaves nothing of the file but its pixels. Pictures are stored in `DATA_DIR/avatars` and shown on the
+sign-in page, the top bar and the Team page; without one, initials stand in.
 
 Deactivating a user, or changing their role, signs them out everywhere at once. The last active lead can't be
 demoted or deactivated, and the Team page doesn't offer to deactivate yourself. Users are never deleted, so their
@@ -640,7 +666,8 @@ being recorded as a GPU run. With `COMPOSE_FILE` unset (or without the GPU file)
 Every model run trained from the UI or API is also logged to an [MLflow](https://mlflow.org) tracking server, which
 Compose runs as the `mlflow` service (MLflow 3.17). Its UI is at **`http://localhost:8080/mlflow/`**, behind the
 Rainforest sign-in: nginx asks the API whether the session cookie is valid before every request, and sends you to
-the sign-in page (and back) if it isn't. The server has no published port of its own.
+the sign-in page (and back) if it isn't. A Viewer can browse it but not change it (`GET` and `HEAD` only). The server
+has no published port of its own.
 
 * **Layout:** one MLflow experiment per dataset, named `rainforest/<dataset id>-<dataset name>` (found again by its
   `rainforest.dataset_id` tag, so renaming a dataset keeps its experiment), and one MLflow run per model run, named
@@ -722,7 +749,7 @@ ORDER BY target, metric, value DESC;
 | `meta.decision_history` | append-only audit log of every change (with family, `user_id` and, for bulk edits, `batch_id`) |
 | `meta.bulk_batches` | each applied bulk edit: summary and a pre-change snapshot used by undo |
 | `meta.field_correlations` | pairwise associations (one row per unordered pair) |
-| `meta.users` | users: name, email, role (`lead` / `member`), active, OIDC subject, last seen |
+| `meta.users` | users: name, email, role (`lead` / `member` / `viewer`), active, `key` (an account from `RAINFOREST_USERS`), `avatar` (the picture's hash), OIDC subject, last seen |
 | `meta.recipes` | baseline versions per dataset: `family` (`tree` / `linear` / `neural`), `version` (counted per family), phase (`assessing` / `review` / `finalized`), `scope` (`all` / `reopened`), who finalized it, the frozen `snapshot`, and `reuse` (the summary when it started from another dataset's baseline) |
 | `meta.recipe_reopened` | the fields a `reopened` version works on |
 | `meta.experiments` | experiments per dataset: name, owner, `source` (`recipe:<id>` or `assessment:<recipe id>:<user id>`), `is_default` (a baseline version's **Team ·** experiment), `target_order`, notes, archived |
@@ -758,6 +785,7 @@ value is written `$$`.
 | `JOB_SLOTS` | 1 | background jobs running at once across all workers; each uses `cpu_count // JOB_SLOTS` threads, so the default gives one job every core |
 | `LOG_LEVEL` | info | API log level |
 | `RAINFOREST_AUTH_MODE` | `pick` | `oidc` for team deployments; `pick` lists users to choose from and doesn't authenticate (see [Sign-in](#sign-in)) |
+| `RAINFOREST_USERS` | – | pick mode's accounts, `key[#id]:Name:role;…` (roles `lead`, `member`, `viewer`); when set, the whole list, synced on every start (see [Sign-in](#sign-in)) |
 | `RAINFOREST_OIDC_ISSUER` | – | the provider's issuer URL, exactly as it appears in its tokens (e.g. `https://sso.example.com/realms/rainforest`). Required in `oidc` mode |
 | `RAINFOREST_OIDC_CLIENT_ID`, `RAINFOREST_OIDC_CLIENT_SECRET` | – | the confidential client registered for Rainforest. Required in `oidc` mode |
 | `RAINFOREST_OIDC_REDIRECT_URL` | from the request | `<Rainforest URL>/api/auth/oidc/callback`; set it when Rainforest sits behind a proxy |
@@ -811,7 +839,7 @@ make sample-csv
 `test_auth.py` and the OIDC redirect and ID-token checks in `test_oidc.py` (against an in-process provider,
 `tests/oidc_provider.py`). The API tests in `test_explore.py`, `test_sql_console.py`, `test_data_correctness.py`,
 `test_api_cleanup.py`, `test_users.py`, `test_team.py`, `test_recipes.py`, `test_baselines.py`,
-`test_experiments.py`, `test_adjustments.py` and the OIDC
+`test_experiments.py`, `test_adjustments.py`, `test_profile_accounts.py` and the OIDC
 sign-in flows in `test_oidc.py`, and the job tests in `test_jobs.py`, run against an empty Postgres and skip unless `RAINFOREST_TEST_DATABASE_URL` is set; the API tests
 sign in with the `login_as(client, role)` fixture in `conftest.py`.
 `test_mlflow.py` logs to a temporary file store, so it needs no server; its database-backed tests follow the same
@@ -843,10 +871,12 @@ service (so nothing skips) and an MLflow server container, the UI typecheck, tes
   field's type, the stored statistics still describe the inferred type (the UI says so). The export uses your type.
 * **Security:** the UI port (`UI_PORT`, 8080) listens on every interface so you can reach it over the LAN; `api` and
   `db` bind to localhost, `mlflow` publishes no port, and the `keycloak` profile publishes `KEYCLOAK_PORT` (8081) on
-  every interface. Every API route except `/health` and sign-in needs the
+  every interface. Every API route except `/health`, sign-in and profile pictures needs the
   session cookie, file downloads included, and so does the MLflow UI at `/mlflow/`.
   * Use `RAINFOREST_AUTH_MODE=oidc` for anything but a single person or a trusted network: pick mode lets anyone who
     reaches the UI act as any user, including a lead.
+  * Profile pictures are open (the sign-in page shows them) at a URL naming the picture's hash. Uploads are decoded
+    and re-encoded as WebP, never stored as sent, and served with `nosniff` and a sandboxing content policy.
   * The session cookie holds only the user id and their session version, signed (HMAC) with the session secret. It
     is `HttpOnly`, `SameSite=Strict`, lasts 7 days, and is `Secure` when the request came over HTTPS. Every request
     checks the user is still active and the version current, so deactivation and role changes apply at once;

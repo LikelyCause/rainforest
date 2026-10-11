@@ -8,6 +8,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
 import time
 from functools import lru_cache
@@ -16,7 +17,7 @@ from typing import Annotated
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
@@ -36,9 +37,34 @@ OPEN_PATHS = {"/health", "/api/auth/config", "/api/auth/logout", "/api/auth/user
               f"{OIDC_PATH}/login", f"{OIDC_PATH}/callback"}
 CHECK_PATH = "/api/auth/check"
 UPLOAD_PATH = "/api/datasets/upload"
+AVATAR_UPLOAD = re.compile(r"/api/users/\d+/avatar")
+AVATAR_PREFIX = "/api/auth/avatars/"  # open to GET: the picker shows pictures before anyone signs in
 DEV_ORIGINS = {"http://localhost:5173", "http://127.0.0.1:5173"}
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+# A viewer reads only. These writes are reads in disguise (Explore, the field finder, the read-only SQL console) or
+# their own picture; every other write, including any route added later, is refused.
+VIEWER_ALLOWED = [(m, re.compile(p)) for m, p in (
+    ("POST", r"/api/datasets/\d+/analyses"), ("POST", r"/api/datasets/\d+/fields/query"),
+    ("PUT", r"/api/users/\d+/avatar"), ("DELETE", r"/api/users/\d+/avatar"),
+)]
+# MLflow's UI loads runs, models and traces with POSTs that only search; a viewer may make those and no other.
+MLFLOW_SEARCH = re.compile(r"/mlflow/(ajax-)?api/2\.0/mlflow/"
+                           r"(runs/search|experiments/search|logged-models/search|traces/search|"
+                           r"metrics/get-history-bulk-interval)")
+VIEWER_REFUSED = "Viewers can look but not change anything."
+
+
+def viewer_refused(user: dict, method: str, path: str, original_method: str | None = None,
+                   original_uri: str | None = None) -> bool:
+    if user.get("role") != "viewer":
+        return False
+    if path == CHECK_PATH:  # nginx's auth_request for MLflow: judge the request it stands for
+        unsafe = (original_method or method).upper() in UNSAFE_METHODS
+        uri = (original_uri or "").split("?")[0]
+        return unsafe and not ((original_method or "").upper() == "POST" and ".." not in uri
+                               and MLFLOW_SEARCH.fullmatch(uri))
+    return method in UNSAFE_METHODS and not any(m == method and p.fullmatch(path) for m, p in VIEWER_ALLOWED)
 
 
 def config_problem() -> str | None:
@@ -164,7 +190,7 @@ def body_type_problem(request: Request) -> str | None:
     if not has_body:
         return None
     ctype = request.headers.get("content-type", "").split(";")[0].strip().lower()
-    if request.url.path == UPLOAD_PATH:
+    if request.url.path == UPLOAD_PATH or AVATAR_UPLOAD.fullmatch(request.url.path):
         return None if ctype == "multipart/form-data" else "Uploads must be sent as multipart/form-data."
     return None if ctype == "application/json" else "Send the request body as application/json."
 
@@ -180,11 +206,11 @@ async def check_request(request: Request) -> JSONResponse | None:
     if request.method in UNSAFE_METHODS:
         if not origin_allowed(request):
             return JSONResponse({"detail": "Cross-origin request refused."}, 403)
-        # nginx's auth_request passes the original method on but never the body.
+        # The check nginx's auth_request makes never carries a body.
         problem = None if path == CHECK_PATH else body_type_problem(request)
         if problem:
             return JSONResponse({"detail": problem}, 415)
-    if path in OPEN_PATHS:
+    if path in OPEN_PATHS or (path.startswith(AVATAR_PREFIX) and request.method in ("GET", "HEAD")):
         return None
     problem = config_problem()
     if problem:
@@ -193,6 +219,9 @@ async def check_request(request: Request) -> JSONResponse | None:
     user = await run_in_threadpool(users.session_user, *ids) if ids else None
     if user is None:
         return JSONResponse({"detail": "Sign in required."}, 401)
+    if viewer_refused(user, request.method, path, request.headers.get("x-original-method"),
+                      request.headers.get("x-original-uri")):
+        return JSONResponse({"detail": VIEWER_REFUSED}, 403)
     request.state.user = user
     return None
 
@@ -262,7 +291,8 @@ def auth_config() -> dict:
     """What the sign-in page needs before anyone is signed in."""
     s = get_settings()
     return {"mode": s.auth_mode, "provider_name": s.oidc_provider_name if s.auth_mode == "oidc" else None,
-            "lead_group": s.lead_group, "member_group": s.member_group, "problem": config_problem()}
+            "lead_group": s.lead_group, "member_group": s.member_group, "problem": config_problem(),
+            "accounts_from_env": users.managed_by_env()}
 
 
 @router.get("/me")
@@ -291,6 +321,19 @@ def _provider_logout_url(request: Request) -> str | None:
     return oidc.end_session_url(f"{redirect.scheme}://{redirect.netloc}/login")
 
 
+@router.get("/avatars/{user_id}/{name}")
+def avatar(user_id: str, name: str) -> FileResponse:
+    from . import avatars
+
+    path = avatars.path_for(int(user_id), name) if user_id.isdigit() else None
+    if path is None:
+        raise HTTPException(404, "No such picture")
+    # The name is the picture's hash, so a changed picture has a new URL and this one can be cached for good.
+    return FileResponse(path, media_type="image/webp", headers={
+        "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox"})
+
+
 # Pick mode ---------------------------------------------------------------------------------------
 class PickIn(BaseModel):
     user_id: int
@@ -311,7 +354,7 @@ def pick(body: PickIn, request: Request, response: Response) -> dict:
         raise HTTPException(404, "No active user with that id")
     users.touch(user["id"])
     _sign_in(response, request, user)
-    return {k: user[k] for k in ("id", "name", "email", "role")} | {"mode": "pick"}
+    return {k: user.get(k) for k in ("id", "name", "email", "role", "key", "avatar_url")} | {"mode": "pick"}
 
 
 # OIDC mode ---------------------------------------------------------------------------------------

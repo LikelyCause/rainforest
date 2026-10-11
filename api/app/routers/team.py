@@ -93,11 +93,13 @@ def assign(dataset_id: int, body: AssessorIn, user: LeadUser) -> dict:
         ds = conn.execute("SELECT status FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()
         if ds["status"] != "ready":
             raise HTTPException(409, "Assign assessors once the dataset is ready")
-        who = conn.execute("SELECT id, active FROM meta.users WHERE id = %s", (body.user_id,)).fetchone()
+        who = conn.execute("SELECT id, active, role FROM meta.users WHERE id = %s", (body.user_id,)).fetchone()
         if who is None:
             raise HTTPException(404, "User not found")
         if not who["active"]:
             raise HTTPException(409, "That user is deactivated")
+        if who["role"] == "viewer":
+            raise HTTPException(422, "Viewers can't assess; they look but don't change anything.")
         conn.execute(
             """INSERT INTO meta.dataset_assessors (recipe_id, user_id, assigned_by) VALUES (%s, %s, %s)
                ON CONFLICT DO NOTHING""",

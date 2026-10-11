@@ -66,6 +66,12 @@ export const api = {
   /** In OIDC mode `logout_url` ends the provider's session too; the browser should go there next. */
   logout: () => request<{ logout_url: string | null }>("/api/auth/logout", { method: "POST" }),
   users: () => request<TeamUser[]>("/api/users"),
+  setAvatar: (userId: number, file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return request<TeamUser>(`/api/users/${userId}/avatar`, { method: "PUT", body });
+  },
+  removeAvatar: (userId: number) => request<TeamUser>(`/api/users/${userId}/avatar`, { method: "DELETE" }),
   createUser: (data: { name: string; email?: string | null; role: Role }) =>
     request<TeamUser>("/api/users", json("POST", data)),
   patchUser: (id: number, data: { name?: string; email?: string | null; role?: Role; active?: boolean }) =>

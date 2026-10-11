@@ -25,3 +25,5 @@ mlflow-skinny==3.17.0
 # CPU build (5 MB). The GPU image swaps in the CUDA build; see the Dockerfile's GPU arg.
 xgboost-cpu==3.4.1; sys_platform == "linux" or sys_platform == "win32"
 xgboost==3.4.1; sys_platform == "darwin"
+# Profile pictures, re-encoded as WebP.
+pillow==12.3.0

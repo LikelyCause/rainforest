@@ -2,7 +2,8 @@ import { createContext, useContext } from "react";
 import { Link, Outlet, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { PROCESSING, useDataset } from "../hooks";
+import { can } from "../can";
+import { PROCESSING, useDataset, useMe } from "../hooks";
 import { ErrorAlert } from "./ui";
 import type { Dataset } from "../types";
 
@@ -18,6 +19,7 @@ export function useDatasetContext(): Dataset {
 export function DatasetLayout() {
   const datasetId = Number(useParams().datasetId);
   const ds = useDataset(datasetId);
+  const me = useMe().data;
   const qc = useQueryClient();
   const nav = useNavigate();
   const del = useMutation({
@@ -62,8 +64,10 @@ export function DatasetLayout() {
         </ErrorAlert>
         <ErrorAlert error={del.error} />
         <div className="row">
-          <button type="button" className="danger" disabled={del.isPending}
-            onClick={() => window.confirm(`Delete ${d.name}?`) && del.mutate()}>Delete</button>
+          {can(me, "deleteDataset") && (
+            <button type="button" className="danger" disabled={del.isPending}
+              onClick={() => window.confirm(`Delete ${d.name}?`) && del.mutate()}>Delete</button>
+          )}
           <Link className="btn" to="/">Back to datasets</Link>
         </div>
       </div>

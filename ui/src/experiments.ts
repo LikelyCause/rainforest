@@ -31,10 +31,11 @@ export function privacyNote(x: Pick<Experiment, "private" | "assessor_id" | "rec
 
 /** Renaming, notes, archiving: the owner (for a personal one, its assessor) or a lead. */
 export const canEdit = (x: Pick<Experiment, "owner" | "assessor_id">, me: Viewer) =>
-  me.role === "lead" || me.id === x.owner || me.id === x.assessor_id;
+  me.role !== "viewer" && (me.role === "lead" || me.id === x.owner || me.id === x.assessor_id);
 
 /** Why the viewer can't add exports or runs, or null when they can. */
 export function addBlocked(x: Pick<Experiment, "archived_at" | "assessor_id" | "owner_name">, me: Viewer): string | null {
+  if (me.role === "viewer") return "Viewers can look but not change anything.";
   if (x.archived_at) return "Archived. Unarchive it to add exports and runs.";
   if (x.assessor_id !== null && x.assessor_id !== me.id) {
     return `Only ${x.owner_name ?? "its assessor"} adds to this experiment; it is built from their assessment.`;
