@@ -60,7 +60,7 @@ export function DerivedFields({ ds }: { ds: Dataset }) {
         or once it is finalized and then start a new version so they get assessed.
       </p>
       {list.data && list.data.length > 0 && (
-        <table className="table">
+        <table className="data">
           <thead><tr><th>Field</th><th>Kind</th><th>Definition</th><th /></tr></thead>
           <tbody>
             {list.data.map((f) => (

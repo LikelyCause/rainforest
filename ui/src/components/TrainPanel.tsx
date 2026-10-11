@@ -163,7 +163,9 @@ export const TrainPanel = forwardRef<HTMLElement, {
   const comboProblem = combos.map((c) => Object.entries(problems(c, catalog!, kinds))[0]).find(Boolean);
   const startOne = (v: Record<string, SettingValue>) => api.startRun(e!.id, {
     model, order, device: useGpu ? "cuda" : "cpu", cv_folds: cvFolds,
-    ...(catalog ? { params: changed(v, catalog, kinds), ...runFields(v, catalog) } : { cv: 5 }),
+    // A sweep's own settings are sent even at their default, so every run of it says what it tried.
+    ...(catalog ? { params: { ...changed(v, catalog, kinds), ...Object.fromEntries(parsedAxes.map((x) => [x.name, v[x.name]])) },
+      ...runFields(v, catalog) } : { cv: 5 }),
   });
   const start = useMutation({
     // A sweep's runs start one after another so a refusal stops the rest instead of leaving a partial grid unexplained.
