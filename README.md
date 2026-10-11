@@ -586,6 +586,14 @@ experiment, and its manifest's `config` the `source` (`recipe` or `assessment`),
   no actual value is 0), up to 1,000 sampled (actual, predicted) pairs and a 30-bin histogram of the errors, and is
   also scored on ranges: actual and predicted values put in up to 5 ranges of roughly equal count, cut on the training rows (tied values can make fewer), with
   `band_accuracy`, `band_f1_macro`, a confusion matrix and per-range precision, recall and F1.
+* **Cross-validation:** a run also fits its chain (same model, settings, chain folds and device) on K folds of the
+  training rows and scores each held-out fold with the same metrics, so each metric gets a mean and a spread (the
+  standard deviation over folds) beside validation and test. K is the Train panel's *Cross-validation*: *Off* or
+  2–20 folds, default 5; a run takes about K + 1 times as long. Validation and test rows never take part, and the saved
+  model is still the one fit on every training row. Folds keep the class shares of the chain's first class target when
+  its rarest class has at least K training rows, else they're drawn at random and the run says so; if a fold's
+  training rows would lose a target's second class, cross-validation is skipped with a note and the run completes. It
+  is separate from *Chain folds*, which only decides what chained targets pass down.
 * **Model settings:** the *Train a model* panel, between the exports and the runs, lays out the chosen model's
   parameters (LightGBM and XGBoost so far), each with its own control: a dropdown for a choice (boosting type, loss, class weights),
   a number with its range, an on/off switch. They change with the model and are grouped (run, trees, learning,
@@ -601,21 +609,24 @@ experiment, and its manifest's `config` the `source` (`recipe` or `assessment`),
   in your browser. A run stores the settings that differ from the defaults; its detail lists them, with *Train again
   with these settings*, which fills the panel with them.
 * **On the page:** the *Train a model* panel picks the export (the newest finished one unless you choose another),
-  the model, CPU or GPU, which of the export's targets to train in which chain order (tick one target for a single
+  the model, CPU or GPU, the cross-validation folds, which of the export's targets to train in which chain order (tick one target for a single
   model, or several and order them) and the model's settings. Each export has *Train ↓* (points the panel at it),
   *Files ▾* (Parquet, preprocessor, manifest) and
   *Use from code* (the CLI command and class mappings). Runs are listed per export, with that export's targets as
   columns, showing AUC and macro-F1 (R² and RMSE for a number) on the test split, or on the validation split with the
-  *Test / Validation* switch. In each of these columns ★ marks the run that scored best on the validation split for
-  that target and metric (lowest for RMSE), so choosing it doesn't use the test split; on *Test* the star can sit on a
-  lower number than another run's, and its tooltip gives the validation score it was picked on. A run expands into,
+  *Test / Validation / CV* switch (*CV* shows each mean ± spread, and — for runs without cross-validation). In each of
+  these columns ★ marks the run that scored best on the validation split for that target and metric (lowest for
+  RMSE), so choosing it doesn't use the test split; on *Test* or *CV* the star can sit on a lower number than another
+  run's, and its tooltip gives the validation score it was picked on. A run expands into,
   per target, its headline metrics (precision, recall and F1 are the positive class's for a binary target and macro
   averages otherwise), then tabs for the confusion matrix (correct predictions
   shaded in blue, errors in red), the ROC curves and the per-class table ending in the macro and weighted averages; for
   a number, R²,
   RMSE, MAE and MAPE tiles over three tabs: the predicted-vs-actual scatter, the error histogram, and *Ranges* (the
   confusion matrix and per-range precision, recall and F1 described above). *Download model* and a test /
-  validation switch apply to every target. A failed run expands into its settings, why it failed in a sentence (the full
+  validation switch apply to every target; with cross-validation the switch adds *cross-validation*, each target's
+  headline metrics as mean ± spread with every fold's value on hover, and a note when the folds weren't stratified or
+  cross-validation was skipped. A failed run expands into its settings, why it failed in a sentence (the full
   message under *Details*) and *Train again with these settings*.
 
 ```bash
@@ -694,13 +705,13 @@ has no published port of its own.
 * **Layout:** one MLflow experiment per dataset, named `rainforest/<dataset id>-<dataset name>` (found again by its
   `rainforest.dataset_id` tag, so renaming a dataset keeps its experiment), and one MLflow run per model run, named
   `run <id> · <model label>` (e.g. `run 12 · LightGBM`).
-* **Params:** `model`, `order`, `cv`, `seed`, `device`, `chain_method`, `export_family`, `n_train`, `n_features`, and
+* **Params:** `model`, `order`, `cv`, `cv_folds`, `seed`, `device`, `chain_method`, `export_family`, `n_train`, `n_features`, and
   every effective estimator parameter as `estimator.<name>` (defaults, your overrides and the device settings),
   `prep.adjusted_fields` (how many fields the experiment adjusted from its baseline), each target's *Predict as* as
   `target.<name>.task` (`classes`, `regression`, `bins`), and the export's split: `prep.valid_size`,
   `prep.test_size`, `prep.split_seed`.
 * **Metrics:** each scalar metric per split and target as `<split>.<target>.<metric>` (e.g. `test.column_a.roc_auc`,
-  `valid.column_c.r2`),
+  `valid.column_c.r2`; cross-validation means as `cv.<target>.<metric>` and spreads as `cv_std.<target>.<metric>`),
   plus `fit_seconds`. Characters MLflow doesn't allow in a key become `_`.
 * **Artifacts:** `report.json` and `model/classifier_chain.joblib`, the same files the API serves for the run, and
   `adjustments.json` (the baseline and the experiment's adjustments, field by field), and
