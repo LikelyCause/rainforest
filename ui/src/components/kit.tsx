@@ -155,7 +155,7 @@ export function PhaseRail({ stage, compact }: { stage: Stage; compact?: boolean 
         const done = i < at || (stage === "finalized" && i === at);
         const current = i === at;
         return (
-          <li key={s.key} aria-current={current ? "step" : undefined} className={current ? "current" : done ? "done" : "todo"}>
+          <li key={s.key} aria-current={current ? "step" : undefined} className={[current && "current", done && "done", !current && !done && "todo"].filter(Boolean).join(" ")}>
             {i > 0 && <span className="conn" aria-hidden="true" />}
             <span className="dot" aria-hidden="true" style={current && !done ? { borderColor: STAGE_COLOR[s.key] } : undefined}>
               {done ? <Icon name="check" size={12} /> : current ? <i style={{ background: STAGE_COLOR[s.key] }} /> : null}
@@ -191,7 +191,13 @@ export const LENS_COLOR: Record<Lens, string> = {
 
 /** Whose decisions are on screen. */
 export function LensChip({ lens, children, title }: { lens: Lens; children: ReactNode; title?: string }) {
-  return <Chip tone={LENS[lens].tone} icon={LENS[lens].icon} title={title} className="lens-chip">{children}</Chip>;
+  // "Private · your assessment": on a phone only the first part shows.
+  const [head, ...rest] = typeof children === "string" ? children.split(" · ") : [children];
+  return (
+    <Chip tone={LENS[lens].tone} icon={LENS[lens].icon} title={title} className="lens-chip">
+      {head}{rest.length > 0 && <span className="lens-more"> · {rest.join(" · ")}</span>}
+    </Chip>
+  );
 }
 
 /** Closes a popover on a click outside `ref` or on Escape. */

@@ -23,7 +23,7 @@ import { ExplorePage } from "./pages/ExplorePage";
 import { DatasetTeamPage } from "./pages/DatasetTeamPage";
 import { DatasetLayout, useDatasetContext } from "./components/DatasetLayout";
 import { ErrorAlert } from "./components/ui";
-import { baselineLabel, familyShort, fmtDate, fmtInt, roleLabel } from "./format";
+import { baselineLabel, familyShort, fmtInt, roleLabel } from "./format";
 import { ToastRegion, showError, toast } from "./toast";
 import { parseView, useView, withView } from "./view";
 import type { Dataset, ExportJob, ModelRun, TeamState } from "./types";
@@ -256,7 +256,7 @@ function gateText(stage: Stage, team: TeamState | undefined, lead: boolean): str
   if (stage === "review" && team.review) return `${fmtInt(team.review.adopted)} adopted · ${fmtInt(team.review.open)} open`;
   if (stage === "finalized") {
     const who = team.recipe.finalized_by_name;
-    return team.recipe.finalized_at ? `${who ? `by ${who}, ` : ""}${fmtDate(team.recipe.finalized_at)}` : null;
+    return team.recipe.finalized_at ? `${who ? `by ${who}, ` : ""}${new Date(team.recipe.finalized_at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}` : null;
   }
   return null;
 }
@@ -301,7 +301,7 @@ function NextStep({ ds, stage, access, team }: { ds: Dataset; stage: Stage; acce
     const todo = all.filter((f) => !f.reviewed);
     if (todo.length > 0) {
       if (here(`${base}/review`)) return <button type="button" className="primary" disabled title={`Review every field first (${todo.length} left)`}>Submit · {todo.length} left</button>;
-      return <Link className="btn primary" to={`${base}/review/${todo[0].id}`}>Next field · {fmtInt(todo.length)} left <kbd>U</kbd></Link>;
+      return <Link className="btn primary" to={`${base}/review/${todo[0].id}`}>Next field · {fmtInt(todo.length)} left <kbd className="hide-phone">U</kbd></Link>;
     }
     if (all.length === 0) return null;
     const ask = async () => {

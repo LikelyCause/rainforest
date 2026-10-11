@@ -135,6 +135,9 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
   .dataset-bar { padding: 6px 12px; }
   .dataset-bar .phase-rail li:not(.current), .dataset-bar .phase-rail .conn, .dataset-bar .gate-text { display: none; }
   .ds-name { max-width: 160px; }
+  .dataset-tabs .tab { padding: 0 8px; }
+  .dataset-bar .version-switcher .badge, .lens-more, .hide-phone { display: none; }
+  .dataset-bar .spacer { flex-basis: 0; }
 }
 .field-label { font-size: 13px; font-weight: 600; color: var(--text-secondary); padding: 0; margin-bottom: 2px; }
 .check-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 2px 12px; max-height: 220px; overflow-y: auto; }
