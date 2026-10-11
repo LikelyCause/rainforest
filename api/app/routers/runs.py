@@ -26,7 +26,7 @@ router = APIRouter(prefix="/api", tags=["models"])
 MLFLOW_URL = """CASE WHEN mlflow_run_id IS NOT NULL
                    THEN '/mlflow/#/experiments/' || mlflow_experiment_id || '/runs/' || mlflow_run_id END AS mlflow_url"""
 RUN_COLS = f"""id, export_id, dataset_id, model, family, status, status_message, error, config, metrics,
-              report - 'top_features' AS report, created_at, updated_at, finished_at, mlflow_experiment_id,
+              report, created_at, updated_at, finished_at, mlflow_experiment_id,
               mlflow_run_id, {MLFLOW_URL}, created_by, experiment_id"""
 
 
