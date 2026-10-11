@@ -58,7 +58,7 @@ The services:
 ### Prerequisites
 
 - Docker with Compose v2.
-- At least 4 GB of RAM free for the stack. Exports and generated samples peak at about 2 GB.
+- At least 6 GB of RAM free. The stack uses about 2.3 GB at rest, and large exports peak at about 2 GB more.
 - Disk space of roughly 2–3× the size of the files you upload, plus room for the images.
 
 See [Sizing](docs/deployment.md#sizing) for where these figures come from.

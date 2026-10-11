@@ -217,13 +217,15 @@ These figures come from the code's defaults and limits. Measure your own data be
 |---|---|---|
 | Disk | each uploaded file: the upload on the `/data` volume, a Parquet copy, and a full typed copy in Postgres (`raw.*`) | roughly 2–3× the file size |
 | Disk | the GPU image | about 800 MB more than the CPU image |
-| RAM | Postgres | `shared_buffers=512MB` (set in `docker-compose.yml`) |
+| RAM | the stack at rest (measured on a new install, with the defaults) | about 2.3 GB: MLflow about 1.9 GB, the API about 340 MB, Postgres about 90 MB, the UI under 10 MB |
+| RAM | Postgres, as data grows | up to `shared_buffers=512MB` (set in `docker-compose.yml`) plus working memory |
 | RAM | an export | peaks at a few times `EXPORT_CHUNK_MB` (256 MB) and `EXPORT_FIT_MB` (512 MB). A 300k-row export peaks at about 1.3–2 GB. |
 | RAM | a generated sample at the `SAMPLE_MAX_CELLS` cap (60M cells) | about 2 GB peak |
 | CPU | a background job | `cpu_count // JOB_SLOTS` threads. With the default `JOB_SLOTS=1`, one job uses every core. |
 
-So plan for at least 4 GB of RAM free for the stack: one job peaking at about 2 GB, plus Postgres, the API workers
-and MLflow. Add more for wider or longer data, for `JOB_SLOTS` above 1, or for the Keycloak profile.
+So plan for at least 6 GB of RAM free for the stack: about 2.3 GB at rest, plus one job peaking at about 2 GB, plus
+headroom. Add more for wider or longer data, for `JOB_SLOTS` above 1, or for the Keycloak profile. A small dataset
+adds little: training on *Concrete strength* (1,030 rows) raised the stack's total by under 100 MB.
 
 ### How background jobs run
 
