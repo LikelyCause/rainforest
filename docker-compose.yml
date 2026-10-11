@@ -43,7 +43,7 @@ services:
       JOB_WORKERS: ${JOB_WORKERS:-2}
       JOB_SLOTS: ${JOB_SLOTS:-1}
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      # Sign-in (README › Sign-in): "pick" doesn't authenticate; team deployments use "oidc".
+      # Sign-in (docs/deployment.md › Sign-in): "pick" doesn't authenticate; team deployments use "oidc".
       RAINFOREST_AUTH_MODE: ${RAINFOREST_AUTH_MODE:-pick}
       RAINFOREST_USERS: ${RAINFOREST_USERS:-}
       RAINFOREST_OIDC_ISSUER: ${RAINFOREST_OIDC_ISSUER:-}
@@ -60,7 +60,7 @@ services:
       RAINFOREST_ALLOWED_HOSTS: ${RAINFOREST_ALLOWED_HOSTS:-*}
       # Empty turns MLflow logging off. The server serves everything, its REST API too, under /mlflow.
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI-http://mlflow:5000/mlflow}
-      # Tuning (README › Configuration); the defaults match api/app/config.py.
+      # Tuning (docs/configuration.md); the defaults match api/app/config.py.
       PROFILE_SAMPLE_ROWS: ${PROFILE_SAMPLE_ROWS:-500000}
       CORR_SAMPLE_ROWS: ${CORR_SAMPLE_ROWS:-100000}
       CORR_MAX_LEVELS: ${CORR_MAX_LEVELS:-50}

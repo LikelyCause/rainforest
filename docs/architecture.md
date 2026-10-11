@@ -1,7 +1,7 @@
 # Architecture
 
 A developer's map of Rainforest: what runs where, how a request and a dataset move through the system, and where to
-add things. For endpoints see [api.md](api.md); for usage see the [README](../README.md).
+add things. For endpoints see [api.md](api.md); for usage see the [README](../README.md) and the [user guide](user-guide.md).
 
 ## Components
 

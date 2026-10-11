@@ -13,7 +13,7 @@ setting = $(or $($(1)),$(shell sed -n 's/^[[:space:]]*$(1)=//p' .env 2>/dev/null
 comma := ,
 
 gpu_files = $(or $(call setting,COMPOSE_FILE),docker-compose.yml)
-up-gpu:        ## `make up` plus the CUDA XGBoost image, for this run only (keep it: COMPOSE_FILE in .env; README › GPU)
+up-gpu:        ## `make up` plus the CUDA XGBoost image, for this run only (keep it: COMPOSE_FILE in .env; docs/deployment.md › GPU)
 	COMPOSE_FILE=$(if $(findstring docker-compose.gpu.yml,$(gpu_files)),$(gpu_files),$(gpu_files):docker-compose.gpu.yml) \
 	docker compose up -d --build
 	@$(if $(findstring docker-compose.gpu.yml,$(call setting,COMPOSE_FILE)),,echo "The GPU image applied to this run only; to keep it for \`make up\`, add COMPOSE_FILE=docker-compose.yml:docker-compose.gpu.yml to .env.")
@@ -32,7 +32,7 @@ kc_profiles = $(call setting,COMPOSE_PROFILES)
 kc_on = $(filter keycloak,$(subst $(comma), ,$(kc_profiles)))
 kc_profile = COMPOSE_PROFILES=$(if $(kc_on),$(kc_profiles),$(if $(kc_profiles),$(kc_profiles)$(comma))keycloak)
 kc_keep = $(strip $(if $(kc_on),,$(kc_profile)) $(kc_fill))
-up-keycloak:   ## `make up` plus the dev-only Keycloak, filling the sign-in settings .env leaves empty (README › Keycloak)
+up-keycloak:   ## `make up` plus the dev-only Keycloak, filling the sign-in settings .env leaves empty (docs/deployment.md › Reference Keycloak)
 	@case "$(call setting,RAINFOREST_AUTH_MODE)" in ""|oidc) ;; \
 	  *) echo "RAINFOREST_AUTH_MODE is $(call setting,RAINFOREST_AUTH_MODE); set it to oidc, or remove it, in .env." >&2; exit 1;; esac
 	env $(kc_fill) $(kc_profile) docker compose up -d --build

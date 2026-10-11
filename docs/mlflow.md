@@ -1,0 +1,108 @@
+# MLflow
+
+Every model run trained from the UI or the API is also logged to an [MLflow](https://mlflow.org) tracking server.
+Compose runs it as the `mlflow` service.
+
+A Rainforest experiment and an MLflow experiment are different things. See
+[Concepts](concepts.md#a-rainforest-experiment-is-not-an-mlflow-experiment).
+
+## Opening MLflow
+
+Open `http://localhost:8080/mlflow/`, or *MLflow ↗* in your profile menu.
+
+- MLflow sits behind the Rainforest sign-in. Before every request, nginx asks the API whether the session cookie is
+  valid. If it isn't, you go to the sign-in page and back.
+- A Viewer can browse MLflow but not change it (`GET` and `HEAD` only).
+- The server has no published port of its own.
+
+The runs table has an *MLflow ↗* link per logged run, and the run's detail links to it too. An experiment's page
+links to the dataset's MLflow experiment, filtered to its runs. `meta.model_runs` stores `mlflow_experiment_id` and
+`mlflow_run_id`, and the API returns `mlflow_url`.
+
+## Layout
+
+- One MLflow experiment per dataset, named `rainforest/<dataset id>-<dataset name>`. Rainforest finds it again by its
+  `rainforest.dataset_id` tag, so renaming a dataset keeps its experiment.
+- One MLflow run per model run, named `run <id> · <model label>`, such as `run 12 · LightGBM`.
+
+## What each run records
+
+### Params
+
+| Param | Contents |
+|---|---|
+| `model`, `order`, `cv`, `cv_folds`, `seed`, `device`, `chain_method`, `export_family`, `n_train`, `n_features` | the run's set-up |
+| `estimator.<name>` | every effective estimator parameter: defaults, your overrides and the device settings |
+| `prep.adjusted_fields` | how many fields the experiment adjusted from its baseline |
+| `target.<name>.task` | each target's *Predict as*: `classes`, `regression` or `bins` |
+| `prep.valid_size`, `prep.test_size`, `prep.split_seed` | the export's split |
+
+### Metrics
+
+- Each scalar metric per split and target, as `<split>.<target>.<metric>`. Examples: `test.column_a.roc_auc`,
+  `valid.column_c.r2`.
+- Cross-validation means as `cv.<target>.<metric>`, and spreads as `cv_std.<target>.<metric>`.
+- `fit_seconds`.
+
+Characters MLflow doesn't allow in a key become `_`.
+
+### Artifacts
+
+| Artifact | Contents |
+|---|---|
+| `report.json` | the run's report, the same file the API serves |
+| `model/classifier_chain.joblib` | the trained chain, the same file the API serves |
+| `adjustments.json` | the baseline and the experiment's adjustments, field by field |
+| `preparation/manifest.json` | the export's manifest: every field's type and settings, the targets and the split |
+
+So each run records the full preparation behind it. The server stores artifacts on the `mlartifacts` volume and
+proxies uploads and downloads, so clients only talk HTTP to it.
+
+### Tags
+
+| Tag | Contents |
+|---|---|
+| `rainforest.dataset_id`, `rainforest.dataset_name` | the dataset |
+| `rainforest.export_id` | the export |
+| `rainforest.recipe_id`, `rainforest.recipe_version` | the baseline version the export was built from |
+| `rainforest.baseline` | its label, such as `Trees baseline v2` |
+| `rainforest.baseline_family` | its model family |
+| `rainforest.adjusted` | the number of adjusted fields |
+| `rainforest.targets_changed` | `true` when the experiment's targets differ from the baseline's |
+| `rainforest.experiment_id`, `rainforest.experiment_name` | the Rainforest experiment |
+| `rainforest.run_id` | the Rainforest model run |
+| `rainforest.model` | the model |
+| `rainforest.model_family` | the family the export was prepared for |
+| `rainforest.user` | who started the run |
+| `rainforest.git_sha`, `mlflow.source.git.commit` | the commit, when the image was built with `GIT_SHA` (`make up` passes the checkout's commit) |
+
+## Private experiments wait
+
+MLflow has no access control of its own. Anyone who can sign in to Rainforest can browse everything in it.
+
+So a run in a [private experiment](experiments-and-training.md#privacy) is not logged while its baseline version is
+assessing. The runs table shows *after review*. When review opens, those runs are logged. Runs that finish after that
+are logged at once. The API also logs any still waiting when it starts.
+
+## When MLflow is down
+
+The run still finishes. Logging gives up after a short timeout: 15 seconds per request, with two retries. The run
+records the reason as `mlflow_error` in its report. The runs table shows *not logged* with the reason.
+
+Nothing is lost. `make mlflow-backfill` logs every finished run that has no MLflow run, such as one trained while
+MLflow was down or turned off. It skips runs of an experiment that is still private. It runs only when you start it.
+
+## Turning it off
+
+Set `MLFLOW_TRACKING_URI=` (empty) in `.env`. Runs are then not logged and show no link. The `mlflow` service still
+starts. Stop it with `docker compose stop mlflow` if you don't want it.
+
+## Storage
+
+The tracking data lives in a database named `mlflow` in the same Postgres. The `mlflow` service creates it on start
+if it is missing. So it works on an existing `pgdata` volume as well as a new one.
+
+## Not logged
+
+Runs from the command line (`make train`) aren't model runs in `meta.model_runs`, so they aren't logged to MLflow.
+See [Training from the command line](experiments-and-training.md#training-from-the-command-line).

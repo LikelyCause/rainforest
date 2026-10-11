@@ -79,7 +79,7 @@ def _probe_xgboost() -> str | None:
     context doesn't hold GPU memory for the life of the process.
     """
     if not xgboost_cuda_build():
-        return "this image's XGBoost is the CPU build (rebuild with GPU=1, see README › GPU)"
+        return "this image's XGBoost is the CPU build (rebuild with GPU=1, see docs/deployment.md › GPU)"
     try:
         r = subprocess.run([sys.executable, "-c", _PROBE], capture_output=True, text=True, timeout=120,
                            cwd=Path(__file__).resolve().parent.parent)
