@@ -76,7 +76,6 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .num { font-variant-numeric: tabular-nums; }
 .small-text { font-size: 12px; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* ------------------------------------------------------------------ app shell */
 .app { display: flex; flex-direction: column; height: 100%; }
@@ -290,8 +289,6 @@ table.data tr.clickable:hover td { background: var(--surface-hover); }
   color: var(--text-secondary); cursor: pointer; transition: border-color 0.12s, background 0.12s;
 }
 .dropzone.over, .dropzone:hover { border-color: var(--accent); background: var(--accent-weak); }
-.dataset-row { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
-.dataset-row:last-child { border-bottom: 0; }
 
 /* ------------------------------------------------------------------ review page */
 .review { display: grid; grid-template-columns: 264px minmax(0, 1fr) 320px; height: 100%; min-height: 0; }
@@ -511,7 +508,6 @@ table.comparison tr.differs td, table.comparison tr.differs th { background: var
 
 .locked { font-size: 12.5px; color: var(--text-muted); display: flex; flex-direction: column; gap: 2px; }
 .locked b { color: var(--text-secondary); font-weight: 500; }
-.family-tag { font-size: 12px; color: var(--text-muted); }
 
 table.cm { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 3px; font-size: 13px; font-variant-numeric: tabular-nums; }
 table.cm th { font-weight: 500; color: var(--text-secondary); padding: 4px 8px; text-align: center; vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -546,7 +542,7 @@ table.data.datasets { background: var(--surface-1); }
 table.data.datasets td { vertical-align: middle; height: 44px; }
 table.data.datasets tr.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 table.data.datasets tr.fresh td { background: var(--accent-weak); transition: background 1.2s ease; }
-.name-cell { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dataset-name { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chevron { color: var(--text-muted); opacity: 0; width: 14px; }
 tr.clickable:hover .chevron, tr.clickable:focus-within .chevron, tr.clickable:focus .chevron { opacity: 1; }
 .target-chips { height: auto; padding: 2px 4px; gap: 4px; flex-wrap: wrap; justify-content: flex-start; }
@@ -635,3 +631,13 @@ table.data tr.clickable:focus-visible { outline: 2px solid var(--accent); outlin
 .ms-default { white-space: nowrap; color: var(--text-muted); opacity: 0.85; }
 .ms-problem { color: var(--bad); }
 .run-settings { justify-content: space-between; }
+
+.info-tip { display: inline-block; position: relative; }
+.info-tip > summary { display: inline; list-style: none; cursor: pointer; }
+.info-tip > summary::-webkit-details-marker { display: none; }
+.info-tip-body { position: absolute; z-index: 40; top: calc(100% + 4px); left: 0; width: max-content; max-width: min(360px, 80vw);
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-1);
+  box-shadow: var(--shadow-pop); color: var(--text-secondary); font-size: 12.5px; font-weight: 400; line-height: 1.4;
+  white-space: pre-wrap; text-transform: none; letter-spacing: 0; text-align: left; }
+th .th-sort { all: unset; cursor: pointer; }
+th .th-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

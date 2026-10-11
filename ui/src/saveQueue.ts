@@ -125,6 +125,7 @@ function applySaved(fieldId: number, datasetId: number, saved: Decision, view: V
   for (const k of ["exportPreview", "fieldQuery", "corrMatrix", "analysis", "team", "reviewQueue"]) {
     qc.invalidateQueries({ queryKey: [k, datasetId] });
   }
+  if (!view) qc.invalidateQueries({ queryKey: ["datasets"] });
   if (view) {
     qc.invalidateQueries({ queryKey: ["experiment"] });
     qc.invalidateQueries({ queryKey: ["experiments", datasetId] });

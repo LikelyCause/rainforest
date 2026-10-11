@@ -153,8 +153,6 @@ export const api = {
     request<RecipeDiff>(`/api/datasets/${datasetId}/recipes/diff?a=${a}&b=${b}`),
   newVersion: (datasetId: number, family: FamilyKey, reopen: number[]) =>
     request<TeamState>(`/api/datasets/${datasetId}/recipes`, json("POST", { family, reopen })),
-  applyRecipe: (datasetId: number, recipeId: number) =>
-    request<TeamState>(`/api/datasets/${datasetId}/recipes/apply`, json("POST", { recipe_id: recipeId })),
   corrMatrix: (datasetId: number, q: { kept: boolean; target: string | null; limit?: number; add?: number[]; view?: View }) => {
     const p = new URLSearchParams({ kept: q.kept ? "1" : "0", limit: String(q.limit ?? 60) });
     if (q.view) p.set("view", q.view);

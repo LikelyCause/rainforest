@@ -205,10 +205,12 @@ export function ReviewPage() {
   // Review mode = focus is not inside a form control; then single keys drive the loop.
   useEffect(() => {
     const update = () => setTyping(isControl(document.activeElement));
+    const later = () => window.setTimeout(update, 0);
     document.addEventListener("focusin", update);
-    document.addEventListener("focusout", () => window.setTimeout(update, 0));
+    document.addEventListener("focusout", later);
     return () => {
       document.removeEventListener("focusin", update);
+      document.removeEventListener("focusout", later);
     };
   }, []);
 

@@ -85,7 +85,7 @@ export type Attention = "leak" | "missing" | "confidence" | "edited" | null;
 /** Why a list row deserves a look, highest priority first. */
 export function attentionOf(f: FieldListItem): Attention {
   if (f.action === "target") return null;
-  if (f.leakage || (f.max_target_assoc ?? 0) >= LEAK_AT) return "leak";
+  if (f.leakage) return "leak";
   if ((f.null_pct ?? 0) >= MISSING_BAD || (f.n_unique ?? 2) <= 1) return "missing";
   if (f.inference_confidence !== null && f.inference_confidence < LOW_CONFIDENCE) return "confidence";
   if (f.source === "user" && !f.reviewed) return "edited";

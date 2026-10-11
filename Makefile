@@ -73,10 +73,11 @@ test:          ## run API unit tests locally (needs `pip install -r api/requirem
 
 TEST_PG_PORT ?= 55432
 test-db:       ## run the full API suite against a throwaway Postgres container
+	@docker rm -f rainforest-testpg >/dev/null 2>&1 || true
 	docker run -d --rm --name rainforest-testpg -e POSTGRES_PASSWORD=test -p 127.0.0.1:$(TEST_PG_PORT):5432 postgres:16 >/dev/null
-	until docker exec rainforest-testpg pg_isready -q; do sleep 1; done
-	cd api && RAINFOREST_TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:$(TEST_PG_PORT)/postgres pytest -q; \
-	  status=$$?; docker rm -f rainforest-testpg >/dev/null; exit $$status
+	trap 'docker rm -f rainforest-testpg >/dev/null' EXIT; \
+	  for i in $$(seq 60); do docker exec rainforest-testpg pg_isready -q && break; sleep 1; done; \
+	  cd api && RAINFOREST_TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:$(TEST_PG_PORT)/postgres pytest -q
 
 clean:         ## stop and DELETE all data volumes
 	docker compose --profile '*' down -v

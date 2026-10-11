@@ -32,9 +32,9 @@ function ConfusionMatrix({ ev, accuracy }: { ev: TargetEvaluation; accuracy?: nu
         <span className="muted small-text">
           Confusion matrix · {fmtInt(total)} rows{accuracy !== undefined ? ` · accuracy ${fmtMetric(accuracy)}` : ""}
         </span>
-        <div className="segmented" role="group" aria-label="Cell values">
-          <button className={`small${mode === "count" ? " on" : ""}`} onClick={() => setMode("count")}>counts</button>
-          <button className={`small${mode === "row" ? " on" : ""}`} onClick={() => setMode("row")}>row %</button>
+        <div className="segmented" role="radiogroup" aria-label="Cell values">
+          <button type="button" role="radio" aria-checked={mode === "count"} className={`small${mode === "count" ? " on" : ""}`} onClick={() => setMode("count")}>counts</button>
+          <button type="button" role="radio" aria-checked={mode === "row"} className={`small${mode === "row" ? " on" : ""}`} onClick={() => setMode("row")}>row %</button>
         </div>
       </div>
       <div style={{ overflowX: "auto" }}>
@@ -402,9 +402,9 @@ export function RunDetail({ run, targets, onTrainAgain = null }: {
         </span>
         <div className="row" style={{ gap: 12 }}>
           <a className="small-text" href={`/api/runs/${run.id}/files/model`}>Download model ↓</a>
-          <div className="segmented" role="group" aria-label="Split">
+          <div className="segmented" role="radiogroup" aria-label="Split">
             {(["test", "valid", ...(cv && run.metrics?.cv ? ["cv"] : [])] as Split[]).map((s) => (
-              <button key={s} className={`small${split === s ? " on" : ""}`} onClick={() => { steady.hold(); setSplit(s); }}>
+              <button key={s} type="button" role="radio" aria-checked={split === s} className={`small${split === s ? " on" : ""}`} onClick={() => { steady.hold(); setSplit(s); }}>
                 {s === "valid" ? "validation" : s === "cv" ? "cross-validation" : "test"}
               </button>
             ))}

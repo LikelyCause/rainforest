@@ -311,14 +311,15 @@ def test_api_map_is_cached_then_stale_then_recomputed(client, dataset):
     assert _finished(client, fresh)["status"] == "done"
 
 
-def test_api_new_request_supersedes_running_one_of_same_kind(client, dataset):
+def test_api_a_recompute_supersedes_only_the_same_request(client, dataset):
     ds = dataset["id"]
     a = _analysis(client, ds, "map", sample=2000, perplexity=40, recompute=True)
-    other = _analysis(client, ds, "importance", target="column_a", sample=1000, recompute=True)
-    b = _analysis(client, ds, "map", sample=2000, perplexity=25, recompute=True)
+    other = _analysis(client, ds, "map", sample=2000, perplexity=25, recompute=True)
+    b = _analysis(client, ds, "map", sample=2000, perplexity=40, recompute=True)
     first = client.get(f"/api/analyses/{a['id']}").json()
     if first["status"] != "done":  # it can finish before the second request lands
         assert (first["status"], first["error"]) == ("failed", "Superseded")
+    # Someone else's map with other settings is never cancelled by this one.
     assert _finished(client, other)["status"] == "done"
     assert _finished(client, b)["status"] == "done"
 

@@ -192,7 +192,7 @@ a **Viewer** (`viewer`):
 | | Viewer | Member | Lead |
 |---|---|---|---|
 | Look at datasets, fields, Explore, experiments, runs and MLflow; query with the field finder | ✓ | ✓ | ✓ |
-| Query with the SQL console (it reads every table, assessors' work in progress included) | | ✓ | ✓ |
+| Query with the SQL console (every table except assessments in progress and private experiments) | | ✓ | ✓ |
 | Change their own picture | ✓ | ✓ | ✓ |
 | Upload, recompute Explore results, experiment (export a finalized baseline or your own assessment, train) | | ✓ | ✓ |
 | Adjust the experiments they own | | ✓ | ✓ |
@@ -874,7 +874,7 @@ make sample-csv
 **Tests** live in `api/tests`. Most need no database, including the pick-mode sign-in and request-check tests in
 `test_auth.py` and the OIDC redirect and ID-token checks in `test_oidc.py` (against an in-process provider,
 `tests/oidc_provider.py`). The API tests in `test_explore.py`, `test_sql_console.py`, `test_data_correctness.py`,
-`test_api_cleanup.py`, `test_users.py`, `test_team.py`, `test_recipes.py`, `test_baselines.py`,
+`test_api_cleanup.py`, `test_users.py`, `test_team.py`, `test_recipes.py`, `test_baselines.py`, `test_baseline_names.py`, `test_sample_library.py`, `test_target_tasks.py`,
 `test_experiments.py`, `test_adjustments.py`, `test_profile_accounts.py` and the OIDC
 sign-in flows in `test_oidc.py`, and the job tests in `test_jobs.py`, run against an empty Postgres and skip unless `RAINFOREST_TEST_DATABASE_URL` is set; the API tests
 sign in with the `login_as(client, role)` fixture in `conftest.py`.

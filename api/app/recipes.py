@@ -15,7 +15,6 @@ from psycopg import sql
 from .db import jsonb
 from .semantics import SETTING_KEYS, suggest, validate_decision
 
-PHASES = ("assessing", "review", "finalized")
 DECISION_KEYS = ("action", "semantic_type", "notes", "target_task", "target_bins")
 FAMILY_LABEL = {"tree": "Trees", "linear": "Linear", "neural": "Neural"}
 NAME_MAX = 60

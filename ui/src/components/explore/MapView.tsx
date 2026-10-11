@@ -51,7 +51,7 @@ function KnobInput({ label, hint, value, min, max, onCommit }: {
   useEffect(() => {
     const v = Number(debounced);
     if (debounced !== "" && Number.isFinite(v) && v >= min && v <= max && Math.round(v) !== value) onCommit(Math.round(v));
-  }, [debounced]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [debounced]);
   const n = Number(text);
   const bad = text !== "" && (!Number.isFinite(n) || n < min || n > max);
   return (

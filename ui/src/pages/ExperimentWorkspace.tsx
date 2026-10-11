@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useFields } from "../hooks";
-import { ErrorAlert } from "../components/ui";
+import { ErrorAlert, InfoTip } from "../components/ui";
 import { RunDetail } from "../components/RunDetail";
 import { TrainPanel, type TrainRequest } from "../components/TrainPanel";
 import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtInt, fmtMetric, fmtNum, fmtPct } from "../format";
@@ -70,6 +70,7 @@ function BuildPanel({ datasetId, family, rows, x }: { datasetId: number; family:
   const [test, setTest] = useState("15");
   const [seed, setSeed] = useState(42);
   const [fitRows, setFitRows] = useState<number | null>(null);
+  const [fitText, setFitText] = useState<string | null>(null);
   const v = Number(valid) / 100, t = Number(test) / 100;
   const train = 1 - v - t;
   const splitError = !Number.isFinite(v) || !Number.isFinite(t) || v < 0 || t < 0 ? "Shares must be numbers of 0% or more."
@@ -99,7 +100,7 @@ function BuildPanel({ datasetId, family, rows, x }: { datasetId: number; family:
     <section className="card build-panel">
       <div className="stack" style={{ gap: 10, minWidth: 0 }}>
         <div className="row" style={{ justifyContent: "space-between" }}>
-          <h2>What will be exported <abbr className="muted" style={{ fontSize: 13, fontWeight: 400 }} title={`${HOW_IT_WORKS}\n\n${familyShort(family)}: ${FAMILY_EXPLAINER[family] ?? ""}`}>ⓘ</abbr></h2>
+          <h2>What will be exported <InfoTip className="muted" style={{ fontSize: 13, fontWeight: 400 }} label="ⓘ" text={`${HOW_IT_WORKS}\n\n${familyShort(family)}: ${FAMILY_EXPLAINER[family] ?? ""}`} /></h2>
           <span className="secondary small-text" title={personal ? "Your assessment as it stands when you export; later edits don't change an export already made." : "The version's frozen snapshot."}>
             from {sourceLabel(x)}{personal ? ", as it stands now" : ""}
           </span>
@@ -149,15 +150,16 @@ function BuildPanel({ datasetId, family, rows, x }: { datasetId: number; family:
           <div className="row" style={{ gap: 12, marginTop: 8 }}>
             <label className="field">Random seed<input type="number" value={seed} onChange={(e) => setSeed(Number(e.target.value))} style={{ width: 110 }} /></label>
             <label className="field">Max rows to fit on
-              <input type="number" min={1000} max={maxFit} step={10_000} value={fit} style={{ width: 130 }}
-                onChange={(e) => setFitRows(Math.max(1000, Math.min(Number(e.target.value), maxFit)))} />
+              <input type="number" min={1000} max={maxFit} step={10_000} value={fitText ?? fit} style={{ width: 130 }}
+                onChange={(e) => setFitText(e.target.value)}
+                onBlur={() => { if (fitText !== null) { setFitRows(Math.max(1000, Math.min(Number(fitText) || maxFit, maxFit))); setFitText(null); } }} />
             </label>
           </div>
         </details>
         <div className="row" style={{ justifyContent: "flex-end", marginTop: "auto" }}>
           <span className="muted small-text">Prepared as {baselineLabel(x.recipe_family, x.recipe_version, false, x.recipe_name)} decided</span>
           <button type="button" className="primary" disabled={!p || p.blocking.length > 0 || Boolean(splitError) || start.isPending}
-            onClick={() => start.mutate({ valid_size: v, test_size: t, seed, fit_sample_rows: Math.max(fit, 1000) })}>
+            onClick={() => start.mutate({ valid_size: v, test_size: t, seed, fit_sample_rows: Math.max(1000, Math.min(fitText !== null ? Number(fitText) || maxFit : fit, maxFit)) })}>
             Export for {familyShort(family).toLowerCase()} models
           </button>
         </div>
@@ -217,9 +219,8 @@ function ExportRow({ e, canAdd, onTrain }: { e: ExportJob; canAdd: boolean; onTr
             {fmtAgo(e.created_at)}
             {e.n_rows !== null && ` · ${fmtInt(e.n_rows)} rows · `}
             {e.n_features !== null && (
-              <abbr title={featuresByType(e) || "Text, date and one-hot fields expand into several features each."}>
-                {inputs !== null ? `${fmtInt(inputs)} fields → ` : ""}{fmtInt(e.n_features)} features ⓘ
-              </abbr>
+              <InfoTip text={featuresByType(e) || "Text, date and one-hot fields expand into several features each."}
+                label={`${inputs !== null ? `${fmtInt(inputs)} fields → ` : ""}${fmtInt(e.n_features)} features ⓘ`} />
             )}
           </span>
         </div>
@@ -387,9 +388,9 @@ export function ExperimentWorkspace({ ds, x, canAdd }: { ds: Dataset; x: Experim
     setFresh(r.id);
     toast({ message: `Training ${r.model} on Export #${r.export_id}` });
   };
-  const groups = (exports.data ?? [])
+  const groups = useMemo(() => (exports.data ?? [])
     .map((e) => ({ e, runs: (runs.data ?? []).filter((r) => r.export_id === e.id) }))
-    .filter((g) => g.runs.length);
+    .filter((g) => g.runs.length), [exports.data, runs.data]);
 
   return (
     <>

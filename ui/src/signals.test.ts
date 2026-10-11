@@ -71,7 +71,8 @@ describe("fieldSignals", () => {
 describe("attentionOf", () => {
   it("ranks leak over missing over confidence over unreviewed edits", () => {
     expect(attentionOf(listItem({ leakage: true, null_pct: 0.9 }))).toBe("leak");
-    expect(attentionOf(listItem({ max_target_assoc: LEAK_AT }))).toBe("leak");
+    // The API's leakage flag decides: in a view it is recomputed for that view's targets, the stored score isn't.
+    expect(attentionOf(listItem({ max_target_assoc: LEAK_AT }))).toBeNull();
     expect(attentionOf(listItem({ null_pct: 0.5, inference_confidence: 0.1 }))).toBe("missing");
     expect(attentionOf(listItem({ n_unique: 1 }))).toBe("missing");
     expect(attentionOf(listItem({ inference_confidence: 0.6, source: "user" }))).toBe("confidence");

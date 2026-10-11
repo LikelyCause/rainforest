@@ -8,7 +8,7 @@ import { fmtInt, fmtNum, fmtPct } from "../format";
 import { stripLabels } from "../quantiles";
 import { fieldSignals } from "../signals";
 import type { BoxSummary, FieldResponse } from "../types";
-import { ErrorAlert } from "./ui";
+import { ErrorAlert, InfoTip } from "./ui";
 
 const NUMERIC = new Set(["numeric_continuous", "numeric_discrete"]);
 const BAR_ROWS = 10;
@@ -106,7 +106,7 @@ export function FieldDetailView({ data, position, stale, onOpenField }: Props) {
         <div className="field-meta num">
           {f.is_target ? "◎ target · " : ""}
           {f.inferred_type.replace("_", " ")}
-          {f.inference_confidence !== null && <> · <abbr title={f.inference_reasons.join("\n")}>{fmtPct(f.inference_confidence, 0)} confident ⓘ</abbr></>}
+          {f.inference_confidence !== null && <> · <InfoTip text={f.inference_reasons.join("\n")} label={`${fmtPct(f.inference_confidence, 0)} confident ⓘ`} /></>}
           {" · "}<span className="mono">{f.physical_dtype}</span> · {fmtInt(f.row_count)} rows
           {s.stored_as_text && " · numbers stored as text"}
         </div>
@@ -151,7 +151,7 @@ export function FieldDetailView({ data, position, stale, onOpenField }: Props) {
             <div className="card-head">
               <h3>
                 Associations{" "}
-                <abbr title={`Spearman ρ for numeric pairs (signed), Cramér's V for categorical pairs, correlation ratio η for mixed pairs, on a ${fmtInt(corr.data?.[0]?.n_obs)}-row sample. ◎ marks a target. Click a bar to open that field.`}>ⓘ</abbr>
+                <InfoTip label="ⓘ" text={`Spearman ρ for numeric pairs (signed), Cramér's V for categorical pairs, correlation ratio η for mixed pairs, on a ${fmtInt(corr.data?.[0]?.n_obs)}-row sample. ◎ marks a target. Click a bar to open that field.`} />
               </h3>
               <button className="link small-text" onClick={() => setMoreAssoc(!moreAssoc)}>
                 top {moreAssoc ? 20 : ASSOC_ROWS} · show {moreAssoc ? "fewer" : "20"}

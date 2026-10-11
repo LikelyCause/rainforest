@@ -57,8 +57,10 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
   const access = useAccess(ds, view);
   const me = useMe();
   const fields = useFields(ds.id, true, view);
-  const exports = useQuery({ queryKey: ["exports", ds.id], queryFn: () => api.exports(ds.id) });
-  const runs = useQuery({ queryKey: ["runs", ds.id], queryFn: () => api.runs(ds.id) });
+  const busy = (q: { state: { data?: { status: string }[] } }) =>
+    (q.state.data ?? []).some((j) => j.status === "pending" || j.status === "running") ? 3000 : false;
+  const exports = useQuery({ queryKey: ["exports", ds.id], queryFn: () => api.exports(ds.id), refetchInterval: busy });
+  const runs = useQuery({ queryKey: ["runs", ds.id], queryFn: () => api.runs(ds.id), refetchInterval: busy });
   const all = fields.data ?? [];
   const reviewed = all.filter((f) => f.reviewed);
   const kept = reviewed.filter((f) => f.action === "keep").length;

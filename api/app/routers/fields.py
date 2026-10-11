@@ -26,7 +26,6 @@ from .query import fields_where
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["fields"])
 
-SHARED_COLS = ["action", "semantic_type", "notes", "reviewed"]
 STAT_KEYS = ["null_pct", "skewness", "outlier_pct", "min_value", "n_unique"]
 # Profiling builds no association sample for these, so as targets they need one computed on demand.
 UNCORRELATED_TYPES = {"text", "identifier"}
@@ -302,7 +301,7 @@ def bulk_decisions(dataset_id: int, body: BulkDecisionIn, user: CurrentUser, vie
         for srow in conn.execute(sql.SQL("SELECT * FROM {} s WHERE field_id = ANY(%s)").format(src.settings()),
                                  (ids,)).fetchall():
             settings.setdefault(srow["field_id"], {})[srow["family"]] = srow
-        if src.kind in ("experiment", "baseline", "suggested"):
+        if src.kind == "experiment":
             # An experiment's copy holds its baseline's model type only; other types' suggestions don't apply.
             rows = [{**r, "suggestion": {src.family: (r["suggestion"] or {}).get(src.family)}
                      if (r["suggestion"] or {}).get(src.family) else {}} for r in rows]

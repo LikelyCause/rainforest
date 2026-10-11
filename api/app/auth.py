@@ -38,12 +38,13 @@ OPEN_PATHS = {"/health", "/api/auth/config", "/api/auth/logout", "/api/auth/user
 CHECK_PATH = "/api/auth/check"
 UPLOAD_PATH = "/api/datasets/upload"
 AVATAR_UPLOAD = re.compile(r"/api/users/\d+/avatar")
+AVATAR_MAX_BODY = 5 * 1024 * 1024 + 64 * 1024
 AVATAR_PREFIX = "/api/auth/avatars/"  # open to GET: the picker shows pictures before anyone signs in
 DEV_ORIGINS = {"http://localhost:5173", "http://127.0.0.1:5173"}
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-# A viewer reads only. These writes are reads in disguise (Explore, the field finder, the read-only SQL console) or
-# their own picture; every other write, including any route added later, is refused.
+# A viewer reads only. These writes are reads in disguise (Explore, the field finder) or their own picture; every
+# other write is refused, the SQL console included (it reads every table) and any route added later.
 VIEWER_ALLOWED = [(m, re.compile(p)) for m, p in (
     ("POST", r"/api/datasets/\d+/analyses"), ("POST", r"/api/datasets/\d+/fields/query"),
     ("PUT", r"/api/users/\d+/avatar"), ("DELETE", r"/api/users/\d+/avatar"),
@@ -210,6 +211,9 @@ async def check_request(request: Request) -> JSONResponse | None:
         problem = None if path == CHECK_PATH else body_type_problem(request)
         if problem:
             return JSONResponse({"detail": problem}, 415)
+        # Checked before the body is read: the route only sees it once it's spooled to disk.
+        if AVATAR_UPLOAD.fullmatch(path) and int(request.headers.get("content-length") or 0) > AVATAR_MAX_BODY:
+            return JSONResponse({"detail": "Pictures can be 5 MB at most."}, 413)
     if path in OPEN_PATHS or (path.startswith(AVATAR_PREFIX) and request.method in ("GET", "HEAD")):
         return None
     problem = config_problem()

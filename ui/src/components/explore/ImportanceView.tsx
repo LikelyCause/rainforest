@@ -69,17 +69,17 @@ function PcaCards({ pca }: { pca: NonNullable<ImportanceResult["pca"]> }) {
   const t = useChartTheme();
   const explained = pca.explained.slice(0, MAX_PCA_BARS);
   const cumulative = pca.cumulative.slice(0, MAX_PCA_BARS);
-  const pcaOpt = useMemo(() => pcaOption(t, explained, cumulative), [t, pca]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pcaOpt = useMemo(() => pcaOption(t, explained, cumulative), [t, pca]);
   const comps = pca.components.slice(0, PCS);
   const features = useMemo(() => {
     const best = new Map<string, number>();
     for (const c of comps) for (const l of c.loadings) best.set(l.feature, Math.max(best.get(l.feature) ?? 0, Math.abs(l.value)));
     return [...best.entries()].sort((a, b) => b[1] - a[1]).slice(0, TOP_FEATURES).map(([f]) => f);
-  }, [pca]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pca]);
   const loadOpt = useMemo(() => {
     const lookup = comps.map((c) => new Map(c.loadings.map((l) => [l.feature, l.value])));
     return loadingsOption(t, comps.map((_, i) => i), features, (i, f) => lookup[i].get(f));
-  }, [t, pca, features]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [t, pca, features]);
   const to80 = pca.cumulative.findIndex((c) => c >= 0.8);
 
   return (
