@@ -60,7 +60,8 @@ export function sourceOptions(
       label: `My assessment (${baselineLabel(team.recipe.family, team.recipe.version, true, team.recipe.name)})` });
   }
   const finalized = versions.filter((v) => v.phase === "finalized")
-    .sort((a, b) => FAMILY_ORDER.indexOf(a.family) - FAMILY_ORDER.indexOf(b.family) || b.version - a.version);
+    .sort((a, b) => Number(b.id === team?.recipe.id) - Number(a.id === team?.recipe.id)
+      || FAMILY_ORDER.indexOf(a.family) - FAMILY_ORDER.indexOf(b.family) || b.version - a.version);
   for (const v of finalized) {
     out.push({ value: `recipe:${v.id}`, label: `${baselineLabel(v.family, v.version, false, v.name)} · finalized` });
   }
