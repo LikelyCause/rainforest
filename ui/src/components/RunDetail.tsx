@@ -4,7 +4,7 @@ import { api } from "../api";
 import { describeSettings } from "../settings";
 import { whyFailed, type Split } from "../runs";
 import { histogramOption, rocOption, scatterOption } from "../charts";
-import { fmtInt, fmtMetric, fmtPct } from "../format";
+import { fmtInt, fmtMetric, fmtNum, fmtPct } from "../format";
 import { useChartTheme } from "../theme";
 import type { CrossValidation, HistogramChart, ModelRun, RegressionEvaluation, RocCurve, SettingValue, TargetEvaluation, TrainPrefill } from "../types";
 import { Chart } from "./Chart";
@@ -304,7 +304,7 @@ function RunSettings({ run, onTrainAgain }: { run: ModelRun; onTrainAgain: ((p: 
   const params = (run.config?.params ?? {}) as Record<string, SettingValue>;
   const extra = [run.config?.seed !== undefined && run.config.seed !== 42 ? `seed ${run.config.seed}` : null,
     run.config?.cv !== undefined && run.config.cv !== 5 ? (run.config.cv ? `chain folds ${run.config.cv}` : "chain folds off") : null,
-    run.config?.cv_folds !== undefined && run.config.cv_folds !== 5 ? (run.config.cv_folds ? `${run.config.cv_folds}-fold cross-validation` : "no cross-validation") : null]
+    !run.config?.cv_folds ? "no cross-validation" : run.config.cv_folds !== 5 ? `${run.config.cv_folds}-fold cross-validation` : null]
     .filter(Boolean);
   const text = [describeSettings(params, settings), ...extra].filter((x) => x !== "defaults" || !extra.length).join(" · ");
   return (
@@ -336,7 +336,10 @@ function CvCard({ target, cv }: { target: string; cv: CrossValidation }) {
     <section className="card stack target-card">
       <div className="card-head" style={{ marginBottom: 0 }}>
         <h3>◎ {target}</h3>
-        <span className="muted small-text">{cv.folds}-fold cross-validation on the training rows{cv.stratified_on ? ` · stratified on ${cv.stratified_on}` : ""}</span>
+        <span className="muted small-text">
+          {cv.folds}-fold cross-validation on the training rows{cv.stratified_on ? ` · stratified on ${cv.stratified_on}` : ""}
+          {cv.seconds !== undefined ? ` · ${fmtNum(cv.seconds)} s` : ""}
+        </span>
       </div>
       <div className="stats metric-tiles">
         {mean.map(([label, v, hint], j) => (
@@ -348,6 +351,19 @@ function CvCard({ target, cv }: { target: string; cv: CrossValidation }) {
           </div>
         ))}
       </div>
+      <details className="cv-folds">
+        <summary className="small-text">Per fold</summary>
+        <div className="table-wrap">
+          <table className="data">
+            <thead><tr><th>Fold</th>{mean.map(([label, v]) => (v === undefined ? null : <th key={label} className="num">{label}</th>))}</tr></thead>
+            <tbody>
+              {folds.map((f, i) => (
+                <tr key={i}><td>{i + 1}</td>{mean.map(([label, v], j) => (v === undefined ? null : <td key={label} className="num">{fmtMetric(f[j][1])}</td>))}</tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
     </section>
   );
 }

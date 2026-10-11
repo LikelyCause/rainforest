@@ -185,7 +185,11 @@ the UI polls (`pending → running → done | failed`, with `progress` and `stat
    checks first (`exports._numeric_target_problems`), so values that don't read as numbers block before queueing.
 8. **Training.** `POST /api/exports/{id}/runs` checks model compatibility and the requested device (see `gpu.py`) and submits `runs._run`, which calls
    `modeling.train.train` and writes `models/run<id>_…/{classifier_chain.joblib, report.json}` (the joblib holds a
-   `ClassifierChain` or a `TargetChain`, named by `report.chain_kind`); metrics and the
+   `ClassifierChain` or a `TargetChain`, named by `report.chain_kind`). With `cv_folds` K, after the final fit and
+   its validation and test scores, `train` fits the same chain K more times on folds of the training rows
+   (`crossval.folds`), scores each held-out fold and keeps the summary (`crossval.summarize`) as
+   `report.cross_validation` and the means as `metrics.cv`; a fold that can't be fit skips cross-validation with a
+   note rather than failing the run. Metrics and the
    report go to `meta.model_runs`. With `MLFLOW_TRACKING_URI` set, `mlflow_log.log_model_run` then logs the run
    before it is marked done (status message *Logging to MLflow*), unless its experiment is private: then the run is
    marked done with `report.mlflow_pending` instead, in the same transaction that checked (see

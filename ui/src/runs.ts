@@ -20,13 +20,12 @@ export function metricFor(r: ModelRun, split: Split, target: string, m: RunMetri
   return typeof v === "number" ? v : undefined;
 }
 
-const cvOf = (r: ModelRun, target: string, m: RunMetric) => {
-  const x = r.report?.cross_validation?.targets?.[target];
-  return x ? x[keyFor(x, m)] : undefined;
-};
 /** The spread (standard deviation over folds) of the cross-validation score `metricFor(r, "cv", …)` shows. */
-export const spreadFor = (r: ModelRun, target: string, m: RunMetric): number | undefined => cvOf(r, target, m)?.std;
-export const foldsFor = (r: ModelRun, target: string, m: RunMetric): (number | null)[] | undefined => cvOf(r, target, m)?.folds;
+export function spreadFor(r: ModelRun, target: string, m: RunMetric): number | undefined {
+  const x = r.report?.cross_validation?.targets?.[target];
+  return x ? x[keyFor(x, m)]?.std : undefined;
+}
+
 
 /** RMSE is the one metric here where lower is better. */
 const lowerIsBetter = (r: ModelRun, target: string, m: RunMetric) => m === "secondary" && isNumber(r.metrics?.valid?.[target]);
@@ -77,7 +76,7 @@ export function whyFailed(error: string | null | undefined): string {
     return "The API restarted while it was training (an update or a restart of the server), which stops running jobs.";
   }
   if (/MemoryError|Unable to allocate|Killed/.test(error)) {
-    return "The server ran out of memory training it. Try fewer trees or leaves, fewer chain folds, or a smaller export.";
+    return "The server ran out of memory training it. Try fewer trees or leaves, fewer chain folds, cross-validation off, or a smaller export.";
   }
   return error.split("\n")[0].replace(/^[A-Za-z]*(Error|Exception): /, "");
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bestRuns, foldsFor, metricFor, pickExport, spreadFor, starTitle, whyFailed } from "./runs";
+import { bestRuns, metricFor, pickExport, spreadFor, starTitle, whyFailed } from "./runs";
 import type { ModelRun } from "./types";
 
 const run = (id: number, valid: Record<string, Record<string, number>>, test: Record<string, Record<string, number>> = valid) =>
@@ -89,12 +89,11 @@ describe("cross-validation", () => {
       n: { r2: { mean: 0.71, std: 0.01, folds: [0.7, 0.71, 0.72] }, rmse: { mean: 3, std: 0.2, folds: [2.8, 3, 3.2] } },
     } } },
   } as unknown as ModelRun;
-  it("reads the CV mean like a split, and its spread and folds for the same metric", () => {
+  it("reads the CV mean like a split, and its spread for the same metric", () => {
     expect(metricFor(cvRun, "cv", "a", "primary")).toBe(0.82);
     expect(spreadFor(cvRun, "a", "primary")).toBe(0.02);
     expect(spreadFor(cvRun, "a", "secondary")).toBe(0.05);
     expect(spreadFor(cvRun, "n", "secondary")).toBe(0.2);
-    expect(foldsFor(cvRun, "a", "secondary")).toEqual([0.55, null, 0.65]);
     expect(spreadFor(run(1, { a: { roc_auc: 0.9 } }), "a", "primary")).toBeUndefined();
   });
   it("says the star is still picked on validation, without the test-split sentence", () => {

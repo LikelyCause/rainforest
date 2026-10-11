@@ -591,9 +591,11 @@ experiment, and its manifest's `config` the `source` (`recipe` or `assessment`),
   standard deviation over folds) beside validation and test. K is the Train panel's *Cross-validation*: *Off* or
   2–20 folds, default 5; a run takes about K + 1 times as long. Validation and test rows never take part, and the saved
   model is still the one fit on every training row. Folds keep the class shares of the chain's first class target when
-  its rarest class has at least K training rows, else they're drawn at random and the run says so; if a fold's
-  training rows would lose a target's second class, cross-validation is skipped with a note and the run completes. It
-  is separate from *Chain folds*, which only decides what chained targets pass down.
+  its rarest class has at least K training rows, else they're drawn at random and the run says so. If a fold's
+  training rows would lose a target's second class (or a number target's spread), or a fold fails to fit, cross-
+  validation is skipped with a note and the run completes with its model and validation and test scores. The run
+  detail's cross-validation view shows how long the folds took and, under *Per fold*, every fold's scores. It is
+  separate from *Chain folds*, which only decides what chained targets pass down.
 * **Model settings:** the *Train a model* panel, between the exports and the runs, lays out the chosen model's
   parameters (LightGBM and XGBoost so far), each with its own control: a dropdown for a choice (boosting type, loss, class weights),
   a number with its range, an on/off switch. They change with the model and are grouped (run, trees, learning,
@@ -790,7 +792,7 @@ ORDER BY target, metric, value DESC;
 | `meta.experiment_decisions`, `meta.experiment_settings`, `meta.experiment_batches` | each team experiment's own copy of its baseline (decisions, its model family's settings) and its bulk edits; fields that differ from the baseline's snapshot are its adjustments |
 | `meta.exports`, `meta.model_runs` | export jobs; training runs with metrics and report; each with its `experiment_id` |
 | `meta.analyses` | Explore jobs (map, tests, importance): params, data version, status, result JSONB |
-| `meta.v_field_profiles`, `meta.v_fields`, `meta.v_field_settings`, `meta.v_correlations`, `meta.v_model_metrics` | query-friendly views (`v_fields` and `v_field_settings` show the team decision of the baseline in progress, `v_fields` with `target_task` and `target_bins`; `v_field_profiles` and `v_fields` carry its `baseline_family` and `baseline_version`, and `v_model_metrics` each run's `experiment_id` and the `baseline_family` and `baseline_version` its export was built from) |
+| `meta.v_field_profiles`, `meta.v_fields`, `meta.v_field_settings`, `meta.v_correlations`, `meta.v_model_metrics` | query-friendly views (`v_fields` and `v_field_settings` show the team decision of the baseline in progress, `v_fields` with `target_task` and `target_bins`; `v_field_profiles` and `v_fields` carry its `baseline_family` and `baseline_version`, and `v_model_metrics` each run's `experiment_id` and the `baseline_family` and `baseline_version` its export was built from; its `split` is `valid`, `test` or `cv`, the cross-validation means) |
 | `raw.ds_<id>` | the uploaded data (sanitized column names; see `meta.fields.db_column`) |
 
 Assessments are private while a dataset is assessed, so the console's role can't read `meta.assessments`,

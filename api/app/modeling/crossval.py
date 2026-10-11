@@ -26,7 +26,9 @@ def folds(y_strat: np.ndarray | None, n: int, k: int, seed: int,
         rarest = int(counts[counts > 0].min())
         if rarest >= k:
             return list(StratifiedKFold(k, shuffle=True, random_state=seed).split(idx, y_strat)), note, True
-        note = f"Folds aren't stratified: the rarest class of {strat_name} has {rarest} training rows"
+        unstratified = (f"Folds aren't stratified: the rarest class of {strat_name} has {rarest} training "
+                        f"row{'' if rarest == 1 else 's'}")
+        note = f"{note}. {unstratified}" if note else unstratified
     return list(KFold(k, shuffle=True, random_state=seed).split(idx)), note, False
 
 

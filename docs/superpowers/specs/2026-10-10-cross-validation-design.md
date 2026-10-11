@@ -24,11 +24,12 @@ stay as they are); K is set per run, default 5; it is separate from *Chain folds
   the held-out fold. The held-out predictions are scored per target with the same metrics as validation and test.
 - The run's model is still the one trained on all training rows; CV models are discarded (not saved, not logged as
   models).
-- Per target and metric the report keeps `mean`, `std` and the per-fold values (`report["cv"]` and the run's
+- Per target and metric the report keeps `mean`, `std` and the per-fold values (`report["cross_validation"]` and the run's
   `metrics["cv"]` = means, so the runs table can read it like the other splits).
-- Too few rows: K is lowered to the smallest training class count when that is below K (at least 2), and the report
-  says so ("3 folds: the rarest class has 3 training rows"); below 2, CV is skipped with that note. A fold that fails
-  fails the run, naming the fold.
+- Too few rows: when the stratifying target's rarest class has fewer than K training rows, the folds are drawn at
+  random instead and the report says so ("Folds aren't stratified: the rarest class of y has 3 training rows"); K
+  drops only below K training rows. A fold whose training rows lose a target's second class, or that fails to fit,
+  skips CV with a note naming the fold; the run keeps its model and its validation and test scores.
 - Progress: "Cross-validating: fold 2 of 5", then the final fit as today.
 - MLflow: `cv_<target>_<metric>` (mean) and `cv_std_<target>_<metric>` per target and metric, and the `cv_folds`
   param.

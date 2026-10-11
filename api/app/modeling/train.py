@@ -450,19 +450,22 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
                                                   seed, None if strat is None else targets[strat])
         per_fold: list[dict[str, Any]] = []
         t1 = time.time()
-        for k, (rows, held) in enumerate(splits, 1):
-            lone = [t for i, t in enumerate(targets) if np.unique(Y_tr[rows, i]).size < 2]
-            if lone:
-                per_fold, note = [], (f"Cross-validation skipped: fold {k}'s training rows have a single value of "
-                                      f"{', '.join(lone)}")
+        # CV only adds scores: whatever stops a fold skips it with a note, and the run keeps its model and scores.
+        for k, (rows, _) in enumerate(splits, 1):
+            if lone := [t for i, t in enumerate(targets) if np.unique(Y_tr[rows, i]).size < 2]:
+                splits, note = [], (f"Cross-validation skipped: fold {k}'s training rows have a single value of "
+                                    f"{', '.join(lone)}")
                 break
+        for k, (rows, held) in enumerate(splits, 1):
             say(f"Cross-validating: fold {k} of {len(splits)}")
-            fold_chain = make_chain()
             try:
+                fold_chain = make_chain()
                 fit(fold_chain, X_tr[rows], Y_tr[rows])
                 per_fold.append(score(fold_chain, X_tr[held], Y_tr[held])[0])
-            except Exception as exc:  # noqa: BLE001 - which fold failed is the useful part
-                raise RuntimeError(f"Cross-validation fold {k} of {len(splits)} failed: {exc}") from exc
+            except Exception as exc:  # noqa: BLE001 - any failure skips CV, not the run
+                log.warning("cross-validation fold %s of %s failed", k, len(splits), exc_info=True)
+                per_fold, note = [], f"Cross-validation skipped: fold {k} of {len(splits)} failed ({exc})"
+                break
         summary = crossval.summarize(per_fold)
         cross_validation = {"folds": len(per_fold), "stratified_on": targets[strat] if stratified and per_fold else None,
                             "note": note, "seconds": round(time.time() - t1, 1), "targets": summary}
@@ -527,7 +530,7 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--cv", type=int, default=5,
                     help="folds for out-of-fold chain features: 0 chains the ground truth, else 2 or more")
-    ap.add_argument("--cv-folds", type=int, default=0,
+    ap.add_argument("--cv-folds", type=int, default=0, choices=[0, *range(2, 21)], metavar="K",
                     help="cross-validate on K folds of the training rows: 0 for none (default), else 2-20")
     ap.add_argument("--param", action="append", default=[], metavar="KEY=VALUE",
                     help="override a model parameter, e.g. --param n_estimators=1000 (repeatable)")
