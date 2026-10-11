@@ -96,10 +96,6 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 }
 .step:hover { background: var(--surface-hover); text-decoration: none; }
 .step.active { background: var(--surface-2); color: var(--text-primary); font-weight: 600; }
-.step .n {
-  display: inline-grid; place-items: center; width: 16px; height: 16px; margin-right: 6px; border-radius: 50%;
-  border: 1px solid currentColor; font-size: 10px; font-weight: 600;
-}
 .step .count { color: var(--text-muted); font-weight: 400; margin-left: 4px; }
 .topbar .spacer { flex: 1; }
 .baseline-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 10px; border: 1px solid var(--border);

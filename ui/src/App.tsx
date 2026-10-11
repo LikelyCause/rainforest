@@ -82,7 +82,7 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
     <>
       <nav className="steps" aria-label="Workflow">
         <NavLink to={withView(`/d/${ds.id}/review`, view)} className={step} title={`${kept} kept · ${dropped} dropped · ${targets} targets · ${all.length - reviewed.length} to do`}>
-          <span><span className="n">1</span>Review<span className="count num">{reviewed.length}/{all.length}</span></span>
+          <span>Review<span className="count num">{reviewed.length}/{all.length}</span></span>
           <ReviewMeter kept={kept} dropped={dropped} targets={targets} total={all.length} />
         </NavLink>
         <NavLink to={withView(`/d/${ds.id}/bulk`, view)} className={step}><span>Bulk edit</span></NavLink>
@@ -91,7 +91,7 @@ function DatasetSteps({ ds }: { ds: Dataset }) {
           <span>Team <PhaseBadge phase={ds.phase} /></span>
         </NavLink>
         <NavLink to={`/d/${ds.id}/experiments`} className={step} title="Exports and model runs, grouped into experiments">
-          <span><span className="n">2</span>Experiments{running > 0 && <span className="badge accent" style={{ marginLeft: 6 }} title={`${running} running`}>{running}</span>}</span>
+          <span>Experiments{running > 0 && <span className="badge accent" style={{ marginLeft: 6 }} title={`${running} running`}>{running}</span>}</span>
         </NavLink>
       </nav>
       <div className="spacer" />
