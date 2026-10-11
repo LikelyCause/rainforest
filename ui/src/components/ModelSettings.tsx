@@ -110,7 +110,7 @@ export function ModelSettings({ settings, values, onChange, kinds }: {
   );
   const body = (
     <div className="stack" style={{ gap: 12 }}>
-      <div className="ms-grid">
+      <div className="ms-grid ms-groups">
         {GROUP_ORDER.filter((g) => g !== "advanced").map((g) => {
           const rows = settings.filter((s) => s.group === g && visible(s));
           if (!rows.length) return null;
