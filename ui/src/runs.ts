@@ -3,16 +3,30 @@ import type { ModelRun } from "./types";
 
 /** The two numbers the runs table shows per target: AUC and macro F1 for classes, R² and RMSE for a number. */
 export type RunMetric = "primary" | "secondary";
-export type Split = "valid" | "test";
+export type Split = "valid" | "test" | "cv";
 
-const isNumber = (x: Record<string, number> | undefined) => !!x && ("r2" in x || "rmse" in x);
+const isNumber = (x: Record<string, unknown> | undefined) => !!x && ("r2" in x || "rmse" in x);
+
+/** Which metric a column shows for a target's metrics: AUC (binary, else one-vs-rest) and macro F1, or R² and RMSE. */
+function keyFor(x: Record<string, unknown>, m: RunMetric): string {
+  if (isNumber(x)) return m === "primary" ? "r2" : "rmse";
+  return m === "primary" ? ("roc_auc" in x ? "roc_auc" : "roc_auc_ovr_macro") : "f1_macro";
+}
 
 export function metricFor(r: ModelRun, split: Split, target: string, m: RunMetric): number | undefined {
   const x = r.metrics?.[split]?.[target];
   if (!x) return undefined;
-  const v = isNumber(x) ? (m === "primary" ? x.r2 : x.rmse) : m === "primary" ? x.roc_auc ?? x.roc_auc_ovr_macro : x.f1_macro;
+  const v = x[keyFor(x, m)];
   return typeof v === "number" ? v : undefined;
 }
+
+const cvOf = (r: ModelRun, target: string, m: RunMetric) => {
+  const x = r.report?.cross_validation?.targets?.[target];
+  return x ? x[keyFor(x, m)] : undefined;
+};
+/** The spread (standard deviation over folds) of the cross-validation score `metricFor(r, "cv", …)` shows. */
+export const spreadFor = (r: ModelRun, target: string, m: RunMetric): number | undefined => cvOf(r, target, m)?.std;
+export const foldsFor = (r: ModelRun, target: string, m: RunMetric): (number | null)[] | undefined => cvOf(r, target, m)?.folds;
 
 /** RMSE is the one metric here where lower is better. */
 const lowerIsBetter = (r: ModelRun, target: string, m: RunMetric) => m === "secondary" && isNumber(r.metrics?.valid?.[target]);
@@ -50,6 +64,7 @@ export function pickExport<E extends { id: number }>(done: E[], chosen: number |
  * number than another run's; the tooltip says why. */
 export function starTitle(r: ModelRun, split: Split, target: string, m: RunMetric): string {
   if (split === "valid") return "Best on the validation split";
+  if (split === "cv") return `Best on the validation split (${fmtMetric(metricFor(r, "valid", target, m))}); the ★ is picked there whichever scores are shown.`;
   return `Best on the validation split (${fmtMetric(metricFor(r, "valid", target, m))}). The ★ is picked there so the `
     + "test split stays an honest check; switch to Validation to see the scores it was picked on.";
 }

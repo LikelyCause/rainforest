@@ -2,14 +2,13 @@ import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import { describeSettings } from "../settings";
-import { whyFailed } from "../runs";
+import { whyFailed, type Split } from "../runs";
 import { histogramOption, rocOption, scatterOption } from "../charts";
 import { fmtInt, fmtMetric, fmtPct } from "../format";
 import { useChartTheme } from "../theme";
-import type { HistogramChart, ModelRun, RegressionEvaluation, RocCurve, SettingValue, TargetEvaluation, TrainPrefill } from "../types";
+import type { CrossValidation, HistogramChart, ModelRun, RegressionEvaluation, RocCurve, SettingValue, TargetEvaluation, TrainPrefill } from "../types";
 import { Chart } from "./Chart";
 
-type Split = "test" | "valid";
 
 /** Background for a cell holding `share` of its actual row: the diagonal in the accent colour (recall), the rest in
  * the error colour, so mistakes stand out from near-empty cells. */
@@ -304,7 +303,8 @@ function RunSettings({ run, onTrainAgain }: { run: ModelRun; onTrainAgain: ((p: 
   const settings = models.data?.find((m) => m.key === run.model)?.settings ?? null;
   const params = (run.config?.params ?? {}) as Record<string, SettingValue>;
   const extra = [run.config?.seed !== undefined && run.config.seed !== 42 ? `seed ${run.config.seed}` : null,
-    run.config?.cv !== undefined && run.config.cv !== 5 ? (run.config.cv ? `chain folds ${run.config.cv}` : "chain folds off") : null]
+    run.config?.cv !== undefined && run.config.cv !== 5 ? (run.config.cv ? `chain folds ${run.config.cv}` : "chain folds off") : null,
+    run.config?.cv_folds !== undefined && run.config.cv_folds !== 5 ? (run.config.cv_folds ? `${run.config.cv_folds}-fold cross-validation` : "no cross-validation") : null]
     .filter(Boolean);
   const text = [describeSettings(params, settings), ...extra].filter((x) => x !== "defaults" || !extra.length).join(" · ");
   return (
@@ -315,9 +315,40 @@ function RunSettings({ run, onTrainAgain }: { run: ModelRun; onTrainAgain: ((p: 
           exportId: run.export_id, model: run.model, order: run.report?.order ?? run.config?.order ?? [],
           values: { ...params, ...(run.config?.seed !== undefined ? { seed: run.config.seed } : {}),
             ...(run.config?.cv !== undefined ? { cv: run.config.cv } : {}) },
+          cvFolds: run.config?.cv_folds ?? 0,
         })}>Train again with these settings</button>
       )}
     </div>
+  );
+}
+
+/** A target's cross-validation: each headline metric as mean ± spread over the folds, the folds on hover. */
+function CvCard({ target, cv }: { target: string; cv: CrossValidation }) {
+  const s = cv.targets[target];
+  const pick = (f: (v: { mean: number; std: number; folds: (number | null)[] }) => number | null) =>
+    Object.fromEntries(Object.entries(s).map(([k, v]) => [k, f(v) ?? undefined])) as Record<string, number>;
+  const number = "r2" in s || "rmse" in s;
+  const tiles = (m: Record<string, number>) => (number ? regressionTiles(m) : headlineTiles(m, "precision" in s));
+  const mean = tiles(pick((v) => v.mean));
+  const std = tiles(pick((v) => v.std));
+  const folds = Array.from({ length: cv.folds }, (_, i) => tiles(pick((v) => v.folds[i])));
+  return (
+    <section className="card stack target-card">
+      <div className="card-head" style={{ marginBottom: 0 }}>
+        <h3>◎ {target}</h3>
+        <span className="muted small-text">{cv.folds}-fold cross-validation on the training rows{cv.stratified_on ? ` · stratified on ${cv.stratified_on}` : ""}</span>
+      </div>
+      <div className="stats metric-tiles">
+        {mean.map(([label, v, hint], j) => (
+          <div key={label} className="stat" title={[hint, v === undefined ? null : `Per fold: ${folds.map((f) => fmtMetric(f[j][1])).join(" · ")}`].filter(Boolean).join("\n")}>
+            <div className="label">{label}</div>
+            <div className={`value${v === undefined ? " muted" : ""}`}>
+              {fmtMetric(v)}{v !== undefined && std[j][1] !== undefined && <span className="muted small-text"> ± {fmtMetric(std[j][1])}</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -327,6 +358,7 @@ export function RunDetail({ run, targets, onTrainAgain = null }: {
   const [split, setSplit] = useState<Split>("test");
   const steady = useSteadyHeight();
   const metrics = run.metrics?.[split];
+  const cv = run.report?.cross_validation;
   if (run.status === "failed") {
     return (
       <div className="stack" style={{ gap: 10, padding: "8px 4px" }}>
@@ -355,17 +387,24 @@ export function RunDetail({ run, targets, onTrainAgain = null }: {
         <div className="row" style={{ gap: 12 }}>
           <a className="small-text" href={`/api/runs/${run.id}/files/model`}>Download model ↓</a>
           <div className="segmented" role="group" aria-label="Split">
-            {(["test", "valid"] as Split[]).map((s) => (
-              <button key={s} className={`small${split === s ? " on" : ""}`} onClick={() => { steady.hold(); setSplit(s); }}>{s === "valid" ? "validation" : "test"}</button>
+            {(["test", "valid", ...(cv && run.metrics?.cv ? ["cv"] : [])] as Split[]).map((s) => (
+              <button key={s} className={`small${split === s ? " on" : ""}`} onClick={() => { steady.hold(); setSplit(s); }}>
+                {s === "valid" ? "validation" : s === "cv" ? "cross-validation" : "test"}
+              </button>
             ))}
           </div>
         </div>
       </div>
+      {cv?.note && <div className="muted small-text">{cv.note}</div>}
       {!run.mlflow_url && run.report?.mlflow_error && (
         <div className="alert warn">Not logged to MLflow: {run.report.mlflow_error} (log it later with make mlflow-backfill)</div>
       )}
       <div ref={steady.box}>
-      {metrics ? (
+      {split === "cv" && cv && metrics ? (
+        <div className="grid-2">
+          {targets.filter((t) => cv.targets[t]).map((t) => <CvCard key={t} target={t} cv={cv} />)}
+        </div>
+      ) : metrics ? (
         <div className="grid-2">
           {targets.filter((t) => metrics[t]).map((t) => {
             const ev = run.report?.evaluation?.[split]?.[t];

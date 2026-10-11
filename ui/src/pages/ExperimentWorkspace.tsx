@@ -8,7 +8,7 @@ import { RunDetail } from "../components/RunDetail";
 import { TrainPanel, type TrainRequest } from "../components/TrainPanel";
 import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtInt, fmtMetric, fmtNum, fmtPct } from "../format";
 import { toast } from "../toast";
-import { bestRuns, columnLabels, metricFor, starTitle, whyFailed, type RunMetric, type Split } from "../runs";
+import { bestRuns, columnLabels, metricFor, spreadFor, starTitle, whyFailed, type RunMetric, type Split } from "../runs";
 import { sourceLabel } from "../experiments";
 import type { Dataset, Experiment, ExportJob, ModelRun, TrainPrefill } from "../types";
 
@@ -308,7 +308,8 @@ function RunsGroup({ e, runs, fresh, onTrainAgain, split }: {
     return (
       <td className="num" style={isBest ? { fontWeight: 700 } : undefined}
         title={isBest ? starTitle(r, split, t, m) : undefined}>
-        {fmtMetric(v)}{isBest ? " ★" : ""}
+        {fmtMetric(v)}{split === "cv" && spreadFor(r, t, m) !== undefined && <span className="muted small-text"> ± {fmtMetric(spreadFor(r, t, m))}</span>}
+        {isBest ? " ★" : ""}
       </td>
     );
   };
@@ -409,10 +410,11 @@ export function ExperimentWorkspace({ ds, x, canAdd }: { ds: Dataset; x: Experim
           <div className="row" style={{ gap: 10 }}>
             <span className="muted small-text">★ best on the validation split within an export · click a run for its full results</span>
             <div className="segmented soft" role="radiogroup" aria-label="Scores shown">
-              {(["test", "valid"] as const).map((s) => (
+              {(["test", "valid", "cv"] as const).map((s) => (
                 <button key={s} type="button" role="radio" aria-checked={split === s} className={split === s ? "on" : ""}
-                  title={s === "test" ? "Scores on the held-out test split" : "Scores on the validation split, where the ★ is picked"}
-                  onClick={() => setSplit(s)}>{s === "test" ? "Test" : "Validation"}</button>
+                  title={s === "test" ? "Scores on the held-out test split" : s === "valid" ? "Scores on the validation split, where the ★ is picked"
+                    : "Cross-validation on the training rows: mean ± spread over the folds (— for runs without it)"}
+                  onClick={() => setSplit(s)}>{s === "test" ? "Test" : s === "valid" ? "Validation" : "CV"}</button>
               ))}
             </div>
           </div>
