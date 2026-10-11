@@ -268,8 +268,12 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
         ) : queue.data && items.length > 0 ? null : team.recipe.reuse ? (
           <ReuseCard reuse={team.recipe.reuse} label={team.recipe.label ?? ""} />
         ) : (
-          queue.data && <Empty title={finalized ? "Finalized" : "Nothing to settle"}>
-            {finalized ? "This baseline version is frozen. A change is a new version, started on the Baselines page."
+          queue.data && <Empty title={finalized ? "Finalized" : "Nothing to settle"} action={finalized ? (
+            <Link className="btn primary" to={`/d/${ds.id}/experiments`}>
+              {can(me, "createExperiment") ? "Start experimenting →" : "See its experiments →"}
+            </Link>
+          ) : undefined}>
+            {finalized ? "This baseline version is frozen: train models on it under Experiments. A change is a new version, started on the Baselines page."
               : direct ? "Nobody assessed this version. Change the team decision in Review or Bulk edit, then finalize."
               : "Finalize when you're ready; every field took the assessors' shared choice."}
           </Empty>

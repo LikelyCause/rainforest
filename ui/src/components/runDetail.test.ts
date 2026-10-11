@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fmtMetric } from "../format";
-import { cellShade, headlineTiles, regressionTiles } from "./RunDetail";
+import { cellShade, headlineTiles, regressionTabs, regressionTiles } from "./RunDetail";
+import type { RegressionEvaluation } from "../types";
 
 describe("fmtMetric", () => {
   it("always shows three decimals", () => {
@@ -46,5 +47,14 @@ describe("regressionTiles", () => {
     expect(rows.map(([l]) => l)).toEqual(["R²", "RMSE", "MAE", "MAPE"]);
     expect(rows[3][1]).toBeUndefined();
     expect(rows[3][2]).toMatch(/0/);
+  });
+});
+
+describe("regressionTabs", () => {
+  it("offers ranges only when the run scored them", () => {
+    const ev: RegressionEvaluation = { kind: "regression", n: 1, scatter: { actual: [], predicted: [] }, residuals: { edges: [], counts: [] } };
+    expect(regressionTabs(ev).map((t) => t.key)).toEqual(["scatter", "errors"]);
+    expect(regressionTabs({ ...ev, bands: { labels: ["< 1", "≥ 1"], edges: [1], confusion_matrix: [[1, 0], [0, 1]], per_class: [] } })
+      .map((t) => t.key)).toEqual(["scatter", "errors", "bands"]);
   });
 });

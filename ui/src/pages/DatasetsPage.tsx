@@ -257,7 +257,7 @@ function SampleMenu({ onCreated }: { onCreated: (ds: Dataset) => void }) {
 
 function SampleTabs({ tab, onTab }: { tab: "library" | "generate"; onTab: (t: "library" | "generate") => void }) {
   return (
-    <div className="segmented" role="tablist" aria-label="Sample kind">
+    <div className="segmented full" role="tablist" aria-label="Sample kind">
       <button type="button" role="tab" aria-selected={tab === "library"} className={tab === "library" ? "on" : ""} onClick={() => onTab("library")}>Real datasets</button>
       <button type="button" role="tab" aria-selected={tab === "generate"} className={tab === "generate" ? "on" : ""} onClick={() => onTab("generate")}>Generate</button>
     </div>

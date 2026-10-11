@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bestRuns, metricFor } from "./runs";
+import { bestRuns, metricFor, pickExport, starTitle, whyFailed } from "./runs";
 import type { ModelRun } from "./types";
 
 const run = (id: number, valid: Record<string, Record<string, number>>, test: Record<string, Record<string, number>> = valid) =>
@@ -42,5 +42,39 @@ describe("number targets", () => {
     const best = bestRuns([reg(1, 0.8, 3), reg(2, 0.7, 2)], ["p"]);
     expect(best["p:primary"]).toBe(1);
     expect(best["p:secondary"]).toBe(2);
+  });
+});
+
+describe("pickExport", () => {
+  it("keeps the chosen export, else takes the newest", () => {
+    const xs = [{ id: 3 }, { id: 9 }, { id: 5 }];
+    expect(pickExport(xs, 5)?.id).toBe(5);
+    expect(pickExport(xs, null)?.id).toBe(9);
+    expect(pickExport(xs, 42)?.id).toBe(9);
+    expect(pickExport([], null)).toBeNull();
+  });
+});
+
+describe("starTitle", () => {
+  const r = run(1, { a: { roc_auc: 0.9 } }, { a: { roc_auc: 0.8 } });
+  it("on the validation split, the star is simply the best number", () => {
+    expect(starTitle(r, "valid", "a", "primary")).toBe("Best on the validation split");
+  });
+  it("on the test split, it says where the star was picked and the score there", () => {
+    expect(starTitle(r, "test", "a", "primary")).toMatch(/validation split \(0\.900\).*Validation/);
+  });
+});
+
+describe("whyFailed", () => {
+  it("explains a restart without blaming the settings", () => {
+    expect(whyFailed("Interrupted by an API restart.")).toMatch(/restarted while it was training.*settings weren't the problem/);
+  });
+  it("explains running out of memory", () => {
+    expect(whyFailed("MemoryError: Unable to allocate 3.1 GiB")).toMatch(/memory/i);
+  });
+  it("passes a run's own message through, first line only", () => {
+    expect(whyFailed("ValueError: Target 'y' has a single value in the training split; there is nothing to predict.\n\nTraceback ..."))
+      .toBe("Target 'y' has a single value in the training split; there is nothing to predict.");
+    expect(whyFailed(null)).toBe("The run failed without a message.");
   });
 });

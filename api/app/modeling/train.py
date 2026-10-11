@@ -49,6 +49,7 @@ from sklearn.metrics import (
 )
 from sklearn.multioutput import ClassifierChain
 
+from .. import bands
 from ..gpu import effective_device
 from .registry import (DEFAULT_MODEL, MODELS, ModelSpec, catalog, compatibility, device_params, get_model,
                        classifier_params, importances, order_problem, param_problems, regression_problem,
@@ -283,9 +284,25 @@ def _sig(values: np.ndarray) -> list[float]:
     return [float(f"{v:.6g}") for v in values]
 
 
-def evaluate_regression(y: np.ndarray, pred: np.ndarray, seed: int = 42) -> tuple[dict[str, float], dict[str, Any]]:
+BAND_COUNT = 5
+
+
+def _band_edges(values: np.ndarray) -> list[float] | None:
+    return bands.quantile_edges(values, BAND_COUNT) or None
+
+
+def evaluate_regression(y: np.ndarray, pred: np.ndarray, seed: int = 42,
+                        edges: list[float] | None = None) -> tuple[dict[str, float], dict[str, Any]]:
     """Score a numeric target: RMSE, MAE, R² (when the actual values vary) and MAPE (when none is 0). Details hold up
-    to SCATTER_MAX_POINTS sampled (actual, predicted) pairs and a histogram of the errors (predicted - actual)."""
+    to SCATTER_MAX_POINTS sampled (actual, predicted) pairs and a histogram of the errors (predicted - actual).
+
+    With `edges` (cut points from the training rows), actual and predicted values are also put in those bands and
+    scored as classes, so a number has a confusion matrix and precision, recall and F1 too: how often the model
+    predicts the right range."""
+    if bad := int((~np.isfinite(pred)).sum()):
+        # Scoring the rest would give a broken model believable numbers.
+        raise ValueError(f"The model predicted something that isn't a number for {bad:,} of {pred.size:,} rows; it "
+                         "probably diverged. Try a lower learning rate or fewer trees.")
     err = pred - y
     out = {"rmse": float(np.sqrt(np.mean(err ** 2))), "mae": float(np.mean(np.abs(err)))}
     if y.size >= 2 and np.var(y) > 0:
@@ -295,12 +312,25 @@ def evaluate_regression(y: np.ndarray, pred: np.ndarray, seed: int = 42) -> tupl
     idx = np.arange(y.size)
     if y.size > SCATTER_MAX_POINTS:
         idx = np.sort(np.random.default_rng(seed).choice(y.size, SCATTER_MAX_POINTS, replace=False))
-    counts, edges = np.histogram(err, bins=RESIDUAL_BINS)
+    counts, hist_edges = np.histogram(err, bins=RESIDUAL_BINS)
     details = {
         "kind": "regression", "n": int(y.size),
         "scatter": {"actual": _sig(y[idx]), "predicted": _sig(pred[idx])},
-        "residuals": {"edges": _sig(edges), "counts": counts.astype(int).tolist()},
+        "residuals": {"edges": _sig(hist_edges), "counts": counts.astype(int).tolist()},
     }
+    if edges:
+        k = len(edges) + 1
+        actual, predicted = bands.assign(y, edges).astype(int), bands.assign(pred, edges).astype(int)
+        p, r, f, support = precision_recall_fscore_support(actual, predicted, labels=list(range(k)), zero_division=0)
+        out["band_accuracy"] = float(accuracy_score(actual, predicted))
+        out["band_f1_macro"] = float(np.mean(f))
+        labels = bands.band_labels(edges)
+        details["bands"] = {
+            "labels": labels, "edges": edges,
+            "confusion_matrix": confusion_matrix(actual, predicted, labels=list(range(k))).astype(int).tolist(),
+            "per_class": [{"label": labels[c], "precision": float(p[c]), "recall": float(r[c]), "f1": float(f[c]),
+                           "support": int(support[c])} for c in range(k)],
+        }
     return out, details
 
 
@@ -374,6 +404,8 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
         if not used.startswith("cuda"):
             raise RuntimeError(f"GPU training was requested but {spec.label} ran on {used}")
 
+    # Ranges for scoring a number as classes too, cut on the training rows like an export's equal-sized bands.
+    band_edges = [_band_edges(Y_tr[:, i]) if num else None for i, num in enumerate(numeric)]
     say("Evaluating on validation and test splits")
     metrics: dict[str, Any] = {}
     details: dict[str, Any] = {}
@@ -386,7 +418,7 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
             outs = chain.predict_all(X, n_classes)
             for i, t in enumerate(targets):
                 metrics[split][t], details[split][t] = (
-                    evaluate_regression(Y[:, i], outs[i], seed) if numeric[i]
+                    evaluate_regression(Y[:, i], outs[i], seed, band_edges[i]) if numeric[i]
                     else evaluate(Y[:, i].astype(int), outs[i], manifest["target_classes"].get(t)))
             continue
         with config_context(assume_finite=spec.handles_nan):

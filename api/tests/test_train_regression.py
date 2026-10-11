@@ -127,3 +127,31 @@ def test_number_links_chain_out_of_fold_on_shuffled_folds():
     folds = chain._folds("regression")
     assert isinstance(folds, KFold) and folds.shuffle and folds.n_splits == 5
     assert chain._folds("binary") == 5  # class links fold as ClassifierChain does
+
+
+def test_a_number_target_is_also_scored_on_bands():
+    rng = np.random.default_rng(4)
+    y = rng.normal(50, 10, 400)
+    pred = y + rng.normal(0, 2, 400)
+    edges = [40.0, 50.0, 60.0]
+    m, d = evaluate_regression(y, pred, edges=edges)
+    b = d["bands"]
+    assert b["labels"] == ["< 40", "[40, 50)", "[50, 60)", "≥ 60"]
+    cm = np.array(b["confusion_matrix"])
+    assert cm.shape == (4, 4) and cm.sum() == 400 and np.trace(cm) > 300
+    assert len(b["per_class"]) == 4 and {"precision", "recall", "f1", "support"} <= set(b["per_class"][0])
+    assert 0.75 < m["band_accuracy"] <= 1 and 0 < m["band_f1_macro"] <= 1
+
+
+def test_bands_come_from_the_training_rows_in_a_run(tmp_path):
+    report = train(_export(tmp_path, {"g3": "regression"}), "lightgbm", params={"n_estimators": 30}, cv=None,
+                   out_dir=tmp_path / "m")
+    b = report["evaluation"]["test"]["g3"]["bands"]
+    assert len(b["labels"]) == 5 and "band_accuracy" in report["metrics"]["test"]["g3"]
+
+
+def test_a_prediction_that_isnt_a_number_fails_the_run_clearly():
+    y = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+    pred = np.array([1.0, 2.0, 3.0, 4.0, 5.0, np.nan])
+    with pytest.raises(ValueError, match="1 of 6 rows"):
+        evaluate_regression(y, pred, edges=[2.5, 4.5])
