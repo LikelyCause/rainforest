@@ -36,7 +36,7 @@ FILES = {
 EXPORT_COLS = """e.id, e.dataset_id, e.status, e.progress, e.status_message, e.error, e.model_family, e.config,
                  e.output_dir, e.n_rows, e.n_features, e.summary, e.created_at, e.updated_at, e.finished_at, e.owner,
                  e.created_by, e.recipe_id, e.experiment_id, r.family AS recipe_family, r.version AS recipe_version,
-                 x.name AS experiment_name"""
+                 meta.baseline_name(r.dataset_id, r.family) AS recipe_name, x.name AS experiment_name"""
 EXPORT_SELECT = (f"SELECT {EXPORT_COLS} FROM meta.exports e LEFT JOIN meta.recipes r ON r.id = e.recipe_id "
                  "LEFT JOIN meta.experiments x ON x.id = e.experiment_id")
 PHASE_WAIT = {"assessing": "is being assessed", "review": "is in team review"}

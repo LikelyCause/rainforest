@@ -296,7 +296,7 @@ def test_a_new_upload_starts_from_a_recipe(people):
                                                                                  v1["id"])
         reuse = rec["reuse"]
         assert reuse["source"] == {"recipe_id": v1["id"], "dataset_id": src["id"], "dataset_name": src["name"],
-                                   "family": "tree", "version": 1}
+                                   "family": "tree", "version": 1, "name": None}
         assert reuse["carried"] == ["c", "y"] and reuse["missing"] == ["w"] and reuse["targets"] == ["y"]
         why = {r["name"]: r for r in reuse["reopened"]}
         assert [r["name"] for r in reuse["reopened"]] == ["x", "z", "w2", "n"]

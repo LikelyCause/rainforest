@@ -18,10 +18,12 @@ from .semantics import SETTING_KEYS, suggest, validate_decision
 PHASES = ("assessing", "review", "finalized")
 DECISION_KEYS = ("action", "semantic_type", "notes", "target_task", "target_bins")
 FAMILY_LABEL = {"tree": "Trees", "linear": "Linear", "neural": "Neural"}
+NAME_MAX = 60
 RECIPE_COLS = """id, dataset_id, family, version, phase, scope, parent_id, created_by, created_at, finalized_by,
-                 finalized_at, schema_fingerprint"""
+                 finalized_at, schema_fingerprint, meta.baseline_name(dataset_id, family) AS name"""
 # Joins a dataset row `d` to its current (latest started) baseline version as `rc`.
-CURRENT_JOIN = """LEFT JOIN LATERAL (SELECT id, family, version, phase, scope FROM meta.recipes
+CURRENT_JOIN = """LEFT JOIN LATERAL (SELECT id, family, version, phase, scope,
+                                            meta.baseline_name(dataset_id, family) AS name FROM meta.recipes
                                        WHERE dataset_id = d.id ORDER BY id DESC LIMIT 1) rc ON true"""
 
 
@@ -192,7 +194,21 @@ def snapshot_of(conn, recipe: dict) -> dict:
 
 
 def label(recipe: dict) -> str:
-    return f"{FAMILY_LABEL[recipe['family']]} baseline v{recipe['version']}"
+    """ "Dropout risk v2 (Trees)", or "Trees baseline v2" unnamed. `name` is required, so a query that forgets it
+    fails instead of labelling the baseline by its model type."""
+    name, fam = recipe["name"], FAMILY_LABEL[recipe["family"]]
+    return f"{name} v{recipe['version']} ({fam})" if name else f"{fam} baseline v{recipe['version']}"
+
+
+def short_label(family: str, version: int, name: str | None) -> str:
+    return f"{name or FAMILY_LABEL[family]} v{version}"
+
+
+def clean_name(raw: str | None) -> str | None:
+    name = (raw or "").strip()
+    if len(name) > NAME_MAX:
+        raise HTTPException(422, f"A baseline name is at most {NAME_MAX} characters")
+    return name or None
 
 
 def fingerprint(columns: list[tuple[str, str]]) -> str:

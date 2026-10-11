@@ -25,6 +25,8 @@ def list_baselines(dataset_id: int, _: CurrentUser) -> list[dict]:
         rows = conn.execute(
             """SELECT r.id, r.family, r.version, r.phase, r.scope, r.parent_id, p.family AS parent_family,
                       p.version AS parent_version, p.dataset_id AS parent_dataset_id, r.created_at, r.finalized_at,
+                      meta.baseline_name(r.dataset_id, r.family) AS name,
+                      meta.baseline_name(p.dataset_id, p.family) AS parent_name,
                       cu.name AS created_by_name, fu.name AS finalized_by_name
                  FROM meta.recipes r
                  LEFT JOIN meta.recipes p ON p.id = r.parent_id
@@ -39,7 +41,7 @@ def list_baselines(dataset_id: int, _: CurrentUser) -> list[dict]:
         if versions:
             fin = [v for v in versions if v["phase"] == "finalized"]
             latest = max(fin, key=lambda v: (v["finalized_at"], v["id"]))["id"] if fin else None
-            out.append({"family": fam, "label": recipes.FAMILY_LABEL[fam], "versions": versions,
+            out.append({"family": fam, "label": recipes.FAMILY_LABEL[fam], "name": versions[0]["name"], "versions": versions,
                         "latest_finalized_id": latest})
     return out
 
