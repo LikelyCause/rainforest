@@ -101,11 +101,12 @@ export function startLabel(next: number, reopen: number): string {
   return reopen === 0 ? `Start v${next} and edit directly` : `Start v${next}, reopening ${reopen} field${reopen === 1 ? "" : "s"}`;
 }
 
-/** What a version was built from: a reused baseline of another dataset, the version or baseline before, or the suggestions. */
-export function builtFrom(v: Pick<RecipeVersion, "reuse" | "parent_id" | "parent_version" | "parent_family" | "parent_name">): string {
+/** What a version was built from: a reused baseline of another dataset, the version or baseline before, or the suggestions.
+ * `inline`: it follows "from" mid-sentence, so it starts in lower case. */
+export function builtFrom(v: Pick<RecipeVersion, "reuse" | "parent_id" | "parent_version" | "parent_family" | "parent_name">, inline = false): string {
   if (v.reuse) {
     const s = v.reuse.source;
-    return `Reused ${s.family ? baselineLabel(s.family, s.version, false, s.name) : `v${s.version}`} of ${s.dataset_name ?? `dataset #${s.dataset_id}`}${v.parent_id === null ? " (since deleted)" : ""}`;
+    return `${inline ? "reused" : "Reused"} ${s.family ? baselineLabel(s.family, s.version, false, s.name) : `v${s.version}`} of ${s.dataset_name ?? `dataset #${s.dataset_id}`}${v.parent_id === null ? " (since deleted)" : ""}`;
   }
   if (v.parent_version && v.parent_family) return baselineLabel(v.parent_family, v.parent_version, false, v.parent_name);
   return "the suggestions";

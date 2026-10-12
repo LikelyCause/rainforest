@@ -9,11 +9,12 @@ import { useDatasetContext } from "../components/DatasetLayout";
 import { DecisionPanel, type DecisionPanelHandle, type VoteKey } from "../components/DecisionPanel";
 import { FieldDetailView } from "../components/FieldDetailView";
 import { Chip, Icon, Segmented } from "../components/kit";
+import { FieldsViewSwitch } from "../components/FieldsViewSwitch";
 import { ReuseCard } from "../components/ReuseCard";
 import { Empty, ErrorAlert, StatusGlyph } from "../components/ui";
 import { bandsText } from "../decision";
 import { familyShort, fmtAgo, fmtDate, fmtInt } from "../format";
-import { nextOpen, oddOnes, PHASE_LABEL, splitAgreement, spread, voteLine } from "../team";
+import { comparedValues, nextOpen, shortNames, oddOnes, PHASE_LABEL, splitAgreement, spread, voteLine } from "../team";
 import { toast } from "../toast";
 import type { Dataset, FieldListItem, FieldResponse, FieldReview, OptionCatalog, QueueItem, SettingsRow, TeamState, TeamUser } from "../types";
 
@@ -35,7 +36,12 @@ export function DatasetTeamPage() {
   const team = useTeam(ds.id);
   if (team.error) return <div className="page"><ErrorAlert error={team.error} /></div>;
   if (!team.data) return <div className="page" aria-busy="true"><span className="skeleton" style={{ width: 240, height: 22 }} /></div>;
-  if (team.data.recipe.phase === "assessing") return <Navigate to={`/d/${ds.id}/baseline`} replace />;
+  if (team.data.recipe.phase === "assessing") {
+    // Straight after a phase change the cached state can be the old one: wait for the fresh one before sending the
+    // viewer away (a baseline that needs no assessing starts in review and belongs here).
+    if (team.isFetching) return <div className="page" aria-busy="true"><span className="skeleton" style={{ width: 240, height: 22 }} /></div>;
+    return <Navigate to={`/d/${ds.id}/baseline`} replace />;
+  }
   return <Review ds={ds} team={team.data} />;
 }
 
@@ -96,6 +102,7 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const el = e.target as HTMLElement;
       if (["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) || el.isContentEditable || document.querySelector(".overlay")) return;
+      if (document.querySelector('[aria-modal="true"]')) return;
       if (e.key === "j") { e.preventDefault(); step(1); }
       else if (e.key === "k") { e.preventDefault(); step(-1); }
       else if (e.key === "Enter" && access.canEdit && item && !el.closest("button, a, summary, [role=option]")) { e.preventDefault(); panel.current?.confirm(); }
@@ -111,12 +118,13 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
     <div className="team-review tr">
       <aside className="sidebar tr-queue" aria-label="Review queue">
         <div className="sidebar-head">
+          <FieldsViewSwitch ds={ds} current="queue" className="fields-view" />
           <Segmented<Show> label="Show" pressed full size="small" value={show}
             onChange={(v) => setParam({ show: v, field: v === "open" ? String(open[0]?.field_id ?? "") || null : v === "settled" ? String(settled[0]?.field_id ?? "") || null : params.get("field") })}
             options={[
               { value: "open", label: <>Open <span className="num">{fmtInt(open.length)}</span></> },
               { value: "settled", label: <>Settled <span className="num">{fmtInt(settled.length)}</span></> },
-              { value: "agreed", label: <>Agreed <span className="num">{fmtInt(summary?.adopted ?? agreed.length)}</span></> },
+              { value: "agreed", label: <>Agreed <span className="num">{fmtInt(fields.data ? agreed.length : summary?.adopted ?? 0)}</span></> },
             ]} />
           {!finalized && direct && (
             <span className="small-text secondary">
@@ -130,13 +138,15 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
               <Link to={`/d/${ds.id}/experiments`}>Experiments</Link> · <Link to={`/d/${ds.id}/baseline`}>{lead ? "Start a new version" : "Baseline"}</Link>
             </span>
           ) : !lead && (
-            <span className="small-text secondary">A lead settles each disagreement and finalizes. You can comment.</span>
+            <span className="small-text secondary">A lead settles each disagreement and finalizes.{can(me, "comment") ? " You can comment." : ""}</span>
           )}
         </div>
         {show === "agreed" ? (
           <nav className="field-list tr-list" aria-label="Agreed fields">
-            {agreed.map((f) => <AgreedRow key={f.id} ds={ds} f={f} typeLabel={typeLabel} />)}
-            {fields.data && agreed.length === 0 && <span className="muted small-text tr-pad">No field was agreed on by everyone.</span>}
+            {agreed.map((f) => <AgreedRow key={f.id} ds={ds} f={f} typeLabel={typeLabel} carried={direct} />)}
+            {fields.data && agreed.length === 0 && (
+              <span className="muted small-text tr-pad">{direct && team.recipe.reuse ? "Every field was carried over and locked." : "No field was agreed on by everyone."}</span>
+            )}
           </nav>
         ) : (
           <div className="field-list tr-list" role="listbox" aria-label={show === "open" ? "Open disagreements" : "Settled disagreements"}>
@@ -216,13 +226,14 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
   );
 }
 
-function AgreedRow({ ds, f, typeLabel }: { ds: Dataset; f: FieldListItem; typeLabel: (t: string) => string }) {
+/** `carried`: nobody assessed this version, so the decision came over from the one before rather than being chosen. */
+function AgreedRow({ ds, f, typeLabel, carried }: { ds: Dataset; f: FieldListItem; typeLabel: (t: string) => string; carried: boolean }) {
   return (
     <Link className="queue-item" to={`/d/${ds.id}/review/${f.id}`} title={`Open ${f.name} in Fields · Focus to change it`}>
       <StatusGlyph kind={f.action === "drop" ? "dropped" : f.action === "target" ? "target" : "kept"} reviewed />
       <span className="grow">
         <span className="name">{f.name}</span>
-        <span className="muted small-text">All chose {f.action}, {typeLabel(f.semantic_type).toLowerCase()}</span>
+        <span className="muted small-text">{carried ? "Carried over:" : "All chose"} {f.action}, {typeLabel(f.semantic_type).toLowerCase()}</span>
       </span>
       <Icon name="chevron-right" />
     </Link>
@@ -232,12 +243,16 @@ function AgreedRow({ ds, f, typeLabel }: { ds: Dataset; f: FieldListItem; typeLa
 const DIMS = ["imputation", "transform", "scaling", "encoding"] as const;
 const DIM_LABEL = { imputation: "Missing values", transform: "Transform", scaling: "Scaling", encoding: "Encoding" } as const;
 
-interface Row { key: string; label: string; values: (string | null)[]; agree?: (v: string) => string }
+/** `among`: the assessors the row is compared across (a setting only matters to those who kept the field). */
+interface Row { key: string; label: string; values: (string | null)[]; among?: number[]; agree?: (v: string) => string }
 
 /** Each part of the decision, one value per assessor, in the order the comparison shows them. */
 function compareRows(review: FieldReview, family: string, catalog: OptionCatalog): Row[] {
   const typeLabel = (t: string) => catalog.types.find((x) => x.value === t)?.label ?? t;
   const rows = review.assessments.map((a) => ({ ...a, s: a.settings[family] as SettingsRow | undefined }));
+  const kept = rows.flatMap((r, i) => (r.action === "keep" && r.s ? [i] : []));
+  // Settings the model type doesn't use (Transform and Scaling for trees) carry a note instead; never compared.
+  const unused = catalog.family_notes[family] ?? {};
   const dim = (r: (typeof rows)[number], d: (typeof DIMS)[number]) =>
     (r.action === "keep" && r.s ? (catalog.labels[d][r.s[d]] ?? r.s[d]).split(" (")[0] : null);
   const out: Row[] = [
@@ -247,10 +262,14 @@ function compareRows(review: FieldReview, family: string, catalog: OptionCatalog
   if (rows.some((r) => r.action === "target")) {
     out.push({ key: "target", label: "Predict as", values: rows.map((r) => bandsText(r.target_task, r.target_bins) ?? null), agree: (v) => `predicted as ${v.toLowerCase()}` });
   }
-  for (const d of DIMS) out.push({ key: d, label: DIM_LABEL[d], values: rows.map((r) => dim(r, d)), agree: (v) => `${DIM_LABEL[d].toLowerCase()} ${v.toLowerCase()}` });
-  out.push({ key: "impute_value", label: "Fill value", values: rows.map((r) => (r.s?.imputation === "constant" ? r.s.impute_value : null)), agree: (v) => `fill ${v}` });
+  for (const d of DIMS) {
+    if (unused[d]) continue;
+    out.push({ key: d, label: DIM_LABEL[d], values: rows.map((r) => dim(r, d)), among: kept, agree: (v) => `${DIM_LABEL[d].toLowerCase()} ${v.toLowerCase()}` });
+  }
+  out.push({ key: "impute_value", label: "Fill value", values: rows.map((r) => (r.action === "keep" && r.s?.imputation === "constant" ? r.s.impute_value : null)),
+    among: kept, agree: (v) => `fill ${v}` });
   out.push({ key: "add_missing_indicator", label: "Missing flag", values: rows.map((r) => (r.action === "keep" && r.s ? (r.s.add_missing_indicator ? "Yes" : "No") : null)),
-    agree: (v) => (v === "Yes" ? "missing flag" : "no missing flag") });
+    among: kept, agree: (v) => (v === "Yes" ? "missing flag" : "no missing flag") });
   out.push({ key: "notes", label: "Note", values: rows.map((r) => r.notes || null) });
   return out;
 }
@@ -261,8 +280,15 @@ function Comparison({ item, review, error, family, catalog, users, meId }: {
   if (!review) return <ErrorAlert error={error} />;
   const people = review.assessments.map((a) => ({ id: a.user_id, name: a.user_name, avatar_url: users.get(a.user_id)?.avatar_url }));
   const { differ, agree } = splitAgreement(compareRows(review, family, catalog));
-  const shared = agree.filter((r) => r.agree && r.values[0]).map((r) => r.agree!(r.values[0]!));
-  const who = (i: number) => (people[i].id === meId ? "you" : people[i].name.split(" ")[0]);
+  // "All agree" only for what everyone chose: a setting only some kept the field for isn't everyone's.
+  const shared = agree.flatMap((r) => {
+    const v = comparedValues(r)[0];
+    return r.agree && v && (!r.among || r.among.length === r.values.length) ? [r.agree(v)] : [];
+  });
+  // Odd ones out among those the row is compared across, as indices into every assessor.
+  const oddIn = (r: Row) => { const at = r.among ?? r.values.map((_, i) => i); return new Set([...oddOnes(comparedValues(r))].map((j) => at[j])); };
+  const short = shortNames(people.map((p) => p.name));
+  const who = (i: number) => (people[i].id === meId ? "you" : short[i]);
   return (
     <section className="card tr-compare" aria-labelledby="tr-diff">
       <div className="tr-card-head">
@@ -286,7 +312,7 @@ function Comparison({ item, review, error, family, catalog, users, meId }: {
               </thead>
               <tbody>
                 {differ.map((r) => {
-                  const odd = oddOnes(r.values);
+                  const odd = oddIn(r);
                   return (
                     <tr key={r.key}>
                       <th scope="row">{r.label}</th>
@@ -302,9 +328,9 @@ function Comparison({ item, review, error, family, catalog, users, meId }: {
           {/* On a phone: each differing setting as stacked rows, grouped by value. */}
           <div className="tr-stacked">
             {differ.map((r) => {
-              const odd = oddOnes(r.values);
+              const odd = oddIn(r);
               const groups = new Map<string, number[]>();
-              r.values.forEach((v, i) => groups.set(v ?? "—", [...(groups.get(v ?? "—") ?? []), i]));
+              r.values.forEach((v, i) => { if (!r.among || r.among.includes(i)) groups.set(v ?? "—", [...(groups.get(v ?? "—") ?? []), i]); });
               return (
                 <div key={r.key} className="tr-stack-row">
                   <span className="secondary small-text">{r.label}</span>

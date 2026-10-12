@@ -100,5 +100,6 @@ describe("builtFrom", () => {
     expect(builtFrom({ ...v, parent_id: 3, parent_version: 1, parent_family: "tree" })).toBe("Trees baseline v1");
     expect(builtFrom({ ...v, parent_id: 3, parent_version: 2, parent_family: "tree", parent_name: "Dropout risk" })).toBe("Dropout risk v2 (Trees)");
     expect(builtFrom({ ...v, reuse: { ...summary, source: { ...summary.source, family: "linear" } } })).toBe("Reused Linear baseline v3 of Churn (since deleted)");
+    expect(builtFrom({ ...v, reuse: { ...summary, source: { ...summary.source, family: "linear" } } }, true)).toBe("reused Linear baseline v3 of Churn (since deleted)");
   });
 });

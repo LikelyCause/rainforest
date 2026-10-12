@@ -65,8 +65,10 @@ function Title({ ds, team }: { ds: Dataset; team: TeamState }) {
   const lines = useQuery({ queryKey: ["baselines", ds.id], queryFn: () => api.baselines(ds.id) });
   const v = (lines.data ?? []).flatMap((l) => l.versions).find((x) => x.id === r.id);
   const parts = [
-    `Started ${dateOnly(r.created_at)}${r.created_by_name ? ` by ${r.created_by_name}` : ""}${v ? ` from ${builtFrom(v)}` : ""}`,
-    r.reopened == null ? "every field open" : `${fmtInt(r.reopened)} field${r.reopened === 1 ? "" : "s"} reopened`,
+    `Started ${dateOnly(r.created_at)}${r.created_by_name ? ` by ${r.created_by_name}` : ""}${v ? ` from ${builtFrom(v, true)}` : ""}`,
+    // A later version nobody assesses ("Start v2 and edit directly") reopens nothing: the lead changes it in Fields.
+    r.reopened == null ? (team.assessors.length === 0 && r.version > 1 && !r.reuse ? "nothing reopened, edited directly" : "every field open")
+      : `${fmtInt(r.reopened)} field${r.reopened === 1 ? "" : "s"} reopened`,
     `settings for ${familyShort(r.family).toLowerCase()} models`,
   ];
   return (
@@ -184,7 +186,9 @@ function Assessors({ ds, team }: { ds: Dataset; team: TeamState }) {
   return (
     <section className="card bl-who" aria-labelledby="bl-who">
       <div className="bl-card-head">
-        <h2 id="bl-who">Assessors <span className="num muted">{submitted} of {team.assessors.length} submitted</span></h2>
+        <h2 id="bl-who">Assessors {team.assessors.length > 0
+          ? <span className="num muted">{submitted} of {team.assessors.length} submitted</span>
+          : <span className="muted">· nobody assigned</span>}</h2>
         {lead && !adding && <button type="button" className="small" onClick={() => setAdding(true)}><Icon name="plus" size={14} />Add an assessor</button>}
       </div>
       {lead && adding && (
@@ -300,7 +304,8 @@ function InReview({ ds, team }: { ds: Dataset; team: TeamState }) {
           <h2 id="bl-review">Team review</h2>
           <Chip tone="team" icon="users">Visible to all</Chip>
         </div>
-        {r && (
+        {/* Nobody assessed a direct version, so there is nothing adopted or disputed to count. */}
+        {r && !direct && (
           <dl className="bl-stats">
             <div><dt>Adopted</dt><dd className="num">{fmtInt(r.adopted)}</dd></div>
             <div><dt>Disagreements</dt><dd className="num">{fmtInt(r.disagreements)}</dd></div>
@@ -337,6 +342,14 @@ function InReview({ ds, team }: { ds: Dataset; team: TeamState }) {
   );
 }
 
+/** "6 agreed, 2 settled in review, 1 kept as it was": disagreements left open at finalizing kept their team decision. */
+function finalSummary(r: NonNullable<TeamState["review"]>): string {
+  const parts = [`${fmtInt(r.adopted)} agreed`];
+  if (r.disagreements > 0) parts.push(`${fmtInt(r.disagreements - r.open)} settled in review`);
+  if (r.open > 0) parts.push(`${fmtInt(r.open)} kept as ${r.open === 1 ? "it was" : "they were"}`);
+  return parts.join(", ");
+}
+
 function Finalized({ ds, team }: { ds: Dataset; team: TeamState }) {
   const me = useMe().data;
   const r = team.recipe;
@@ -350,7 +363,7 @@ function Finalized({ ds, team }: { ds: Dataset; team: TeamState }) {
         </div>
         <p className="bl-pad">
           {r.finalized_by_name ?? "A lead"} finalized {r.label} <span title={fmtDate(r.finalized_at)}>{fmtAgo(r.finalized_at)}</span>
-          {team.review ? <span className="num">: {fmtInt(team.review.adopted)} agreed, {fmtInt(team.review.disagreements)} settled in review.</span> : "."}
+          {team.review ? <span className="num">: {finalSummary(team.review)}.</span> : "."}
         </p>
         <p className="bl-pad secondary">Its decisions are frozen. Experiments build on it; a change is a new version.</p>
         <div className="row bl-pad">
@@ -434,7 +447,7 @@ function VersionRow({ ds, v, current, experiments }: { ds: Dataset; v: RecipeVer
         {v.finalized_at
           ? <span title={fmtDate(v.finalized_at)}>Finalized {dateOnly(v.finalized_at)}{v.finalized_by_name ? ` by ${v.finalized_by_name}` : ""}</span>
           : <span title={fmtDate(v.created_at)}>Started {dateOnly(v.created_at)}{v.created_by_name ? ` by ${v.created_by_name}` : ""}</span>}
-        {" · "}{v.reopened == null ? "all fields" : `${fmtInt(v.reopened)} reopened`} · from {builtFrom(v)}
+        {" · "}{v.reopened == null ? "all fields" : `${fmtInt(v.reopened)} reopened`} · from {builtFrom(v, true)}
       </span>
       {experiments.length > 0 && (
         <span className="small-text">

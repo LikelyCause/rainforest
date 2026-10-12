@@ -168,6 +168,7 @@ function FieldFinder({ datasetId, presetLabel, canEdit, view }: {
   useEffect(() => {
     if (!pending) return;
     const onKey = (e: KeyboardEvent) => {
+      if (document.querySelector('[aria-modal="true"]')) return;
       if (e.key === "Escape") setPending(null);
       else if (e.key === "Enter" && !(e.target instanceof HTMLButtonElement)) { e.preventDefault(); apply.mutate(pending.action); }
     };
@@ -180,6 +181,7 @@ function FieldFinder({ datasetId, presetLabel, canEdit, view }: {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
+      if (document.querySelector('[aria-modal="true"]')) return;
       if (e.key === "r" && !e.metaKey && !e.ctrlKey && !["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) && selected.length) reviewSet();
     };
     window.addEventListener("keydown", onKey);
@@ -514,7 +516,8 @@ export function BulkEditPage() {
         )}
       </div>
       {!view && <JoinAssessment ds={ds} />}
-      {access.note && <Banner tone={access.canEdit ? "info" : "warn"}>{access.note}</Banner>}
+      {/* The note is about field decisions; SQL only reads, and a lead adds derived fields even before set-up. */}
+      {access.note && tab === "table" && <Banner tone={access.canEdit ? "info" : "warn"}>{access.note}</Banner>}
       {tab === "derived" ? <DerivedFields ds={ds} />
         : tab === "table" ? <FieldFinder datasetId={ds.id} presetLabel={presetLabel} canEdit={access.canEdit} view={view} /> : <SqlConsole datasetId={ds.id} />}
     </div>

@@ -15,6 +15,8 @@ import type { Dataset, Phase } from "../types";
 
 const ACCEPT = /\.(csv|parquet|pq|txt)$/i;
 const PHONE = "(max-width: 759px)";
+/** "Waiting on you" cards shown before "Show all N". */
+const WAITING_CAP = 6;
 
 const STATUS_LABEL: Record<string, string> = { pending: "Queued", ingesting: "Loading", profiling: "Profiling", correlating: "Correlating" };
 const PHASE_TONE: Record<Phase, ChipTone> = { assessing: "private", review: "team", finalized: "good" };
@@ -37,12 +39,15 @@ function usePhone(): boolean {
   );
 }
 
-/** Fixed position under `anchor`, so a popover isn't clipped by the table's scroll box. */
-function useAnchored(anchor: RefObject<HTMLElement>, open: boolean, align: "left" | "right") {
+/** Fixed position under `anchor`, so a popover isn't clipped by the table's scroll box.
+ *  `popover` lets a left-aligned one be clamped by its real width; on phone it sits at the 16px gutter. */
+function useAnchored(anchor: RefObject<HTMLElement>, open: boolean, align: "left" | "right", popover?: RefObject<HTMLElement>) {
   const [style, setStyle] = useState<React.CSSProperties>({ visibility: "hidden" });
   const place = useCallback(() => {
     const r = anchor.current?.getBoundingClientRect();
     if (!r) return;
+    const width = popover?.current?.offsetWidth || 320;
+    const left = window.matchMedia(PHONE).matches ? 16 : Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
     const below = window.innerHeight - r.bottom - 12;
     const above = r.top - 12;
     // Opens upwards when there's more room above than the little left below.
@@ -50,9 +55,9 @@ function useAnchored(anchor: RefObject<HTMLElement>, open: boolean, align: "left
     setStyle({
       position: "fixed", overflowY: "auto",
       ...(up ? { top: "auto", bottom: window.innerHeight - r.top + 4, maxHeight: above } : { top: r.bottom + 4, bottom: "auto", maxHeight: Math.max(160, below) }),
-      ...(align === "left" ? { left: Math.max(8, Math.min(r.left, window.innerWidth - 328)), right: "auto" } : { right: Math.max(8, window.innerWidth - r.right), left: "auto" }),
+      ...(align === "left" ? { left, right: "auto" } : { right: Math.max(8, window.innerWidth - r.right), left: "auto" }),
     });
-  }, [anchor, align]);
+  }, [anchor, align, popover]);
   useLayoutEffect(() => {
     if (!open) return;
     place();
@@ -87,7 +92,8 @@ function useUpload() {
   return { progress, start };
 }
 
-function TargetPicker({ ds, anchor, onClose }: { ds: Dataset; anchor: RefObject<HTMLElement>; onClose: () => void }) {
+/** `reveal`: opened from a link (?target=), so bring its row into view first; the page may start far above it. */
+function TargetPicker({ ds, anchor, onClose, reveal }: { ds: Dataset; anchor: RefObject<HTMLElement>; onClose: () => void; reveal?: boolean }) {
   const qc = useQueryClient();
   const fields = useFields(ds.id);
   const [q, setQ] = useState("");
@@ -102,8 +108,18 @@ function TargetPicker({ ds, anchor, onClose }: { ds: Dataset; anchor: RefObject<
     },
   });
   const ref = useRef<HTMLDivElement>(null);
+  const search = useRef<HTMLInputElement>(null);
   useDismiss(ref, true, onClose);
-  const style = useAnchored(anchor, true, "left");
+  // Runs before useAnchored places the popover, so it is placed at the row's scrolled-to position.
+  useLayoutEffect(() => {
+    if (reveal) anchor.current?.scrollIntoView({ block: "center" });
+  }, [reveal, anchor]);
+  const style = useAnchored(anchor, true, "left", ref);
+  // The popover starts hidden until placed, so autoFocus would miss: focus the search once it shows.
+  const shownOnce = style.visibility !== "hidden";
+  useEffect(() => {
+    if (shownOnce) search.current?.focus({ preventScroll: true });
+  }, [shownOnce]);
   const shown = (fields.data ?? []).filter((f) => f.name.toLowerCase().includes(q.toLowerCase())).slice(0, 200);
   const toggle = (n: string) => {
     const next = new Set(chosen);
@@ -112,7 +128,7 @@ function TargetPicker({ ds, anchor, onClose }: { ds: Dataset; anchor: RefObject<
   };
   return (
     <div ref={ref} className="popover combobox" role="dialog" aria-label={`Targets for ${ds.name}`} style={style} onClick={(e) => e.stopPropagation()}>
-      <input type="search" placeholder="Search columns" value={q} onChange={(e) => setQ(e.target.value)} autoFocus aria-label="Search columns" />
+      <input ref={search} type="search" placeholder="Search columns" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search columns" />
       <label className="check"><span className="row" style={{ gap: 8 }}>
         <input type="radio" checked={chosen.size === 0} onChange={() => setChosen(new Set())} />
         No target (unsupervised)
@@ -326,7 +342,7 @@ function waitingOn(rows: Dataset[], me: ReturnType<typeof useMe>["data"]): Waiti
         key: `assess-${ds.id}`, ds, edge: "var(--lens-private)", chip: <Chip tone="private" icon="user">Private</Chip>,
         title: "Finish your assessment", to: `/d/${ds.id}/review`, action: done ? "Continue assessing" : "Start assessing", primary: true,
         progress: { value: done, max: total },
-        body: <>{fmtInt(done)} of {fmtInt(total)} fields · {fmtInt(total - done)} left</>,
+        body: <>{fmtInt(done)} of {fmtInt(total)}{ds.reopened != null ? " reopened" : ""} fields · {fmtInt(total - done)} left</>,
       });
     }
     if (stage === "setup" && can(me, "startBaseline")) {
@@ -409,25 +425,28 @@ function StageCell({ ds }: { ds: Dataset }) {
 /** The viewer's own progress while they assess, else the team decision's. */
 function AssessmentCell({ ds }: { ds: Dataset }) {
   const stage = stageOf(ds);
-  // An assessor of a later version only assesses the reopened fields.
-  const total = (ds.my_assessment && ds.reopened != null ? ds.reopened : ds.field_count) ?? ds.column_count ?? 0;
+  const mine = ds.my_assessment;
+  // An assessor of a later version only assesses the reopened fields: count those, and say so, not "of" the dataset.
+  const partial = mine != null && ds.reopened != null;
+  const total = (partial ? ds.reopened : ds.field_count) ?? ds.column_count ?? 0;
   if (stage === null || stage === "setup" || total === 0) return <span className="muted">—</span>;
   const title = `${ds.kept_count ?? 0} kept · ${ds.dropped_count ?? 0} dropped · ${ds.target_count ?? 0} targets`;
-  const mine = ds.my_assessment;
+  const scope = partial ? " reopened" : "";
   if (stage === "assessing" && mine && !mine.submitted) {
     return (
       <div className="stack home-assess" title={title}>
         <ProgressBar value={mine.reviewed} max={total} color="var(--lens-private)" label={`Your assessment of ${ds.name}`} />
-        <span className="num small-text secondary">You {fmtInt(mine.reviewed)}/{fmtInt(total)}</span>
+        <span className="num small-text secondary">You {fmtInt(mine.reviewed)}/{fmtInt(total)}{scope}</span>
       </div>
     );
   }
-  const reviewed = mine?.reviewed ?? ds.reviewed_count ?? 0;
+  // In team review the team decision's progress counts (open disagreements aren't settled), not the viewer's own.
+  const reviewed = (stage === "review" && !partial ? ds.reviewed_count : mine?.reviewed ?? ds.reviewed_count) ?? 0;
   if (stage === "finalized" || reviewed >= total) {
-    const settled = stage === "finalized" || stage === "review";
+    const word = stage === "finalized" || stage === "review" ? "settled" : "assessed";
     return (
       <span title={title} className="row" style={{ gap: 6 }}>
-        <Chip tone="good" icon="check">{fmtInt(total)} of {fmtInt(total)} {settled ? "settled" : "assessed"}</Chip>
+        <Chip tone="good" icon="check">{partial ? `${fmtInt(total)} reopened · ${word}` : `${fmtInt(total)} of ${fmtInt(total)} ${word}`}</Chip>
         {stage === "assessing" && mine?.submitted && <Chip tone="good" title="You submitted your assessment">Submitted</Chip>}
       </span>
     );
@@ -436,7 +455,7 @@ function AssessmentCell({ ds }: { ds: Dataset }) {
     <div className="stack home-assess" title={title}>
       <ProgressBar value={reviewed} max={total} color={stage === "review" ? "var(--lens-team)" : "var(--good)"} label={`Assessment of ${ds.name}`} />
       <span className="num small-text secondary">
-        {fmtInt(reviewed)} of {fmtInt(total)}{mine?.submitted ? " · you submitted" : ""}
+        {fmtInt(reviewed)} of {fmtInt(total)}{scope}{mine?.submitted ? " · you submitted" : ""}
       </span>
     </div>
   );
@@ -511,6 +530,8 @@ export function DatasetsPage() {
   const [q, setQ] = useState("");
   // ?target=<dataset id> opens that dataset's target picker (linked from Explore).
   const [targetFor, setTargetFor] = useState<number | null>(() => Number(new URLSearchParams(window.location.search).get("target")) || null);
+  const linkedTarget = useRef(targetFor);
+  const [allWaiting, setAllWaiting] = useState(false);
   const [renaming, setRenaming] = useState<number | null>(null);
   const [fresh, setFresh] = useState<number | null>(null);
   const [details, setDetails] = useState<number | null>(null);
@@ -612,7 +633,7 @@ export function DatasetsPage() {
   const waiting = useMemo(() => waitingOn(rows, me.data), [rows, me.data]);
   const processing = rows.filter((d) => PROCESSING.has(d.status)).length;
   const failed = rows.filter((d) => d.status === "failed").length;
-  const closeTarget = useCallback(() => setTargetFor(null), []);
+  const closeTarget = useCallback(() => { linkedTarget.current = null; setTargetFor(null); }, []);
 
   const nameInput = (ds: Dataset) => (
     <input defaultValue={ds.name} autoFocus aria-label="Dataset name" onClick={(e) => e.stopPropagation()}
@@ -624,7 +645,7 @@ export function DatasetsPage() {
       onBlur={(e) => e.currentTarget.value.trim() !== ds.name ? rename.mutate({ id: ds.id, name: e.currentTarget.value.trim() || ds.name }) : setRenaming(null)} />
   );
   const warnings = (ds: Dataset) => ds.warnings.length > 0 && (
-    <InfoTip className="badge warn" label={<><Icon name="alert" size={13} /> {ds.warnings.length}</>} text={ds.warnings.join("\n")} />
+    <InfoTip className="badge warn" ariaLabel={`${ds.warnings.length} warning${ds.warnings.length === 1 ? "" : "s"}`} label={<><Icon name="alert" size={13} /> {ds.warnings.length}</>} text={ds.warnings.join("\n")} />
   );
   const menu = (ds: Dataset, withTargets: boolean) => editor && (
     <RowMenu ds={ds} canDelete={canDelete} onRename={() => setRenaming(ds.id)} onDelete={() => void remove(ds)}
@@ -669,9 +690,17 @@ export function DatasetsPage() {
       {waiting.length > 0 && (
         <section className="stack home-section" aria-labelledby="home-waiting">
           <h2 id="home-waiting">Waiting on you{phone ? <span className="muted"> · {waiting.length}</span> : null}</h2>
-          <div className={phone ? "stack home-wait-list" : "home-wait-grid"}>
-            {waiting.map((w) => <WaitingCard key={w.key} w={w} phone={phone} />)}
+          <div id="home-wait-cards" className={phone ? "stack home-wait-list" : "home-wait-grid"}>
+            {(allWaiting ? waiting : waiting.slice(0, WAITING_CAP)).map((w) => <WaitingCard key={w.key} w={w} phone={phone} />)}
           </div>
+          {/* Past a few cards, the rest fold away so the table (uploads, processing, failures) stays near the top. */}
+          {waiting.length > WAITING_CAP && (
+            <div>
+              <button type="button" className="ghost" aria-expanded={allWaiting} aria-controls="home-wait-cards" onClick={() => setAllWaiting(!allWaiting)}>
+                {allWaiting ? "Show fewer" : <>Show all {waiting.length}<Icon name="chevron-down" /></>}
+              </button>
+            </div>
+          )}
         </section>
       )}
 
@@ -722,7 +751,7 @@ export function DatasetsPage() {
                       {ready && renaming !== ds.id ? <Link to={openPath(ds)} className="home-item-main">{body}</Link> : <div className="home-item-main">{body}</div>}
                       <span ref={targetFor === ds.id ? targetAnchor : undefined} className="home-item-menu">{menu(ds, true)}</span>
                     </div>
-                    {targetFor === ds.id && ready && editor && <TargetPicker ds={ds} anchor={targetAnchor} onClose={closeTarget} />}
+                    {targetFor === ds.id && ready && editor && <TargetPicker ds={ds} anchor={targetAnchor} onClose={closeTarget} reveal={linkedTarget.current === ds.id} />}
                     {errorDetails(ds)}
                   </li>
                 );
@@ -795,7 +824,7 @@ export function DatasetsPage() {
                                     </button>
                                   ))}
                                 </span>
-                                {targetFor === ds.id && editor && <TargetPicker ds={ds} anchor={targetAnchor} onClose={closeTarget} />}
+                                {targetFor === ds.id && editor && <TargetPicker ds={ds} anchor={targetAnchor} onClose={closeTarget} reveal={linkedTarget.current === ds.id} />}
                               </td>
                               <td><AssessmentCell ds={ds} /></td>
                               <td><ResultCell ds={ds} /></td>

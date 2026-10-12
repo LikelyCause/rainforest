@@ -233,7 +233,7 @@ function NewVersion({ ds, parent, onCancel }: { ds: Dataset; parent: RecipeVersi
       </div>
       <div className="row">
         <input type="search" placeholder="Search fields" aria-label="Search fields" value={search} onChange={(e) => setSearch(e.target.value)} />
-        <button type="button" className={`chip attention${attention ? " on" : ""}`} aria-pressed={attention} onClick={() => setAttention(!attention)}><Icon name="alert" size={13} />Needs attention</button>
+        <button type="button" className={`chip attention${attention ? " on" : ""}`} aria-pressed={attention} onClick={() => setAttention(!attention)}><Icon name="alert" size={13} />Needs a look</button>
         <div className="chips" role="group" aria-label="Filter by type">
           {typeCounts.map(([t, n]) => (
             <button key={t} type="button" className={`chip${types.has(t) ? " on" : ""}`} aria-pressed={types.has(t)}

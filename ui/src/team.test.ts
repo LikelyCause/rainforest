@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accessOf, differing, finalizeQuestion, nextOpen, oddOnes, splitAgreement, spread, submittedText, valueGroups, voteLine } from "./team";
+import { accessOf, differing, finalizeQuestion, nextOpen, oddOnes, shortNames, splitAgreement, spread, submittedText, valueGroups, voteLine } from "./team";
 import type { Assessment } from "./types";
 
 const lead = { id: 1, role: "lead" as const };
@@ -104,12 +104,21 @@ describe("voteLine", () => {
     expect(voteLine(["keep", "keep"], names.slice(0, 2))).toBe("Both chose keep");
   });
   it("names who chose what, and the value where it isn't the current one", () => {
-    expect(voteLine(["category", "category", "number"], names, "category")).toBe("2 Maya, Dana · 1 Priya: number");
-    expect(voteLine(["category", "category", "number"], names, "number")).toBe("2 Maya, Dana: category · 1 Priya");
+    expect(voteLine(["category", "category", "number"], names, "category")).toBe("2 Maya Chen, Dana Okafor · 1 Priya Raman: number");
+    expect(voteLine(["category", "category", "number"], names, "number")).toBe("2 Maya Chen, Dana Okafor: category · 1 Priya Raman");
   });
   it("has nothing to say when nobody set it", () => {
     expect(voteLine([null, undefined], names.slice(0, 2))).toBeNull();
-    expect(voteLine([null, "none"], names.slice(0, 2), "none")).toBe("Dana chose none");
+    expect(voteLine([null, "none"], names.slice(0, 2), "none")).toBe("Dana Okafor chose none");
+  });
+});
+
+describe("shortNames", () => {
+  it("keeps full names, shortening only long ones to first name and initial", () => {
+    expect(shortNames(["Admin", "Test Member", "Alexandra Montgomery"])).toEqual(["Admin", "Test Member", "Alexandra M."]);
+  });
+  it("keeps full names where the short ones would look the same", () => {
+    expect(shortNames(["Alexandra Montgomery", "Alexandra Mendelssohn"])).toEqual(["Alexandra Montgomery", "Alexandra Mendelssohn"]);
   });
 });
 
@@ -119,6 +128,14 @@ describe("splitAgreement", () => {
     const { differ, agree } = splitAgreement(rows);
     expect(differ.map((r) => r.k)).toEqual(["type"]);
     expect(agree.map((r) => r.k)).toEqual(["scale", "flag"]);
+  });
+  it("compares a setting only across the assessors in `among`", () => {
+    // Priya dropped the field: her "—" doesn't make the scaling the others chose differ.
+    const rows = [{ k: "scale", values: ["x", "x", null], among: [0, 1] }, { k: "enc", values: ["a", "b", null], among: [0, 1] },
+      { k: "none", values: [null, null, null], among: [] }];
+    const { differ, agree } = splitAgreement(rows);
+    expect(differ.map((r) => r.k)).toEqual(["enc"]);
+    expect(agree.map((r) => r.k)).toEqual(["scale"]);
   });
 });
 

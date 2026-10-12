@@ -97,26 +97,46 @@ export function oddOnes(values: (string | null | undefined)[]): Set<number> {
   return new Set(groups.slice(1).flatMap((g) => g.at));
 }
 
-const firstName = (n: string) => n.trim().split(/\s+/)[0] ?? n;
+/** Names short enough for a vote line: the full name, or for a long one the first name and an initial ("Priya R.").
+ * Wherever that leaves two people looking the same, both keep their full names. */
+export function shortNames(names: string[]): string[] {
+  const short = names.map((n) => {
+    const full = n.trim().replace(/\s+/g, " ");
+    const parts = full.split(" ");
+    return full.length <= 14 || parts.length < 2 ? full : `${parts[0]} ${parts[parts.length - 1][0]}.`;
+  });
+  return short.map((s, i) => (short.some((t, j) => j !== i && t === s && names[j].trim() !== names[i].trim()) ? names[i].trim() : s));
+}
 
 /** How the assessors voted on one part of the decision, for the team decision panel: "All 3 chose keep", or
  * "2 Maya, Dana · 1 Priya: number", naming the value wherever it isn't the team decision's current one. */
 export function voteLine(values: (string | null | undefined)[], names: string[], current?: string | null): string | null {
-  const groups = valueGroups(values, names).filter((g) => g.value !== null);
+  const groups = valueGroups(values, shortNames(names)).filter((g) => g.value !== null);
   if (groups.length === 0) return null;
   if (groups.length === 1) {
     const n = values.length;
-    if (groups[0].who.length < n) return `${groups[0].who.map(firstName).join(", ")} chose ${groups[0].value}`;
+    if (groups[0].who.length < n) return `${groups[0].who.join(", ")} chose ${groups[0].value}`;
     return `${n === 1 ? "The assessor" : n === 2 ? "Both" : `All ${n}`} chose ${groups[0].value}`;
   }
-  return groups.map((g) => `${g.who.length} ${g.who.map(firstName).join(", ")}${g.value === current ? "" : `: ${g.value}`}`).join(" · ");
+  return groups.map((g) => `${g.who.length} ${g.who.join(", ")}${g.value === current ? "" : `: ${g.value}`}`).join(" · ");
 }
 
-/** Splits the compared settings into the ones where the assessors differ and the ones they all share. */
-export function splitAgreement<T extends { values: (string | null | undefined)[] }>(rows: T[]): { differ: T[]; agree: T[] } {
+/** The values a row is compared on: only those of the assessors in `among` when it is given (e.g. a setting only
+ * those who kept the field chose), else everyone's. */
+export function comparedValues(r: { values: (string | null | undefined)[]; among?: number[] }): (string | null | undefined)[] {
+  return r.among ? r.among.map((i) => r.values[i]) : r.values;
+}
+
+/** Splits the compared settings into the ones where the assessors differ and the ones they all share. A row limited
+ * to `among` differs only when those assessors differ; with nobody in `among` it is left out of both. */
+export function splitAgreement<T extends { values: (string | null | undefined)[]; among?: number[] }>(rows: T[]): { differ: T[]; agree: T[] } {
   const differ: T[] = [];
   const agree: T[] = [];
-  for (const r of rows) (new Set(r.values.map((v) => v ?? null)).size > 1 ? differ : agree).push(r);
+  for (const r of rows) {
+    const vs = comparedValues(r);
+    if (vs.length === 0) continue;
+    (new Set(vs.map((v) => v ?? null)).size > 1 ? differ : agree).push(r);
+  }
   return { differ, agree };
 }
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { eligibleTarget, FAMILIES, startBaselineDefaults, type StartBaselineForm } from "../baselines";
 import { defaultTask, taskLabel } from "../decision";
@@ -24,6 +24,7 @@ export function StartBaseline({ ds, onCancel, family }: { ds: Dataset; onCancel?
   const setup = Boolean(ds.baseline?.setup);
   const isNew = (f: FamilyKey) => setup || !ds.baselines.some((b) => b.family === f);
   const others = useQuery({ queryKey: ["finalizedRecipes"], queryFn: api.finalizedRecipes, enabled: setup });
+  const qc = useQueryClient();
   const invalidate = useInvalidateTeam(ds.id);
   const [form, setForm] = useState<StartBaselineForm | null>(null);
   useEffect(() => {
@@ -40,6 +41,8 @@ export function StartBaseline({ ds, onCancel, family }: { ds: Dataset; onCancel?
       name: isNew(f.family) ? f.name : undefined,
     }),
     onSuccess: (t) => {
+      // The queue page goes by the team state: give it the new one now, so it doesn't send the lead back on the old.
+      qc.setQueryData(["team", ds.id], t);
       invalidate();
       toast({ message: t.recipe.phase === "review" ? `${t.recipe.label} started: nothing needs assessing; a lead confirms by finalizing.`
         : `${t.recipe.label} started: ${t.assessors.length} assessor${t.assessors.length === 1 ? "" : "s"}` });
@@ -81,7 +84,8 @@ export function StartBaseline({ ds, onCancel, family }: { ds: Dataset; onCancel?
         </label>
       ) : (
         <span className="muted small-text">
-          {nameFor(form.family) ? `This baseline is called ${nameFor(form.family)}` : "This baseline has no name"}; rename it under Baseline · Versions.
+          {nameFor(form.family) ? `This baseline is called ${nameFor(form.family)}; rename it with Rename on its card below.`
+            : "This baseline has no name; give it one with Name it on its card below."}
         </span>
       )}
 
