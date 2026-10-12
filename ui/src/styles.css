@@ -121,6 +121,8 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .dataset-bar .version-switcher .badge { height: 20px; }
 .dataset-bar .version-name { font-weight: 600; }
 .gate-text { font-size: var(--fs-small); color: var(--text-muted); }
+/* Below ~1300px the gate text gives way, so the next-step button stays on the first line. */
+@media (max-width: 1299px) { .dataset-bar .gate-text { display: none; } }
 .menu-link { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 4px 10px; border-radius: var(--radius-sm);
   color: var(--text-primary); font-size: var(--fs-ui); text-decoration: none; }
 .menu-link:hover { background: var(--surface-hover); text-decoration: none; }
@@ -380,6 +382,8 @@ table.data tr.clickable:hover td { background: var(--surface-hover); }
   background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-pop);
   width: min(480px, 100%); padding: 18px 20px; display: flex; flex-direction: column; gap: 14px;
 }
+/* The box itself takes focus when nothing inside does, so Escape and Tab stay with the dialog. */
+.dialog:focus { outline: none; }
 .shortcut-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 20px; font-size: 13px; }
 .shortcut-grid div { display: flex; align-items: center; gap: 8px; }
 .shortcut-grid kbd + kbd { margin-left: -4px; }

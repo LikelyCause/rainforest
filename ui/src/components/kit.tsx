@@ -1,5 +1,5 @@
 import { useEffect, useRef, useSyncExternalStore, type ReactNode, type RefObject } from "react";
-import { NavLink } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
 import type { Phase } from "../types";
 
 /* One component per job: tabs move between places, segmented chooses a value, one banner, one dialog, one chip. */
@@ -55,18 +55,25 @@ export interface TabItem {
   title?: string;
 }
 
-/** Underline tabs that move between places. */
+/** Underline tabs that move between places. A tab that passes `active` is a plain link, so its
+ * aria-current always matches what it shows; the others follow the router. */
 export function Tabs({ items, label, className }: { items: TabItem[]; label: string; className?: string }) {
   return (
     <nav className={`tabs${className ? ` ${className}` : ""}`} aria-label={label}>
-      {items.map((t) => (
-        <NavLink key={t.to + String(t.label)} to={t.to} end={t.end} title={t.title}
-          className={({ isActive }) => `tab${(t.active ?? isActive) ? " on" : ""}`}
-          aria-current={t.active === undefined ? undefined : t.active ? "page" : undefined}>
-          {t.label}
-          {t.count != null && <span className="tab-count num">{t.count}</span>}
-        </NavLink>
-      ))}
+      {items.map((t) => {
+        const body = <>{t.label}{t.count != null && <span className="tab-count num">{t.count}</span>}</>;
+        return t.active === undefined ? (
+          <NavLink key={t.to + String(t.label)} to={t.to} end={t.end} title={t.title}
+            className={({ isActive }) => `tab${isActive ? " on" : ""}`}>
+            {body}
+          </NavLink>
+        ) : (
+          <Link key={t.to + String(t.label)} to={t.to} title={t.title} className={`tab${t.active ? " on" : ""}`}
+            aria-current={t.active ? "page" : undefined}>
+            {body}
+          </Link>
+        );
+      })}
     </nav>
   );
 }
@@ -212,22 +219,62 @@ export function useDismiss(ref: RefObject<HTMLElement>, open: boolean, close: ()
   }, [ref, open, close]);
 }
 
-/** The one dialog: a title, what will happen, and its buttons. Escape or the scrim closes it. */
-export function Dialog({ title, children, onClose, actions, wide, labelledBy }: {
+/** True while a modal dialog is open: page-wide single-key shortcuts stand down until it closes. */
+export const isModalOpen = () => document.querySelector('[aria-modal="true"]') !== null;
+
+// Open dialogs, oldest first: Escape and the focus trap belong to the topmost one only.
+const dialogStack: object[] = [];
+const FOCUSABLE = 'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
+
+/** The one dialog: a title, what will happen, and its buttons. Escape or the scrim closes it; focus stays inside. */
+export function Dialog({ title, children, onClose, actions, wide, labelledBy, role = "dialog" }: {
   title: ReactNode; children?: ReactNode; onClose: () => void; actions?: ReactNode; wide?: boolean; labelledBy?: string;
+  /** "alertdialog" for a confirmation of something that can't be undone. */
+  role?: "dialog" | "alertdialog";
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   const id = labelledBy ?? "dialog-title";
   useEffect(() => {
+    const token = {};
+    dialogStack.push(token);
+    const top = () => dialogStack[dialogStack.length - 1] === token;
     const prev = document.activeElement as HTMLElement | null;
     const el = ref.current;
-    (el?.querySelector<HTMLElement>("[data-autofocus]") ?? el?.querySelector<HTMLElement>("button, input, select, textarea"))?.focus();
-    return () => prev?.focus?.();
+    (el?.querySelector<HTMLElement>("[data-autofocus]") ?? el?.querySelector<HTMLElement>("button, input, select, textarea") ?? el)?.focus();
+    // Document-level, so Escape works after a click on the dialog's text or after the focused control goes away.
+    const onKey = (e: KeyboardEvent) => {
+      if (!top() || !el) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        closeRef.current();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const items = [...el.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((x) => x.offsetParent !== null || x === document.activeElement);
+      const active = document.activeElement;
+      if (!items.length) { e.preventDefault(); el.focus(); return; }
+      const first = items[0], last = items[items.length - 1];
+      if (!el.contains(active) || active === el) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+      else if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+    };
+    // Focus that lands outside (a click on the scrim's edge, a script) comes back to the dialog.
+    const onFocus = (e: FocusEvent) => top() && el && !el.contains(e.target as Node) && el.focus();
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("focusin", onFocus);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("focusin", onFocus);
+      dialogStack.splice(dialogStack.indexOf(token), 1);
+      if (prev?.isConnected) prev.focus();
+    };
   }, []);
   return (
-    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}
-      onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } }}>
-      <div ref={ref} className={`dialog${wide ? " wide" : ""}`} role="dialog" aria-modal="true" aria-labelledby={id}>
+    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div ref={ref} className={`dialog${wide ? " wide" : ""}`} role={role} aria-modal="true" aria-labelledby={id} tabIndex={-1}>
         <h2 id={id}>{title}</h2>
         {children}
         {actions && <div className="dialog-actions">{actions}</div>}
@@ -267,10 +314,11 @@ export function ConfirmRegion() {
   const p = useSyncExternalStore((l) => { confirmListeners.add(l); return () => { confirmListeners.delete(l); }; }, () => pending);
   if (!p) return null;
   return (
-    <Dialog title={p.title} onClose={() => settle(false)} labelledBy="confirm-title"
+    // A destructive confirm starts on Cancel, so a stray Enter can't destroy anything.
+    <Dialog title={p.title} onClose={() => settle(false)} labelledBy="confirm-title" role={p.danger ? "alertdialog" : "dialog"}
       actions={<>
-        <button type="button" onClick={() => settle(false)}>{p.cancel ?? "Cancel"}</button>
-        <button type="button" className={p.danger ? "danger" : "primary"} data-autofocus onClick={() => settle(true)}>{p.confirm}</button>
+        <button type="button" onClick={() => settle(false)} data-autofocus={p.danger ? true : undefined}>{p.cancel ?? "Cancel"}</button>
+        <button type="button" className={p.danger ? "danger" : "primary"} data-autofocus={p.danger ? undefined : true} onClick={() => settle(true)}>{p.confirm}</button>
       </>}>
       {p.body && <div className="dialog-body">{p.body}</div>}
     </Dialog>

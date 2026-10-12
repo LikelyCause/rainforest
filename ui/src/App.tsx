@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, NavLink, Navigate, Outlet, Route, Routes, useLocation, useMatch, useNavigate } from "react-router-dom";
+import { Link, NavLink, Navigate, Outlet, Route, Routes, useMatch, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useAccess, useDataset, useExperiment, useFields, useInvalidateTeam, useMe, useTeam } from "./hooks";
+import { useAccess, useDataset, useExperiment, useFields, useMe, useTeam } from "./hooks";
 import { ApiError, api, setUnauthorizedHandler } from "./api";
 import { can } from "./can";
 import { Avatar } from "./components/Avatar";
 import { Logo } from "./components/Logo";
 import { PictureDialog } from "./components/PictureDialog";
-import { ConfirmRegion, Icon, LensChip, PhaseRail, Tabs, confirmDialog, stageOf, useDismiss, type Lens, type Stage } from "./components/kit";
+import { ConfirmRegion, Icon, LensChip, PhaseRail, Tabs, isModalOpen, stageOf, useDismiss, type Lens, type Stage } from "./components/kit";
+import { NextStep } from "./components/NextStep";
 import { ExperimentBar } from "./components/ExperimentBar";
 import { DatasetsPage } from "./pages/DatasetsPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -24,7 +25,7 @@ import { DatasetTeamPage } from "./pages/DatasetTeamPage";
 import { DatasetLayout, useDatasetContext } from "./components/DatasetLayout";
 import { ErrorAlert } from "./components/ui";
 import { baselineLabel, familyShort, fmtInt, roleLabel } from "./format";
-import { ToastRegion, showError, toast } from "./toast";
+import { ToastRegion, showError } from "./toast";
 import { parseView, useView, withView } from "./view";
 import type { Dataset, ExportJob, ModelRun, TeamState } from "./types";
 import type { Access } from "./team";
@@ -61,6 +62,7 @@ function DatasetTabs({ ds }: { ds: Dataset }) {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
       if (e.key !== "u" || e.metaKey || e.ctrlKey || e.altKey || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) || el.isContentEditable) return;
+      if (isModalOpen()) return;
       if (nextTodo) nav(`/d/${ds.id}/review/${nextTodo.id}`);
     };
     window.addEventListener("keydown", onKey);
@@ -149,6 +151,7 @@ function UserMenu({ compact }: { compact?: boolean }) {
   const [picture, setPicture] = useState(false);
   const system = useQuery({ queryKey: ["system"], queryFn: api.system, staleTime: Infinity });
   const ref = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
   const close = useCallback(() => setOpen(false), []);
   useDismiss(ref, open, close);
   const out = useMutation({
@@ -166,7 +169,7 @@ function UserMenu({ compact }: { compact?: boolean }) {
   const pick = u.mode === "pick";
   return (
     <div ref={ref} className="user-menu" style={{ position: "relative" }}>
-      <button type="button" className="ghost profile-button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}
+      <button ref={button} type="button" className="ghost profile-button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}
         aria-label={`Profile menu: ${u.name}, ${roleLabel(u.role)}`} title={u.email ?? undefined}>
         <Avatar user={u} size={28} />
         {!compact && <span className="user-name">{u.name}</span>}
@@ -193,7 +196,8 @@ function UserMenu({ compact }: { compact?: boolean }) {
           </button>
         </div>
       )}
-      {picture && <PictureDialog user={u} onClose={() => setPicture(false)} />}
+      {/* The menu item that opened it is gone by now, so focus returns to the profile button. */}
+      {picture && <PictureDialog user={u} onClose={() => { setPicture(false); button.current?.focus(); }} />}
     </div>
   );
 }
@@ -251,90 +255,12 @@ function gateText(stage: Stage, team: TeamState | undefined, lead: boolean): str
     const n = team.assessors.length;
     const k = team.assessors.filter((a) => a.submitted_at).length;
     if (n === 0) return lead ? "Nobody is assigned yet" : "Nobody is assigned yet";
-    return `Team review opens when ${n === 1 ? "the assessor submits" : `all ${n} submit`} · ${k} in`;
+    return `Team review opens when ${n === 1 ? "the assessor submits" : n === 2 ? "both submit" : `all ${n} submit`} · ${k} in`;
   }
   if (stage === "review" && team.review) return `${fmtInt(team.review.adopted)} adopted · ${fmtInt(team.review.open)} open`;
   if (stage === "finalized") {
     const who = team.recipe.finalized_by_name;
     return team.recipe.finalized_at ? `${who ? `by ${who}, ` : ""}${new Date(team.recipe.finalized_at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}` : null;
-  }
-  return null;
-}
-
-/** The next step: always this slot, always the primary style; only the words change. */
-function NextStep({ ds, stage, access, team }: { ds: Dataset; stage: Stage; access: Access; team: TeamState | undefined }) {
-  const me = useMe().data;
-  const nav = useNavigate();
-  const loc = useLocation();
-  const view = useView();
-  const fields = useFields(ds.id, true, view);
-  const invalidate = useInvalidateTeam(ds.id);
-  const submit = useMutation({
-    mutationFn: () => api.submitAssessment(ds.id),
-    onSuccess: (t) => {
-      invalidate();
-      toast({ tone: "good", message: t.recipe.phase === "review" ? "Submitted. Everyone is in: team review is open." : "Assessment submitted" });
-      nav(`/d/${ds.id}/baseline`);
-    },
-    onError: (e) => showError("Couldn't submit", e),
-  });
-  const finalize = useMutation({
-    mutationFn: (acceptOpen: boolean) => api.finalize(ds.id, acceptOpen),
-    onSuccess: (t) => {
-      invalidate();
-      toast({ tone: "good", message: `${t.recipe.label} finalized` });
-      nav(`/d/${ds.id}/experiments?finalized=${t.recipe.id}`);
-    },
-    onError: (e) => showError("Couldn't finalize", e),
-  });
-  const here = (p: string) => loc.pathname === p || loc.pathname.startsWith(`${p}/`);
-  const base = `/d/${ds.id}`;
-  const lead = me?.role === "lead";
-  const label = team?.recipe.label ?? ds.baseline?.label ?? "this baseline";
-  const shortLabel = ds.baseline ? baselineLabel(ds.baseline.family, ds.baseline.version, true, ds.baseline.name) : label;
-
-  if (stage === "setup") {
-    return lead && !here(`${base}/baseline`) ? <Link className="btn primary" to={`${base}/baseline`}>Set up the baseline</Link> : null;
-  }
-  if (stage === "assessing" && access.source === "mine" && team?.me && !team.me.submitted) {
-    const all = fields.data ?? [];
-    const todo = all.filter((f) => !f.reviewed);
-    if (todo.length > 0) {
-      if (here(`${base}/review`)) return <button type="button" className="primary" disabled title={`Review every field first (${todo.length} left)`}>Submit · {todo.length} left</button>;
-      return <Link className="btn primary" to={`${base}/review/${todo[0].id}`}>Next field · {fmtInt(todo.length)} left <kbd className="hide-phone">U</kbd></Link>;
-    }
-    if (all.length === 0) return null;
-    const ask = async () => {
-      const changed = team.me ? team.me.total : all.length;
-      const ok = await confirmDialog({
-        title: "Submit your assessment?",
-        body: <p>{fmtInt(changed)} fields. Your choices stay private until everyone submits. You can unsubmit until then.</p>,
-        confirm: "Submit", cancel: "Keep reviewing",
-      });
-      if (ok) submit.mutate();
-    };
-    return <button type="button" className="primary" disabled={submit.isPending} onClick={ask}>Submit assessment</button>;
-  }
-  if (stage === "review" && team?.review) {
-    const open = team.review.open;
-    const askFinalize = async () => {
-      const r = team.review!;
-      const ok = await confirmDialog({
-        title: `Finalize ${shortLabel}?`,
-        body: <>
-          <p className="num">{fmtInt(r.adopted)} agreed and {fmtInt(r.disagreements - open)} settled, {fmtInt(open)} open. It freezes as a snapshot that experiments build on. A later change is a new version.</p>
-          {open > 0 && <p><b>{open} disagreement{open === 1 ? " is" : "s are"} still open</b> and will keep {open === 1 ? "its" : "their"} current team decision{open === 1 ? "" : "s"}.</p>}
-        </>,
-        confirm: `Finalize ${shortLabel}`, cancel: "Not yet",
-      });
-      if (ok) finalize.mutate(open > 0);
-    };
-    if (!lead) return here(`${base}/team`) ? null : <Link className="btn primary" to={`${base}/team`}>See the review queue</Link>;
-    if (open > 0 && !here(`${base}/team`)) return <Link className="btn primary" to={`${base}/team`}>Settle {fmtInt(open)} open field{open === 1 ? "" : "s"}</Link>;
-    return <button type="button" className={open > 0 ? "" : "primary"} disabled={finalize.isPending} onClick={askFinalize}>Finalize {shortLabel}</button>;
-  }
-  if (stage === "finalized" && !here(`${base}/experiments`)) {
-    return <Link className="btn primary" to={`${base}/experiments`}>{can(me, "createExperiment") ? "Start an experiment" : "See experiments"}</Link>;
   }
   return null;
 }

@@ -53,6 +53,8 @@ export function DerivedFields({ ds }: { ds: Dataset }) {
     onError: (e) => showError("Couldn't remove the field", e),
   });
 
+  // The API only adds or removes fields before the first baseline is set up or once a version is finalized.
+  const locked = ds.phase !== "finalized" && !ds.baseline?.setup;
   const shown = (fields ?? []).filter((f) => !countFilter || f.name.toLowerCase().includes(countFilter.toLowerCase()));
   return (
     <div className="stack tools-derived">
@@ -60,6 +62,11 @@ export function DerivedFields({ ds }: { ds: Dataset }) {
         A derived field is computed from this dataset's fields and added to its data. Add them while the baseline is being set up,
         or once it is finalized and then start a new version so they get assessed.
       </p>
+      {locked && (
+        <Banner tone="warn" title={`${ds.baseline?.label ?? "The baseline"} is being worked on.`}>
+          You can preview a field now; add or remove fields once it is finalized, then start a new version to assess them.
+        </Banner>
+      )}
       <ErrorAlert error={list.error} />
       {list.data && list.data.length > 0 && (
         <section className="card stack" aria-labelledby="derived-list-title">
@@ -72,7 +79,7 @@ export function DerivedFields({ ds }: { ds: Dataset }) {
                   <tr key={f.id}>
                     <td className="mono">{f.name}</td><td>{KIND_LABEL[f.kind]}</td><td><code>{describeDerived(f)}</code></td>
                     <td className="tools-actions">
-                      <button type="button" className="ghost small" disabled={remove.isPending} onClick={async () => {
+                      <button type="button" className="ghost small" disabled={remove.isPending || locked} onClick={async () => {
                         const ok = await confirmDialog({
                           title: `Remove ${f.name}?`, confirm: "Remove field", danger: true,
                           body: "The field leaves this dataset's data, and its review goes with it.",
@@ -128,7 +135,7 @@ export function DerivedFields({ ds }: { ds: Dataset }) {
         <div className="row tools-derived-actions">
           <button type="button" disabled={!input || preview.isPending} onClick={() => input && preview.mutate(input)}>Preview</button>
           <input aria-label="New field name" placeholder="New field name" value={name} onChange={(e) => setName(e.target.value)} />
-          <button type="button" className="primary" disabled={!input || !name.trim() || add.isPending} onClick={() => add.mutate()}>
+          <button type="button" className="primary" disabled={!input || !name.trim() || add.isPending || locked} title={locked ? "Add fields once the baseline is finalized" : undefined} onClick={() => add.mutate()}>
             {add.isPending ? "Adding…" : "Add field"}
           </button>
         </div>

@@ -112,7 +112,7 @@ export function FieldDetailView({ data, position, stale, onOpenField, onPrev, on
         <div className="field-title">
           <h1>{f.name}</h1>
           <div className="field-meta num">
-            {f.is_target && <span className="target-word"><Icon name="target" size={14} /> Target · </span>}
+            {f.is_target && <><span className="target-word"><Icon name="target" size={14} /> Target</span>{" · "}</>}
             {typeName}
             {f.inference_confidence !== null && <>, <InfoTip text={f.inference_reasons.join("\n")} label={`${fmtPct(f.inference_confidence, 0)} sure`}
               ariaLabel={`${fmtPct(f.inference_confidence, 0)} sure of the type: why`} /></>}

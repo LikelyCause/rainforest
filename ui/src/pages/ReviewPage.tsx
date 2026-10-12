@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { useAccess, useExperiment, useFields, useOptions } from "../hooks";
+import { useAccess, useExperiment, useFields, useOptions, useTeam } from "../hooks";
 import { JoinAssessment } from "../components/JoinAssessment";
 import { parseView, useView, viewKey, withView, type View } from "../view";
 import { useDatasetContext } from "../components/DatasetLayout";
@@ -10,7 +10,8 @@ import { FieldList, type StatusFilter, type WorkingSet } from "../components/Fie
 import { FieldDetailView } from "../components/FieldDetailView";
 import { DecisionPanel, type Confirmed, type DecisionPanelHandle, type PanelLens } from "../components/DecisionPanel";
 import { Empty, ErrorAlert } from "../components/ui";
-import { Banner, Dialog, Icon } from "../components/kit";
+import { Banner, Dialog, Icon, isModalOpen, stageOf } from "../components/kit";
+import { NextStep } from "../components/NextStep";
 import { attentionOf } from "../signals";
 import { queueSave, useFailedSaves } from "../saveQueue";
 import { baselineLabel, familyShort, fmtInt } from "../format";
@@ -204,7 +205,8 @@ export function ReviewPage() {
     });
     if (status === "todo" && !workingSet) setSettled((s) => new Set(s).add(c.fieldId));
     const remaining = scope.filter((f) => !f.reviewed && f.id !== c.fieldId);
-    if (remaining.length === 0) {
+    // In an experiment every field already counts as reviewed: Next there just moves on.
+    if (remaining.length === 0 && !view) {
       setFinish(workingSet ? { kind: "setdone" } : { kind: "complete" });
       return;
     }
@@ -238,6 +240,11 @@ export function ReviewPage() {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const k = e.key;
+      // A dialog is open (this page's own shortcuts list included): its keys are its own; ? still closes the list.
+      if (isModalOpen()) {
+        if (overlay && k === "?" && !isControl(e.target)) { e.preventDefault(); setOverlay(false); }
+        return;
+      }
       if (k === "Escape") {
         if (overlay) return setOverlay(false);
         if (drawer) return setDrawer(false);
@@ -253,6 +260,7 @@ export function ReviewPage() {
         if (e.target instanceof Element && e.target.closest(ACTIVATES_ON_ENTER)) return;
         e.preventDefault();
         if (finish?.kind === "end") return goFirstUnreviewed();
+        if (finish?.kind === "complete") return document.querySelector<HTMLElement>(".finish [data-next-step]")?.click();
         if (!finish) panel.current?.confirm();
         return;
       }
@@ -283,9 +291,11 @@ export function ReviewPage() {
     setQuery(q);
   };
 
-  const current = detail.data;
+  const current = detail.data && detail.data.field.dataset_id === datasetId ? detail.data : undefined;
   const position = idx >= 0 ? { index: scope.findIndex((f) => f.id === fieldId), total: scope.length } : null;
-  const missingField = detail.error && (detail.error as { status?: number }).status === 404;
+  // A field id from another dataset reads as missing here, not as that dataset's field under this header.
+  const foreign = Boolean(detail.data && detail.data.field.dataset_id !== datasetId);
+  const missingField = foreign || (detail.error && (detail.error as { status?: number }).status === 404);
 
   const typeLabel = (t: string) => options.data?.types.find((x) => x.value === t)?.label ?? t.replace("_", " ");
   const panelReady = Boolean(current && options.data && !detail.isPlaceholderData && !finish);
@@ -308,7 +318,7 @@ export function ReviewPage() {
         {!view && <JoinAssessment ds={ds} />}
         {detail.isFetching && detail.isPlaceholderData && <div className="loading-bar" aria-hidden="true" />}
         {finish ? (
-          <FinishCard finish={finish} scope={scope} datasetId={datasetId} workingSet={workingSet} assessor={assessor}
+          <FinishCard finish={finish} scope={scope} ds={ds} access={access} workingSet={workingSet} assessor={assessor}
             onFirstUnreviewed={goFirstUnreviewed} onStay={() => setFinish(null)} onClearSet={clearSet}
             onOpen={go} />
         ) : missingField ? (
@@ -354,12 +364,15 @@ export function ReviewPage() {
   );
 }
 
-function FinishCard({ finish, scope, datasetId, workingSet, assessor, onFirstUnreviewed, onStay, onClearSet, onOpen }: {
-  finish: NonNullable<Finish>; scope: FieldListItem[]; datasetId: number; workingSet: WorkingSet | null; assessor: boolean;
+function FinishCard({ finish, scope, ds, access, workingSet, assessor, onFirstUnreviewed, onStay, onClearSet, onOpen }: {
+  finish: NonNullable<Finish>; scope: FieldListItem[]; ds: Dataset; access: Access; workingSet: WorkingSet | null; assessor: boolean;
   onFirstUnreviewed: () => void; onStay: () => void; onClearSet: () => void; onOpen: (id: number) => void;
 }) {
+  const datasetId = ds.id;
   const firstTodo = scope.find((f) => !f.reviewed);
   const finishView = useView();
+  const stage = stageOf(ds);
+  const team = useTeam(ds.id, finish.kind === "complete" && Boolean(stage && stage !== "setup"));
   if (finish.kind === "end") {
     return (
       <div className="finish card">
@@ -405,10 +418,11 @@ function FinishCard({ finish, scope, datasetId, workingSet, assessor, onFirstUnr
         <span className="secondary">Leakage flags: {leaks.length} dropped, 0 kept.</span>
       ))}
       <p className="secondary">
-        {assessor ? "Every field is reviewed. Submit your assessment with the button at the top right; until then you can still change any field."
-          : "Every field is reviewed. The next step is at the top right."}
+        {assessor ? "Every field is reviewed. Until you submit your assessment you can still change any field." : "Every field is reviewed."}
       </p>
       <div className="row">
+        {/* The same next step as the bar above, focused so Enter takes it. */}
+        {stage && <NextStep ds={ds} stage={stage} access={access} team={team.data} card />}
         <button type="button" onClick={onStay}>Back to the field</button>
       </div>
     </div>

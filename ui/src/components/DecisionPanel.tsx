@@ -1,7 +1,7 @@
 import { forwardRef, Fragment, useEffect, useImperativeHandle, useRef, useState, type ChangeEvent } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "../api";
-import { pendingDraft, queueSave } from "../saveQueue";
+import { flushSave, pendingDraft, queueSave, useFailedSaves } from "../saveQueue";
 import { bandCount, bandsText, defaultTask, NUMERIC, paramProblem, parseEdges, retype, taskLabel, toInput, withEncoding, type ParamRule } from "../decision";
 import { baselineDiff, revertedInput } from "../experiments";
 import type { DecisionInput, Dim, FieldResponse, OptionCatalog, TargetBins, TargetTask } from "../types";
@@ -75,6 +75,13 @@ function retypeWarning(type: string, data: FieldResponse): string | null {
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+/** How a target is predicted, in a few lower-case words for a button: "one vs rest <30", "4 bands". */
+function taskWords(task: TargetTask, bins: TargetBins | null | undefined): string {
+  if (task !== "bins" || !bins) return taskLabel(task).toLowerCase();
+  if ("positive" in bins) return `one vs rest ${bins.positive.join(" / ")}`;
+  return "k" in bins ? `${bins.k} bands` : `bands at ${bins.edges.join(", ")}`;
+}
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function DecisionPanel(
@@ -90,6 +97,7 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
   const noteRef = useRef<HTMLTextAreaElement>(null);
   const [noteOpen, setNoteOpen] = useState(Boolean(draft.notes));
   const ds = useDataset(f.dataset_id);
+  const saveFailed = useFailedSaves(view).has(f.id);
   const v = parseView(view);
   const lens: PanelLens = lensProp ?? (owner === "Your assessment" ? "private" : v?.kind === "experiment" ? "experiment"
     : v?.kind === "baseline" || ds.data?.phase === "finalized" ? "frozen" : "team");
@@ -115,17 +123,26 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
 
   const editableDims = draft.action === "keep" ? DIMS.filter((d) => allowed[d].length > 1 || draft[d] !== allowed[d][0]) : [];
   const lockedDims = draft.action === "keep" ? DIMS.filter((d) => !editableDims.includes(d) && notes[d]) : [];
-  const edited = (["action", "semantic_type", ...editableDims, ...(NUMERIC.has(draft.semantic_type) && draft.action === "keep" ? ["add_missing_indicator" as const] : [])] as const)
-    .filter((k) => differs(k));
+  // How a target is predicted counts as a change too: the suggestion is the type's default task.
+  const task = isTarget ? draft.target_task ?? defaultTask(draft.semantic_type, f.n_unique) : null;
+  const suggestedTask = defaultTask(sugg.semantic_type, f.n_unique);
+  const taskEdited = isTarget && task !== null && (task !== suggestedTask || (task === "bins" && !same(draft.target_bins, suggested.target_bins)));
+  const edited = [
+    ...(["action", "semantic_type", ...editableDims, ...(NUMERIC.has(draft.semantic_type) && draft.action === "keep" ? ["add_missing_indicator" as const] : [])] as const)
+      .filter((k) => differs(k)),
+    ...(taskEdited ? ["target_task" as const] : []),
+  ];
 
   const verb = { keep: "keep", drop: "drop", target: "target" }[draft.action];
   const confirmLabel = (() => {
-    if (settleLabel) return `${settleLabel === true ? "Settle" : settleLabel} as ${verb}, ${typeLabel(draft.semantic_type).toLowerCase()}`;
+    const how = isTarget && task ? `, ${taskWords(task, draft.target_bins)}` : "";
+    if (settleLabel) return `${settleLabel === true ? "Settle" : settleLabel} as ${verb}, ${typeLabel(draft.semantic_type).toLowerCase()}${how}`;
     const unchanged = same({ ...draft, notes: null }, { ...server, notes: null }) && draft.reviewed;
     if (unchanged) return "Next field";
     const parts = edited.filter((k) => k !== "action").map((k) =>
       k === "semantic_type" ? typeLabel(draft.semantic_type).toLowerCase()
         : k === "add_missing_indicator" ? "missing flag"
+        : k === "target_task" ? taskWords(task!, draft.target_bins)
         : `${optLabel(k as Dim, draft[k as Dim]).split(" (")[0].toLowerCase()}${k === "imputation" ? " fill" : ""}`);
     const shown = parts.slice(0, 2).join(", ");
     return `Confirm · ${verb}${shown ? `, ${shown}` : ""}${parts.length > 2 ? ` +${parts.length - 2}` : ""}`;
@@ -215,7 +232,10 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
   );
 
   if (readOnly) {
-    const task = draft.target_task ?? fallbackTask;
+    // Read-only, a setting that departs from the suggestion still says what was suggested (no Reset).
+    const was = (k: Dim | "semantic_type" | "action" | "add_missing_indicator", text: string) =>
+      differs(k) ? <span className="suggested">Suggested: {text}</span> : null;
+    const bins = draft.target_bins;
     return (
       <aside className="decision" aria-label={`${title}, read-only`} data-lens={lens}>
         <div className="decision-body">
@@ -228,12 +248,22 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
           )}
           {experimentBox}
           <dl className="plain-values num">
-            <div className="setting-row"><dt>Decision</dt><dd>{cap(draft.action)}{vote("action")}</dd></div>
-            {isTarget && task && <div className="setting-row"><dt>Predict as</dt><dd>{bandsText(task, draft.target_bins)}{vote("target")}</dd></div>}
-            <div className="setting-row"><dt>Type</dt><dd>{typeLabel(draft.semantic_type)}{vote("semantic_type")}</dd></div>
+            <div className="setting-row"><dt>Decision</dt><dd>{cap(draft.action)}{was("action", cap(sugg.action))}{vote("action")}</dd></div>
+            {isTarget && task && (
+              <div className="setting-row">
+                <dt>Predict as</dt>
+                <dd>
+                  {bandsText(task, bins)}
+                  {taskEdited && suggestedTask && <span className="suggested">Default for this type: {taskLabel(suggestedTask).toLowerCase()}</span>}
+                  {vote("target")}
+                  {task === "bins" && bins && !("positive" in bins) && <BandPreview fieldId={f.id} bins={bins} />}
+                </dd>
+              </div>
+            )}
+            <div className="setting-row"><dt>Type</dt><dd>{typeLabel(draft.semantic_type)}{was("semantic_type", typeLabel(sugg.semantic_type))}{vote("semantic_type")}</dd></div>
             {editableDims.map((dim) => (
               <Fragment key={dim}>
-                <div className="setting-row"><dt>{DIM_LABEL[dim]}</dt><dd>{optLabel(dim, draft[dim])}{vote(dim)}</dd></div>
+                <div className="setting-row"><dt>{DIM_LABEL[dim]}</dt><dd>{optLabel(dim, draft[dim])}{was(dim, optLabel(dim, sugg[dim]).split(" (")[0])}{vote(dim)}</dd></div>
                 {dim === "imputation" && draft.imputation === "constant" && (
                   <div className="setting-row"><dt>{fillLabel}</dt><dd className="mono">{draft.impute_value ?? "—"}{vote("impute_value")}</dd></div>
                 )}
@@ -243,7 +273,7 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
               </Fragment>
             ))}
             {draft.action === "keep" && NUMERIC.has(draft.semantic_type) && (
-              <div className="setting-row"><dt>Missing flag</dt><dd className={draft.add_missing_indicator ? "" : "off"}>{draft.add_missing_indicator ? "On" : "Off"}{vote("add_missing_indicator")}</dd></div>
+              <div className="setting-row"><dt>Missing flag</dt><dd className={draft.add_missing_indicator ? "" : "off"}>{draft.add_missing_indicator ? "On" : "Off"}{was("add_missing_indicator", suggested.add_missing_indicator ? "on" : "off")}{vote("add_missing_indicator")}</dd></div>
             )}
           </dl>
           {lockedLine}
@@ -413,12 +443,16 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
       </div>
 
       <div className="decision-foot">
-        <span className="foot-line">
-          {typing ? "Esc to return to review" : [
-            draft.reviewed && server.reviewed ? "Reviewed" : "Not reviewed yet",
-            edited.length ? `${edited.length} change${edited.length === 1 ? "" : "s"} from the suggestion` : "matches the suggestion",
-            "saved as you go",
-          ].join(" · ")}
+        <span className={`foot-line${saveFailed && !typing ? " error" : ""}`}>
+          {typing ? "Esc to return to review" : <>
+            {[
+              draft.reviewed && server.reviewed ? "Reviewed" : "Not reviewed yet",
+              edited.length ? `${edited.length} change${edited.length === 1 ? "" : "s"} from the suggestion` : "matches the suggestion",
+              saveFailed ? "Not saved" : "saved as you go",
+            ].join(" · ")}
+            {/* The last save failed: send the kept draft again, as the toast's Retry does. */}
+            {saveFailed && <>{" · "}<button type="button" className="link" onClick={() => void flushSave(f.id, view)}>Retry</button></>}
+          </>}
         </span>
         <button type="button" className="primary large confirm" onClick={confirm} aria-keyshortcuts="Enter">
           <span>{confirmLabel}</span><kbd>↵</kbd>
@@ -524,12 +558,6 @@ function BandSettings({ fieldId, bins, readOnly, onChange }: {
   // Typed as text, so "12" can pass through "1" on the way.
   const [kText, setKText] = useState(String("k" in bins ? bins.k : 5));
   const parsed = parseEdges(text);
-  const preview = useQuery({
-    queryKey: ["bands", fieldId, JSON.stringify(bins)],
-    queryFn: () => api.bands(fieldId, "positive" in bins ? { k: 5 } : bins),
-    placeholderData: keepPreviousData,
-  });
-  const max = Math.max(1, ...(preview.data?.counts ?? [1]));
   const pick = (m: "k" | "edges") => {
     setMode(m);
     if (m === "k") onChange({ k: "k" in bins ? bins.k : 5 });
@@ -556,18 +584,31 @@ function BandSettings({ fieldId, bins, readOnly, onChange }: {
       )}
       {mode === "edges" && text.trim() !== "" && typeof parsed === "string" && <div className="inline-warn">{parsed}</div>}
       {mode === "edges" && !("edges" in bins) ? <span className="muted small-text">Type cut points to use them.</span>
-        : preview.error ? <div className="inline-warn">{(preview.error as Error).message}</div> : preview.data && (
-        <ul className="band-preview" aria-label="Rows per band">
-          {preview.data.labels.map((l, i) => (
-            <li key={l}>
-              <span className="mono">{l}</span>
-              <span className="band-bar" style={{ width: `${Math.round((preview.data!.counts[i] / max) * 100)}%` }} />
-              <span className="num">{preview.data!.counts[i].toLocaleString()}</span>
-            </li>
-          ))}
-        </ul>
-      )}
+        : <BandPreview fieldId={fieldId} bins={bins} />}
       <span className="muted small-text">Equal-sized bands are cut again on each export's training rows.</span>
     </div>
+  );
+}
+
+/** How the field's rows fall into the bands: for editors under the band settings, for readers under "Predict as". */
+function BandPreview({ fieldId, bins }: { fieldId: number; bins: TargetBins }) {
+  const preview = useQuery({
+    queryKey: ["bands", fieldId, JSON.stringify(bins)],
+    queryFn: () => api.bands(fieldId, "positive" in bins ? { k: 5 } : bins),
+    placeholderData: keepPreviousData,
+  });
+  const max = Math.max(1, ...(preview.data?.counts ?? [1]));
+  if (preview.error) return <div className="inline-warn">{(preview.error as Error).message}</div>;
+  if (!preview.data) return null;
+  return (
+    <ul className="band-preview" aria-label="Rows per band">
+      {preview.data.labels.map((l, i) => (
+        <li key={l}>
+          <span className="mono">{l}</span>
+          <span className="band-bar" style={{ width: `${Math.round((preview.data!.counts[i] / max) * 100)}%` }} />
+          <span className="num">{preview.data!.counts[i].toLocaleString()}</span>
+        </li>
+      ))}
+    </ul>
   );
 }

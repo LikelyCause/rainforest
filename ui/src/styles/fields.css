@@ -75,7 +75,7 @@
 .field-meta { margin: 0; font-size: var(--fs-ui); color: var(--text-secondary); }
 .field-meta .mono { font-size: var(--fs-small); }
 .field-meta .info-tip > summary { text-decoration: underline dotted; text-underline-offset: 3px; }
-.field-meta .target-word { color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: 4px; margin-right: 4px; }
+.field-meta .target-word { color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: 4px; }
 .field-nav { display: flex; gap: 6px; flex: none; }
 .field-nav .list-button { display: none; }
 
@@ -136,6 +136,9 @@
 .plain-values dd { margin: 0; font-size: var(--fs-ui); font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
 .plain-values dd.off { color: var(--text-muted); font-weight: 400; }
 .plain-values dd .vote { padding-left: 0; font-weight: 400; }
+/* Read-only: what was suggested, and the rows per band, under the value. */
+.plain-values dd .suggested { padding-left: 0; font-weight: 400; margin-top: 2px; }
+.plain-values dd .band-preview { font-weight: 400; margin-top: 6px; }
 .plain-values dd.mono { font-family: var(--mono); font-size: var(--fs-small); }
 .plain-note { display: flex; flex-direction: column; gap: 4px; padding-top: 12px; border-top: 1px solid var(--border); }
 .plain-note .field-label { font-size: var(--fs-small); font-weight: 600; color: var(--text-muted); }
@@ -162,6 +165,8 @@
 
 .decision-foot { gap: 10px; }
 .decision-foot .foot-line { display: block; min-height: 0; font-size: var(--fs-small); color: var(--text-muted); }
+.decision-foot .foot-line.error { color: var(--bad); }
+.decision-foot .foot-line button.link { height: auto; padding: 0; font-size: var(--fs-small); }
 .decision-foot .confirm { width: 100%; height: auto; min-height: 40px; padding: 6px 12px; justify-content: space-between; font-size: var(--fs-body); }
 .decision-foot .revert-all { align-self: flex-start; gap: 6px; }
 .key-hints { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: var(--fs-small); color: var(--text-muted); align-items: center; }
