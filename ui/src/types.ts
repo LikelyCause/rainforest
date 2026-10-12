@@ -28,6 +28,14 @@ export interface Dataset {
   phase: Phase | null;
   /** Datasets list only: the viewer's own assessment of the current version, when they are assigned. */
   my_assessment?: { reviewed: number; submitted: boolean } | null;
+  /** Datasets list only: how many assess the current version and how many have submitted (counts, never choices). */
+  assessors?: { total: number; submitted: number } | null;
+  /** Datasets list only: in team review, the disagreements still open; else null. */
+  review_open?: number | null;
+  /** Datasets list only: per target column, how it is predicted, as the viewer may read it. */
+  target_kinds?: Record<string, PredictAs>;
+  /** Datasets list only: `target_kinds` is the suggestion nobody has decided on yet. */
+  target_kinds_suggested?: boolean;
   /** Fields the current version reopened; null when every field is open. */
   reopened?: number | null;
   field_count?: number;
@@ -42,6 +50,9 @@ export interface Dataset {
   /** Datasets list only: the chosen model, else the best finished run on validation. */
   best_run?: { run_id: number; experiment_id: number; experiment_name: string; model: string; model_label: string; chosen: boolean; metric: string | null; value: number | null } | null;
 }
+
+/** How the datasets list names a target's task: one of its values, a number, or bands of numbers. */
+export type PredictAs = "classes" | "number" | "bands";
 
 export type Action = "keep" | "drop" | "target";
 /** How a target is predicted: one of its values, a number, or a band of numbers. */
@@ -736,6 +747,8 @@ export interface RecipeVersion extends Recipe {
   parent_version: number | null;
   parent_name?: string | null;
   parent_dataset_name: string | null;
+  /** How its team review went; null while assessing or when it never had assessors. */
+  review?: VersionReview | null;
 }
 
 export interface FinalizedRecipe {
@@ -781,6 +794,18 @@ export interface AssessorProgress {
   submitted_at: string | null;
   reviewed: number;
   total: number;
+  /** When they last reviewed or changed a field; null while their assessment is as it was seeded. */
+  last_active_at?: string | null;
+}
+
+/** How a version's team review went (GET /datasets/{id}/baselines). */
+export interface VersionReview {
+  adopted: number;
+  disagreements: number;
+  /** Null for versions finalized before the summary was kept. */
+  settled: number | null;
+  /** Null while in review, and for versions finalized before the summary was kept. */
+  open_at_finalize: number | null;
 }
 
 export interface ReviewSummary {

@@ -77,6 +77,9 @@ def list_datasets(user: CurrentUser) -> list[dict]:
                                                                 WHERE o.recipe_id = rc.id))) AS my_reviewed,
                    CASE WHEN rc.scope = 'reopened'
                         THEN (SELECT count(*) FROM meta.recipe_reopened o WHERE o.recipe_id = rc.id) END AS reopened,
+                   (SELECT count(*) FROM meta.dataset_assessors o WHERE o.recipe_id = rc.id) AS my_assessors_total,
+                   (SELECT count(*) FROM meta.dataset_assessors o
+                     WHERE o.recipe_id = rc.id AND o.submitted_at IS NOT NULL) AS my_assessors_submitted,
                    coalesce(c.field_count, 0) AS field_count, coalesce(c.reviewed_count, 0) AS reviewed_count,
                    coalesce(c.kept_count, 0) AS kept_count, coalesce(c.dropped_count, 0) AS dropped_count,
                    coalesce(c.target_count, 0) AS target_count,
@@ -107,7 +110,37 @@ def list_datasets(user: CurrentUser) -> list[dict]:
         {"user": user["id"]},
     )
     best = best_by_dataset([r["id"] for r in rows], visible)
-    return with_baselines([{**_with_latest(row), "best_run": best.get(row["id"])} for row in rows])
+    out = with_baselines([{**_with_latest(row), "best_run": best.get(row["id"])} for row in rows])
+    with connection() as conn:
+        for row in out:
+            row.update(_team_glance(conn, row, user))
+    return out
+
+
+TASK_KIND = {"classes": "classes", "regression": "number", "bins": "bands"}
+
+
+def _team_glance(conn, row: dict, user: dict) -> dict:
+    """For the datasets list: how each target is predicted as the viewer may read it (`target_kinds`, with
+    `target_kinds_suggested` when that reading is the suggestion nobody has decided yet: a version being assessed,
+    read by someone who isn't assessing it) and, in team review, how many disagreements are still open."""
+    from .team import _review_summary
+
+    out = {"target_kinds": {}, "target_kinds_suggested": False, "review_open": None}
+    if row["recipe_id"] is None or row["status"] != "ready":
+        return out
+    recipe = recipes.get(conn, row["recipe_id"])
+    if row["phase"] == "review":
+        out["review_open"] = _review_summary(conn, recipe)["open"]
+    if row["target_columns"]:
+        src = source_for(conn, row["id"], user, recipe)
+        kinds = conn.execute(
+            sql.SQL("""SELECT f.name, d.target_task FROM meta.fields f JOIN {} d ON d.field_id = f.id
+                        WHERE f.dataset_id = %s AND f.name = ANY(%s) AND d.action = 'target'""").format(
+                src.decisions()), (row["id"], row["target_columns"])).fetchall()
+        out["target_kinds"] = {k["name"]: TASK_KIND.get(k["target_task"] or "classes") for k in kinds}
+        out["target_kinds_suggested"] = src.kind == "suggested" or (src.team and recipe["phase"] == "assessing")
+    return out
 
 
 def best_by_dataset(ids: list[int], visible: str) -> dict[int, dict]:
@@ -152,6 +185,9 @@ def best_by_dataset(ids: list[int], visible: str) -> dict[int, dict]:
 
 def _with_latest(row: dict) -> dict:
     out = {k: v for k, v in row.items() if not k.startswith(("e_", "r_", "my_")) and k != "assigned"}
+    # Who assesses the current version and how many have submitted (counts only; the team sees these anyway).
+    out["assessors"] = None if not row["my_assessors_total"] else {
+        "total": row["my_assessors_total"], "submitted": row["my_assessors_submitted"]}
     # The viewer's own assessment of the current version, when they are assigned to it.
     out["my_assessment"] = None if not row["assigned"] else {
         "reviewed": row["my_reviewed"], "submitted": row["my_submitted_at"] is not None}

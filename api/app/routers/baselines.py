@@ -10,7 +10,7 @@ from ..auth import CurrentUser, LeadUser
 from ..db import connection
 from ..schemas import RenameBaselineIn, StartBaselineIn
 from .datasets import queue_target_work
-from .team import _team_state
+from .team import _team_state, review_of
 
 router = APIRouter(prefix="/api", tags=["baselines"])
 FAMILY_ORDER = tuple(recipes.FAMILY_LABEL)
@@ -19,11 +19,12 @@ FAMILY_ORDER = tuple(recipes.FAMILY_LABEL)
 @router.get("/datasets/{dataset_id}/baselines")
 def list_baselines(dataset_id: int, _: CurrentUser) -> list[dict]:
     """The dataset's baselines, one per family that has one (Trees, Linear, Neural), each with its versions newest
-    first and its latest finalized version's id."""
+    first (each with how its team review went, `review`, once it reached review) and its latest finalized version's
+    id."""
     with connection() as conn:
         recipes.current(conn, dataset_id)
         rows = conn.execute(
-            """SELECT r.id, r.family, r.version, r.phase, r.scope, r.parent_id, p.family AS parent_family,
+            """SELECT r.id, r.dataset_id, r.family, r.version, r.phase, r.scope, r.parent_id, p.family AS parent_family,
                       p.version AS parent_version, p.dataset_id AS parent_dataset_id, r.created_at, r.finalized_at,
                       meta.baseline_name(r.dataset_id, r.family) AS name,
                       meta.baseline_name(p.dataset_id, p.family) AS parent_name, pd.name AS parent_dataset_name,
@@ -38,6 +39,7 @@ def list_baselines(dataset_id: int, _: CurrentUser) -> list[dict]:
                 WHERE r.dataset_id = %s ORDER BY r.version DESC""",
             (dataset_id,),
         ).fetchall()
+        rows = [{**r, "review": review_of(conn, r)} for r in rows]
     out = []
     for fam in FAMILY_ORDER:
         versions = [{**r, "label": recipes.label(r)} for r in rows if r["family"] == fam]

@@ -1,12 +1,12 @@
 import { useCallback, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useMatch, useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import { can } from "../can";
-import { useInvalidateTeam, useMe, useTeam } from "../hooks";
+import { useFields, useInvalidateTeam, useMe, useTeam } from "../hooks";
 import { Avatar } from "../components/Avatar";
 import { useDatasetContext } from "../components/DatasetLayout";
-import { Banner, Chip, Icon, ProgressBar, confirmDialog, stageOf, useDismiss } from "../components/kit";
+import { Banner, Chip, Icon, ProgressBar, Tabs, confirmDialog, stageOf, useDismiss } from "../components/kit";
 import { ReuseCard } from "../components/ReuseCard";
 import { StartBaseline } from "../components/StartBaseline";
 import { ErrorAlert } from "../components/ui";
@@ -20,6 +20,24 @@ import { PhaseBadge, useUserMap } from "./DatasetTeamPage";
 
 const dateOnly = (s: string | null) => (s ? new Date(s).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "—");
 
+/** The Baseline tab's own places: the version's progress, its review queue while in team review, and every version.
+ *  The queue lives at /team (under Fields too); the Baseline tab stays the active top tab on the other two. */
+export function BaselineTabs({ ds }: { ds: Dataset }) {
+  const onProgress = useMatch("/d/:datasetId/baseline");
+  const onQueue = useMatch("/d/:datasetId/team");
+  const onVersions = useMatch("/d/:datasetId/baselines");
+  const team = useTeam(ds.id, ds.phase === "review");
+  const open = team.data?.review?.open;
+  return (
+    <Tabs label="Baseline" className="sub lined bl-tabs" items={[
+      { to: `/d/${ds.id}/baseline`, label: "Progress", active: Boolean(onProgress) },
+      ...(ds.phase === "review" ? [{ to: `/d/${ds.id}/team`, label: "Queue", active: Boolean(onQueue), count: open != null ? `${open} open` : undefined,
+        title: "The fields the assessors disagreed on" }] : []),
+      { to: `/d/${ds.id}/baselines`, label: "Versions", active: Boolean(onVersions), title: "Every version, compare, start a new one" },
+    ]} />
+  );
+}
+
 /** The Baseline tab: the version being worked (its progress, assessors, queue summary) beside every version. */
 export function BaselinePage() {
   const ds = useDatasetContext();
@@ -27,7 +45,7 @@ export function BaselinePage() {
   const team = useTeam(ds.id);
   const stage = stageOf(ds);
   if (team.error) return <div className="page"><ErrorAlert error={team.error} /></div>;
-  if (!team.data || !stage) return <div className="page" aria-busy="true"><span className="skeleton" style={{ width: 240, height: 22 }} /></div>;
+  if (!team.data || !stage) return <div className="page" aria-busy="true"><span className="skeleton bl-skeleton" /></div>;
   const t = team.data;
 
   if (stage === "setup") {
@@ -46,6 +64,7 @@ export function BaselinePage() {
 
   return (
     <div className="page bl-page">
+      <BaselineTabs ds={ds} />
       <div className="bl-grid">
         <div className="bl-main">
           <Title ds={ds} team={t} />
@@ -64,11 +83,14 @@ function Title({ ds, team }: { ds: Dataset; team: TeamState }) {
   const r = team.recipe;
   const lines = useQuery({ queryKey: ["baselines", ds.id], queryFn: () => api.baselines(ds.id) });
   const v = (lines.data ?? []).flatMap((l) => l.versions).find((x) => x.id === r.id);
+  // Targets this version carried over from the one before (locked), named after the reopened count.
+  const fields = useFields(ds.id, r.reopened != null);
+  const carried = r.reopened == null ? [] : (fields.data ?? []).filter((f) => f.locked && f.action === "target").map((f) => f.name);
   const parts = [
     `Started ${dateOnly(r.created_at)}${r.created_by_name ? ` by ${r.created_by_name}` : ""}${v ? ` from ${builtFrom(v, true)}` : ""}`,
     // A later version nobody assesses ("Start v2 and edit directly") reopens nothing: the lead changes it in Fields.
     r.reopened == null ? (team.assessors.length === 0 && r.version > 1 && !r.reuse ? "nothing reopened, edited directly" : "every field open")
-      : `${fmtInt(r.reopened)} field${r.reopened === 1 ? "" : "s"} reopened`,
+      : `${fmtInt(r.reopened)} field${r.reopened === 1 ? "" : "s"} reopened${carried.length ? `, ${carried.join(", ")} carried over` : ""}`,
     `settings for ${familyShort(r.family).toLowerCase()} models`,
   ];
   return (
@@ -129,8 +151,8 @@ function MyAssessment({ ds, me }: { ds: Dataset; me: NonNullable<TeamState["me"]
   };
   return (
     <section className="card bl-mine" aria-labelledby="bl-mine">
-      <div className="stack grow" style={{ gap: 6, minWidth: 0 }}>
-        <div className="row" style={{ gap: 8 }}>
+      <div className="stack grow bl-mine-body">
+        <div className="row bl-gap-8">
           <h2 id="bl-mine">Your assessment</h2>
           <Chip tone="private" icon="user">Private</Chip>
           {me.submitted && <Chip tone="good" icon="check">Submitted</Chip>}
@@ -228,7 +250,10 @@ function Assessors({ ds, team }: { ds: Dataset; team: TeamState }) {
                       </span>
                     </td>
                     <td>
-                      {a.submitted_at ? <Chip tone="good" icon="check" title={fmtDate(a.submitted_at)}>Submitted {fmtAgo(a.submitted_at)}</Chip> : <Chip>Assessing</Chip>}
+                      {a.submitted_at ? <Chip tone="good" icon="check" title={fmtDate(a.submitted_at)}>Submitted {fmtAgo(a.submitted_at)}</Chip>
+                        : <Chip title={a.last_active_at ? `Last changed a field ${fmtDate(a.last_active_at)}` : "Nothing changed since they were assigned"}>
+                          Assessing{a.last_active_at ? ` · last active ${fmtAgo(a.last_active_at)}` : ""}
+                        </Chip>}
                     </td>
                     {lead && <td className="bl-actions"><RowMenu name={a.name} busy={unassign.isPending} onUnassign={() => askUnassign(a)} /></td>}
                   </tr>
@@ -419,7 +444,7 @@ function Versions({ ds, team }: { ds: Dataset; team: TeamState }) {
         <div className="card bl-other">
           <span className="bl-label">Other model types</span>
           <p className="secondary small-text">A {free.map((f) => familyShort(f).toLowerCase()).join(" or ")} baseline keeps its own versions, built from the same fields.</p>
-          <div className="row" style={{ gap: 8 }}>
+          <div className="row bl-gap-8">
             {free.map((f) => busyReason ? (
               <button key={f} type="button" className="small" disabled title={busyReason}>Start a {familyShort(f).toLowerCase()} baseline</button>
             ) : (
@@ -437,7 +462,7 @@ function VersionRow({ ds, v, current, experiments }: { ds: Dataset; v: RecipeVer
   const chosen = experiments.find((x) => x.chosen)?.chosen;
   return (
     <div className={`bl-version${current ? ` current ${v.phase}` : ""}`} aria-current={current ? "true" : undefined}>
-      <span className="row" style={{ gap: 8 }}>
+      <span className="row bl-gap-8">
         {v.phase === "finalized" && !current
           ? <Link to={`/d/${ds.id}/review?view=baseline:${v.id}`} className="bl-version-name" title="Browse its fields, read-only">{label}</Link>
           : <b className="bl-version-name">{label}</b>}
@@ -447,7 +472,8 @@ function VersionRow({ ds, v, current, experiments }: { ds: Dataset; v: RecipeVer
         {v.finalized_at
           ? <span title={fmtDate(v.finalized_at)}>Finalized {dateOnly(v.finalized_at)}{v.finalized_by_name ? ` by ${v.finalized_by_name}` : ""}</span>
           : <span title={fmtDate(v.created_at)}>Started {dateOnly(v.created_at)}{v.created_by_name ? ` by ${v.created_by_name}` : ""}</span>}
-        {" · "}{v.reopened == null ? "all fields" : `${fmtInt(v.reopened)} reopened`} · from {builtFrom(v, true)}
+        {" · "}{v.reopened == null ? `${fmtInt(ds.column_count)} fields` : `${fmtInt(v.reopened)} reopened`}
+        {v.review?.settled ? ` · ${fmtInt(v.review.settled)} settled in review` : ""} · from {builtFrom(v, true)}
       </span>
       {experiments.length > 0 && (
         <span className="small-text">

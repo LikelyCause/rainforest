@@ -55,7 +55,7 @@
 .home-target-anchor { display: inline-flex; }
 .home-target code { padding: 1px 6px; border-radius: var(--radius-xs); background: var(--surface-2); }
 .home-target .chip.attention { gap: 4px; }
-.home-assess { gap: 6px; max-width: 180px; }
+.home-assess { gap: 6px; max-width: 220px; }
 .home-score { font-weight: 600; }
 .home-score span { font-weight: 400; color: var(--text-secondary); }
 .home-actions-cell { text-align: right; width: 48px; }
@@ -110,3 +110,35 @@ a.home-item-main:hover { text-decoration: none; background: var(--surface-hover)
   .home h2 .muted { color: inherit; }
   .home .popover.combobox { width: calc(100vw - 32px); }
 }
+
+/* Waiting cards: the top edge says whose move it is. */
+.home-wait.edge-private { border-top-color: var(--lens-private); }
+.home-wait.edge-team { border-top-color: var(--lens-team); }
+.home-wait.edge-good { border-top-color: var(--good); }
+.home-wait h3 b { font-weight: 700; }
+
+/* Targets: field names in Plex Sans, with how each is predicted. */
+.home-target-names { display: inline-flex; flex-wrap: wrap; gap: 2px 10px; text-align: left; }
+.home-target-name { white-space: nowrap; color: var(--text-primary); }
+.home-target .target-chips { height: auto; min-height: 28px; min-width: 0; padding: 2px 6px; font-weight: 400; }
+
+/* Small layout helpers for this page (were inline styles). */
+.home-gap-2 { gap: 2px; }
+.home-gap-4 { gap: 4px; }
+.home-gap-6 { gap: 6px; }
+.home-gap-8 { gap: 8px; }
+.home-start { align-items: flex-start; }
+.home-spread { justify-content: space-between; flex-wrap: nowrap; }
+.home-grow { flex: 1; }
+.home-pad-6 { padding: 6px; }
+.home-accent { color: var(--accent); }
+.home-hint { font-weight: 400; }
+.home-stage-row { gap: 8px; flex-wrap: nowrap; align-items: flex-start; }
+.home-pick-row { gap: 8px; flex-wrap: nowrap; min-width: 0; }
+.home-pick-name { overflow: hidden; text-overflow: ellipsis; }
+.home-pick-why { flex-basis: 100%; }
+.home-pick-foot { justify-content: space-between; padding: 4px 2px 0; }
+.home-sample-size { gap: 10px; align-items: flex-start; }
+.home-sample-fields { width: 96px; }
+.home-library { gap: 8px; max-height: 420px; overflow-y: auto; }
+.home-first-side { justify-content: center; gap: 12px; }

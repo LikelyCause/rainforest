@@ -440,8 +440,9 @@ def seed(conn, recipe: dict, user_id: int) -> None:
 
 
 def progress(conn, recipe: dict) -> list[dict]:
-    """Per assessor: fields reviewed out of the fields to assess (the reopened ones on a later version) and whether
-    they submitted. Never their choices."""
+    """Per assessor: fields reviewed out of the fields to assess (the reopened ones on a later version), whether
+    they submitted, and when they last changed anything in their assessment (`last_active_at`, None while it is as
+    it was seeded). Never their choices."""
     open_ = recipes.open_field_ids(conn, recipe)
     return conn.execute(
         """SELECT a.user_id, u.name, a.assigned_at, a.assigned_by, a.submitted_at,
@@ -449,7 +450,15 @@ def progress(conn, recipe: dict) -> list[dict]:
                     WHERE x.recipe_id = a.recipe_id AND x.user_id = a.user_id AND x.reviewed
                       AND (%(all)s OR x.field_id = ANY(%(open)s))) AS reviewed,
                   CASE WHEN %(all)s THEN (SELECT count(*) FROM meta.fields f WHERE f.dataset_id = %(ds)s)
-                       ELSE %(n_open)s END AS total
+                       ELSE %(n_open)s END AS total,
+                  -- Their own edits only: rows still following the suggestion move when targets change. Seeding
+                  -- writes in the assigning transaction, so seeded rows carry assigned_at itself.
+                  nullif(greatest(
+                      (SELECT max(x.updated_at) FROM meta.assessments x
+                        WHERE x.recipe_id = a.recipe_id AND x.user_id = a.user_id AND (x.reviewed OR x.source = 'user')),
+                      (SELECT max(s.updated_at) FROM meta.assessment_settings s
+                        WHERE s.recipe_id = a.recipe_id AND s.user_id = a.user_id AND s.source = 'user')),
+                         a.assigned_at) AS last_active_at
              FROM meta.dataset_assessors a JOIN meta.users u ON u.id = a.user_id
             WHERE a.recipe_id = %(r)s ORDER BY u.name, a.user_id""",
         {"ds": recipe["dataset_id"], "r": recipe["id"], "all": open_ is None, "open": open_ or [],

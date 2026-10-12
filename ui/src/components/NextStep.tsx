@@ -84,13 +84,14 @@ export function NextStep({ ds, stage, access, team, card }: {
     const open = team.review.open;
     const askFinalize = async () => {
       const r = team.review!;
+      const next = `A later change is a new version, v${team.recipe.version + 1}.`;
       const ok = await confirmDialog({
         title: `Finalize ${shortLabel}?`,
         body: <>
           {r.adopted === 0 && r.disagreements === 0
             // Nothing went through assessment (say, only new fields confirmed directly): no counts to report.
-            ? <p>Its decisions freeze as a snapshot that experiments build on. A later change is a new version.</p>
-            : <p className="num">{fmtInt(r.adopted)} agreed and {fmtInt(r.disagreements - open)} settled, {fmtInt(open)} open. It freezes as a snapshot that experiments build on. A later change is a new version.</p>}
+            ? <p>Its decisions freeze as a snapshot that experiments build on. {next}</p>
+            : <p className="num">{fmtInt(r.adopted)} agreed and {fmtInt(r.disagreements - open)} settled, {fmtInt(open)} open. It freezes as a snapshot that experiments build on. {next}</p>}
           {open > 0 && <p><b>{open} disagreement{open === 1 ? " is" : "s are"} still open</b> and will keep {open === 1 ? "its" : "their"} current team decision{open === 1 ? "" : "s"}.</p>}
         </>,
         confirm: `Finalize ${shortLabel}`, cancel: "Not yet",

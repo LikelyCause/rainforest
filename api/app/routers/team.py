@@ -56,6 +56,36 @@ def _review_summary(conn, recipe: dict) -> dict:
             "open": open_}
 
 
+def review_record(summary: dict, finalized: bool = True) -> dict:
+    """A version's review as the Baselines page shows it: fields adopted, disagreements, how many of those the lead
+    settled, and how many were still open when it was finalized (None before then)."""
+    return {"adopted": summary["adopted"], "disagreements": summary["disagreements"],
+            "settled": summary["disagreements"] - summary["open"],
+            "open_at_finalize": summary["open"] if finalized else None}
+
+
+def review_of(conn, recipe: dict) -> dict | None:
+    """How a version's team review went (`review_record`), or None when it hasn't reached review. A version finalized
+    before review summaries were kept gets what its stored assessments still tell (adopted and disagreements); what
+    the lead settled was only in the working tables, so that is None."""
+    if recipe["phase"] == "assessing":
+        return None
+    if recipe["phase"] == "review":
+        return review_record(_review_summary(conn, recipe), finalized=False)
+    stored = conn.execute("SELECT review_summary FROM meta.recipes WHERE id = %s", (recipe["id"],)).fetchone()
+    if stored and stored["review_summary"] is not None:
+        return stored["review_summary"]
+    by_field = assessments_by_field(conn, recipe["id"], _assessor_ids(conn, recipe["id"]))
+    if not by_field:
+        return None
+    open_ = recipes.open_field_ids(conn, recipe)
+    if open_ is not None:
+        by_field = {fid: rows for fid, rows in by_field.items() if fid in set(open_)}
+    dis = len(disagreements(by_field))
+    return {"adopted": _open_count(conn, recipe) - dis, "disagreements": dis, "settled": None,
+            "open_at_finalize": None}
+
+
 def _team_state(conn, dataset_id: int, user: dict) -> dict:
     recipe = recipes.current(conn, dataset_id)
     assessors = progress(conn, recipe)
@@ -313,9 +343,10 @@ def finalize(dataset_id: int, body: FinalizeIn, user: LeadUser) -> dict:
         status = conn.execute("SELECT status FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()["status"]
         if status != "ready":
             raise HTTPException(409, "The dataset is still processing")
-        open_ = _review_summary(conn, recipe)["open"]
+        summary = _review_summary(conn, recipe)
+        open_ = summary["open"]
         if open_ and not body.accept_open:
             raise HTTPException(409, {"message": f"{open_} disagreement(s) are still open. Settle them, or confirm "
                                                  "to keep their current team decision.", "open": open_})
-        recipes.finalize(conn, recipe, user["id"])
+        recipes.finalize(conn, recipe, user["id"], review_record(summary))
         return _team_state(conn, dataset_id, user)

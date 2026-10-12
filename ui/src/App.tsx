@@ -27,7 +27,7 @@ import { ErrorAlert } from "./components/ui";
 import { baselineLabel, familyShort, fmtInt, roleLabel } from "./format";
 import { ToastRegion, showError } from "./toast";
 import { parseView, useView, withView } from "./view";
-import type { Dataset, ExportJob, ModelRun, TeamState } from "./types";
+import type { Dataset, ExportJob, ModelRun, RecipeVersion, TeamState } from "./types";
 import type { Access } from "./team";
 
 /* ------------------------------------------------------------------ first row: where you are */
@@ -204,18 +204,24 @@ function UserMenu({ compact }: { compact?: boolean }) {
 
 /* ------------------------------------------------------------------ second row: where the version stands */
 
-/** Every baseline and version of the dataset; replaces the Baseline chip. */
+const PHASE_WORD = { assessing: "Assessing", review: "Team review", finalized: "Finalized" } as const;
+
+/** Every version of every baseline of the dataset, with its phase; replaces the Baseline chip. The current version
+ *  opens the Baseline tab, a finalized one its fields read-only, any other the versions page with it in view. */
 function VersionSwitcher({ ds, stage }: { ds: Dataset; stage: Stage }) {
   const me = useMe().data;
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
   useDismiss(ref, open, close);
+  const lines = useQuery({ queryKey: ["baselines", ds.id], queryFn: () => api.baselines(ds.id), enabled: open });
   const b = ds.baseline;
   if (!b) return null;
   const name = stage === "setup" ? "No baseline yet" : baselineLabel(b.family, b.version, true, b.name);
+  const where = (v: RecipeVersion) => v.id === b.id ? `/d/${ds.id}/baseline`
+    : v.phase === "finalized" ? `/d/${ds.id}/review?view=baseline:${v.id}` : `/d/${ds.id}/baselines?v=${v.id}`;
   return (
-    <div ref={ref} style={{ position: "relative", minWidth: 0 }}>
+    <div ref={ref} className="version-switch">
       <button type="button" className="ghost switcher version-switcher" aria-expanded={open} aria-haspopup="true" onClick={() => setOpen(!open)}
         title={stage === "setup" ? "This dataset's first baseline isn't set up yet" : b.label}>
         <span className="ds-name">{name}</span>
@@ -223,12 +229,24 @@ function VersionSwitcher({ ds, stage }: { ds: Dataset; stage: Stage }) {
         <Icon name="chevron-down" />
       </button>
       {open && (
-        <div className="popover" style={{ left: 0, right: "auto", minWidth: 280 }}>
-          {ds.baselines.map((l) => (
-            <Link key={l.family} to={`/d/${ds.id}/baselines`} className="menu-link" onClick={close}>
-              <span className="grow">{baselineLabel(l.family, l.version, true, l.name)} <span className="muted">· {familyShort(l.family)}</span></span>
-              <span className="muted small-text">{l.phase === "finalized" ? "Finalized" : l.phase === "review" ? "Team review" : "Assessing"}</span>
-            </Link>
+        <div className="popover version-menu">
+          {lines.isPending && <span className="menu-note muted small-text">Loading versions…</span>}
+          <ErrorAlert error={lines.error} />
+          {(lines.data ?? []).map((l) => (
+            <div key={l.family} role="group" aria-label={`${l.name ?? l.label} baseline`}>
+              {(lines.data ?? []).length > 1 && <span className="menu-note muted small-text">{l.name ?? `${l.label} baseline`} · {l.label}</span>}
+              {l.versions.map((v) => {
+                const current = v.id === b.id;
+                return (
+                  <Link key={v.id} to={where(v)} className="menu-link" aria-current={current ? "true" : undefined} onClick={close}
+                    title={current ? "The version being worked: its progress" : v.phase === "finalized" ? "Browse its fields, read-only" : "See it on the versions page"}>
+                    <span className="grow">{baselineLabel(v.family, v.version, true, v.name)}{current && <span className="muted"> · current</span>}</span>
+                    <span className="muted small-text">{PHASE_WORD[v.phase]}</span>
+                    {current ? <Icon name="check" /> : v.phase === "finalized" ? <Icon name="lock" size={14} className="muted" /> : null}
+                  </Link>
+                );
+              })}
+            </div>
           ))}
           <hr />
           <Link to={`/d/${ds.id}/baselines`} className="menu-link" onClick={close}>Versions and compare</Link>
@@ -239,7 +257,9 @@ function VersionSwitcher({ ds, stage }: { ds: Dataset; stage: Stage }) {
   );
 }
 
-function lensOf(stage: Stage, access: Access, me: { role: string } | undefined, team: TeamState | undefined): { lens: Lens; text: string } {
+function lensOf(stage: Stage, access: Access, me: { role: string } | undefined, team: TeamState | undefined, onBaseline: boolean): { lens: Lens; text: string } {
+  // The Baseline tab shows progress only while assessing, whoever is looking.
+  if (onBaseline && stage === "assessing") return { lens: "suggestions", text: "Progress only · nobody's choices show" };
   if (access.source === "mine") return { lens: "private", text: team?.me?.submitted ? "Private · submitted" : "Private · your assessment" };
   if (me?.role === "viewer") return stage === "finalized" ? { lens: "frozen", text: "Frozen snapshot" } : { lens: "suggestions", text: "Read-only" };
   if (stage === "setup") return { lens: "suggestions", text: "Suggestions only" };
@@ -270,16 +290,17 @@ function ViewBar({ ds }: { ds: Dataset }) {
   const view = useView();
   const v = parseView(view);
   const x = useExperiment(v?.kind === "experiment" ? v.id : null);
+  const lines = useQuery({ queryKey: ["baselines", ds.id], queryFn: () => api.baselines(ds.id), enabled: v?.kind === "baseline" });
   if (!v) return null;
   if (v.kind === "baseline") {
-    const line = ds.baselines.find((l) => l.latest_finalized_id === v.id || l.id === v.id);
+    const ver = (lines.data ?? []).flatMap((l) => l.versions).find((r) => r.id === v.id);
     return (
       <>
-        <b className="version-name">{line ? baselineLabel(line.family, line.version, true, line.name) : "A finalized baseline"}</b>
+        <b className="version-name">{ver ? baselineLabel(ver.family, ver.version, true, ver.name) : "A finalized baseline"}</b>
         <span className="secondary small-text">Browsing a finalized baseline</span>
         <span className="spacer" />
         <LensChip lens="frozen">Frozen snapshot · read-only</LensChip>
-        <Link className="btn primary" to={`/d/${ds.id}/baselines`}>Back to versions</Link>
+        <Link className="btn primary" to={`/d/${ds.id}/baselines?v=${v.id}`}>Back to versions</Link>
       </>
     );
   }
@@ -307,6 +328,7 @@ function DatasetBar({ ds }: { ds: Dataset }) {
   const view = useView();
   const access = useAccess(ds, view);
   const onExperiment = useMatch("/d/:datasetId/experiments/:experimentId");
+  const onBaseline = useMatch("/d/:datasetId/baseline");
   const stage = stageOf(ds);
   const team = useTeam(ds.id, Boolean(stage && stage !== "setup"));
   let body: React.ReactNode;
@@ -315,7 +337,7 @@ function DatasetBar({ ds }: { ds: Dataset }) {
   } else if (view) {
     body = <ViewBar ds={ds} />;
   } else if (stage) {
-    const lens = lensOf(stage, access, me, team.data);
+    const lens = lensOf(stage, access, me, team.data, Boolean(onBaseline));
     const gate = gateText(stage, team.data, me?.role === "lead");
     body = (
       <>

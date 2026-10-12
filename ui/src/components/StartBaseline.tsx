@@ -49,7 +49,7 @@ export function StartBaseline({ ds, onCancel, family }: { ds: Dataset; onCancel?
       nav(t.recipe.phase === "review" ? `/d/${ds.id}/team` : `/d/${ds.id}/review`);
     },
   });
-  if (!form || !me) return <span className="skeleton" style={{ width: 240, height: 22 }} />;
+  if (!form || !me) return <span className="skeleton bl-skeleton" />;
   const set = (patch: Partial<StartBaselineForm>) => setForm({ ...form, ...patch });
   const toggle = <T,>(list: T[], v: T) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
   const nextVersion = (f: FamilyKey) => (setup ? 1 : (ds.baselines.find((b) => b.family === f)?.version ?? 0) + 1);
@@ -67,7 +67,7 @@ export function StartBaseline({ ds, onCancel, family }: { ds: Dataset; onCancel?
         <span className="muted small-text">The model type is fixed once it starts.</span>
       </div>
 
-      <fieldset className="bare stack sb-section" style={{ gap: 6 }}>
+      <fieldset className="bare stack sb-section bl-gap-6">
         <legend className="field-label">Model type</legend>
         <Segmented label="Model type" value={form.family} onChange={(f) => set({ family: f })} className="sb-family"
           options={FAMILIES.map((f) => ({ value: f, label: familyShort(f), disabled: form.start === "recipe", title: catalog?.families.find((x) => x.value === f)?.examples }))} />
@@ -89,7 +89,7 @@ export function StartBaseline({ ds, onCancel, family }: { ds: Dataset; onCancel?
         </span>
       )}
 
-      <fieldset className="bare stack sb-section" style={{ gap: 6 }}>
+      <fieldset className="bare stack sb-section bl-gap-6">
         <legend className="field-label">Start from</legend>
         <label className="check"><input type="radio" name="start" checked={form.start === "scratch"} onChange={() => set({ start: "scratch" })} />
           The suggestions for {familyShort(form.family).toLowerCase()} models</label>
@@ -119,7 +119,7 @@ export function StartBaseline({ ds, onCancel, family }: { ds: Dataset; onCancel?
       </fieldset>
 
       {form.start !== "recipe" && (
-        <fieldset className="bare stack sb-section" style={{ gap: 4 }}>
+        <fieldset className="bare stack sb-section bl-gap-4">
           <legend className="field-label">Targets <span className="muted small-text">· {form.targets.length} chosen</span></legend>
           <span className="muted small-text">Fixed for this baseline; experiments can change them. Each is predicted as shown; change it to a number or bands per field in Fields.</span>
           <div className="check-grid">
@@ -130,7 +130,7 @@ export function StartBaseline({ ds, onCancel, family }: { ds: Dataset; onCancel?
                 <label key={f.id} className={`check${why ? " muted" : ""}`} title={why ?? undefined}>
                   <input type="checkbox" disabled={Boolean(why) && !form.targets.includes(f.name)} checked={form.targets.includes(f.name)}
                     onChange={() => set({ targets: toggle(form.targets, f.name) })} />
-                  <span className="mono">{f.name}</span>
+                  <span className="sb-name">{f.name}</span>
                   {!why && task && <span className="muted small-text"> · {taskLabel(task).toLowerCase()}</span>}
                 </label>
               );
@@ -139,7 +139,7 @@ export function StartBaseline({ ds, onCancel, family }: { ds: Dataset; onCancel?
         </fieldset>
       )}
 
-      <fieldset className="bare stack sb-section" style={{ gap: 4 }}>
+      <fieldset className="bare stack sb-section bl-gap-4">
         <legend className="field-label">Assessors <span className="muted small-text">· {form.assessors.length} chosen</span></legend>
         <span className="muted small-text">Each assesses every field blind; team review opens when all have submitted.</span>
         <div className="check-grid">

@@ -19,6 +19,9 @@ const PHONE = "(max-width: 759px)";
 const WAITING_CAP = 6;
 
 const STATUS_LABEL: Record<string, string> = { pending: "Queued", ingesting: "Loading", profiling: "Profiling", correlating: "Correlating" };
+/** Processing runs in three steps after the upload: load, profile, correlate. */
+const STATUS_STEP: Record<string, number> = { ingesting: 1, profiling: 2, correlating: 3 };
+const STEPS = 3;
 const PHASE_TONE: Record<Phase, ChipTone> = { assessing: "private", review: "team", finalized: "good" };
 
 function lastVisited(id: number): string | null {
@@ -129,12 +132,12 @@ function TargetPicker({ ds, anchor, onClose, reveal }: { ds: Dataset; anchor: Re
   return (
     <div ref={ref} className="popover combobox" role="dialog" aria-label={`Targets for ${ds.name}`} style={style} onClick={(e) => e.stopPropagation()}>
       <input ref={search} type="search" placeholder="Search columns" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search columns" />
-      <label className="check"><span className="row" style={{ gap: 8 }}>
+      <label className="check"><span className="row home-gap-8">
         <input type="radio" checked={chosen.size === 0} onChange={() => setChosen(new Set())} />
         No target (unsupervised)
       </span></label>
       <div className="combo-list">
-        {fields.isLoading && <span className="muted small-text" style={{ padding: 6 }}>Loading columns…</span>}
+        {fields.isLoading && <span className="muted small-text home-pad-6">Loading columns…</span>}
         {shown.map((f) => {
           const blocker = eligibleTarget(f);
           const task = defaultTask(f.semantic_type, f.n_unique);
@@ -142,21 +145,21 @@ function TargetPicker({ ds, anchor, onClose, reveal }: { ds: Dataset; anchor: Re
           const disabled = blocker !== null && !chosen.has(f.name);
           return (
             <label key={f.id} className={`check${blocker ? " blocked" : ""}${disabled ? " disabled" : ""}`} title={blocker ?? undefined}>
-              <span className="row" style={{ gap: 8, flexWrap: "nowrap", minWidth: 0 }}>
+              <span className="row home-pick-row">
                 <input type="checkbox" checked={chosen.has(f.name)} disabled={disabled} onChange={() => toggle(f.name)}
                   aria-describedby={blocker ? `tb-${f.id}` : undefined} />
-                <span className="mono" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{f.name}</span>
+                <span className="home-pick-name">{f.name}</span>
               </span>
               <span className="type-tag" title={task ? `Predicted as ${taskLabel(task).toLowerCase()} unless changed in Review` : undefined}>
                 {f.semantic_type.replace("_", " ")}{!blocker && task ? ` · ${taskLabel(task).toLowerCase()}` : ""}
               </span>
-              {blocker && <span id={`tb-${f.id}`} className="muted small-text" style={{ flexBasis: "100%" }}>{blocker}</span>}
+              {blocker && <span id={`tb-${f.id}`} className="muted small-text home-pick-why">{blocker}</span>}
             </label>
           );
         })}
       </div>
       <ErrorAlert error={save.error} />
-      <div className="row" style={{ justifyContent: "space-between", padding: "4px 2px 0" }}>
+      <div className="row home-pick-foot">
         <span className="muted small-text">{chosen.size} selected · associations are recomputed</span>
         <button type="button" className="primary small" disabled={save.isPending} onClick={() => save.mutate([...chosen])}>Save</button>
       </div>
@@ -238,14 +241,14 @@ function SampleMenu({ onCreated }: { onCreated: (ds: Dataset) => void }) {
           <span className="secondary small-text">
             Mixed numeric, categorical, text and date fields with missingness, skew, IDs, numbers-as-text, a constant column and one leaky feature.
           </span>
-          <div className="row" style={{ gap: 10, alignItems: "flex-start" }}>
-            <label className="field" style={{ flex: 1 }}>Rows
+          <div className="row home-sample-size">
+            <label className="field home-grow">Rows
               <input type="number" min={1000} max={maxRows} step={1000} value={rows} onChange={(e) => setRows(e.target.value)} />
-              <span className="muted" style={{ fontWeight: 400 }}>1,000 – {fmtInt(maxRows)}{maxRows < 2000000 ? ` at ${fields} fields` : ""}</span>
+              <span className="muted home-hint">1,000 – {fmtInt(maxRows)}{maxRows < 2000000 ? ` at ${fields} fields` : ""}</span>
             </label>
-            <label className="field" style={{ width: 96 }}>Fields
+            <label className="field home-sample-fields">Fields
               <input type="number" min={30} max={400} value={fields} onChange={(e) => setFields(e.target.value)} />
-              <span className="muted" style={{ fontWeight: 400 }}>30 – 400</span>
+              <span className="muted home-hint">30 – 400</span>
             </label>
           </div>
           <label className="field">Targets
@@ -284,11 +287,11 @@ function LibraryList({ onCreated }: { onCreated: (ds: Dataset) => void }) {
     onSuccess: (ds) => { qc.invalidateQueries({ queryKey: ["datasets"] }); onCreated(ds); },
   });
   return (
-    <div className="stack" style={{ gap: 8, maxHeight: 420, overflowY: "auto" }}>
+    <div className="stack home-library">
       {lib.isLoading && <span className="muted small-text">Loading…</span>}
       {(lib.data ?? []).map((d) => (
-        <div key={d.key} className="library-item stack" style={{ gap: 2 }}>
-          <div className="row" style={{ justifyContent: "space-between", flexWrap: "nowrap" }}>
+        <div key={d.key} className="library-item stack home-gap-2">
+          <div className="row home-spread">
             <b>{d.name}</b>
             <button type="button" className="small primary" disabled={add.isPending} onClick={() => add.mutate(d.key)}>Add</button>
           </div>
@@ -312,10 +315,10 @@ function FirstRun({ onBrowse, onDemo, busy }: { onBrowse: () => void; onDemo: ()
       <button type="button" className="dropzone first-drop" onClick={onBrowse}>
         <Icon name="upload" size={20} />
         <b>Drop a CSV or Parquet file</b>
-        <span>or <span style={{ color: "var(--accent)" }}>browse</span></span>
+        <span>or <span className="home-accent">browse</span></span>
         <span className="muted small-text">Targets are picked after upload</span>
       </button>
-      <div className="stack" style={{ justifyContent: "center", gap: 12 }}>
+      <div className="stack home-first-side">
         <h2>No data handy?</h2>
         <div><button type="button" className="primary" disabled={busy} onClick={onDemo}>Open the 50k × 150 demo</button></div>
         <span className="secondary small-text">
@@ -327,7 +330,15 @@ function FirstRun({ onBrowse, onDemo, busy }: { onBrowse: () => void; onDemo: ()
   );
 }
 
-interface Waiting { key: string; ds: Dataset; edge: string; chip: ReactNode; title: string; body: ReactNode; to: string; action: string; primary?: boolean; progress?: { value: number; max: number } }
+type Edge = "private" | "team" | "good" | "plain";
+interface Waiting { key: string; ds: Dataset; edge: Edge; chip: ReactNode; title: ReactNode; body: ReactNode; to: string; action: string; primary?: boolean; progress?: { value: number; max: number } }
+
+/** " · 1 of 3 submitted": who is in on the version being assessed (counts only, never choices). */
+function submittedNote(ds: Dataset, short = false): string {
+  const a = ds.assessors;
+  if (!a || stageOf(ds) !== "assessing") return "";
+  return ` · ${fmtInt(a.submitted)} of ${fmtInt(a.total)} ${short ? "in" : "submitted"}`;
+}
 
 /** What the viewer can move forward, from what the datasets list says. */
 function waitingOn(rows: Dataset[], me: ReturnType<typeof useMe>["data"]): Waiting[] {
@@ -339,30 +350,42 @@ function waitingOn(rows: Dataset[], me: ReturnType<typeof useMe>["data"]): Waiti
     if (stage === "assessing" && ds.my_assessment && !ds.my_assessment.submitted && total > 0) {
       const done = Math.min(ds.my_assessment.reviewed, total);
       out.push({
-        key: `assess-${ds.id}`, ds, edge: "var(--lens-private)", chip: <Chip tone="private" icon="user">Private</Chip>,
+        key: `assess-${ds.id}`, ds, edge: "private", chip: <Chip tone="private" icon="user">Private</Chip>,
         title: "Finish your assessment", to: `/d/${ds.id}/review`, action: done ? "Continue assessing" : "Start assessing", primary: true,
         progress: { value: done, max: total },
-        body: <>{fmtInt(done)} of {fmtInt(total)}{ds.reopened != null ? " reopened" : ""} fields · {fmtInt(total - done)} left</>,
+        body: <>{fmtInt(done)} of {fmtInt(total)}{ds.reopened != null ? " reopened" : ""} fields · {fmtInt(total - done)} left{submittedNote(ds)}</>,
       });
     }
     if (stage === "setup" && can(me, "startBaseline")) {
       out.push({
-        key: `setup-${ds.id}`, ds, edge: "var(--border-strong)", chip: <Chip>Needs a baseline</Chip>,
+        key: `setup-${ds.id}`, ds, edge: "plain", chip: <Chip>Needs a baseline</Chip>,
         title: "Set up the first baseline", to: `/d/${ds.id}/baseline`, action: "Set up",
         body: <>{fmtInt(ds.row_count)} rows · {fmtInt(ds.column_count)} fields. Choose the model type, targets and assessors.</>,
       });
     }
     if (stage === "review" && can(me, "finalize")) {
+      const open = ds.review_open;
       out.push({
-        key: `review-${ds.id}`, ds, edge: "var(--lens-team)", chip: <Chip tone="team" icon="users">Team review</Chip>,
-        title: "Settle open fields", to: `/d/${ds.id}/team`, action: "Settle fields",
-        body: <>Every assessment is in. Compare them side by side, settle where they differ, then finalize.</>,
+        key: `review-${ds.id}`, ds, edge: "team", chip: <Chip tone="team" icon="users">Team review</Chip>,
+        title: open === 0 ? "Every field is settled" : open != null ? <>Settle <b className="num">{fmtInt(open)}</b> open field{open === 1 ? "" : "s"}</> : "Settle open fields",
+        to: `/d/${ds.id}/team`, action: open === 0 ? "Review and finalize" : "Settle fields",
+        body: open === 0
+          ? <>Every disagreement has a team decision. Finalize when you're ready.</>
+          : <>Every assessment is in. Compare them side by side, settle where they differ, then finalize.</>,
+      });
+    } else if (stage === "review" && can(me, "comment")) {
+      // Everyone else hears that review opened: they can follow it and comment on the open fields.
+      const open = ds.review_open;
+      out.push({
+        key: `review-${ds.id}`, ds, edge: "team", chip: <Chip tone="team" icon="users">Team review</Chip>,
+        title: "Team review is open", to: `/d/${ds.id}/team`, action: "See the review",
+        body: <>Every assessment is in{open ? <>; {fmtInt(open)} field{open === 1 ? "" : "s"} still open</> : null}. A lead settles where assessors differ; you can comment.</>,
       });
     }
     const best = ds.best_run;
     if (best && !best.chosen && can(me, "chooseModel")) {
       out.push({
-        key: `choose-${ds.id}`, ds, edge: "var(--good)", chip: <Chip tone="good">{fmtInt(ds.run_count ?? 0)} run{ds.run_count === 1 ? "" : "s"}</Chip>,
+        key: `choose-${ds.id}`, ds, edge: "good", chip: <Chip tone="good">{fmtInt(ds.run_count ?? 0)} run{ds.run_count === 1 ? "" : "s"}</Chip>,
         title: "Mark a chosen model", to: `/d/${ds.id}/experiments/${best.experiment_id}?tab=runs&run=${best.run_id}`, action: "Compare runs",
         body: <>Best on validation: {best.model_label}{best.value !== null ? <>, {metricLabel(best.metric ?? "")} {fmtNum(best.value, 3)}</> : null}. No model chosen yet.</>,
       });
@@ -377,24 +400,42 @@ function WaitingCard({ w, phone }: { w: Waiting; phone: boolean }) {
   const where = <>{w.ds.name} · {w.ds.baseline?.label}</>;
   if (phone) {
     return (
-      <Link to={w.to} className="card home-wait phone" style={{ borderTopColor: w.edge }}>
+      <Link to={w.to} className={`card home-wait phone edge-${w.edge}`}>
         <span className="home-wait-head"><b>{w.title}</b><Icon name="chevron-right" className="muted" /></span>
         <span className="secondary">{w.ds.baseline?.setup ? w.ds.name : where}</span>
-        {w.progress && <ProgressBar value={w.progress.value} max={w.progress.max} color="var(--lens-private)" label={`${w.title}: ${w.ds.name}`} />}
-        {w.progress && <span className="num muted small-text">{fmtInt(w.progress.value)} of {fmtInt(w.progress.max)} · {fmtInt(w.progress.max - w.progress.value)} left</span>}
+        {w.progress && <ProgressBar value={w.progress.value} max={w.progress.max} color="var(--lens-private)" label={`Your assessment: ${w.ds.name}`} />}
+        {w.progress && <span className="num muted small-text">{fmtInt(w.progress.value)} of {fmtInt(w.progress.max)} · {fmtInt(w.progress.max - w.progress.value)} left{submittedNote(w.ds)}</span>}
       </Link>
     );
   }
   return (
-    <article className="card home-wait" style={{ borderTopColor: w.edge }}>
+    <article className={`card home-wait edge-${w.edge}`}>
       <div className="row home-wait-where">{w.chip}<span className="secondary">{w.ds.baseline?.setup ? w.ds.name : where}</span></div>
-      <div className="stack" style={{ gap: 6 }}>
+      <div className="stack home-gap-6">
         <h3>{w.title}</h3>
-        {w.progress && <ProgressBar value={w.progress.value} max={w.progress.max} color="var(--lens-private)" label={`${w.title}: ${w.ds.name}`} />}
+        {w.progress && <ProgressBar value={w.progress.value} max={w.progress.max} color="var(--lens-private)" label={`Your assessment: ${w.ds.name}`} />}
         <p className="num secondary">{w.body}</p>
       </div>
       <div><Link className={`btn${w.primary ? " primary" : ""}`} to={w.to}>{w.action}<Icon name="arrow-right" /></Link></div>
     </article>
+  );
+}
+
+/** Each target with how it is predicted ("classes", "number", "bands"), or "suggested" while nobody has decided. */
+function TargetNames({ ds }: { ds: Dataset }) {
+  const kinds = ds.target_kinds ?? {};
+  return (
+    <span className="home-target-names">
+      {ds.target_columns.map((t) => {
+        const kind = kinds[t];
+        const note = ds.target_kinds_suggested ? "suggested" : kind;
+        return (
+          <span key={t} className="home-target-name" title={kind ? `${t}: predicted as ${kind}${ds.target_kinds_suggested ? " (the suggestion)" : ""}` : t}>
+            {t}{note && <span className="muted"> · {note}</span>}
+          </span>
+        );
+      })}
+    </span>
   );
 }
 
@@ -436,7 +477,7 @@ function AssessmentCell({ ds }: { ds: Dataset }) {
     return (
       <div className="stack home-assess" title={title}>
         <ProgressBar value={mine.reviewed} max={total} color="var(--lens-private)" label={`Your assessment of ${ds.name}`} />
-        <span className="num small-text secondary">You {fmtInt(mine.reviewed)}/{fmtInt(total)}{scope}</span>
+        <span className="num small-text secondary">You {fmtInt(mine.reviewed)}/{fmtInt(total)}{scope}{submittedNote(ds)}</span>
       </div>
     );
   }
@@ -445,9 +486,10 @@ function AssessmentCell({ ds }: { ds: Dataset }) {
   if (stage === "finalized" || reviewed >= total) {
     const word = stage === "finalized" || stage === "review" ? "settled" : "assessed";
     return (
-      <span title={title} className="row" style={{ gap: 6 }}>
+      <span title={title} className="row home-gap-6">
         <Chip tone="good" icon="check">{partial ? `${fmtInt(total)} reopened · ${word}` : `${fmtInt(total)} of ${fmtInt(total)} ${word}`}</Chip>
         {stage === "assessing" && mine?.submitted && <Chip tone="good" title="You submitted your assessment">Submitted</Chip>}
+        {stage === "assessing" && ds.assessors && <span className="num small-text secondary">{submittedNote(ds).slice(3)}</span>}
       </span>
     );
   }
@@ -455,7 +497,7 @@ function AssessmentCell({ ds }: { ds: Dataset }) {
     <div className="stack home-assess" title={title}>
       <ProgressBar value={reviewed} max={total} color={stage === "review" ? "var(--lens-team)" : "var(--good)"} label={`Assessment of ${ds.name}`} />
       <span className="num small-text secondary">
-        {fmtInt(reviewed)} of {fmtInt(total)}{scope}{mine?.submitted ? " · you submitted" : ""}
+        {fmtInt(reviewed)} of {fmtInt(total)}{scope}{mine?.submitted ? " · you submitted" : ""}{submittedNote(ds)}
       </span>
     </div>
   );
@@ -470,8 +512,8 @@ function ResultCell({ ds, compact }: { ds: Dataset; compact?: boolean }) {
     const score = <span className="num home-score">{fmtNum(best.value, 3)} <span>{metricLabel(best.metric ?? "")}</span></span>;
     if (compact) return score;
     return (
-      <div className="stack" style={{ gap: 2 }} title={`${best.chosen ? "Chosen model" : "Best on validation"} · validation score`}>
-        <span className="row" style={{ gap: 6 }}>{score}{best.chosen && <Chip tone="good">Chosen</Chip>}</span>
+      <div className="stack home-gap-2" title={`${best.chosen ? "Chosen model" : "Best on validation"} · validation score`}>
+        <span className="row home-gap-6">{score}{best.chosen && <Chip tone="good">Chosen</Chip>}</span>
         <Link className="small-text" to={`/d/${ds.id}/experiments/${best.experiment_id}?tab=runs&run=${best.run_id}`} onClick={(e) => e.stopPropagation()}>
           {best.model_label} · {best.experiment_name}
         </Link>
@@ -484,7 +526,7 @@ function ResultCell({ ds, compact }: { ds: Dataset; compact?: boolean }) {
   }
   if (compact) return null;
   return (
-    <div className="stack" style={{ gap: 2, alignItems: "flex-start" }} title={exp}>
+    <div className="stack home-gap-2 home-start" title={exp}>
       <StatusBadge status={run.status} />
       <Link className="small-text" to={`/d/${ds.id}/experiments`} onClick={(e) => e.stopPropagation()}>{run.model_label ?? run.model}</Link>
     </div>
@@ -493,12 +535,15 @@ function ResultCell({ ds, compact }: { ds: Dataset; compact?: boolean }) {
 
 function Processing({ ds, compact }: { ds: Dataset; compact?: boolean }) {
   const label = STATUS_LABEL[ds.status] ?? ds.status;
+  const step = STATUS_STEP[ds.status];
   return (
     <div className={`home-processing${compact ? " compact" : ""}`}>
       {!compact && <span className="home-dot" aria-hidden="true" />}
       {!compact && <b>{label}</b>}
       <ProgressBar value={ds.progress} max={1} label={`${label} ${ds.name}`} className="home-proc-bar" />
-      <span className="num secondary">{compact ? `${label} · ` : ""}{ds.status_message ?? label} · {fmtPct(ds.progress, 0)}</span>
+      <span className="num secondary">
+        {compact ? `${label} · ` : ""}{step ? `Step ${step} of ${STEPS} · ` : ""}{ds.status_message ?? label} · {fmtPct(ds.progress, 0)}
+      </span>
       {!compact && <span className="muted">Opens when profiling finishes</span>}
     </div>
   );
@@ -569,7 +614,7 @@ export function DatasetsPage() {
       "the raw table",
     ].filter(Boolean);
     const ok = await confirmDialog({
-      title: `Delete ${ds.name}?`, confirm: "Delete", danger: true,
+      title: `Delete ${ds.name}?`, confirm: "Delete dataset", cancel: "Keep it", danger: true,
       body: <p>This removes {parts.join(", ")}. Its baselines, experiments and runs go too. MLflow keeps its own copies. It can't be undone.</p>,
     });
     if (!ok) return;
@@ -667,7 +712,7 @@ export function DatasetsPage() {
       <input ref={fileInput} type="file" accept=".csv,.parquet,.pq,.txt" hidden
         onChange={(e) => { void upload.start(e.target.files?.[0]).then((ds) => ds && uploaded(ds)); e.target.value = ""; }} />
       <div className="home-head">
-        <div className="stack" style={{ gap: 4 }}>
+        <div className="stack home-gap-4">
           <h1>Datasets</h1>
           {data && rows.length > 0 && <p className="secondary num">{summary}</p>}
         </div>
@@ -737,7 +782,7 @@ export function DatasetsPage() {
                     {ready && (
                       <span className="home-item-stage">
                         <StageBar stage={stage} />
-                        {stage === "setup" || !ds.baseline ? "Needs a baseline" : `${STAGE_LABEL[stage!]} · ${ds.baseline.label}`}
+                        {stage === "setup" || !ds.baseline ? "Needs a baseline" : `${STAGE_LABEL[stage!]} · ${ds.baseline.label}${submittedNote(ds, true)}`}
                         {warnings(ds)}
                       </span>
                     )}
@@ -804,18 +849,18 @@ export function DatasetsPage() {
                           ) : (
                             <>
                               <td>
-                                <div className="row" style={{ gap: 8, flexWrap: "nowrap", alignItems: "flex-start" }}>
+                                <div className="row home-stage-row">
                                   <StageCell ds={ds} />
                                   {warnings(ds)}
                                 </div>
                               </td>
                               <td className="home-target">
                                 <span ref={targetFor === ds.id ? targetAnchor : undefined} className="home-target-anchor">
-                                  {!editor && (ds.target_columns.length ? ds.target_columns.map((t) => <code key={t}>{t}</code>) : <span className="muted">None</span>)}
+                                  {!editor && (ds.target_columns.length ? <TargetNames ds={ds} /> : <span className="muted">None</span>)}
                                   {editor && (ds.target_columns.length ? (
                                     <button type="button" className="ghost target-chips" title="Change targets" aria-expanded={targetFor === ds.id}
                                       onClick={(e) => { e.stopPropagation(); setTargetFor(targetFor === ds.id ? null : ds.id); }}>
-                                      {ds.target_columns.map((t) => <code key={t}>{t}</code>)}
+                                      <TargetNames ds={ds} />
                                     </button>
                                   ) : (
                                     <button type="button" className="chip attention on" aria-expanded={targetFor === ds.id}

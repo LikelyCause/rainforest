@@ -279,13 +279,15 @@ def snapshot(conn, dataset_id: int, src=None, family: str | None = None, targets
     }
 
 
-def finalize(conn, recipe: dict, user_id: int) -> dict:
+def finalize(conn, recipe: dict, user_id: int, review_summary: dict | None = None) -> dict:
+    """Freeze the team decision as the version's snapshot, with how its team review went (`review_summary`), which
+    can't be told from the snapshot later."""
     return conn.execute(
         f"""UPDATE meta.recipes SET phase = 'finalized', finalized_by = %s, finalized_at = now(), snapshot = %s,
-                   schema_fingerprint = %s
+                   schema_fingerprint = %s, review_summary = %s
              WHERE id = %s RETURNING {RECIPE_COLS}""",
         (user_id, jsonb(snapshot(conn, recipe["dataset_id"], family=recipe["family"])),
-         schema_fingerprint(conn, recipe["dataset_id"]),
+         schema_fingerprint(conn, recipe["dataset_id"]), None if review_summary is None else jsonb(review_summary),
          recipe["id"]),
     ).fetchone()
 

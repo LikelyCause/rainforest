@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
@@ -15,6 +15,7 @@ import { toast } from "../toast";
 import type { BaselineLine, Dataset, FamilyKey, RecipeVersion } from "../types";
 import { FAMILIES } from "../baselines";
 import { PhaseBadge, useInvalidateTeam } from "./DatasetTeamPage";
+import { BaselineTabs } from "./BaselinePage";
 
 export function BaselinesPage() {
   const ds = useDatasetContext();
@@ -25,6 +26,8 @@ export function BaselinesPage() {
   // The Baseline tab links here to start another model type (?start=linear) or a new version (?new=tree).
   const startFamily = FAMILIES.find((f) => f === params.get("start"));
   const newFamily = FAMILIES.find((f) => f === params.get("new"));
+  // ?v=<recipe id>: the version switcher (or Browse's way back) brings that version into view.
+  const focus = Number(params.get("v")) || null;
   const [starting, setStarting] = useState(Boolean(startFamily));
   const clearParam = (k: string) => { if (params.has(k)) { const n = new URLSearchParams(params); n.delete(k); setParams(n, { replace: true }); } };
   const lead = me?.role === "lead";
@@ -35,8 +38,8 @@ export function BaselinesPage() {
   const all = (lines.data ?? []).flatMap((l) => l.versions);
   return (
     <div className="page bls-page">
+      <BaselineTabs ds={ds} />
       <div className="bl-title">
-        <Link to={`/d/${ds.id}/baseline`} className="small-text bls-back"><Icon name="arrow-left" size={14} />Baseline</Link>
         <h1>Versions and compare</h1>
         <p className="secondary">
           A baseline is the team's agreed preparation of this dataset for one model type. Each is assessed blind, reviewed
@@ -61,7 +64,7 @@ export function BaselinesPage() {
         </Banner>
       )}
       {(lines.data ?? []).map((l) => (
-        <BaselineCard key={l.family} ds={ds} line={l} canChange={Boolean(lead && t?.recipe.phase === "finalized" && l.latest_finalized_id)}
+        <BaselineCard key={l.family} ds={ds} line={l} focus={focus} canChange={Boolean(lead && t?.recipe.phase === "finalized" && l.latest_finalized_id)}
           canRename={can(me, "renameBaseline") && !cur?.setup} startOpen={newFamily === l.family} onClose={() => clearParam("new")} />
       ))}
       {all.length > 1 && <Diff ds={ds} versions={all} />}
@@ -69,8 +72,8 @@ export function BaselinesPage() {
   );
 }
 
-function BaselineCard({ ds, line, canChange, canRename, startOpen, onClose }: {
-  ds: Dataset; line: BaselineLine; canChange: boolean; canRename: boolean; startOpen?: boolean; onClose?: () => void;
+function BaselineCard({ ds, line, focus, canChange, canRename, startOpen, onClose }: {
+  ds: Dataset; line: BaselineLine; focus: number | null; canChange: boolean; canRename: boolean; startOpen?: boolean; onClose?: () => void;
 }) {
   const [changing, setChanging] = useState(Boolean(startOpen));
   const [renaming, setRenaming] = useState(false);
@@ -79,19 +82,19 @@ function BaselineCard({ ds, line, canChange, canRename, startOpen, onClose }: {
     <section className="card stack" aria-label={`${line.name ?? line.label} baseline`}>
       <div className="card-head">
         {renaming ? <RenameBaseline ds={ds} line={line} onDone={() => setRenaming(false)} /> : (
-          <h2 className="row" style={{ gap: 8 }}>
+          <h2 className="row bl-gap-8">
             {line.name ?? `${line.label} baseline`}
             {line.name && <Chip>{line.label}</Chip>}
           </h2>
         )}
-        <span className="row" style={{ gap: 12 }}>
+        <span className="row bl-gap-12">
           {canRename && !renaming && (
             <button type="button" className="ghost small" onClick={() => setRenaming(true)}>{line.name ? "Rename" : "Name it"}</button>
           )}
           <span className="muted small-text">{line.versions.length} version{line.versions.length === 1 ? "" : "s"}</span>
         </span>
       </div>
-      <History ds={ds} versions={line.versions} />
+      <History ds={ds} versions={line.versions} focus={focus} />
       {canChange && latest && (changing ? <NewVersion ds={ds} parent={latest} onCancel={() => { setChanging(false); onClose?.(); }} /> : (
         <div className="row">
           <span className="secondary grow">{latest.label} is finalized and frozen. To change it, start v{line.versions[0].version + 1} and pick the fields to reopen.</span>
@@ -115,11 +118,11 @@ function RenameBaseline({ ds, line, onDone }: { ds: Dataset; line: BaselineLine;
     },
   });
   return (
-    <form className="stack grow" style={{ gap: 6 }} onSubmit={(e) => { e.preventDefault(); save.mutate(); }}
+    <form className="stack grow bl-gap-6" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}
       onKeyDown={(e) => e.key === "Escape" && onDone()}>
-      <div className="row" style={{ gap: 8 }}>
+      <div className="row bl-gap-8">
         <input autoFocus aria-label={`Name of the ${line.label} baseline`} value={name} maxLength={60} placeholder={`${line.label} baseline`}
-          onChange={(e) => setName(e.target.value)} style={{ maxWidth: 360 }} />
+          onChange={(e) => setName(e.target.value)} className="bls-name-input" />
         <button type="submit" className="primary" disabled={save.isPending}>Save</button>
         <button type="button" className="ghost" onClick={onDone}>Cancel</button>
       </div>
@@ -128,19 +131,36 @@ function RenameBaseline({ ds, line, onDone }: { ds: Dataset; line: BaselineLine;
   );
 }
 
-function History({ ds, versions }: { ds: Dataset; versions: RecipeVersion[] }) {
+/** "30 agreed · 6 settled in review · 1 kept as it was", from what the version's team review left. */
+function reviewText(v: RecipeVersion): string | null {
+  const r = v.review;
+  if (!r) return null;
+  const parts = [`${fmtInt(r.adopted)} agreed`];
+  if (r.disagreements > 0) parts.push(r.settled == null ? `${fmtInt(r.disagreements)} disagreed` : `${fmtInt(r.settled)} settled in review`);
+  if (r.open_at_finalize) parts.push(`${fmtInt(r.open_at_finalize)} kept as ${r.open_at_finalize === 1 ? "it was" : "they were"}`);
+  return parts.join(" · ");
+}
+
+function History({ ds, versions, focus }: { ds: Dataset; versions: RecipeVersion[]; focus: number | null }) {
+  const focused = useRef<HTMLTableRowElement>(null);
+  const has = versions.some((v) => v.id === focus);
+  useEffect(() => { if (has) focused.current?.scrollIntoView({ block: "center" }); }, [has]);
   return (
     <div className="table-wrap" aria-label="Version history">
       <table className="data">
-        <thead><tr><th>Version</th><th>Phase</th><th>Started</th><th>Finalized</th><th>Fields worked</th><th>Built from</th><th aria-label="Browse" /></tr></thead>
+        <thead><tr><th>Version</th><th>Phase</th><th>Started</th><th>Finalized</th><th>Fields worked</th><th>Team review</th><th>Built from</th><th aria-label="Browse" /></tr></thead>
         <tbody>
           {versions.map((v) => (
-            <tr key={v.id}>
+            <tr key={v.id} ref={v.id === focus ? focused : undefined} className={v.id === focus ? "bls-focus" : undefined}
+              aria-current={v.id === focus ? "true" : undefined}>
               <td><b>v{v.version}</b></td>
               <td><PhaseBadge phase={v.phase} /></td>
               <td title={fmtDate(v.created_at)}>{v.created_by_name ?? "—"} · {fmtAgo(v.created_at)}</td>
               <td title={fmtDate(v.finalized_at)}>{v.finalized_at ? `${v.finalized_by_name ?? "—"} · ${fmtAgo(v.finalized_at)}` : <span className="muted">—</span>}</td>
-              <td className="num">{v.reopened == null ? "all fields" : `${fmtInt(v.reopened)} reopened`}</td>
+              <td className="num">{v.reopened == null ? `${fmtInt(ds.column_count)} fields` : `${fmtInt(v.reopened)} reopened`}</td>
+              <td className="num secondary" title={v.review && v.review.settled == null ? "Finalized before the review was recorded: what the lead settled isn't known" : undefined}>
+                {reviewText(v) ?? <span className="muted">—</span>}
+              </td>
               <td className="secondary">{builtFrom(v)}</td>
               <td>{v.phase === "finalized" && (
                 <Link className="btn ghost small" to={`/d/${ds.id}/review?view=baseline:${v.id}`} title="Its fields and decisions, read-only">Browse</Link>
@@ -169,7 +189,7 @@ function Diff({ ds, versions }: { ds: Dataset; versions: RecipeVersion[] }) {
   return (
     <section className="card stack" aria-label="Compare versions">
       <div className="card-head"><h2>Compare versions</h2><span className="muted small-text">Team decisions and settings only (decisions only across model types); assessments are never part of a version.</span></div>
-      <div className="row" style={{ alignItems: "flex-end" }}>
+      <div className="row bls-pick">
         {pick(a, setA, "From")}
         {pick(b, setB, "To")}
       </div>
@@ -184,7 +204,7 @@ function Diff({ ds, versions }: { ds: Dataset; versions: RecipeVersion[] }) {
               )}
               {d.fields.map((f) => (
                 <tr key={f.name}>
-                  <td className="mono">{f.name}</td>
+                  <td>{f.name}</td>
                   <td>
                     {f.change === "changed" ? (
                       <ul className="plain">{f.changes.map((c) => <li key={`${c.family}:${c.key}`}>{fmtChange(c, familyShort)}</li>)}</ul>
@@ -247,14 +267,14 @@ function NewVersion({ ds, parent, onCancel }: { ds: Dataset; parent: RecipeVersi
         <button type="button" className="small" onClick={() => setChosen((s) => new Set([...s, ...visible.map((f) => f.id)]))}>Choose all {visible.length} shown</button>
         <button type="button" className="small ghost" disabled={chosen.size === 0} onClick={() => setChosen(new Set())}>Clear</button>
       </div>
-      <div className="table-wrap" style={{ maxHeight: 320 }}>
+      <div className="table-wrap bls-reopen">
         <table className="data" aria-label="Fields">
-          <thead><tr><th aria-label="Reopen" style={{ width: 36 }} /><th>Field</th><th>Type</th><th>Decision</th></tr></thead>
+          <thead><tr><th aria-label="Reopen" className="bls-check" /><th>Field</th><th>Type</th><th>Decision</th></tr></thead>
           <tbody>
             {visible.map((f) => (
-              <tr key={f.id} onClick={() => toggle(f.id)} style={{ cursor: "pointer" }}>
+              <tr key={f.id} onClick={() => toggle(f.id)} className="clickable">
                 <td><input type="checkbox" aria-label={`Reopen ${f.name}`} checked={chosen.has(f.id)} onChange={() => toggle(f.id)} onClick={(e) => e.stopPropagation()} /></td>
-                <td className="mono">{f.name}</td>
+                <td>{f.name}</td>
                 <td>{TYPE_SHORT[f.semantic_type] ?? f.semantic_type}</td>
                 <td>{f.action}</td>
               </tr>
@@ -262,7 +282,7 @@ function NewVersion({ ds, parent, onCancel }: { ds: Dataset; parent: RecipeVersi
           </tbody>
         </table>
       </div>
-      <div className="row" style={{ justifyContent: "flex-end" }}>
+      <div className="row bls-end">
         <button type="button" className="ghost" onClick={onCancel}>Cancel</button>
         <button type="button" className="primary" disabled={start.isPending} onClick={() => start.mutate()}>{startLabel(next, chosen.size)}</button>
       </div>
