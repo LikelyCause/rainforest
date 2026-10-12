@@ -4,7 +4,7 @@ import { api } from "../api";
 import { fmtInt, fmtPct } from "../format";
 import { changed, describeSettings, fmtSetting, isVisible, prefillValues, problems, restore, runFields, suitsTargets } from "../settings";
 import { combinations, parseSweep, SWEEP_MAX } from "../sweep";
-import { pickExport } from "../runs";
+import { modelDescription, modelLabel, pickExport } from "../runs";
 import type { ExportJob, ModelRun, ModelSetting, SettingValue, TrainPrefill } from "../types";
 import { Chip, Icon, Segmented } from "./kit";
 import { ModelSettings } from "./ModelSettings";
@@ -192,7 +192,7 @@ export function TrainPanel({ exports, request, onStarted }: {
     },
     onSuccess: (runs) => {
       qc.setQueryData<ModelRun[]>(["runs", e!.dataset_id, e!.experiment_id], (old) => [...[...runs].reverse(), ...(old ?? []).filter((r) => !runs.some((x) => x.id === r.id))]);
-      onStarted(runs, e!, selected?.label ?? model);
+      onStarted(runs, e!, selected ? modelLabel(selected, kinds) : model);
     },
   });
   if (!e) return null;
@@ -245,14 +245,14 @@ export function TrainPanel({ exports, request, onStarted }: {
             </label>
             <label className="field">Model
               <select value={model} onChange={(ev) => choose({ model: ev.target.value })}>
-                {shown.map((m) => <option key={m.key} value={m.key} disabled={!m.compatible}>{m.label}{m.compatible ? "" : " — not compatible"}</option>)}
+                {shown.map((m) => <option key={m.key} value={m.key} disabled={!m.compatible}>{modelLabel(m, kinds)}{m.compatible ? "" : " — not compatible"}</option>)}
                 {planned.length > 0 && (
                   <optgroup label="Planned">
                     {planned.map((m) => <option key={m.key} value={m.key} disabled>{m.label} (planned)</option>)}
                   </optgroup>
                 )}
               </select>
-              <span className="muted small-text">{selected?.compatible === false && selected.reason ? selected.reason : selected?.description}</span>
+              <span className="muted small-text">{selected?.compatible === false && selected.reason ? selected.reason : selected && modelDescription(selected, kinds)}</span>
             </label>
             <label className="field">Cross-validation
               <select value={cvFolds} onChange={(ev) => setCvFolds(Number(ev.target.value))}>
@@ -284,14 +284,14 @@ export function TrainPanel({ exports, request, onStarted }: {
             <Sweep catalog={catalog} values={values} kinds={kinds} axes={axes} onChange={setAxes} />
           </>
         ) : selected?.compatible && (
-          <section className="card"><span className="muted small-text">{selected.label}'s settings aren't in the app yet; it trains with its defaults.</span></section>
+          <section className="card"><span className="muted small-text">{modelLabel(selected, kinds)}'s settings aren't in the app yet; it trains with its defaults.</span></section>
         )}
       </div>
 
       <aside className="card stack train-summary" aria-labelledby="train-ready">
         <h2 id="train-ready">{blocked ? "Not ready yet" : "Ready to train"}</h2>
         <dl className="num">
-          <dt>Model</dt><dd>{selected?.label ?? "—"}</dd>
+          <dt>Model</dt><dd>{selected ? modelLabel(selected, kinds) : "—"}</dd>
           <dt>On</dt><dd>Export #{e.id}{split ? ` · ${fmtInt(split.train)} training rows` : ""}</dd>
           {order.length > 1 && <><dt>Chain</dt><dd>{order.join(" → ")}</dd></>}
           <dt>Changed</dt><dd>{[changedText === "defaults" && swept.length ? null : changedText, ...swept].filter(Boolean).join(" · ")}</dd>

@@ -89,7 +89,23 @@ class FirstPer(BaseModel):
     order: str | None = Field(None, max_length=500, description="The first by this field; default: file order")
 
 
-class ExportRequest(BaseModel):
+class RowRules(BaseModel):
+    """Which rows an export keeps, and how its split keeps related rows together."""
+    dedupe: bool = Field(False, description="Leave out exact duplicate rows (all columns equal), keeping the first")
+    exclude: list[ExcludeRule] = Field(default_factory=list, max_length=20)
+    first_per: FirstPer | None = None
+    group_by: str | None = Field(None, max_length=500, description="Keep each value's rows in one split and one CV fold")
+
+
+class ExportRowsRequest(RowRules):
+    recipe_id: int | None = Field(None, description="As for export-preview: the version whose targets count")
+    experiment_id: int | None = Field(None, description="As for export-preview: the experiment whose targets count")
+    valid_size: float = Field(0.15, ge=0, lt=0.5)
+    test_size: float = Field(0.15, ge=0, lt=0.5)
+    seed: int = 42
+
+
+class ExportRequest(RowRules):
     model_config = ConfigDict(protected_namespaces=())
     source: Literal["recipe", "assessment"] | None = Field(
         None, description="recipe: a finalized recipe version; assessment: your own assessment (needs experiment_id). "
@@ -102,10 +118,6 @@ class ExportRequest(BaseModel):
     test_size: float = Field(0.15, ge=0, lt=0.5)
     seed: int = 42
     fit_sample_rows: int = Field(500_000, ge=1_000, le=5_000_000)
-    dedupe: bool = Field(False, description="Leave out exact duplicate rows (all columns equal), keeping the first")
-    exclude: list[ExcludeRule] = Field(default_factory=list, max_length=20)
-    first_per: FirstPer | None = None
-    group_by: str | None = Field(None, max_length=500, description="Keep each value's rows in one split and one CV fold")
     chunk_rows: int = Field(200_000, ge=10_000, le=2_000_000)
 
 

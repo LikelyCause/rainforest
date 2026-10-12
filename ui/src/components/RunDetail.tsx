@@ -5,7 +5,7 @@ import { can } from "../can";
 import { useMe } from "../hooks";
 import { describeSettings } from "../settings";
 import { showError } from "../toast";
-import { whyFailed, type Split } from "../runs";
+import { runLabel, whyFailed, type Split } from "../runs";
 import { Banner, Chip, Icon, Segmented } from "./kit";
 import { histogramOption, rocOption, scatterOption } from "../charts";
 import { fmtInt, fmtMetric, fmtNum, fmtPct } from "../format";
@@ -478,7 +478,7 @@ export function RunDetail({ run, targets, kinds, onTrainAgain = null, onClose, s
   const settingsText = [describeSettings(params, settings), ...extra].filter((x) => x !== "defaults" || !extra.length).join(" · ");
   const metrics = run.metrics?.[split];
   const top = run.report?.top_features ?? {};
-  const label = run.report?.model_label ?? option?.label ?? run.model;
+  const label = runLabel(run, option);
   const trainAgain = onTrainAgain && settings ? () => onTrainAgain({
     exportId: run.export_id, model: run.model, order: run.report?.order ?? run.config?.order ?? [],
     values: { ...params, ...(run.config?.seed !== undefined ? { seed: run.config.seed } : {}),

@@ -30,6 +30,11 @@ class ModelSpec:
     cuda_params: dict[str, Any] | None = None  # set => the model can train on a CUDA GPU
     build_regressor: Callable[[dict[str, Any], int], Any] | None = None  # for targets predicted as numbers
     regressor_defaults: dict[str, Any] = field(default_factory=dict)
+    # The model's name and description when its regressor is a different method (ridge for logistic regression);
+    # None keeps `label` and `description` for number targets too, as a random forest is one name for both.
+    regressor_label: str | None = None
+    regressor_description: str | None = None
+    mixed_label: str | None = None  # a chain of class and number targets
 
     @property
     def devices(self) -> list[str]:
@@ -154,6 +159,9 @@ MODELS: dict[str, ModelSpec] = {
             description="Linear baseline; needs a linear-family export (scaled, imputed, one-hot). Numbers use ridge "
                         "regression.",
             build_regressor=_ridge, regressor_defaults={"alpha": 1.0},
+            regressor_label="Ridge regression", mixed_label="Logistic and ridge regression",
+            regressor_description="Linear baseline for numbers; needs a linear-family export (scaled, imputed, "
+                                  "one-hot). Class targets use logistic regression.",
         ),
         ModelSpec(
             "mlp", "MLP", "neural", False, _mlp,
@@ -165,6 +173,16 @@ MODELS: dict[str, ModelSpec] = {
     ]
 }
 DEFAULT_MODEL = "lightgbm"
+
+
+def label_for(spec: ModelSpec, kinds: list[str]) -> str:
+    """What a run of `spec` on targets of these kinds is called: "Ridge regression" when every target is a number,
+    "Logistic and ridge regression" for a chain of both. The model key stays the same (stored runs use it)."""
+    if spec.regressor_label is None or "regression" not in kinds:
+        return spec.label
+    if all(k == "regression" for k in kinds):
+        return spec.regressor_label
+    return spec.mixed_label or f"{spec.label} and {spec.regressor_label.lower()}"
 
 
 def get_model(key: str) -> ModelSpec:
@@ -320,6 +338,8 @@ def catalog() -> list[dict[str, Any]]:
     return [
         {"key": m.key, "label": m.label, "family": m.family, "handles_nan": m.handles_nan,
          "available": m.available, "description": m.description, "devices": m.devices, "planned": False,
+         "regressor_label": m.regressor_label, "regressor_description": m.regressor_description,
+         "mixed_label": m.mixed_label,
          "settings": [s.to_json() for s in model_params.settings_for(m.key) or []] or None}
         for m in MODELS.values()
     ] + [

@@ -53,8 +53,9 @@ from sklearn.multioutput import ClassifierChain
 from .. import bands
 from ..gpu import effective_device
 from . import crossval
+from .mlflow_log import MODEL_FILE
 from .registry import (DEFAULT_MODEL, MODELS, ModelSpec, catalog, compatibility, device_params, get_model,
-                       classifier_params, importances, order_problem, param_problems, regression_problem,
+                       classifier_params, importances, label_for, order_problem, param_problems, regression_problem,
                        regressor_params)
 
 log = logging.getLogger("train")
@@ -403,7 +404,7 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
             raise ValueError(f"Target {t!r} has only one class in the training split; a classifier needs at least two.")
         if absent := [c for k, c in enumerate(manifest["target_classes"][t]) if k not in seen]:
             missing_from_train[t] = absent
-    say(f"Fitting {spec.label} chain {' → '.join(order_names)} on {X_tr.shape[0]:,} rows × {X_tr.shape[1]:,} features"
+    say(f"Fitting {label_for(spec, kinds)} chain {' → '.join(order_names)} on {X_tr.shape[0]:,} rows × {X_tr.shape[1]:,} features"
         + (" on the GPU" if device == "cuda" else ""))
 
     def make_chain():
@@ -511,11 +512,11 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
 
     out_dir = out_dir or export_dir.parent.parent / "models" / f"export{export_dir.name}_{spec.key}_{int(time.time())}"
     out_dir.mkdir(parents=True, exist_ok=True)
-    joblib.dump(chain, out_dir / "classifier_chain.joblib", compress=3)
+    joblib.dump(chain, out_dir / MODEL_FILE, compress=3)  # one name on disk for either kind of chain
     report = {
         "export_dir": str(export_dir),
         "model": spec.key,
-        "model_label": spec.label,
+        "model_label": label_for(spec, kinds),
         "family": spec.family,
         "export_family": export_family,
         "order": order_names,

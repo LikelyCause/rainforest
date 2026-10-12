@@ -48,7 +48,7 @@ FAMILIES: dict[str, dict[str, Any]] = {
     },
     "linear": {
         "label": "Linear models",
-        "examples": "logistic regression",
+        "examples": "logistic or ridge regression",
         "handles_nan": False,
         "scale_invariant": False,
         "needs_onehot": True,

@@ -370,6 +370,20 @@ export interface SystemInfo {
   mlflow: boolean;
 }
 
+/** What the export's row rules leave to split (POST /export-rows): the file's rows, the rows the rules keep, the kept
+ * rows the split leaves out because a target is empty, what the split divides, and the groups it keeps together. */
+export interface ExportRows {
+  rows: number;
+  kept: number;
+  removed: Record<string, number>;
+  missing_target: number;
+  split_rows: number;
+  groups: number | null;
+  /** The exact counts the export's own split makes with the shares and seed asked for; null when it would refuse. */
+  split: { train: number; valid: number; test: number } | null;
+  split_error: string | null;
+}
+
 export interface ModelOption {
   key: string;
   label: string;
@@ -377,6 +391,11 @@ export interface ModelOption {
   handles_nan: boolean;
   available: boolean;
   description: string;
+  /** The name and description when every target is a number and the model trains a different method for them
+   * (ridge regression for logistic regression); `mixed_label` names a chain of both. Null: one name for both. */
+  regressor_label?: string | null;
+  regressor_description?: string | null;
+  mixed_label?: string | null;
   devices?: Device[];
   /** On the roadmap: listed, never trainable. */
   planned: boolean;

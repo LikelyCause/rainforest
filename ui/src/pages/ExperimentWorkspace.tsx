@@ -1,16 +1,16 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { useFields } from "../hooks";
+import { useDebounced, useFields } from "../hooks";
 import { Empty, ErrorAlert, InfoTip } from "../components/ui";
 import { Banner, Chip, Icon, ProgressBar, Segmented, StatusBadge, useDismiss } from "../components/kit";
 import { MlflowLink, RunDetail } from "../components/RunDetail";
 import { TrainPanel, type TrainRequest } from "../components/TrainPanel";
 import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtInt, fmtMetric, fmtNum, fmtPct } from "../format";
 import { toast } from "../toast";
-import { batchSummary, bestRuns, isActive, metricFor, runColumns, spreadFor, starTitle, whyFailed, type RunMetric, type Split } from "../runs";
-import { lastRowRules, NO_RULES, sourceLabel, type RowRules } from "../experiments";
+import { batchSummary, bestRuns, isActive, metricFor, runColumns, runLabel, spreadFor, starTitle, whyFailed, type RunMetric, type Split } from "../runs";
+import { lastRowRules, NO_RULES, rowsSentence, sourceLabel, splitPreview, type RowRules } from "../experiments";
 import { describeSettings } from "../settings";
 import type { Dataset, Experiment, ExportJob, ModelRun, SettingValue, TrainPrefill } from "../types";
 
@@ -49,7 +49,10 @@ function textWidth(text: string, el: HTMLElement | null): number {
   return measurer.measureText(text).width;
 }
 
-function SplitBar({ valid, test, rows }: { valid: number; test: number; rows: number | null }) {
+/** The split's shares, with each wide-enough segment's row count (`about` when the counts are an estimate). */
+function SplitBar({ valid, test, counts, about }: {
+  valid: number; test: number; counts: { train: number; valid: number; test: number } | null; about: boolean;
+}) {
   const train = 1 - valid - test;
   const bad = train < MIN_TRAIN;
   // Text on the amber and grey segments takes the page colour, so it reads in both themes.
@@ -68,7 +71,8 @@ function SplitBar({ valid, test, rows }: { valid: number; test: number; rows: nu
     { label: "valid", share: valid, color: "var(--warn)" },
     { label: "test", share: test, color: "var(--text-secondary)" },
   ].filter((s) => s.share > 0).map((s) => {
-    const text = `${s.label} ${fmtPct(s.share, 0)}${rows && s.share >= 0.3 ? ` · ${fmtInt(Math.round(rows * s.share))}` : ""}`;
+    const n = counts?.[s.label as "train" | "valid" | "test"];
+    const text = `${s.label} ${fmtPct(s.share, 0)}${n !== undefined && s.share >= 0.3 ? ` · ${about ? "about " : ""}${fmtInt(n)}` : ""}`;
     // The text's width plus the segment's padding; before the bar is measured, the old 10% rule.
     const fits = width ? s.share * width >= textWidth(text, bar.current) + 16 : s.share >= 0.1;
     return { ...s, text, fits };
@@ -161,6 +165,17 @@ function BuildPanel({ datasetId, family, rows, x }: { datasetId: number; family:
   const splitError = !Number.isFinite(v) || !Number.isFinite(t) || v < 0 || t < 0 ? "Shares must be numbers of 0% or more."
     : v >= 0.5 || t >= 0.5 ? "Validation and test must each stay under 50%."
     : train < MIN_TRAIN ? `Train would be ${fmtPct(train, 0)}; keep it at ${MIN_TRAIN * 100}% or more.` : null;
+  // What the row rules leave to split, counted on the server by the export's own code once typing settles.
+  // The shares and seed go too, so the server splits the rows exactly as the export will (groups included).
+  const ask = JSON.stringify({ ...rulesBody(rules), ...(splitError ? {} : { valid_size: v, test_size: t, seed }) });
+  const askKey = useDebounced(ask, 400);
+  const counted = useQuery({
+    queryKey: ["exportRows", datasetId, x.id, askKey], queryFn: () => api.exportRows(datasetId, JSON.parse(askKey), x.id),
+    placeholderData: keepPreviousData, staleTime: 60_000,
+  });
+  const grouped = Boolean(rules.group_by);
+  const { counts, about } = splitError ? { counts: null, about: false } : splitPreview(counted.data, rows, v, t, grouped);
+  const counting = counted.isFetching || askKey !== ask;
   const maxFit = rows ?? 500_000;
   const fit = Math.min(fitRows ?? maxFit, 5_000_000);
 
@@ -221,7 +236,16 @@ function BuildPanel({ datasetId, family, rows, x }: { datasetId: number; family:
       </div>
       <div className="stack" style={{ gap: 10 }}>
         <h2>Split</h2>
-        <SplitBar valid={Math.max(v, 0) || 0} test={Math.max(t, 0) || 0} rows={rows} />
+        <SplitBar valid={Math.max(v, 0) || 0} test={Math.max(t, 0) || 0} counts={counts} about={about} />
+        {counted.data && (
+          <p className="small-text secondary num split-rows" aria-live="polite">
+            {rowsSentence(counted.data)}.
+            {counts && <> {about ? "About t" : "T"}rain {fmtInt(counts.train)} · valid {fmtInt(counts.valid)} · test {fmtInt(counts.test)}{grouped && counted.data.groups !== null
+              ? `, with each of the ${fmtInt(counted.data.groups)} values of ${rules.group_by} in one split` : ""}.</>}
+            {counting && <span className="muted"> Counting…</span>}
+          </p>
+        )}
+        <ErrorAlert error={counted.error} />
         <div className="row" style={{ gap: 12, alignItems: "flex-end" }}>
           <label className="field">Validation
             <span className="value-pct"><input type="number" min={0} max={45} step={5} value={valid} onChange={(e) => setValid(e.target.value)} style={{ width: 80 }} /> %</span>
@@ -408,6 +432,7 @@ export function useJobToasts({ x, exports, runs, fresh, canAdd, base }: {
     // A finished export is the newest to compare decisions with (and to take row rules from).
     if (exportDone) {
       qc.invalidateQueries({ queryKey: ["exportPreview"] });
+      qc.invalidateQueries({ queryKey: ["exportRows"] });
       qc.invalidateQueries({ queryKey: ["exports"] });
     }
     // A batch this page started: say so once all of it is through.
@@ -548,7 +573,6 @@ function RunsTable({ e, runs, targets, kinds, split, fresh, selectedId, onSelect
 }) {
   const best = useMemo(() => bestRuns(runs, targets), [runs, targets]);
   const models = useQuery({ queryKey: ["exportModels", e.id], queryFn: () => api.modelsForExport(e.id), staleTime: 60_000 });
-  const labels = Object.fromEntries((models.data ?? []).map((m) => [m.key, m.label]));
   const settingsOf = (model: string) => models.data?.find((m) => m.key === model)?.settings;
   const multi = targets.length > 1;
   const cols = (["primary", "pr", "secondary"] as const).flatMap((m) => targets.flatMap((t) =>
@@ -585,7 +609,7 @@ function RunsTable({ e, runs, targets, kinds, split, fresh, selectedId, onSelect
         <tbody>
           {runs.map((r) => {
             const order = r.report?.order ?? r.config?.order ?? targets;
-            const label = r.report?.model_label ?? labels[r.model] ?? r.model;
+            const label = runLabel(r, models.data?.find((m) => m.key === r.model));
             const on = selectedId === r.id;
             const params = (r.config?.params ?? {}) as Record<string, SettingValue>;
             return (

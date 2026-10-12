@@ -601,6 +601,36 @@ def row_rules(parquet_path: Path, config: dict[str, Any]) -> tuple[np.ndarray | 
     return keep, groups, removed
 
 
+def rows_after_rules(parquet_path: Path, config: dict[str, Any], targets: list[str],
+                     target_tasks: dict[str, dict] | None = None) -> dict[str, Any]:
+    """How many rows an export with these row rules would split, by the export's own code: the file's rows, the rows
+    the rules keep (`row_rules`), what each rule removed, the kept rows the split drops because a target is missing,
+    how many groups the split rows form when it keeps a field's rows together, and `split`: the exact train, valid
+    and test counts from the export's own `prepare_targets` with the config's shares and seed (null with
+    `split_error` when the export would refuse the targets)."""
+    keep, groups, removed = row_rules(parquet_path, config)
+    total = pl.scan_parquet(parquet_path).select(pl.len()).collect().item() if keep is None else len(keep)
+    kept = np.ones(total, dtype=bool) if keep is None else keep
+    labeled = np.ones(total, dtype=bool)
+    if targets:
+        y = pl.read_parquet(parquet_path, columns=targets)
+        for c in y.columns:
+            col = y[c].fill_nan(None) if y[c].dtype.is_float() else y[c]
+            labeled &= col.is_not_null().to_numpy()
+    rows = kept & labeled
+    split, split_error = None, None
+    if targets:
+        try:
+            codes = prepare_targets(parquet_path, targets, target_tasks or {}, config, int(config.get("seed", 42)))[3]
+            split = {k: int((codes == v).sum()) for k, v in SPLIT_CODES.items()}
+        except ValueError as exc:  # the export would fail the same way; the preview's blocking list says why
+            split_error = str(exc)
+    return {"rows": int(total), "kept": int(kept.sum()), "removed": removed,
+            "missing_target": int((kept & ~labeled).sum()), "split_rows": int(rows.sum()),
+            "groups": None if groups is None else int(np.unique(groups[rows]).size),
+            "split": split, "split_error": split_error}
+
+
 def prepare_targets(parquet_path: Path, targets: list[str], target_tasks: dict[str, dict], config: dict[str, Any],
                     seed: int):
     """Read, check and encode the targets, and split the rows. Class targets become codes; a number stays a float; bands

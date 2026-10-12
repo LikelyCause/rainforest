@@ -23,7 +23,8 @@ links to the dataset's MLflow experiment, filtered to its runs. `meta.model_runs
 
 - One MLflow experiment per dataset, named `rainforest/<dataset id>-<dataset name>`. Rainforest finds it again by its
   `rainforest.dataset_id` tag, so renaming a dataset keeps its experiment.
-- One MLflow run per model run, named `run <id> · <model label>`, such as `run 12 · LightGBM`.
+- One MLflow run per model run, named `run <id> · <model label>`, such as `run 12 · LightGBM` (or `run 13 · Ridge
+  regression` for the linear model on number targets).
 
 ## What each run records
 
@@ -51,7 +52,7 @@ Characters MLflow doesn't allow in a key become `_`.
 | Artifact | Contents |
 |---|---|
 | `report.json` | the run's report, the same file the API serves |
-| `model/classifier_chain.joblib` | the trained chain, the same file the API serves |
+| `model/classifier_chain.joblib` | the trained chain, the same file the API serves; `model/target_chain.joblib` when any target is a number |
 | `adjustments.json` | the baseline and the experiment's adjustments, field by field |
 | `preparation/manifest.json` | the export's manifest: every field's type and settings, the targets and the split |
 

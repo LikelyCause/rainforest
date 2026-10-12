@@ -22,10 +22,22 @@ os.environ.setdefault("MLFLOW_HTTP_REQUEST_MAX_RETRIES", "2")
 os.environ.setdefault("MLFLOW_HTTP_REQUEST_BACKOFF_FACTOR", "1")
 os.environ.setdefault("MLFLOW_DISABLE_AGENT_HINT", "1")
 
+# The fitted chain's name on disk, for either kind of chain (runs already stored keep it). What it's called when it
+# leaves the app, as a download or an MLflow artifact, says which kind it is: `model_file_name`.
 MODEL_FILE = "classifier_chain.joblib"
 REPORT_FILE = "report.json"
 _KEY_UNSAFE = re.compile(r"[^\w./\- :]")
 _PARAM_MAX = 6000
+
+
+def model_file_name(report: dict | None) -> str:
+    """`target_chain.joblib` when any target is a number, else `classifier_chain.joblib`."""
+    report = report or {}
+    kind = report.get("chain_kind")
+    if kind not in ("classifier_chain", "target_chain"):  # a report from before chain_kind: read its target kinds
+        numeric = "regression" in (report.get("target_kinds") or {}).values()
+        kind = "target_chain" if numeric else "classifier_chain"
+    return f"{kind}.joblib"
 
 
 def enabled() -> bool:
@@ -168,9 +180,10 @@ def log_run(run: dict, dataset_name: str, report: dict, model_dir: Path | None, 
         for i in range(0, max(len(params), len(metrics)), 100):
             client.log_batch(mlflow_run_id, metrics=metrics[i:i + 100], params=params[i:i + 100])
         if model_dir is not None:
-            for name, artifact_path in ((REPORT_FILE, None), (MODEL_FILE, "model")):
-                if (Path(model_dir) / name).exists():
-                    client.log_artifact(mlflow_run_id, str(Path(model_dir) / name), artifact_path)
+            if (Path(model_dir) / REPORT_FILE).exists():
+                client.log_artifact(mlflow_run_id, str(Path(model_dir) / REPORT_FILE))
+            if (Path(model_dir) / MODEL_FILE).exists():
+                _log_model_file(client, mlflow_run_id, Path(model_dir) / MODEL_FILE, model_file_name(report))
         manifest = Path(run["export_dir"]) / "manifest.json" if run.get("export_dir") else None
         if manifest is not None and manifest.exists():
             # Every field's preparation (type, imputation, transform, scaling, encoding), the split and the targets.
@@ -186,6 +199,24 @@ def log_run(run: dict, dataset_name: str, report: dict, model_dir: Path | None, 
             pass
         raise
     return experiment_id, mlflow_run_id
+
+
+def _log_model_file(client, mlflow_run_id: str, path: Path, name: str) -> None:
+    """Log the chain under `model/<name>`; MLflow names an artifact after its file, so a target chain goes through a
+    temporary link (or copy) carrying its own name."""
+    if path.name == name:
+        client.log_artifact(mlflow_run_id, str(path), "model")
+        return
+    import shutil
+    import tempfile
+
+    with tempfile.TemporaryDirectory(dir=path.parent) as tmp:
+        named = Path(tmp) / name
+        try:
+            os.link(path, named)
+        except OSError:
+            shutil.copyfile(path, named)
+        client.log_artifact(mlflow_run_id, str(named), "model")
 
 
 def error_message(exc: BaseException) -> str:

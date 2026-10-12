@@ -16,7 +16,7 @@ from ..auth import CurrentUser
 from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..modeling import mlflow_log
 from ..modeling import params as model_params
-from ..modeling.registry import (MODELS, PLANNED, catalog, compatibility, dry_fit_problem, order_problem,
+from ..modeling.registry import (MODELS, PLANNED, catalog, compatibility, dry_fit_problem, label_for, order_problem,
                                 param_problems, regression_problem)
 from ..schemas import RunRequest
 from .exports import visible_export
@@ -110,12 +110,13 @@ def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
             raise HTTPException(422, problem)
     with connection() as conn:
         experiments.require_writable(experiments.get_visible(conn, exp["experiment_id"], user), user)
+    # Named for its targets from the start ("Ridge regression" for numbers), so a queued or failed run reads right too.
     run = fetch_one(
         f"""INSERT INTO meta.model_runs (export_id, dataset_id, model, family, status, status_message, config, owner,
-                                         created_by, experiment_id)
-            VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s, %s, %s) RETURNING {RUN_COLS}""",
+                                         created_by, experiment_id, report)
+            VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s, %s, %s, %s) RETURNING {RUN_COLS}""",
         (export_id, exp["dataset_id"], spec.key, spec.family, jsonb(req.model_dump(exclude={"experiment_id"})),
-         jobs.owner_id(), user["id"], exp["experiment_id"]),
+         jobs.owner_id(), user["id"], exp["experiment_id"], jsonb({"model_label": label_for(spec, kinds)})),
     )
     jobs.submit(_run, run["id"], exp["output_dir"], req.model_dump())
     return run
@@ -179,13 +180,15 @@ def update_run(run_id: int, body: RunPatch, user: CurrentUser) -> dict:
 @router.get("/runs/{run_id}/files/{kind}")
 def download(run_id: int, kind: str, user: CurrentUser) -> FileResponse:
     run = get_run(run_id, user)
-    files = {"model": ("classifier_chain.joblib", "application/octet-stream"), "report": ("report.json", "application/json")}
+    # The file on disk keeps one name for either kind of chain; the download says which kind it is.
+    files = {"model": (mlflow_log.MODEL_FILE, mlflow_log.model_file_name(run["report"]), "application/octet-stream"),
+             "report": (mlflow_log.REPORT_FILE, mlflow_log.REPORT_FILE, "application/json")}
     if kind not in files:
         raise HTTPException(404, f"Unknown file {kind!r}")
     if run["status"] != "done":
         raise HTTPException(409, "Run is not finished")
-    name, media = files[kind]
-    path = Path(run["model_dir"]) / name
+    stored, name, media = files[kind]
+    path = Path(run["model_dir"]) / stored
     if not path.exists():
         raise HTTPException(410, "Model files were removed")
     return FileResponse(path, media_type=media, filename=f"run{run_id}_{run['model']}_{name}")

@@ -1,5 +1,26 @@
 import { fmtMetric } from "./format";
-import type { ModelRun } from "./types";
+import type { ModelOption, ModelRun } from "./types";
+
+type Named = Pick<ModelOption, "label" | "description" | "regressor_label" | "regressor_description" | "mixed_label">;
+
+/** A model's name for targets of these kinds, as the API's `registry.label_for`: the linear model is "Ridge
+ * regression" when every target is a number and "Logistic and ridge regression" for a chain of both. */
+export function modelLabel(m: Named, kinds: (string | undefined)[]): string {
+  if (!m.regressor_label || !kinds.includes("regression")) return m.label;
+  if (kinds.every((k) => k === "regression")) return m.regressor_label;
+  return m.mixed_label ?? `${m.label} and ${m.regressor_label.toLowerCase()}`;
+}
+
+/** The model's description for targets of these kinds: its regressor's when every target is a number. */
+export function modelDescription(m: Named, kinds: (string | undefined)[]): string {
+  return kinds.length && kinds.every((k) => k === "regression") && m.regressor_description ? m.regressor_description : m.description;
+}
+
+/** A run's model name: the one it was trained under, else the catalog's for the targets it trained on. */
+export function runLabel(r: ModelRun, option: Named | undefined): string {
+  if (r.report?.model_label) return r.report.model_label;
+  return option ? modelLabel(option, Object.values(r.report?.target_kinds ?? {})) : r.model;
+}
 
 /** The two numbers the runs table shows per target: AUC and macro F1 for classes, R² and RMSE for a number. */
 export type RunMetric = "primary" | "pr" | "secondary";

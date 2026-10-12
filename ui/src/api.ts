@@ -1,7 +1,7 @@
 import type { StartBaselineForm } from "./baselines";
 import { type View, viewQuery } from "./view";
 import type {
-  Analysis, AnalysisKind, AnalysisParams, AuthConfig, DerivedField, DerivedInput, DerivedPreview, BandPreview, BaselineLine, BulkRequest, BulkResult, CorrMatrix, Correlation, Dataset, Decision, DecisionInput, Device, Experiment, ExperimentDetail, ExportJob, ExportPreview, FamilyKey, FieldFilter, FieldListItem, FieldResponse, FieldReview, FinalizedRecipe, LibraryEntry, Me, ModelOption, ModelRun, OptionCatalog, PickUser, RecipeDiff, RecipeVersion, ReviewComment, ReviewQueue, Role, SqlResult, SystemInfo, TeamState, TeamUser,
+  Analysis, AnalysisKind, AnalysisParams, AuthConfig, DerivedField, DerivedInput, DerivedPreview, BandPreview, BaselineLine, BulkRequest, BulkResult, CorrMatrix, Correlation, Dataset, Decision, DecisionInput, Device, Experiment, ExperimentDetail, ExportJob, ExportPreview, ExportRows, FamilyKey, FieldFilter, FieldListItem, FieldResponse, FieldReview, FinalizedRecipe, LibraryEntry, Me, ModelOption, ModelRun, OptionCatalog, PickUser, RecipeDiff, RecipeVersion, ReviewComment, ReviewQueue, Role, SqlResult, SystemInfo, TeamState, TeamUser,
 } from "./types";
 
 export class ApiError extends Error {
@@ -110,6 +110,9 @@ export const api = {
   sqlExamples: () => request<{ title: string; sql: string }[]>("/api/sql/examples"),
   exportPreview: (id: number, family: string, recipeId?: number | null, experimentId?: number | null) =>
     request<ExportPreview>(`/api/datasets/${id}/export-preview?family=${family}${recipeId ? `&recipe_id=${recipeId}` : ""}${experimentId ? `&experiment_id=${experimentId}` : ""}`),
+  /** How many rows these row rules leave to split, counted by the export's own code. */
+  exportRows: (id: number, rules: Record<string, unknown>, experimentId?: number | null) =>
+    request<ExportRows>(`/api/datasets/${id}/export-rows`, json("POST", { ...rules, experiment_id: experimentId ?? null })),
   exports: (id: number, experimentId?: number) =>
     request<ExportJob[]>(`/api/datasets/${id}/exports${experimentId ? `?experiment_id=${experimentId}` : ""}`),
   startExport: (id: number, cfg: Record<string, unknown>) =>

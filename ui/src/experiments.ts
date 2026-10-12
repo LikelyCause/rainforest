@@ -1,7 +1,7 @@
 import { toInput } from "./decision";
-import { baselineLabel } from "./format";
+import { baselineLabel, fmtInt } from "./format";
 import { SETTING_LABEL } from "./recipes";
-import type { Decision, DecisionInput, Experiment, FieldResponse, Phase, Role } from "./types";
+import type { Decision, DecisionInput, Experiment, ExportRows, FieldResponse, Phase, Role } from "./types";
 
 export type ExperimentFilter = "all" | "mine" | "team" | "archived";
 
@@ -117,6 +117,35 @@ export function lastRowRules(exports: { id: number; status?: string; config: Rec
     if (rules.dedupe || rules.exclude.length || rules.first_per || rules.group_by) return { from: e.id, rules };
   }
   return null;
+}
+
+/** Rows per split as the export cuts `n` rows: the held-out share rounds up, then test's part of it does (scikit-learn's
+ * shuffle split). A grouped split moves whole groups, so its sizes only come close to these. */
+export function splitCounts(n: number, valid: number, test: number): { train: number; valid: number; test: number } {
+  const holdout = valid + test;
+  if (holdout <= 0 || n <= 0) return { train: Math.max(n, 0), valid: 0, test: 0 };
+  const rest = Math.ceil(holdout * n);
+  const t = valid <= 0 ? rest : test <= 0 ? 0 : Math.ceil((test / holdout) * rest);
+  return { train: n - rest, valid: rest - t, test: t };
+}
+
+/** The split counts the panel shows: the server's exact ones (the export's own split, groups included) when it has
+ * them, else an estimate from the rows to split, marked `about` for a grouped split, which moves whole groups. */
+export function splitPreview(r: ExportRows | undefined, fileRows: number | null, valid: number, test: number, grouped: boolean):
+  { counts: { train: number; valid: number; test: number } | null; about: boolean } {
+  if (r?.split) return { counts: r.split, about: false };
+  const n = r?.split_rows ?? fileRows;
+  return n === null ? { counts: null, about: false } : { counts: splitCounts(n, valid, test), about: grouped };
+}
+
+/** "69,990 rows after the row rules (1,246 left out)", or the file's count when the rules leave every row. Kept rows
+ * without a target value are said too, since the split leaves them out. */
+export function rowsSentence(r: ExportRows): string {
+  const left = r.rows - r.kept;
+  const head = left > 0 ? `${fmtInt(r.kept)} rows after the row rules (${fmtInt(left)} left out)` : `${fmtInt(r.rows)} rows`;
+  const missing = r.missing_target > 0
+    ? `; ${fmtInt(r.missing_target)} of them ${r.missing_target === 1 ? "has" : "have"} no target value and ${r.missing_target === 1 ? "stays" : "stay"} out of the split` : "";
+  return head + missing;
 }
 
 /** An experiment page's places, as `?tab=`; anything else opens Runs. */

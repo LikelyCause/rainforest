@@ -151,6 +151,12 @@ Under *Rows* in the export panel, you can leave rows out before anything else ha
 | *Leave out rows where …* | drops rows whose field holds given values | `discharge_disposition_id` 11, 13, 14, 19–21, for patients who died or went to hospice |
 | *One row per* … *First by* … | keeps only the first row per key | one row per patient number, first by encounter number |
 
+Under the split bar, the panel counts what the rules leave, with the export's own row-rule and split code, so the
+preview and the export agree: *69,990 rows after the row rules (1,246 left out)*, then the exact train, validation and
+test rows the export will make with these shares and seed, a grouped split included. Kept rows with no target value
+are named too, since the split leaves them out. The count updates a moment after you stop changing the rules or
+shares.
+
 The export row says how many rows each rule removed (`split_info.rows_removed`).
 
 ### Grouped split
@@ -159,7 +165,7 @@ The export row says how many rows each rule removed (`split_info.rows_removed`).
 and, for cross-validation, the same fold. So a model is never scored on someone it trained on.
 
 The split then uses scikit-learn's `GroupShuffleSplit`. Its shares are of groups, so row shares come out close but
-not exact. Folds use `StratifiedGroupKFold`. The manifest records `split_info.grouped_on`, and the export writes
+not exact; the panel shows the split's actual counts and how many groups there are. Folds use `StratifiedGroupKFold`. The manifest records `split_info.grouped_on`, and the export writes
 `groups.npy`.
 
 ### Leakage-safe split
@@ -280,6 +286,12 @@ predictions of the earlier targets, not the ground truth.
   family, and the MLP.
 - Classifier-only parameters (`class_weight`, `objective`, `scale_pos_weight`, `C`, …) are left out for a regressor.
 - The report records `chain_kind` (`classifier_chain` or `target_chain`) and `target_tasks`.
+- The linear model (`logistic_regression`) trains ridge regression for a number, so a run whose targets are all
+  numbers is named *Ridge regression*, and one with both kinds *Logistic and ridge regression*. *Train* names it the
+  same way for the targets you pick, and shows ridge's settings for a number. The model key stays
+  `logistic_regression`.
+- *Model* in the run detail downloads the chain as `run<id>_<model>_classifier_chain.joblib`, or
+  `…_target_chain.joblib` when any target is a number.
 - NaN-capable models are wrapped, so scikit-learn's finiteness check doesn't reject the NaN they handle natively.
 - A class that is missing from training (a rare class that only landed in validation or test) keeps its own
   probability column, set to zero. So metrics stay aligned with the class names. The report lists these classes under
@@ -444,7 +456,8 @@ make models                                  # what's registered / installed, an
 `--order` takes the export's own target names. A generated sample's are `column_a` and `column_b`, plus `column_c`
 when generated with a numeric target.
 
-CLI runs write `classifier_chain.joblib` (for either kind of chain) and `report.json` under
+CLI runs write `classifier_chain.joblib` (on disk, for either kind of chain; the download and MLflow name a target
+chain `target_chain.joblib`) and `report.json` under
 `/data/models/export<id>_<model>_<time>/`. They aren't recorded in `meta.model_runs`. So they don't appear in the UI's
 runs table or `meta.v_model_metrics`, and they aren't logged to MLflow.
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { batchSummary, bestRuns, metricFor, pickExport, runColumns, spreadFor, starTitle, whyFailed } from "./runs";
+import { batchSummary, bestRuns, metricFor, modelDescription, modelLabel, pickExport, runColumns, runLabel, spreadFor, starTitle, whyFailed } from "./runs";
 import type { ModelRun } from "./types";
 
 const run = (id: number, valid: Record<string, Record<string, number>>, test: Record<string, Record<string, number>> = valid) =>
@@ -122,5 +122,28 @@ describe("batchSummary", () => {
     expect(batchSummary([a, b], "y", "regression")).toBe("2 runs finished · best R² 0.900");
     expect(batchSummary([a, c], "y", "regression")).toBe("1 run finished, 1 failed · best R² 0.800");
     expect(batchSummary([c], "y", "binary")).toBe("1 run failed");
+  });
+});
+
+describe("model names", () => {
+  const linear = { label: "Logistic regression", description: "Linear baseline.", regressor_label: "Ridge regression",
+    regressor_description: "Linear baseline for numbers.", mixed_label: "Logistic and ridge regression" };
+  const forest = { label: "Random forest", description: "Bagged trees.", regressor_label: null };
+  it("names the linear model ridge regression when every target is a number", () => {
+    expect(modelLabel(linear, ["binary"])).toBe("Logistic regression");
+    expect(modelLabel(linear, [])).toBe("Logistic regression");
+    expect(modelLabel(linear, ["regression", "regression"])).toBe("Ridge regression");
+    expect(modelLabel(linear, ["multiclass", "regression"])).toBe("Logistic and ridge regression");
+    expect(modelLabel(forest, ["regression"])).toBe("Random forest");
+    expect(modelDescription(linear, ["regression"])).toBe("Linear baseline for numbers.");
+    expect(modelDescription(linear, ["binary", "regression"])).toBe("Linear baseline.");
+    expect(modelDescription(forest, ["regression"])).toBe("Bagged trees.");
+  });
+  it("reads a run's stored name, else names it by the targets it trained on", () => {
+    const r = (report: object) => ({ id: 1, model: "logistic_regression", report }) as unknown as ModelRun;
+    expect(runLabel(r({ model_label: "Ridge regression" }), linear)).toBe("Ridge regression");
+    expect(runLabel(r({ target_kinds: { price: "regression" } }), linear)).toBe("Ridge regression");
+    expect(runLabel(r({}), linear)).toBe("Logistic regression");
+    expect(runLabel(r({}), undefined)).toBe("logistic_regression");
   });
 });

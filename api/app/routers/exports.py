@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import time
 import traceback
+from functools import lru_cache
 from pathlib import Path
 
 import polars as pl
@@ -17,10 +19,10 @@ from ..auth import CurrentUser
 from ..config import get_settings
 from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..leakage import leak_names
-from ..schemas import ExportRequest
+from ..schemas import ExportRequest, ExportRowsRequest, RowRules
 from ..semantics import FAMILIES, NON_FEATURE_TYPES, validate_decision, grouped_target
 from ..profiling import coerce_numeric
-from ..transform import FieldSpec, check_target_classes, run_export
+from ..transform import FieldSpec, check_target_classes, rows_after_rules, run_export
 from .fields import _same_settings
 
 log = logging.getLogger(__name__)
@@ -246,6 +248,47 @@ def _lone_class_problem(parquet_path: str | None, targets: list[str]) -> str | N
     return None
 
 
+def _check_rule_fields(conn, dataset_id: int, rules: RowRules) -> None:
+    names = {r["name"] for r in conn.execute("SELECT name FROM meta.fields WHERE dataset_id = %s",
+                                             (dataset_id,)).fetchall()}
+    named = [r.field for r in rules.exclude] + ([rules.first_per.key] if rules.first_per else []) \
+        + ([rules.first_per.order] if rules.first_per and rules.first_per.order else []) \
+        + ([rules.group_by] if rules.group_by else [])
+    if unknown := [n for n in named if n not in names]:
+        raise HTTPException(422, f"No field named {', '.join(map(repr, unknown))} in this dataset")
+
+
+@lru_cache(maxsize=64)
+def _rows_after_rules(path: str, mtime_ns: int, config: str, targets: tuple[str, ...], tasks: str) -> dict:
+    """Cached per file version, rules, split and targets: dedupe reads every column, and the panel asks as they change."""
+    return rows_after_rules(Path(path), json.loads(config), list(targets), json.loads(tasks))
+
+
+@router.post("/datasets/{dataset_id}/export-rows")
+def export_rows(dataset_id: int, req: ExportRowsRequest, user: CurrentUser) -> dict:
+    """What an export with these row rules and split would divide, counted by the export's own code: `rows` in the
+    file, `kept` by the rules (`removed` says how many each rule left out), `missing_target` kept rows the split leaves
+    out because a target is empty, `split_rows` what the split divides, `groups` (with `group_by`) how many groups
+    those rows form, and `split`: the exact `train`, `valid` and `test` counts the export would make with these
+    `valid_size`, `test_size` and `seed` (null, with `split_error`, when the export would refuse the targets). The
+    targets are those export-preview reads for the same experiment or version."""
+    ds = fetch_one("SELECT status, parquet_path FROM meta.datasets WHERE id = %s", (dataset_id,))
+    if ds is None:
+        raise HTTPException(404, "Dataset not found")
+    if ds["status"] != "ready" or not ds["parquet_path"] or not Path(ds["parquet_path"]).exists():
+        raise HTTPException(409, "Dataset is not ready")
+    if req.valid_size + req.test_size >= 0.9:
+        raise HTTPException(422, "valid_size + test_size must be < 0.9")
+    with connection() as conn:
+        _check_rule_fields(conn, dataset_id, req)
+        recipe, snap, _ = _plan(conn, dataset_id, user, req.recipe_id, req.experiment_id)
+        _, targets, tasks = export_spec(conn, dataset_id, snap, recipe["family"])
+    config = json.dumps(req.model_dump(exclude={"recipe_id", "experiment_id"}), sort_keys=True)
+    path = Path(ds["parquet_path"])
+    return copy.deepcopy(_rows_after_rules(str(path), path.stat().st_mtime_ns, config, tuple(targets),
+                                           json.dumps(tasks, sort_keys=True, default=str)))
+
+
 @router.post("/datasets/{dataset_id}/exports", status_code=202)
 def start_export(dataset_id: int, req: ExportRequest, user: CurrentUser) -> dict:
     """A team export of a finalized version (into the experiment given, else the version's default Team
@@ -282,12 +325,7 @@ def start_export(dataset_id: int, req: ExportRequest, user: CurrentUser) -> dict
                 raise HTTPException(409, problem)
             snap = experiments.snapshot_for(conn, x)
         pv = _preview_of(conn, dataset_id, user, recipe, snap, x, req.model_family)
-        names = {r["name"] for r in conn.execute("SELECT name FROM meta.fields WHERE dataset_id = %s",
-                                                 (dataset_id,)).fetchall()}
-        named = [r.field for r in req.exclude] + ([req.first_per.key] if req.first_per else []) \
-            + ([req.first_per.order] if req.first_per and req.first_per.order else []) + ([req.group_by] if req.group_by else [])
-        if unknown := [n for n in named if n not in names]:
-            raise HTTPException(422, f"No field named {', '.join(map(repr, unknown))} in this dataset")
+        _check_rule_fields(conn, dataset_id, req)
         if pv["blocking"]:
             raise HTTPException(422, {"message": "Cannot export", "errors": pv["blocking"]})
         personal = x["assessor_id"] is not None

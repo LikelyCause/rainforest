@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lastRowRules, addBlocked, baselineDiff, metricLabel, canEdit, experimentTab, filterExperiments, finalizedPrompt, mlflowExperimentUrl, privacyNote, revertedInput, sourceChip, sourceLabel, sourceOptions } from "./experiments";
+import { lastRowRules, rowsSentence, splitCounts, splitPreview, addBlocked, baselineDiff, metricLabel, canEdit, experimentTab, filterExperiments, finalizedPrompt, mlflowExperimentUrl, privacyNote, revertedInput, sourceChip, sourceLabel, sourceOptions } from "./experiments";
 import type { Experiment } from "./types";
 
 const me = { id: 2, role: "member" as const };
@@ -172,5 +172,35 @@ describe("finalizedPrompt", () => {
     expect(finalizedPrompt([x(1, { archived_at: "2026-01-01" })], base, null)).toBe(10);
     expect(finalizedPrompt([x(1)], base, null)).toBeNull();
     expect(finalizedPrompt([], { id: 10, phase: "assessing" }, null)).toBeNull();
+  });
+});
+
+describe("split preview", () => {
+  it("cuts rows as the export does: the held-out share rounds up, then test's part of it", () => {
+    expect(splitCounts(69_990, 0.15, 0.15)).toEqual({ train: 48_993, valid: 10_498, test: 10_499 });
+    expect(splitCounts(490, 0.2, 0.15)).toEqual({ train: 318, valid: 98, test: 74 });
+    expect(splitCounts(100, 0.2, 0)).toEqual({ train: 80, valid: 20, test: 0 });
+    expect(splitCounts(100, 0, 0.1)).toEqual({ train: 90, valid: 0, test: 10 });
+    expect(splitCounts(100, 0, 0)).toEqual({ train: 100, valid: 0, test: 0 });
+  });
+  it("says how many rows the row rules leave, and the kept rows without a target", () => {
+    const base = { rows: 71_236, kept: 71_236, removed: {}, missing_target: 0, split_rows: 71_236, groups: null, split: null, split_error: null };
+    expect(rowsSentence(base)).toBe("71,236 rows");
+    expect(rowsSentence({ ...base, kept: 69_990, split_rows: 69_990 })).toBe("69,990 rows after the row rules (1,246 left out)");
+    expect(rowsSentence({ ...base, missing_target: 1 })).toBe("71,236 rows; 1 of them has no target value and stays out of the split");
+  });
+});
+
+describe("splitPreview", () => {
+  const r = { rows: 1030, kept: 991, removed: {}, missing_target: 0, split_rows: 991, groups: 13, split: null, split_error: null };
+  it("shows the server's exact split, groups included", () => {
+    expect(splitPreview({ ...r, split: { train: 843, valid: 88, test: 60 } }, 1030, 0.15, 0.15, true))
+      .toEqual({ counts: { train: 843, valid: 88, test: 60 }, about: false });
+  });
+  it("estimates from the rows to split without it, as about for a grouped split", () => {
+    expect(splitPreview(r, 1030, 0.15, 0.15, true)).toEqual({ counts: { train: 693, valid: 149, test: 149 }, about: true });
+    expect(splitPreview(r, 1030, 0.15, 0.15, false).about).toBe(false);
+    expect(splitPreview(undefined, 100, 0.2, 0, false)).toEqual({ counts: { train: 80, valid: 20, test: 0 }, about: false });
+    expect(splitPreview(undefined, null, 0.2, 0, false)).toEqual({ counts: null, about: false });
   });
 });

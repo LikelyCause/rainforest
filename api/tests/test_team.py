@@ -480,6 +480,7 @@ READS = {
     "export manifest": lambda c, d, f, x: c.get(f"/api/exports/{x['b_export']}/files/manifest"),
     "export models": lambda c, d, f, x: c.get(f"/api/exports/{x['b_export']}/models"),
     "export preview of experiment": lambda c, d, f, x: c.get(f"/api/datasets/{d}/export-preview?experiment_id={x['b_xp']}"),
+    "export rows of experiment": lambda c, d, f, x: c.post(f"/api/datasets/{d}/export-rows", json={"experiment_id": x["b_xp"]}),
     "export into experiment": lambda c, d, f, x: c.post(f"/api/datasets/{d}/exports", json={"experiment_id": x["b_xp"]}),
     "train on export": lambda c, d, f, x: c.post(f"/api/exports/{x['b_export']}/runs", json={"cv": 0}),
     "runs": lambda c, d, f, x: c.get(f"/api/datasets/{d}/runs"),
@@ -500,7 +501,7 @@ READS = {
 # Reads that must be refused outright, whatever they would contain.
 REFUSED = {"undo another's batch": 404, "field detail linear": 422, "another's analysis": 404, "review queue": 409, "field review": 409,
            **{name: 404 for name in ("experiment", "rename experiment", "export", "export data", "export pipeline",
-                                     "export manifest", "export models", "export preview of experiment",
+                                     "export manifest", "export models", "export preview of experiment", "export rows of experiment",
                                      "export into experiment", "train on export", "run", "run model", "run report",
                                      "explore on export", "another's export analysis")},
            **{name: 400 for name in ("sql assessments", "sql assessment settings", "sql assessment batches",
