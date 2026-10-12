@@ -26,11 +26,11 @@ It is for data science teams who need to agree on, and record, how a dataset is 
 ## How it works
 
 ```
-Upload → Review → Submit → Team review → Finalize baseline → Experiment → Export → Train → MLflow
+Upload → Assess → Submit → Team review → Finalize baseline → Experiment → Export → Train → MLflow
 ```
 
 1. **Upload.** You add a CSV or Parquet file, and Rainforest profiles and suggests a decision for every field.
-2. **Review.** Each assessor keeps, drops or retypes every field and checks its settings, on their own.
+2. **Assess.** Each assessor keeps, drops or retypes every field and checks its settings, on their own.
 3. **Submit.** Each assessor submits their assessment once every field is reviewed.
 4. **Team review.** Fields everyone agreed on are adopted, and a lead settles the rest.
 5. **Finalize baseline.** A lead freezes the decisions as a numbered baseline version.
@@ -91,20 +91,24 @@ demo*.
 This walkthrough uses the *Concrete strength* sample: predict a concrete's strength from its mix. You are the lead
 and the only assessor.
 
-1. On *Datasets*, choose *Samples ▾ → Real datasets* and add *Concrete strength*. Its target, `strength_mpa`, is
+1. On *Datasets*, choose *Add a sample ▾ → Real datasets* and add *Concrete strength*. Its target, `strength_mpa`, is
    already set.
-2. Open the dataset's *Team* step. Choose the model type *Trees*, keep *the suggestions* as the starting point, keep
-   the target ticked, and leave yourself as the only assessor. Choose *Start*.
-3. In *Review*, walk through the fields and their *Why these suggestions*. Press `A` to use a
-   suggestion and confirm it. The target's *Predict as* says it is predicted as a number. You can change it to bands.
-4. When every field is reviewed, go back to *Team* and choose *Submit assessment*. With one assessor there is nothing
-   to settle, so every field is adopted.
-5. Choose *Finalize*. This freezes the baseline as *Trees v1*.
-6. On *Experiments*, create an experiment from *Trees v1*.
-7. In the experiment, build an export, then train a model. LightGBM is the default.
-8. Compare the runs in the runs table, and open *MLflow ↗* to see them in MLflow.
+2. Open the dataset when it is ready. A new dataset opens on its *Baseline* tab, at *Set up the first baseline*.
+   Choose the model type *Trees*, keep *the suggestions* as the starting point, keep the target ticked, and leave
+   yourself as the only assessor. Choose *Start Trees baseline v1*.
+3. You land in *Fields*, on the first field. Walk through the fields and their *Why these suggestions*. Press `A` to
+   use a suggestion and confirm it. The target's *Predict as* says it is predicted as a number. You can change it to
+   bands.
+4. When every field is reviewed, the button at the right of the top bar's second row reads *Submit assessment*.
+   Choose it, and confirm. With one assessor there is nothing to settle, so every field is adopted.
+5. The same button now reads *Finalize Trees v1*. Choose it, and confirm. This freezes the baseline as *Trees v1* and
+   takes you to *Experiments*.
+6. Choose *New experiment from v1*, give it a name, and create it.
+7. In the experiment, choose *Export for trees models* on *Exports*. Then, on *Train*, train a model. LightGBM is the
+   default.
+8. Compare the runs on *Runs*, and open *MLflow ↗* on a run to see it in MLflow.
 
-To change the baseline later, or prepare the data for another model type, use the *Baselines* page.
+To change the baseline later, or prepare the data for another model type, use the *Baseline* tab.
 
 Next, read the [user guide](docs/user-guide.md) and the [team workflow](docs/team-workflow.md).
 
@@ -164,7 +168,7 @@ Next, read the [user guide](docs/user-guide.md) and the [team workflow](docs/tea
 
 ## Data attribution
 
-*Samples ▾ → Real datasets* adds one of five datasets from the
+*Add a sample ▾ → Real datasets* adds one of five datasets from the
 [UCI Machine Learning Repository](https://archive.ics.uci.edu/), used under
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/):
 

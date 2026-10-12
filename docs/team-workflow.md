@@ -8,15 +8,15 @@ baseline changes over time. Terms are defined in [Concepts](concepts.md).
 Every dataset goes through the same steps, whether one person uses Rainforest or a team. On your own, you are the lead
 and the only assessor.
 
-1. A lead adds people and uploads the dataset. In pick mode, people are added on the *Team* page or in
+1. A lead adds people and uploads the dataset. In pick mode, people are added on the *People* page or in
    `RAINFOREST_USERS`. With OIDC, they come from the identity provider's groups. See
    [Deployment](deployment.md#sign-in).
-2. The lead sets up the dataset's baseline on its *Team* step: model type, starting point, targets and assessors.
+2. The lead sets up the dataset's baseline on its *Baseline* tab: model type, starting point, targets and assessors.
    The lead can assess too.
-3. Each assessor works through *Review* and *Bulk edit* on their own assessment, which nobody else sees. Then they
-   *Submit assessment* on the *Team* step. The lead follows everyone's progress there.
+3. Each assessor works through *Fields* on their own assessment, which nobody else sees. Then they *Submit
+   assessment*. The lead follows everyone's progress on the *Baseline* tab.
 4. When the last assessor submits, team review opens. Fields everyone agreed on are adopted. The disagreements form a
-   queue on the *Team* step. The lead settles them and finalizes.
+   queue in *Fields*. The lead settles them and finalizes.
 5. Everyone builds experiments from the finalized baseline. Each person adjusts only their own. You compare results
    on *Experiments* and in MLflow. See [Experiments and training](experiments-and-training.md).
 
@@ -32,14 +32,14 @@ uploads, exports, model runs and *Explore* analyses.
 | Change their own picture | ✓ | ✓ | ✓ |
 | Upload, recompute *Explore* results, experiment (export a finalized baseline or your own assessment, train) | | ✓ | ✓ |
 | Adjust the experiments they own | | ✓ | ✓ |
-| Review and bulk edit their own assessment when assigned; comment in team review | | ✓ | ✓ |
+| Assess in *Fields · Focus* and *Fields · Table* when assigned; comment in team review | | ✓ | ✓ |
 | Start baselines and versions, assign assessors, set the team decision in review, finalize | | | ✓ |
 | Delete datasets | | | ✓ |
-| Manage users on the *Team* page; change anyone's picture | | | ✓ |
+| Manage users on the *People* page; change anyone's picture | | | ✓ |
 
 What "manage users" means depends on the sign-in mode:
 
-| Sign-in mode | What a lead can do on the *Team* page |
+| Sign-in mode | What a lead can do on the *People* page |
 |---|---|
 | Pick mode without `RAINFOREST_USERS` | add, rename, edit email, set role, deactivate, reactivate |
 | Pick mode with `RAINFOREST_USERS` | nothing: the page lists the accounts read-only |
@@ -58,7 +58,7 @@ on, Viewers see the team decision like everyone else.
 
 - Deactivating a user, or changing their role, signs them out everywhere at once.
 - The last active lead can't be demoted or deactivated.
-- The *Team* page doesn't offer to deactivate yourself.
+- The *People* page doesn't let you deactivate yourself.
 - Users are never deleted, so their history keeps their names.
 - With OIDC, users are matched by the provider's subject id, never by email.
 
@@ -66,16 +66,18 @@ on, Viewers see the team decision like everyone else.
 
 Every dataset has baselines: the team's decisions for one model type (*Trees*, *Linear* or *Neural*), at most one per
 type. Each baseline has numbered versions, labelled like *Trees baseline v2*. A version moves through three phases:
-*Assessing*, *Review* and *Finalized*. The phase shows on the *Datasets* list, one chip per baseline, and in the top
-bar.
+*Assessing*, *Team review* and *Finalized*. Before its first version starts, a new dataset's baseline is in *Set up*.
+The phase shows on the *Datasets* list and on the top bar's phase rail: *Set up · Assessing · Team review ·
+Finalized*.
 
 One baseline version per dataset is in progress (assessing or in review) at a time. Another baseline or version can
 start once it is finalized.
 
 ## Starting a baseline
 
-A lead starts a baseline with *Start a baseline…* on the dataset's *Baselines* page. A new dataset's first baseline
-(*Trees v1*) is set up in place, with the same form on the dataset's *Team* step.
+A lead starts a baseline with *Start a baseline…* on *Versions and compare*, or with *Start a linear baseline* or
+*Start a neural baseline* on the *Baseline* tab. A new dataset's first baseline (*Trees v1*) is set up in place, with
+the same form on the dataset's *Baseline* tab. The form ends with *Start Trees baseline v1*, naming what it starts.
 
 The form asks for:
 
@@ -96,22 +98,25 @@ For *another dataset's baseline*, see [Reusing another dataset's baseline](#reus
 ## Assessing
 
 1. Each assessor starts from the baseline's starting point: the suggestions, or the baseline it was built from.
-2. They use *Review* and *Bulk edit* as usual, but on their own assessment.
-3. When every field is reviewed, they *Submit assessment* on the *Team* step.
+2. They use *Fields · Focus* and *Fields · Table* as usual, but on their own assessment. The lens chip reads
+   *Private*, and the top bar's next step reads *Next field · N left*.
+3. When every field is reviewed, they choose *Submit assessment* in the top bar, or *Submit* on the *Baseline* tab,
+   and confirm.
 
 An assessment is private. Nobody else sees an assessor's choices, the lead included. The API never returns them to
-anyone else: not in field lists, field details, history, *Bulk edit*, the SQL console or *Explore*. Leads see each
+anyone else: not in field lists, field details, history, *Fields · Table*, the SQL console or *Explore*. Leads see each
 assessor's progress (fields reviewed, submitted or not), never their choices. Everyone else can browse the fields at
 the starting point and use *Explore*, read-only.
 
 ### Details
 
-- A lead adds or removes assessors on the dataset's *Team* step.
-- An assessor can unsubmit until team review opens.
+- A lead adds assessors with *Add an assessor* on the dataset's *Baseline* tab, and unassigns them from each row's
+  menu.
+- An assessor can unsubmit until team review opens, with *Unsubmit to make changes* on the *Baseline* tab.
 - A lead can unassign someone. Their choices are kept but don't count.
 - The targets stay as the baseline started, since every assessor starts from them.
-- A lead who opens *Review* or *Bulk edit* on a dataset they aren't assessing sees *Assess it myself*. It assigns them
-  like anyone else.
+- A lead who opens *Fields · Focus* or *Fields · Table* on a dataset they aren't assessing sees *Assess it myself*.
+  It assigns them like anyone else.
 
 ## Team review
 
@@ -121,18 +126,22 @@ assessor who hadn't submitted.
 A field is **adopted** as the team decision when every assessor chose the same keep, drop or target, type and
 *Predict as*. Its settings take the most common choice. A tie takes the suggestion.
 
-The other fields form the **review queue** on the *Team* step. Each queued field shows every assessor's choice,
-settings and notes side by side, with the differences marked, and a comment thread.
+The other fields form the **review queue**. During team review, *Fields* opens on it, and the top bar's next step
+reads *Settle N open fields*. The queue lists fields under *Open*, *Settled* and *Agreed*. Each queued field shows
+every assessor's choice, settings and notes side by side, with the differences marked, and a discussion.
 
 - Everyone can comment.
-- A lead sets the team decision, with the same decision panel as *Review*.
-- *Bulk edit* is for leads only in this phase, and changes team decisions.
+- A lead sets the team decision, with the same decision panel as *Focus*, and settles the field.
+- A lead can open an agreed field from *Agreed* to change it.
+- *Fields · Table* is for leads only in this phase, and changes team decisions.
 
 With a single assessor, every field is adopted and the queue is empty.
 
 ## Finalizing
 
-A lead finalizes once the queue is settled. A lead can also confirm finalizing with fields left as they stand.
+A lead finalizes once the queue is settled, with *Finalize vN* in the top bar or *Finalize…* on the *Baseline* tab.
+Rainforest asks to confirm, and says how many fields are agreed, settled and still open. A lead can also finalize
+with fields left open: they keep their current team decision. Finalizing takes you to *Experiments*.
 
 Finalizing freezes the version. Its snapshot records every field's decision, its settings for the baseline's model
 type, its inferred type and key statistics, and the target order. A finalized version's decisions can't change. To
@@ -140,16 +149,16 @@ change them, start a new version.
 
 ## New versions
 
-1. On the dataset's *Baselines* page, choose *New version…* on a baseline. It starts from the baseline's latest
-   finalized version.
-2. Pick the fields to reopen. You can search and use the same filters as the *Review* list: type, *Needs attention*,
-   name. None are picked by default.
-3. Assign assessors.
+1. Choose *Start a new version* on the *Baseline* tab, or *New version…* on a baseline on *Versions and compare*. It
+   starts from the baseline's latest finalized version.
+2. Pick the fields to reopen. You can search them, and filter by type and by *Needs attention*. None are picked by
+   default. Choose *Start vN, reopening N fields*, or *Start vN and edit directly* with none picked.
+3. Assign assessors on the *Baseline* tab.
 
 Reopened fields go through blind assessment and team review again. Assessors only assess those fields. *Submit
 assessment* needs only those reviewed. The review queue holds only disagreements among them.
 
-Every other field is **carried over and locked** (🔒 in the *Review* list). Nobody changes it in that version, the
+Every other field is **carried over and locked** (🔒 in the *Fields* list). Nobody changes it in that version, the
 lead included.
 
 With nothing reopened, the version opens straight in team review. The lead edits the team decision directly, which is
@@ -158,7 +167,7 @@ recorded in each field's history, and finalizes.
 ## Baseline names
 
 A baseline can have a name, given when it starts. A lead changes it with *Rename* (or *Name it*) on the baseline's
-card on the *Baselines* page. A blank name removes it.
+card on *Versions and compare*. A blank name removes it.
 
 | | Named baseline | Unnamed baseline |
 |---|---|---|
@@ -199,6 +208,6 @@ Everything else is **reopened** for assessment:
 - a source target that isn't a valid target here
 - settings that aren't valid for this data
 
-Source fields missing from the new data are listed. The source's targets carry over when they are still valid
-targets here. The summary stays on the dataset's *Team* and *Baselines* pages, and the version records the baseline it
-came from. If nothing needs assessing, the version opens in team review, and a lead confirms it by finalizing.
+Source fields missing from the new data are listed. The source's targets carry over when they are still valid targets
+here. The summary stays on the dataset's *Baseline* tab and *Versions and compare*, and the version records the baseline
+it came from. If nothing needs assessing, the version opens in team review, and a lead confirms it by finalizing.

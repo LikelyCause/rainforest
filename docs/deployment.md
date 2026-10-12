@@ -51,7 +51,7 @@ as `.env` describes.
 
 *Switch profile* in the profile menu goes back to the sign-in page.
 
-Without `RAINFOREST_USERS`, leads manage the user list on the *Team* page. The first start creates one lead, *Admin*.
+Without `RAINFOREST_USERS`, leads manage the user list on the *People* page. The first start creates one lead, *Admin*.
 
 ### Accounts from .env
 
@@ -66,7 +66,7 @@ tanner:Tanner:lead;test-member:Test Member:member;test-viewer:Test Viewer:viewer
 - The list is synced on every start. A listed key creates its account, or updates its name and role. A key that
   returns reactivates its account. Every account not listed is deactivated, never deleted, so its work stays attached.
 - `#id` gives an existing account without a key this key, once, so it keeps its history.
-- With the list set, accounts can't be added or edited in the app. The *Team* page lists them read-only.
+- With the list set, accounts can't be added or edited in the app. The *People* page lists them read-only.
 - A list with a problem stops the API from starting, with a message naming it, before anything changes. Problems are a
   malformed entry, an unknown role, a repeated key, or no lead.
 

@@ -1,6 +1,6 @@
 # Explore
 
-*Explore* has four views over one dataset: *Correlations*, *Map*, *Feature tests* and *Importance*. Terms are
+*Explore* has four views over one dataset: *Correlations*, *Map*, *Tests* and *Importance*. Terms are
 defined in [Concepts](concepts.md).
 
 ## The toolbar
@@ -39,16 +39,16 @@ On export data, a target predicted as a number is numeric. Every other target is
 
 | View | What it computes |
 |---|---|
-| *Correlations* | A clustered heatmap of the stored associations, for raw data only (no background job). It shows the target and the 59 fields most associated with it, or the 60 fields with the strongest associations overall. They are ordered by average-linkage clustering on 1 − strength. A slider hides weak cells. You can add fields beyond the 60. Click a cell to see the pair, with links to *Review*. |
+| *Correlations* | A clustered heatmap of the stored associations, for raw data only (no background job). It shows the target and the 59 fields most associated with it, or the 60 fields with the strongest associations overall. They are ordered by average-linkage clustering on 1 − strength. A slider hides weak cells. You can add fields beyond the 60. Click a cell to see the pair, with *Open field* links to *Fields · Focus*. |
 | *Map* | A 2-D embedding of the sampled rows, coloured by the target. **t-SNE** is the default: PCA to 50 components first when there are more features, perplexity 5–100, default 30. **UMAP** is the other option: neighbours 5–100, default 15. The seed is fixed. Numerics are median-filled and standardised, categoricals one-hot. Hover shows the 5 fields that spread the rows most (largest weight in the first two principal components). |
-| *Feature tests* | One test per field against the target, with Benjamini–Hochberg adjusted p-values. The UI marks adjusted p < 0.05. Numeric field × class target: one-way ANOVA (effect η²) plus Kruskal–Wallis, with box plots per class. Categorical field × class target: χ² (effect Cramér's V), with level counts per class. Numeric target: Spearman (effect \|ρ\|) plus Pearson, with a scatter of up to 500 points; or ANOVA of the target across the field's levels. Classes with fewer than 5 sampled rows are excluded and listed. |
+| *Tests* | One test per field against the target, with Benjamini–Hochberg adjusted p-values. The UI marks adjusted p < 0.05. Numeric field × class target: one-way ANOVA (effect η²) plus Kruskal–Wallis, with box plots per class. Categorical field × class target: χ² (effect Cramér's V), with level counts per class. Numeric target: Spearman (effect \|ρ\|) plus Pearson, with a scatter of up to 500 points; or ANOVA of the target across the field's levels. Classes with fewer than 5 sampled rows are excluded and listed. |
 | *Importance* | Mutual information of each field with the target (needs a target). Also PCA: explained variance for up to 20 components with the cumulative line, plus loadings of the first 5 components for the top 20 features. |
 
 How associations are measured is in [Data preparation](data-preparation.md#associations-and-the-leak-screen).
 
 ## Caching and out-of-date results
 
-*Map*, *Feature tests* and *Importance* run as background jobs. Their results are cached in `meta.analyses`, per set
+*Map*, *Tests* and *Importance* run as background jobs. Their results are cached in `meta.analyses`, per set
 of parameters.
 
 A result is tied to the decisions it was computed from: every field's keep, drop, target and type. For export data,

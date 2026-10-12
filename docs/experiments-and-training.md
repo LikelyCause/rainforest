@@ -5,9 +5,10 @@ How you turn a finalized baseline into a model-ready export and train models on 
 
 ## Experiments
 
-Exports and the model runs trained on them belong to an experiment. The dataset's *Experiments* step lists them.
+Exports and the model runs trained on them belong to an experiment. The dataset's *Experiments* tab lists them.
 
-To create one, choose *New experiment*, give it a name, and choose what it is built from:
+To create one, choose *New experiment*, give it a name, and choose what it is built from. Right after a lead
+finalizes a version, *New experiment from vN* does the same with that version chosen.
 
 | Built from | Kind | Who sees it | Who adds exports and runs |
 |---|---|---|---|
@@ -34,12 +35,22 @@ console doesn't know who is asking, so this includes the owner. See [SQL](sql.md
 
 ### The experiment page
 
-An experiment's page shows how it was built, whether it is private, and its notes. It has the export and train panel
-scoped to the experiment: build an export from its source, train on it, compare the runs. *MLflow ↗* opens its runs in
-MLflow.
+On an experiment's page, the second row of the top bar names the experiment, with a menu to switch to another one of
+the dataset's experiments. It shows what the experiment is built from, such as *From Trees baseline v2 · as
+finalized*, whether it is private, and *Train a model*. Its tabs are:
+
+| Tab | What it holds |
+|---|---|
+| *Runs* | The [runs table](#the-runs-table), with a run's detail beside it. |
+| *Train* | The [Train tab](#the-train-tab): what to train, the model's settings, and *Train*. |
+| *Exports* | What goes into an export, the split and rows, and the [exports](#exports) made. |
+| *Adjustments* | What the experiment changes from its baseline. See [Adjusting an experiment](#adjusting-an-experiment). |
+| *Notes* | Its name, notes, best run, chosen model, *Open its runs in MLflow*, and *Archive*. |
+
+A new experiment opens on *Exports*.
 
 The owner (for a personal experiment, its assessor) or a lead can rename it, edit its notes, and archive or unarchive
-it. An archived experiment takes no new exports or runs.
+it, all on *Notes*. Archiving asks to confirm. An archived experiment takes no new exports or runs.
 
 ## Adjusting an experiment
 
@@ -55,13 +66,15 @@ Per field, you can change:
 Changes stay within the baseline's model type. A type change brings the new type's suggested settings where the old
 ones don't fit.
 
-1. Choose *Adjust fields* on the experiment's page. It opens *Review* and *Bulk edit* on the experiment's copy
-   (`?view=experiment:<id>`), with a bar naming the experiment.
-2. Change fields as in *Review*. The decision panel says what differs from the baseline, with *Revert to baseline*.
-3. Check the experiment's *Adjustments* card. It lists every changed field, and the targets when they differ, with a
-   per-field *Revert* and *Revert everything*.
+1. Choose *Adjust fields* on the experiment's *Adjustments* tab. It opens *Fields · Focus* and *Fields · Table* on the
+   experiment's copy (`?view=experiment:<id>`). The top bar's second row names the experiment, with the *Experiment
+   copy* chip and *Back to the experiment*.
+2. Change fields as in *Focus*. The decision panel says what differs from the baseline, with *Revert to baseline*.
+3. Check the experiment's *Adjustments* tab. It lists every changed field, and the targets when they differ, with a
+   per-field *Revert* and *Revert everything*. *Revert everything* asks to confirm.
 
-The experiments list and page badge an adjusted experiment *N adjusted* and *targets changed*.
+The experiments list badges an adjusted experiment *N adjusted* and *Targets changed*. Its page shows *N fields
+adjusted* and *Targets changed*.
 
 ### Details
 
@@ -105,7 +118,8 @@ The manifest's `config` records:
 
 ### Before you export
 
-The page summarises what goes in: kept, dropped, target and customised fields, and kept fields by type.
+*Exports*, under *What will be exported*, summarises what goes in: kept, dropped, target and customised fields, and
+kept fields by type.
 
 It warns about:
 
@@ -122,9 +136,10 @@ These block the export:
 - a numeric target with values that don't read as numbers, or with a single value
 - a band with fewer than 2 rows
 
-Once an export exists, the page shows how many decisions changed since, with *Re-export with same split*.
+Once an export exists, it shows how many decisions changed since, with *Re-export with same split*.
 
-You can adjust the validation and test shares, the seed and the fit-row cap.
+You can adjust the validation and test shares, and, under *Advanced*, the seed and *Max rows to fit on*. *Export for
+trees models* (or linear, or neural) builds it.
 
 ### Rows
 
@@ -221,13 +236,13 @@ The manifest records:
 
 - Tree models train on any export.
 - Linear and neural models need an export prepared for their family. They are refused if the export contains NaN.
-- The UI disables incompatible models and shows the reason.
+- The *Train* tab hides incompatible models. *Show incompatible models* lists them, disabled, with the reason.
 - Planned models (linear SVM, k-nearest neighbours, convolutional and recurrent networks) are listed as *planned*.
   You can't train them yet.
 
-### The Train a model panel
+### The Train tab
 
-The *Train a model* panel sits between the exports and the runs. It picks:
+*Train a model*, in the top bar, opens the experiment's *Train* tab. It picks:
 
 - the export: the newest finished one, unless you choose another
 - the model
@@ -237,9 +252,12 @@ The *Train a model* panel sits between the exports and the runs. It picks:
   and order them.
 - the model's settings
 
-Each export has:
+A summary beside it, *Ready to train*, sums up the model, the export, the changed settings, the scoring and the number
+of runs, above *Train*. Starting a run takes you to *Runs*, where it appears at the top as it trains.
 
-- *Train ↓*, which points the panel at it
+Each export, on *Exports*, has:
+
+- *Train on it*, which opens *Train* with that export
 - *Files ▾*: Parquet, preprocessor, manifest
 - *Use from code*: the CLI command and class mappings
 
@@ -270,7 +288,7 @@ predictions of the earlier targets, not the ground truth.
 
 ### Model settings
 
-The panel lays out the chosen model's parameters. Every trainable model has them: LightGBM, XGBoost, histogram GBM,
+*Train* lays out the chosen model's parameters. Every trainable model has them: LightGBM, XGBoost, histogram GBM,
 random forest, logistic or ridge regression, and the MLP. You write the MLP's layers like `128,64`.
 
 Each parameter has its own control: a dropdown for a choice (boosting type, loss, class weights), a number with its
@@ -286,7 +304,8 @@ range, or an on/off switch. The controls change with the model. They are grouped
 
 Every other parameter that changes the model sits under a folded, searchable *Advanced*.
 
-Each setting shows its default and a one-line explanation. A changed setting is marked and has ↺.
+Each setting shows a one-line explanation. A changed setting is marked, shows its default and has *Reset*. *Reset
+all* puts every setting back. A folded group sums up its settings in a line.
 
 ### Details
 
@@ -298,9 +317,9 @@ Each setting shows its default and a one-line explanation. A changed setting is 
   rows. An example is LightGBM's random forest without bagging or a feature sample.
 - A loss that needs non-negative numbers (Poisson, Tweedie) is refused for a target whose training minimum breaks it.
   Gamma needs positive numbers. Squared log error needs numbers above -1.
-- The panel remembers each model's last settings per export, in your browser.
-- A run stores the settings that differ from the defaults. Its detail lists them, with *Train again with these
-  settings*, which fills the panel with them.
+- *Train* remembers each model's last settings per export, in your browser.
+- A run stores the settings that differ from the defaults. Its detail lists them, with *Train again*, which opens
+  *Train* with the run's export, model, chain order and settings.
 
 ### Trying several values
 
@@ -317,7 +336,8 @@ A run can also fit its chain on K folds of the training rows. It uses the same m
 device. It scores each held-out fold with the same metrics. So each metric gets a mean and a spread (the standard
 deviation over folds), beside validation and test.
 
-K is the panel's *Cross-validation*: *Off*, or 2–20 folds. The default is 5. A run takes about K + 1 times as long.
+K is the *Train* tab's *Cross-validation*: *Off*, or 2–20 folds. The default is 5. A run takes about K + 1 times as
+long.
 
 ### Details
 
@@ -358,47 +378,52 @@ Every run is scored per target on the validation and test splits.
 
 ## The runs table
 
-Runs are listed per export, with that export's targets as columns. Each column shows AUC and macro-F1, or R² and RMSE
+*Runs* lists the runs of one export at a time; the picker above the table chooses the export. The export's targets are
+the columns. Each column shows AUC and macro-F1, or R² and RMSE
 for a number.
 
-The *Test / Validation / CV* switch picks the split. *CV* shows each mean ± spread, and — for runs without
-cross-validation.
+The *Validation / Test / Cross-validation* switch picks the split. *Cross-validation* shows each mean ± spread, and —
+for runs without cross-validation.
 
-In each column, ★ marks the run that scored best on the validation split for that target and metric (lowest for
-RMSE). So choosing it doesn't use the test split. On *Test* or *CV*, the star can sit on a lower number than another
-run's. Its tooltip gives the validation score it was picked on.
+In each column, ★ marks the run that scored best on the validation split for that target and metric (lowest for RMSE).
+So choosing it doesn't use the test split. On *Test* or *Cross-validation*, the star can sit on a lower number than
+another run's. Its tooltip gives the validation score it was picked on.
 
 A lead can mark one run per experiment as the chosen model (see [Choosing a model](#choosing-a-model)).
 
 ### Run detail
 
-A run expands into, per target:
+Select a run to open its detail beside the table (below it on a phone). The detail has *Train again*, *MLflow ↗*,
+*Model* (download), the run's note and, for a lead, *Mark as chosen*. Per target, it shows:
 
 - its headline metrics. For a binary target, precision, recall and F1 are the positive class's. Otherwise they are
   macro averages.
 - for a class target, tabs for the confusion matrix (correct predictions shaded blue, errors red), the ROC curves, and
-  the per-class table ending in the macro and weighted averages
+  the per-class table ending in the macro and weighted averages, plus *Threshold* for a binary target
 - for a number, R², RMSE, MAE and MAPE tiles over three tabs: the predicted-vs-actual scatter, the error histogram,
   and *Ranges* (the range confusion matrix and per-range precision, recall and F1)
+- *Top features*, when the run recorded them
 
-*Download model* and a test / validation switch apply to every target. With cross-validation, the switch adds
-*cross-validation*. It shows each target's headline metrics as mean ± spread, with every fold's value on hover, and a
-note when the folds weren't stratified or cross-validation was skipped.
+A *Test / Validation* switch applies to every target. With cross-validation, the switch adds *Cross-validation*. It
+shows each target's headline metrics as mean ± spread, with every fold's value on hover, and a note when the folds
+weren't stratified or cross-validation was skipped.
 
-A failed run expands into its settings, why it failed in one sentence (the full message under *Details*), and *Train
-again with these settings*.
+A failed run's detail shows its settings, why it failed in one sentence (the full message under *Details*), and *Train
+again*.
 
 ### Choosing a model
 
-Each run has a note that its author or a lead can write: why this run, what it showed. A lead can *Mark as the chosen
-model*, one per experiment. The runs table shows *Chosen* beside it, and who chose it.
+Each run has a note that its author or a lead can write: why this run, what it showed. A lead can *Mark as chosen*, one
+run per experiment, and *Unmark* it. The runs table shows *Chosen* beside it, with who chose it on hover. The
+experiments list shows *Chosen: LightGBM*, and the *Datasets* page shows the chosen model as the dataset's *Best
+result*.
 
 ## GPU training
 
 XGBoost can train on an NVIDIA GPU when the API runs the GPU image. Setting that up is in
 [Deployment](deployment.md#gpu).
 
-Training on the GPU is a per-run choice. When the API sees a usable GPU, the *Train a model* panel shows a CPU / GPU
+Training on the GPU is a per-run choice. When the API sees a usable GPU, the *Train* tab shows a CPU / GPU
 switch with the GPU's name, for models that support it. It defaults to GPU. On the GPU, XGBoost uses
 `device="cuda"` and `tree_method="hist"`.
 

@@ -54,8 +54,8 @@ Part of each decision is shared by every model family. The rest is set per famil
 |---|---|
 | keep / drop / target, *Predict as*, semantic type, notes, reviewed | imputation, missing indicator, transform, scaling, encoding, encoder parameters |
 
-A baseline's family decides which settings you review, export and log. *Review*, *Bulk edit* and the decision panel
-show that family's settings only. A baseline's snapshot stores only those.
+A baseline's family decides which settings you review, export and log. *Fields · Focus*, *Fields · Table* and the
+decision panel show that family's settings only. A baseline's snapshot stores only those.
 
 Each family has its own suggestions. A baseline started from a baseline of another family copies the shared
 decisions. It keeps each field's settings where they are valid for the new family, and takes the new family's
@@ -110,7 +110,7 @@ A field with an association of 0.95 or more to a target is flagged as a **possib
 
 ## Predicting numbers and bands
 
-Each target has a *Predict as* setting in the *Review* decision panel. It is part of the target's decision, like keep
+Each target has a *Predict as* setting in the decision panel in *Fields*. It is part of the target's decision, like keep
 or drop and type.
 
 | Predict as | What it means | Default for |
@@ -145,7 +145,7 @@ How each choice is written to an export is in
 
 ## Derived fields
 
-*Bulk edit → Derived fields* adds columns computed from the dataset's own fields. There are three kinds:
+*Fields · Derived* adds columns computed from the dataset's own fields. There are three kinds:
 
 | Kind | Example |
 |---|---|

@@ -60,30 +60,34 @@ for one run.
 
 | Path | Responsibility |
 |---|---|
-| `App.tsx` | Routes, the sign-in gate (`RequireAuth`), and the top bar (dataset switcher, workflow steps, the baseline chip, which names the experiment instead in experiment mode, and `UserMenu`: picture, name and role, opening *Change picture…*, *Settings*, *Team*, *MLflow ↗* and *Switch profile* / *Sign out*). `pages/SettingsPage.tsx` is the Settings page. |
-| `can.ts`, `avatar.ts` | `can(me, action)`: what a role may do, behind the edit controls outside Review, Bulk edit and experiments, where `accessOf` and the experiment helpers refuse a Viewer the same way (a Viewer only changes their own picture); initials and a stable colour slot for an account without a picture. |
+| `App.tsx` | Routes, the sign-in gate (`RequireAuth`), where opening a dataset lands (`DatasetIndex`), and the two-row top bar. Row 1: the dataset switcher, the tabs *Fields · Explore · Baseline · Experiments*, and `UserMenu` (picture, name and role, opening *Change picture…*, *Settings*, *People*, *MLflow ↗* and *Switch profile* / *Sign out*). Row 2 (`DatasetBar`): the version switcher, the phase rail with what opens the next phase, the lens chip and the next-step button; under a `view`, the experiment or finalized baseline being browsed; on an experiment's page, `ExperimentBar`. `pages/SettingsPage.tsx` is the Settings page. |
+| `can.ts`, `avatar.ts` | `can(me, action)`: what a role may do, behind the edit controls outside *Fields · Focus*, *Fields · Table* and experiments, where `accessOf` and the experiment helpers refuse a Viewer the same way (a Viewer only changes their own picture); initials and a stable colour slot for an account without a picture. |
 | `api.ts`, `types.ts` | Typed fetch client for every endpoint; response types. Any `401` (fetch or the upload XHR) sends the user to `/login?next=<current path>`. |
 | `hooks.ts` | Shared queries (`useMe`, `useDataset`, `useFields` (per view), `useOptions`, `useTeam`, `useExperiment`), `useAccess(ds, view)` (wraps `accessOf`; in an experiment or a finalized baseline it answers from the view), `PROCESSING` (the dataset statuses still processing) and `useDebounced`. |
-| `saveQueue.ts` | Review decision saves: one serial lane per field and view, latest draft wins, failures surface with Retry, flushes on page hide. |
-| `view.ts` | The decision source Review, Bulk edit and the finder work on, carried as `?view=` (`experiment:<id>`, `baseline:<id>`; none for the baseline in progress): `useView`, `parseView`, `withView`, and the query-key part `viewKey`. |
-| `pages/` | `LoginPage` (a centred grid of profiles to pick, or *Sign in with …*), `ForbiddenPage` (OIDC user in neither group, or deactivated), `TeamPage` (users and their pictures; read-only with `RAINFOREST_USERS`), `DatasetsPage`, `ReviewPage`, `BulkEditPage`, `ExplorePage`, `ExperimentsPage` (the list with its filters and the *New experiment* dialog; `ExperimentPage`, one experiment's header, notes and archive, around `ExperimentWorkspace`), `ExperimentWorkspace` (the export build panel, exports and runs of one experiment), `DatasetTeamPage` (setting up a new dataset's first baseline; a dataset's assessors and your assessment while assessing; the review queue, side-by-side comparison, comments, team decision and Finalize from review on), `BaselinesPage` (one card per baseline with its version history, starting a baseline, starting the next version with its field picker, comparing two versions). `ExperimentPage` also holds the Adjustments card (per-field revert). |
-| `components/` | `DatasetLayout` (gates dataset pages on status), `FieldList`, `FieldDetailView`, `DecisionPanel` (in an experiment, what differs from the baseline and *Revert to baseline*), `StartBaseline` (the start / set-up form: model type, start from, targets, assessors), `ExperimentModeBar` (the bar Review and Bulk edit show under a `view`), `JoinAssessment` (*Assess it myself*), `RunDetail`, `Chart`, `ReuseCard` (the reuse summary), `Avatar` (picture or initials), `PictureDialog` (choose, preview, save or remove a picture), `ui.tsx` (error alert, empty state, status glyphs, review meter), `Logo`; `components/explore/` holds the four Explore views, their shared state (`state.tsx`) and chart options (`options.ts`).; `TrainPanel` (export, model, device, cross-validation, targets and the model's settings) and `ModelSettings` (the settings grid, grouped, with Advanced folded); `ui.tsx`'s `InfoTip` (an explanation that opens on tap, for touch screens) |
+| `saveQueue.ts` | *Fields · Focus* decision saves: one serial lane per field and view, latest draft wins, failures surface with Retry, flushes on page hide. |
+| `view.ts` | The decision source *Fields · Focus*, *Fields · Table* and the finder work on, carried as `?view=` (`experiment:<id>`, `baseline:<id>`; none for the baseline in progress): `useView`, `parseView`, `withView`, and the query-key part `viewKey`. |
+| `pages/` | `LoginPage` (a centred grid of profiles to pick, or *Sign in with …*), `ForbiddenPage` (OIDC user in neither group, or deactivated), `TeamPage` (*People*: users and their pictures; read-only with `RAINFOREST_USERS`), `DatasetsPage` (*Waiting on you* cards and the datasets table), `ReviewPage` (*Fields · Focus*), `BulkEditPage` (*Fields · Table*, *SQL* and *Derived*), `ExplorePage`, `ExperimentsPage` (the list with its filters and the *New experiment* dialog; `ExperimentPage`, one experiment's tabs, with *Notes* (rename, notes, archive) and *Adjustments* (per-field revert) itself, around `ExperimentWorkspace`), `ExperimentWorkspace` (the *Runs*, *Train* and *Exports* tabs of one experiment), `BaselinePage` (the *Baseline* tab: setting up a new dataset's first baseline, your assessment and the assessors while assessing, the team review summary, the finalized version, and the versions), `DatasetTeamPage` (the team review queue: side-by-side comparison, discussion and team decision), `BaselinesPage` (*Versions and compare*: one card per baseline with its version history, starting a baseline, starting the next version with its field picker, comparing two versions). |
+| `components/` | `DatasetLayout` (gates dataset pages on status), `FieldList`, `FieldDetailView`, `DecisionPanel` (in an experiment, what differs from the baseline and *Revert to baseline*), `StartBaseline` (the start / set-up form: model type, start from, targets, assessors), `FieldsViewSwitch` (*Queue · Focus · Table · SQL · Derived*), `ExperimentBar` (the second row on an experiment's page), `kit.tsx` (icons, tabs, segmented controls, banners, chips, the phase rail and stage bar, the lens chip, and the one dialog with `confirmDialog`), `JoinAssessment` (*Assess it myself*), `RunDetail`, `Chart`, `ReuseCard` (the reuse summary), `Avatar` (picture or initials), `PictureDialog` (choose, preview, save or remove a picture), `ui.tsx` (error alert, empty state, status glyphs, review meter), `Logo`; `components/explore/` holds the four Explore views, their shared state (`state.tsx`) and chart options (`options.ts`).; `TrainPanel` (export, model, device, cross-validation, targets and the model's settings) and `ModelSettings` (the settings grid, grouped, with Advanced folded); `ui.tsx`'s `InfoTip` (an explanation that opens on tap, for touch screens) |
 | `signals.ts`, `format.ts`, `theme.ts`, `charts.ts`, `toast.tsx` | Field signal thresholds, formatting and labels, chart theme, shared chart options, toasts. |
-| `main.tsx`, `styles.css` | Entry point (query client, providers) and global styles. |
-| `decision.ts`, `finder.ts`, `runs.ts`, `team.ts`, `recipes.ts`, `baselines.ts`, `experiments.ts`, `components/explore/params.ts` | Pure logic behind the pages: retyping a draft and encoder-param checks, Bulk edit's presets and URL state, run ranking, what the viewer may edit in each phase (`accessOf`, used through `useAccess`) and the review queue's helpers, the reuse summary's grouping and reasons, diff formatting and the reopen picker's filter, the start form's defaults and target rule, the experiment list filters, source options and labels, privacy notes, who may edit or add, and a field's differences from its baseline (`baselineDiff`, `revertedInput`), Explore's URL state.; `settings.ts` (model settings: visibility, validation, changed values) and `quantiles.ts` (the distribution strip's labels) |
+| `main.tsx`, `styles.css`, `styles/` | Entry point (query client, providers), global styles and tokens, and one stylesheet per area (`home`, `fields`, `baseline`, `experiments`, `tools`). |
+| `decision.ts`, `finder.ts`, `runs.ts`, `team.ts`, `recipes.ts`, `baselines.ts`, `experiments.ts`, `components/explore/params.ts` | Pure logic behind the pages: retyping a draft and encoder-param checks, *Fields · Table*'s presets and URL state, run ranking, what the viewer may edit in each phase (`accessOf`, used through `useAccess`) and the review queue's helpers, the reuse summary's grouping and reasons, diff formatting and the reopen picker's filter, the start form's defaults and target rule, the experiment list filters, source options and labels, privacy notes, who may edit or add, and a field's differences from its baseline (`baselineDiff`, `revertedInput`), Explore's URL state.; `settings.ts` (model settings: visibility, validation, changed values) and `quantiles.ts` (the distribution strip's labels) |
 
-Routes: `/login`, `/forbidden`, `/` (datasets), `/team`, `/d/:id/review/:fieldId?`, `/d/:id/bulk`,
-`/d/:id/explore/:view?` (`?decisions=` picks the decision source), `/d/:id/team` (`?field=` selects a queue item),
-`/d/:id/baselines`, `/d/:id/experiments`, `/d/:id/experiments/:experimentId`. Review and Bulk edit take `?view=`.
-`/d/:id` redirects to Review, `/d/:id/query` to Bulk edit, `/d/:id/versions` to Baselines and `/d/:id/export` to the
-experiments list; anything else shows *Page not found*. The top bar's step is *Experiments* rather than a default
+Routes: `/login`, `/forbidden`, `/` (datasets), `/people`, `/settings/:section?`, `/d/:id/review/:fieldId?`
+(*Fields · Focus*), `/d/:id/bulk` (*Fields · Table*; `?tab=sql` and `?tab=derived`), `/d/:id/explore/:view?`
+(`?decisions=` picks the decision source), `/d/:id/team` (the team review queue; `?field=` selects a queue item),
+`/d/:id/baseline` (the *Baseline* tab), `/d/:id/baselines` (*Versions and compare*), `/d/:id/experiments`,
+`/d/:id/experiments/:experimentId` (`?tab=runs|train|exports|adjustments|notes`). Focus and Table take `?view=`.
+`/d/:id` lands on the dataset's next step: `baseline` while it is being set up, `team` in team review, else `review`.
+`/team` redirects to `/people`, `/d/:id/fields` to Focus, `/d/:id/query` to SQL, `/d/:id/versions` to
+*Versions and compare* and `/d/:id/export` to the experiments list; `/d/:id/team` redirects to the *Baseline* tab
+while a version is assessing. Anything else shows *Page not found*. The tab is *Experiments* rather than a default
 experiment's *Export & train*: while a dataset's first baseline is assessing there is no finalized baseline and so no
 team experiment to land in, and the experiments an assessor can use then are personal ones that only the list shows.
 
-Review, Bulk edit and the decision panel don't know about phases beyond `useAccess(ds, view)`: it says whether the
+Focus, Table and the decision panel don't know about phases beyond `useAccess(ds, view)`: it says whether the
 viewer works on their own assessment, the team decision, an experiment's copy or a finalized baseline, and whether
 they can edit, and the panel turns read-only with the reason when they can't. Every query and save they make passes
-the view on. A carried-over field arrives with `locked` (the reason) on its field detail, which the Review page passes
+the view on. A carried-over field arrives with `locked` (the reason) on its field detail, which the Focus page passes
 to the panel as its read-only note.
 
 ## Request and data flow
@@ -156,17 +160,17 @@ the UI polls (`pending → running → done | failed`, with `progress` and `stat
    for knock-on changes). Targets profiled as text or identifier have no association sample, so a `correlate_targets`
    job computes theirs. Added targets also get the leak screen against text and high-cardinality fields: inside
    `correlate_targets` when that job runs, otherwise as a `fields.screen_targets` job that leaves the dataset
-   `ready`. A target chosen in Review (`PUT …/decision`) gets the same job. How each target is predicted is
+   `ready`. A target chosen in *Fields* (`PUT …/decision`) gets the same job. How each target is predicted is
    `target_task` (`classes`, `regression`, `bins`) and `target_bins` on every decision table; the trigger from
    migration 014 clears both on a non-target and, when the task is missing or doesn't fit the type, sets the type's
    default (`meta.default_target_task`, mirrored by `semantics.default_task`), so every writer gets the same rule.
-4. **Review.** `GET /api/fields/{id}` returns the field, the viewer's decision merged with the baseline family's
+4. **Fields · Focus.** `GET /api/fields/{id}` returns the field, the viewer's decision merged with the baseline family's
    settings, and target associations. `PUT /api/fields/{id}/decision` validates against the family (a type change
    whose settings don't fit takes the new type's suggestion; a target saved without `target_task` keeps the stored
    one, `fields._with_stored_task`), writes the decision and settings and, for the team
    decision only, appends `meta.decision_history` and keeps the target state in step. See
    [Team process](#team-process) for whose decision that is.
-5. **Bulk edit.** The field filter compiles to a `WHERE` over the viewer's `fields_view()` (`meta.v_fields` for the
+5. **Fields · Table.** The field filter compiles to a `WHERE` over the viewer's `fields_view()` (`meta.v_fields` for the
    team decision; `query.fields_where`, a whitelist of columns and operators). `POST …/decisions/bulk` resolves and locks the set in one statement, plans per-field
    changes, and either returns the plan (`dry_run`) or applies it, storing a pre-change snapshot in
    `meta.bulk_batches` (an assessor's in `meta.assessment_batches`, an experiment's in `meta.experiment_batches`) for
@@ -319,7 +323,7 @@ renamed.
 **Copies and adjustments.** A team experiment gets its own copy of its baseline when it is created (`seed_copy`;
 bootstrap's `backfill_copies` seeds any that lack one): every field's decision in `meta.experiment_decisions`, the
 baseline family's settings in `meta.experiment_settings`, and the baseline's target order in
-`experiments.target_order`. Review, Bulk edit and the finder read and write it through the experiment source
+`experiments.target_order`. Focus, Table and the finder read and write it through the experiment source
 (`view=experiment:<id>`), with bulk batches in `meta.experiment_batches`. The adjustments are not stored separately:
 `experiments.adjustments` diffs the baseline's snapshot against `snapshot_for` (the copy shaped as a snapshot, with
 the experiment's targets), and `revert` deletes the copy's rows for some or all fields and reseeds them. Only the
@@ -515,7 +519,7 @@ exports freeze them. Tests that need team decisions to be editable or exportable
 with `conftest.set_phase`.
 
 `ui` uses Vitest (`npm test`) for the pure logic: field signals, formatting, the save queue (with the API mocked),
-retype rules, the Bulk edit and Explore URL state, error parsing, run ranking, phase access, the experiment
+retype rules, the *Fields · Table* and Explore URL state, error parsing, run ranking, phase access, the experiment
 helpers (including a field's differences from its baseline), the start form's defaults and target rule, the view
 URL helpers, `can` for every role and action, initials, and the reuse summary, diff formatting and reopen picker. Tests sit next to the code as
 `*.test.ts`. CI (`.github/workflows/ci.yml`, on pushes to `main` and pull requests) runs the API tests with a

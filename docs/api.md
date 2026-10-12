@@ -36,7 +36,8 @@ baseline version, the latest started (see [Team](#team-routersteampy)). While it
 everyone else reads the team decision (the baseline's starting point) and gets `403` on writes. A submitted assessor
 gets `409` until they unsubmit. In `review` everyone reads the team decision and only a lead writes it (`403` for
 members). A `finalized` version answers writes with `409`. On a version that reopened some fields, the rest are
-carried over and locked: writes to them get `409` naming them, whoever asks, and Bulk edit passes over them.
+carried over and locked: writes to them get `409` naming them, whoever asks, and bulk actions (*Fields · Table*) pass
+over them.
 
 **`view`.** The field routes (`GET …/datasets/{id}/fields`, `GET /api/fields/{id}`, `PUT …/decision`,
 `POST …/decisions/bulk` and its undo, `POST …/fields/query`) and Explore take a `view` naming another decision
@@ -103,7 +104,7 @@ The session cookie is `HttpOnly`, `SameSite=Strict`, lasts 7 days and is `Secure
 | GET | `/api/datasets/{dataset_id}` | One dataset, with `recipe_id`, `recipe_version` and `phase`; `baseline`, the current version (`id`, `family`, `version`, `phase`, `name` (null when unnamed), `label` like `Dropout risk v2 (Trees)` or `Trees baseline v2`, and `setup`: a new dataset's first baseline nobody has started on), or null; and `baselines`, one per family that has one, Trees first (`family`, `id`, `version`, `phase`, `name` and `label` of its latest version, and `latest_finalized_id`). | |
 | PATCH | `/api/datasets/{dataset_id}` | Rename or set the targets. `model_family` is the current baseline's: sending another is `422`. Setting targets needs a `ready` dataset (`409` otherwise) and may start a job for targets with no associations yet. While assessing, targets change only before any assessor is assigned (`409` after); in review only a lead changes them; a finalized version refuses (`409`), and so does a change to a carried-over field's role. A target must be typed binary, categorical or numeric, and binary or categorical with at most 100 distinct values (`422` naming each field otherwise). A new target gets its type's default task (see `PUT /api/fields/{id}/decision`); an existing one keeps its own. | `name`, `target_columns` (exact list in chain order; `[]` for none) |
 | DELETE | `/api/datasets/{dataset_id}` | *Lead.* Delete the dataset, its fields, exports, runs, analyses and files. `409` while it, or one of its exports or runs, is still running. Returns counts removed. | |
-| GET | `/api/datasets/{dataset_id}/fields` | Lightweight field rows for the Review sidebar (type, confidence, missing, uniques, target association, leakage, decision, reviewed, `locked`: carried over into the current version, always false once it is finalized), with the viewer's decisions. | `view` |
+| GET | `/api/datasets/{dataset_id}/fields` | Lightweight field rows for the *Fields* list (type, confidence, missing, uniques, target association, leakage, decision, reviewed, `locked`: carried over into the current version, always false once it is finalized), with the viewer's decisions. | `view` |
 
 ## Fields and decisions (`routers/fields.py`)
 

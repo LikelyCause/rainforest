@@ -64,7 +64,7 @@ version.
 | Phase | What happens |
 |---|---|
 | *Assessing* | Assessors review the fields, each on their own. |
-| *Review* | The team settles the fields where assessors disagreed. |
+| *Team review* | The team settles the fields where assessors disagreed. |
 | *Finalized* | The version is frozen and can be exported. |
 
 Only one version per dataset is in progress (assessing or in review) at a time.
@@ -77,8 +77,8 @@ assessing, the lead included.
 **Team review.** The phase after every assessor submits. Fields where every assessor made the same core choice are
 *adopted*. The rest wait in the review queue.
 
-**Review queue.** The fields assessors disagreed on, shown side by side with comments on the *Team* step. A lead
-sets the team decision for each.
+**Review queue.** The fields assessors disagreed on, shown side by side with comments in *Fields* during team review. A
+lead sets the team decision for each.
 
 **Team decision.** The decision that counts for the version: adopted, or set by a lead in team review.
 
@@ -86,7 +86,7 @@ sets the team decision for each.
 family, its inferred type and key statistics, and the target order.
 
 **Carried-over field (locked).** In a new version, a field the lead didn't reopen. It keeps the previous version's
-decision, and nobody can change it in that version. The Review list marks it with 🔒.
+decision, and nobody can change it in that version. The *Fields* list marks it with 🔒.
 
 **Reopened field.** In a new version, a field the lead chose for assessment again.
 
@@ -144,7 +144,7 @@ See [Roles and permissions](team-workflow.md#roles-and-permissions).
 |---|---|
 | Baseline version | `recipe` (`meta.recipes`, `recipe_id`, `recipe_version`) |
 | Model type | `family` (`tree`, `linear`, `neural`; `model_family`) |
-| *Assessing* / *Review* / *Finalized* | phase `assessing` / `review` / `finalized` |
+| *Assessing* / *Team review* / *Finalized* | phase `assessing` / `review` / `finalized` |
 | Reopened version | `scope = 'reopened'` (a full version is `all`) |
 | *Classes* / *Number* / *Bands* | `target_task` `classes` / `regression` / `bins` |
 | Bands definition | `target_bins` |

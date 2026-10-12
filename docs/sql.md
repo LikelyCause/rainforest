@@ -7,7 +7,7 @@ Rainforest keeps everything in Postgres, so you can query it with SQL. Terms are
 
 You have two options:
 
-- The *SQL* tab in *Bulk edit*: a read-only console. Members and leads can use it.
+- *Fields · SQL*: a read-only console. Members and leads can use it.
 - Any SQL client, connected to `localhost:5432` on the Docker host (`DB_PORT`), with the user and password from
   `.env`. `make psql` opens psql as the database owner.
 
