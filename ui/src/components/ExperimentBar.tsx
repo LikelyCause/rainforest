@@ -49,10 +49,12 @@ export function ExperimentBar({ ds, experimentId }: { ds: Dataset; experimentId:
   const adjusted = d?.adjustments.count ?? 0;
   const canTrain = Boolean(d && me && !addBlocked(d, me));
   // The same queries the tabs poll, so the counts move as jobs start.
-  const runList = useQuery({ queryKey: ["runs", ds.id, experimentId], queryFn: () => api.runs(ds.id, experimentId) });
-  const exportList = useQuery({ queryKey: ["exports", ds.id, experimentId], queryFn: () => api.exports(ds.id, experimentId) });
+  const runList = useQuery({ queryKey: ["runs", ds.id, experimentId], queryFn: () => api.runs(ds.id, experimentId), enabled: !x.error });
+  const exportList = useQuery({ queryKey: ["exports", ds.id, experimentId], queryFn: () => api.exports(ds.id, experimentId), enabled: !x.error });
   const runs = runList.data?.length ?? d?.runs.length;
   const exports = exportList.data?.length ?? d?.exports.length;
+  // Missing, or not shared with this viewer: the page says so; here, only the way back.
+  if (x.error) return <Link to={`/d/${ds.id}/experiments`} className="secondary small-text">Experiments</Link>;
   return (
     <>
       <Link to={`/d/${ds.id}/experiments`} className="secondary small-text">Experiments</Link>
@@ -73,6 +75,14 @@ export function ExperimentBar({ ds, experimentId }: { ds: Dataset; experimentId:
       {adjusted > 0 && (
         <Link to={`${base}?tab=adjustments`} className="exp-chip-link">
           <Chip tone="experiment" icon="flask">{adjusted} field{adjusted === 1 ? "" : "s"} adjusted</Chip>
+        </Link>
+      )}
+      {d?.chosen && (
+        <Link to={`${base}?tab=runs&run=${d.chosen.run_id}`} className="exp-chip-link"
+          title={`The chosen model: run #${d.chosen.run_id}${d.chosen.by ? `, chosen by ${d.chosen.by}` : ""}`}>
+          <Chip tone="good" icon="check">
+            Chosen: {d.chosen.model_label ?? d.chosen.model} · run #{d.chosen.run_id}{d.chosen.by && <span className="exp-chosen-by"> · by {d.chosen.by}</span>}
+          </Chip>
         </Link>
       )}
       {d?.adjustments.targets_changed && (

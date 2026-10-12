@@ -218,7 +218,10 @@ export function TrainPanel({ exports, request, onStarted }: {
   const splitText = cfg.valid_size !== undefined
     ? `Split ${fmtPct(1 - cfg.valid_size - cfg.test_size, 0)} / ${fmtPct(cfg.valid_size, 0)} / ${fmtPct(cfg.test_size, 0)}` : null;
   const runChanged = catalog ? catalog.filter((s) => s.group === "run" && s.name in values && values[s.name] !== s.default) : [];
-  const changedText = catalog ? describeSettings({ ...changed(values, catalog, kinds), ...Object.fromEntries(runChanged.map((s) => [s.name, values[s.name]])) }, catalog) : "defaults";
+  // A swept setting's own value is never used, so it isn't listed as changed.
+  const sweptNames = new Set(axes.map((a) => a.name));
+  const changedValues = { ...changed(values, catalog ?? [], kinds), ...Object.fromEntries(runChanged.map((s) => [s.name, values[s.name]])) };
+  const changedText = catalog ? describeSettings(Object.fromEntries(Object.entries(changedValues).filter(([k]) => !sweptNames.has(k))), catalog) : "defaults";
   const swept = parsedAxes.filter((a) => !a.error).map((a) => {
     const s = catalog!.find((x) => x.name === a.name)!;
     return `${s.label}, swept over ${a.values.map((v) => fmtSetting(s, v)).join(", ")}`;
@@ -299,7 +302,7 @@ export function TrainPanel({ exports, request, onStarted }: {
         {blocked && <span className="small-text" role={settingProblems ? "alert" : undefined} style={settingProblems ? { color: "var(--bad)" } : undefined}>{blocked}</span>}
         <button type="button" className="primary large" disabled={Boolean(blocked) || start.isPending} onClick={() => start.mutate()}>
           <Icon name="play" />
-          {start.isPending ? "Starting…" : combos.length ? `Train ${combos.length} runs` : order.length > 1 ? "Train chain" : "Train"}
+          {start.isPending ? "Starting…" : combos.length > 1 ? `Train ${combos.length} runs` : order.length > 1 ? "Train chain" : "Train"}
         </button>
         {dropped.length > 0 && (
           <span className="muted small-text">Not carried over (no longer settings of this model): {dropped.join(", ")}</span>

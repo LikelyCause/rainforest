@@ -140,6 +140,10 @@ describe("lastRowRules", () => {
     expect(lastRowRules([ex(1, { dedupe: false, exclude: [] })])).toBeNull();
     expect(lastRowRules([])).toBeNull();
   });
+  it("skips failed exports, whose rules may be why they failed", () => {
+    expect(lastRowRules([{ id: 3, status: "failed", config: { group_by: "x" } }, { id: 2, status: "done", config: { dedupe: true } }]))
+      .toEqual({ from: 2, rules: { dedupe: true, exclude: [], first_per: null, group_by: null } });
+  });
 });
 
 describe("experimentTab", () => {

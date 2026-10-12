@@ -40,20 +40,55 @@ function Pop({ label, children, primary, align = "right" }: {
   );
 }
 
+let measurer: CanvasRenderingContext2D | null = null;
+/** How wide a label renders in the element's font (7px a character where canvas can't say). */
+function textWidth(text: string, el: HTMLElement | null): number {
+  measurer ??= document.createElement("canvas").getContext("2d");
+  if (!measurer || !el) return text.length * 7;
+  measurer.font = getComputedStyle(el).font;
+  return measurer.measureText(text).width;
+}
+
 function SplitBar({ valid, test, rows }: { valid: number; test: number; rows: number | null }) {
   const train = 1 - valid - test;
   const bad = train < MIN_TRAIN;
   // Text on the amber and grey segments takes the page colour, so it reads in both themes.
-  const seg = (label: string, share: number, color: string) => share > 0 && (
-    <span style={{ width: `${Math.max(share, 0) * 100}%`, background: color, color: label === "train" ? undefined : "var(--bg)" }} title={`${label} ${fmtPct(share, 0)}`}>
-      {share >= 0.1 && <>{label} {fmtPct(share, 0)}{rows && share >= 0.3 ? ` · ${fmtInt(Math.round(rows * share))}` : ""}</>}
-    </span>
-  );
+  // A segment too narrow for its label (a 15% share on a phone) shows it on a line under the bar instead.
+  const bar = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const el = bar.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setWidth(el.clientWidth));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const segs = [
+    { label: "train", share: Math.max(train, 0), color: bad ? "var(--bad)" : "var(--accent-fill)" },
+    { label: "valid", share: valid, color: "var(--warn)" },
+    { label: "test", share: test, color: "var(--text-secondary)" },
+  ].filter((s) => s.share > 0).map((s) => {
+    const text = `${s.label} ${fmtPct(s.share, 0)}${rows && s.share >= 0.3 ? ` · ${fmtInt(Math.round(rows * s.share))}` : ""}`;
+    // The text's width plus the segment's padding; before the bar is measured, the old 10% rule.
+    const fits = width ? s.share * width >= textWidth(text, bar.current) + 16 : s.share >= 0.1;
+    return { ...s, text, fits };
+  });
   return (
-    <div className="split-bar" role="img" aria-label={`Train ${fmtPct(train, 0)}, validation ${fmtPct(valid, 0)}, test ${fmtPct(test, 0)}`}>
-      {seg("train", Math.max(train, 0), bad ? "var(--bad)" : "var(--accent-fill)")}
-      {seg("valid", valid, "var(--warn)")}
-      {seg("test", test, "var(--text-secondary)")}
+    <div className="split">
+      <div ref={bar} className="split-bar" role="img" aria-label={`Train ${fmtPct(train, 0)}, validation ${fmtPct(valid, 0)}, test ${fmtPct(test, 0)}`}>
+        {segs.map(({ label, share, color, text, fits }) => (
+          <span key={label} style={{ width: `${share * 100}%`, background: color, color: label === "train" ? undefined : "var(--bg)" }} title={`${label} ${fmtPct(share, 0)}`}>
+            {fits && text}
+          </span>
+        ))}
+      </div>
+      {width > 0 && segs.some((s) => !s.fits) && (
+        <div className="split-legend small-text secondary" aria-hidden="true">
+          {segs.filter((s) => !s.fits).map(({ label, share, color }) => (
+            <span key={label}><i style={{ background: color }} />{label} {fmtPct(share, 0)}</span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -349,10 +384,12 @@ export function useJobToasts({ x, exports, runs, fresh, canAdd, base }: {
   const told = useRef<string>("");
   useEffect(() => {
     let changed = false;
+    let exportDone = false;
     for (const e of exports ?? []) {
       const before = seen.current.get(`e${e.id}`);
       if (before && isActive(before) && !isActive(e.status)) {
         changed = true;
+        exportDone = true;
         if (e.status === "done") {
           toast({ tone: "good", message: `Export #${e.id} is ready`, duration: 10_000,
             action: canAdd ? { label: "Train on it", run: () => nav(`${base}?tab=train&export=${e.id}`) } : undefined });
@@ -368,6 +405,11 @@ export function useJobToasts({ x, exports, runs, fresh, canAdd, base }: {
       seen.current.set(`r${r.id}`, r.status);
     }
     if (changed) qc.invalidateQueries({ queryKey: ["experiment", x.id] });
+    // A finished export is the newest to compare decisions with (and to take row rules from).
+    if (exportDone) {
+      qc.invalidateQueries({ queryKey: ["exportPreview"] });
+      qc.invalidateQueries({ queryKey: ["exports"] });
+    }
     // A batch this page started: say so once all of it is through.
     const batch = (runs ?? []).filter((r) => fresh.includes(r.id));
     const key = fresh.join(",");
@@ -403,6 +445,26 @@ export function RunsTab({ x, exports, runs, error, canAdd, fresh, onTrainAgain }
     return next;
   }, { replace: true });
   const select = (id: number | null) => set({ run: id === null ? null : String(id) });
+  // Closing the aside puts focus back on the run's row, where it was opened from.
+  const close = () => {
+    const id = selected?.id;
+    select(null);
+    if (id) requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-run-open="${id}"]`)?.focus());
+  };
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  // Esc closes it wherever focus is, unless a dialog or popover takes the Esc, or you are typing.
+  useEffect(() => {
+    if (!selectedId) return;
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== "Escape" || ev.defaultPrevented) return;
+      if (document.querySelector('[aria-modal="true"], .popover')) return;
+      if ((ev.target as HTMLElement | null)?.closest?.("textarea, input, select")) return;
+      closeRef.current();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [selectedId]);
   // Open a run as soon as the one run you just started finishes.
   const prev = useRef(new Map<number, string>());
   useEffect(() => {
@@ -447,7 +509,7 @@ export function RunsTab({ x, exports, runs, error, canAdd, fresh, onTrainAgain }
                 <select value={e.id} aria-label="Export" onChange={(ev) => set({ export: ev.target.value, run: null })}>
                   {withRuns.map((x) => {
                     const sc = x.summary?.split_counts;
-                    return <option key={x.id} value={x.id}>Export #{x.id}{sc ? ` · ${fmtInt(sc.train)} / ${fmtInt(sc.valid)} / ${fmtInt(sc.test)} rows` : ""} · {all.filter((r) => r.export_id === x.id).length} runs</option>;
+                    return <option key={x.id} value={x.id}>Export #{x.id}{sc ? ` · ${fmtInt(sc.train)} / ${fmtInt(sc.valid)} / ${fmtInt(sc.test)} rows` : ""} · {plural(all.filter((r) => r.export_id === x.id).length, "run")}</option>;
                   })}
                 </select>
               </label>
@@ -468,11 +530,11 @@ export function RunsTab({ x, exports, runs, error, canAdd, fresh, onTrainAgain }
         )}
       </div>
       {selected && (
-        <aside ref={aside} id="run-detail" className="run-aside" aria-labelledby={`run-${selected.id}-title`}
-          onKeyDown={(ev) => { if (ev.key === "Escape" && !(ev.target as HTMLElement).closest("textarea, input, select")) select(null); }}>
+        <aside ref={aside} id="run-detail" className="run-aside" aria-labelledby={`run-${selected.id}-title`}>
           <RunDetail key={selected.id} run={selected} split={split}
             targets={selected.report?.order ?? selected.config?.order ?? exports.find((x) => x.id === selected.export_id)?.summary?.targets ?? []}
-            onTrainAgain={canAdd ? onTrainAgain : null} onClose={() => select(null)} />
+            kinds={exports.find((x) => x.id === selected.export_id)?.summary?.target_kinds}
+            onTrainAgain={canAdd ? onTrainAgain : null} onClose={close} />
         </aside>
       )}
     </div>
@@ -532,7 +594,7 @@ function RunsTable({ e, runs, targets, kinds, split, fresh, selectedId, onSelect
                 <td className="run-model">
                   <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
                     {opens(r) ? (
-                      <button type="button" className="run-open" aria-pressed={on} aria-controls={on ? "run-detail" : undefined}
+                      <button type="button" className="run-open" data-run-open={r.id} aria-pressed={on} aria-controls={on ? "run-detail" : undefined}
                         onClick={(ev) => { ev.stopPropagation(); onSelect(on ? null : r.id); }}>{label}</button>
                     ) : <span className="secondary">{label}</span>}
                     {r.chosen_at && <Chip tone="good" title={r.chosen_by_name ? `Chosen by ${r.chosen_by_name}` : undefined}>Chosen</Chip>}
@@ -608,6 +670,8 @@ export function TrainTab({ exports, onStarted }: { exports: ExportJob[] | undefi
   }
   return <div className="page exp-wide"><TrainPanel exports={exports} request={request} onStarted={onStarted} /></div>;
 }
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /** " · 3 fields adjusted · targets changed", from what the export recorded. */
 function adjustedNote(e: ExportJob): string {

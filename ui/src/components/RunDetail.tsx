@@ -415,8 +415,10 @@ function RunChoice({ run }: { run: ModelRun }) {
             onChange={(e) => setNote(e.target.value)} onBlur={() => { if (edited) save.mutate({ note }); }} />
         ) : run.note && <p className="secondary" style={{ margin: 0, whiteSpace: "pre-wrap" }}>“{run.note}”</p>}
       </div>
+      {/* Mouse down keeps focus in the note, so its blur doesn't save it a moment before this click saves it again. */}
       {lead && run.status === "done" && (
         <button type="button" className={chosen ? "ghost small" : "small"} disabled={save.isPending}
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => save.mutate({ chosen: !chosen, ...(edited ? { note } : {}) })}>
           {chosen ? "Unmark" : "Mark as chosen"}
         </button>
@@ -441,21 +443,26 @@ export function MlflowLink({ run, button }: { run: ModelRun; button?: boolean })
   return button ? null : <span className="muted small-text">—</span>;
 }
 
-/** "strength_mpa as a number", "a → b as classes": what the run predicts. */
-function predicts(run: ModelRun, targets: string[]): string {
+/** "strength_mpa as a number", "a → b as classes": what the run predicts, from the run's report or scores, else the
+ * export's target kinds; null when nothing says (a failed run on an export that didn't record them). */
+function predicts(run: ModelRun, targets: string[], exportKinds?: Record<string, string>): string | null {
   const kind = (t: string) => {
-    const k = run.report?.target_kinds?.[t];
+    const k = run.report?.target_kinds?.[t] ?? exportKinds?.[t];
+    if (k) return k === "regression" ? "a number" : "classes";
     const m = run.metrics?.test?.[t] ?? run.metrics?.valid?.[t];
-    return k === "regression" || (m && ("r2" in m || "rmse" in m)) ? "a number" : "classes";
+    if (!m) return null;
+    return "r2" in m || "rmse" in m ? "a number" : "classes";
   };
-  const kinds = new Set(targets.map(kind));
-  return kinds.size === 1 ? `${targets.join(" → ")} as ${[...kinds][0]}` : targets.map((t) => `${t} as ${kind(t)}`).join(", ");
+  const each = targets.map(kind);
+  if (!targets.length || each.some((k) => k === null)) return null;
+  const kinds = new Set(each);
+  return kinds.size === 1 ? `${targets.join(" → ")} as ${each[0]}` : targets.map((t, i) => `${t} as ${each[i]}`).join(", ");
 }
 
 /** One run in full, for the aside beside the runs table: what it is, the chosen-model box, its scores per target with
  * their charts, and a way to train again with its settings. */
-export function RunDetail({ run, targets, onTrainAgain = null, onClose, split: initialSplit = "test" }: {
-  run: ModelRun; targets: string[]; onTrainAgain?: ((p: TrainPrefill) => void) | null; onClose?: () => void; split?: Split;
+export function RunDetail({ run, targets, kinds, onTrainAgain = null, onClose, split: initialSplit = "test" }: {
+  run: ModelRun; targets: string[]; kinds?: Record<string, string>; onTrainAgain?: ((p: TrainPrefill) => void) | null; onClose?: () => void; split?: Split;
 }) {
   const cv = run.report?.cross_validation;
   const [split, setSplit] = useState<Split>(initialSplit === "cv" && !(cv && run.metrics?.cv) ? "test" : initialSplit);
@@ -479,12 +486,13 @@ export function RunDetail({ run, targets, onTrainAgain = null, onClose, split: i
     cvFolds: run.config?.cv_folds ?? 0,
   }) : null;
 
+  const prediction = predicts(run, targets, kinds);
   const head = (
     <div className="run-head">
       <div className="stack" style={{ gap: 2, minWidth: 0 }}>
         <h2 id={`run-${run.id}-title`}>{label}</h2>
         <span className="secondary small-text">
-          Run {run.id} · <span title="Settings changed from the defaults">{settingsText}</span> · predicts {predicts(run, targets)}
+          Run {run.id} · <span title="Settings changed from the defaults">{settingsText}</span>{prediction ? ` · predicts ${prediction}` : ""}
         </span>
       </div>
       <div className="row run-actions">

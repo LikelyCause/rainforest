@@ -168,3 +168,17 @@ button.run-open:focus-visible { outline: 2px solid var(--accent); outline-offset
   .dataset-bar .exp-switcher .exp-name, .dataset-bar > .btn.primary { min-height: 44px; }
   button.exp-icon { width: 44px; }
 }
+
+/* ------------------------------------------------------------------ split bar: labels too wide for a narrow bar go under it */
+.split { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.split-legend { display: flex; gap: 4px 14px; flex-wrap: wrap; }
+.split-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.split-legend i { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.exp-page-banner + .exp-runs .exp-runs-main { padding-top: 16px; }
+@media (max-width: 759px) {
+  .exp-chosen-by { display: none; }
+}
+@media (max-width: 759px) {
+  /* The global fade covers the last 15% of a scrolling sub-tab row; pad past it so "Notes" comes clear at the end. */
+  .dataset-bar .tabs.sub.exp-tabs { mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); padding-right: 40px; }
+}

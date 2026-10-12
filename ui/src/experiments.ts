@@ -107,9 +107,11 @@ export interface RowRules {
 }
 export const NO_RULES: RowRules = { dedupe: false, exclude: [], first_per: null, group_by: null };
 
-/** The row rules of the dataset's newest export that set any, so the next export starts from them. */
-export function lastRowRules(exports: { id: number; config: Record<string, any> | null }[]): { from: number; rules: RowRules } | null {
+/** The row rules of the dataset's newest export that set any, so the next export starts from them. A failed export's
+ * rules may be why it failed, so those don't count. */
+export function lastRowRules(exports: { id: number; status?: string; config: Record<string, any> | null }[]): { from: number; rules: RowRules } | null {
   for (const e of [...exports].sort((a, b) => b.id - a.id)) {
+    if (e.status === "failed") continue;
     const c = e.config ?? {};
     const rules: RowRules = { dedupe: Boolean(c.dedupe), exclude: c.exclude ?? [], first_per: c.first_per ?? null, group_by: c.group_by ?? null };
     if (rules.dedupe || rules.exclude.length || rules.first_per || rules.group_by) return { from: e.id, rules };

@@ -12,7 +12,7 @@ import {
   addBlocked, canEdit, experimentTab, filterExperiments, finalizedPrompt, metricLabel, mlflowExperimentUrl, privacyNote, sourceLabel,
   sourceOptions, type ExperimentFilter,
 } from "../experiments";
-import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtNum } from "../format";
+import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtMetric } from "../format";
 import { fmtChange } from "../recipes";
 import { withView } from "../view";
 import { toast } from "../toast";
@@ -55,10 +55,13 @@ function CreateDialog({ ds, me, initial, onClose }: { ds: Dataset; me: Me; initi
   const [source, setSource] = useState("");
   useEffect(() => {
     // The current finalized baseline by default (sourceOptions lists it first among the finalized), then anything else.
-    if (!source && options.length) {
-      setSource((options.find((o) => o.value === initial) ?? options.find((o) => o.value.startsWith("recipe:")) ?? options[0]).value);
+    // Wait for the versions: an assessment listed before they load mustn't become the default.
+    if (!source && options.length && !versions.isPending) {
+      const current = ds.baseline?.phase === "finalized" ? `recipe:${ds.baseline.id}` : null;
+      setSource((options.find((o) => o.value === initial) ?? options.find((o) => o.value === current)
+        ?? options.find((o) => o.value.startsWith("recipe:")) ?? options[0]).value);
     }
-  }, [source, options, initial]);
+  }, [source, options, initial, versions.isPending, ds.baseline]);
   const create = useMutation({
     mutationFn: () => api.createExperiment(ds.id, { name: name.trim(), source }),
     onSuccess: (x) => {
@@ -174,7 +177,7 @@ export function ExperimentsPage() {
                     <td className="num">{x.export_count ?? 0}</td>
                     <td className="num">{x.run_count ?? 0}</td>
                     <td className="num" title={x.best ? `Run #${x.best.run_id} · ${x.best.target}` : undefined}>
-                      {x.best ? <>{fmtNum(x.best.value, 3)} <span className="muted">{metricLabel(x.best.metric)}</span></> : <span className="muted">—</span>}
+                      {x.best ? <>{fmtMetric(x.best.value)} <span className="muted">{metricLabel(x.best.metric)}</span></> : <span className="muted">—</span>}
                     </td>
                     <td className="muted small-text" title={fmtDate(x.created_at)}>{fmtAgo(x.created_at)}</td>
                   </tr>
@@ -227,7 +230,7 @@ function NotesTab({ ds, x, me, blocked }: { ds: Dataset; x: ExperimentDetail; me
           {renaming ? (
             <form className="row" onSubmit={(e) => { e.preventDefault(); if (name.trim()) patch.mutate({ name: name.trim() }); }}>
               <input autoFocus value={name} maxLength={200} aria-label="Experiment name" onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => e.key === "Escape" && setRenaming(false)} />
+                onKeyDown={(e) => { if (e.key === "Escape") { setRenaming(false); setName(x.name); } }} />
               <button type="submit" className="small primary" disabled={!name.trim() || patch.isPending}>Save</button>
               <button type="button" className="small ghost" onClick={() => { setRenaming(false); setName(x.name); }}>Cancel</button>
             </form>
@@ -238,7 +241,7 @@ function NotesTab({ ds, x, me, blocked }: { ds: Dataset; x: ExperimentDetail; me
           <dt>Built from</dt><dd>{sourceLabel(x, me)}</dd>
           <dt>Owner</dt><dd>{x.owner_name ?? "Team"}</dd>
           <dt>Created</dt><dd title={fmtDate(x.created_at)}>{fmtAgo(x.created_at)}</dd>
-          {x.best && <><dt>Best</dt><dd className="num">{fmtNum(x.best.value, 3)} {metricLabel(x.best.metric)} on validation (run #{x.best.run_id}, {x.best.target})</dd></>}
+          {x.best && <><dt>Best</dt><dd className="num">{fmtMetric(x.best.value)} {metricLabel(x.best.metric)} on validation (run #{x.best.run_id}, {x.best.target})</dd></>}
           {x.chosen && <><dt>Chosen</dt><dd>{x.chosen.model_label ?? x.chosen.model} (run #{x.chosen.run_id}){x.chosen.by ? `, by ${x.chosen.by}` : ""}</dd></>}
           {x.archived_at && <><dt>Archived</dt><dd title={fmtDate(x.archived_at)}>{fmtAgo(x.archived_at)}</dd></>}
           {(mlflow || x.private) && <>
@@ -378,6 +381,7 @@ export function ExperimentPage() {
     toast({ message: runs.length > 1 ? `Training ${runs.length} ${label} runs on Export #${e.id}` : `Training ${label} on Export #${e.id}` });
     nav(`${base}?tab=runs&export=${e.id}`);
   };
+  const reason = blocked && <div className="exp-page-banner"><Banner>{blocked}</Banner></div>;
   switch (tab) {
     case "train":
       return canAdd ? <TrainTab exports={jobs.exports.data} onStarted={onStarted} />
@@ -385,17 +389,17 @@ export function ExperimentPage() {
     case "exports":
       return (
         <>
-          {blocked && <div className="exp-page-banner"><Banner>{blocked}</Banner></div>}
+          {reason}
           <ExportsTab ds={ds} x={x.data} exports={jobs.exports.data} error={jobs.exports.error} canAdd={canAdd}
             onTrain={(id) => nav(`${base}?tab=train&export=${id}`)} />
         </>
       );
     case "adjustments":
-      return <AdjustmentsTab ds={ds} x={x.data} />;
+      return <>{reason}<AdjustmentsTab ds={ds} x={x.data} /></>;
     case "notes":
       return <NotesTab ds={ds} x={x.data} me={me} blocked={blocked} />;
     default:
-      return <RunsTab x={x.data} exports={jobs.exports.data ?? []} runs={jobs.runs.data} error={jobs.runs.error ?? jobs.exports.error}
-        canAdd={canAdd} fresh={fresh} onTrainAgain={trainAgain} />;
+      return <>{reason}<RunsTab x={x.data} exports={jobs.exports.data ?? []} runs={jobs.runs.data} error={jobs.runs.error ?? jobs.exports.error}
+        canAdd={canAdd} fresh={fresh} onTrainAgain={trainAgain} /></>;
   }
 }
