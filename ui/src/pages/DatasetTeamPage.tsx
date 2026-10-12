@@ -13,7 +13,7 @@ import { FieldsViewSwitch } from "../components/FieldsViewSwitch";
 import { ReuseCard } from "../components/ReuseCard";
 import { Empty, ErrorAlert, StatusGlyph } from "../components/ui";
 import { bandsText } from "../decision";
-import { familyShort, fmtAgo, fmtDate, fmtInt } from "../format";
+import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtInt } from "../format";
 import { comparedValues, nextOpen, shortNames, oddOnes, PHASE_LABEL, splitAgreement, spread, voteLine } from "../team";
 import { toast } from "../toast";
 import type { Dataset, FieldListItem, FieldResponse, FieldReview, OptionCatalog, QueueItem, SettingsRow, TeamState, TeamUser } from "../types";
@@ -35,11 +35,11 @@ export function DatasetTeamPage() {
   const ds = useDatasetContext();
   const team = useTeam(ds.id);
   if (team.error) return <div className="page"><ErrorAlert error={team.error} /></div>;
-  if (!team.data) return <div className="page" aria-busy="true"><span className="skeleton" style={{ width: 240, height: 22 }} /></div>;
+  if (!team.data) return <div className="page" aria-busy="true"><span className="skeleton skel-title" /></div>;
   if (team.data.recipe.phase === "assessing") {
     // Straight after a phase change the cached state can be the old one: wait for the fresh one before sending the
     // viewer away (a baseline that needs no assessing starts in review and belongs here).
-    if (team.isFetching) return <div className="page" aria-busy="true"><span className="skeleton" style={{ width: 240, height: 22 }} /></div>;
+    if (team.isFetching) return <div className="page" aria-busy="true"><span className="skeleton skel-title" /></div>;
     return <Navigate to={`/d/${ds.id}/baseline`} replace />;
   }
   return <Review ds={ds} team={team.data} />;
@@ -84,6 +84,9 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
     setParams(next, { replace: true });
   };
   const select = (id: number | null) => id !== null && setParam({ field: String(id) });
+  // On a phone the queue and a field are two screens: a field shows once one is picked, and back returns to the queue.
+  const fieldOpen = params.has("field");
+  const phone = () => window.matchMedia("(max-width: 759px)").matches;
   const at = list.findIndex((q) => q.field_id === selected);
   const step = (d: 1 | -1) => {
     if (!list.length) return;
@@ -113,14 +116,19 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
 
   const typeLabel = (t: string) => catalog?.types.find((x) => x.value === t)?.label ?? t;
   const position = show === "agreed" || at < 0 ? null : `${show} ${at + 1} of ${list.length}`;
+  const version = baselineLabel(team.recipe.family, team.recipe.version, true, team.recipe.name);
+  // Where the field sits in its own list (open or settled), whichever list is showing.
+  const own = item ? (item.resolved ? settled : open) : [];
+  const ownAt = item ? own.findIndex((q) => q.field_id === item.field_id) : -1;
 
   return (
-    <div className="team-review tr">
+    <div className={`team-review tr${fieldOpen ? " tr-field-open" : ""}`}>
       <aside className="sidebar tr-queue" aria-label="Review queue">
         <div className="sidebar-head">
           <FieldsViewSwitch ds={ds} current="queue" className="fields-view" />
           <Segmented<Show> label="Show" pressed full size="small" value={show}
-            onChange={(v) => setParam({ show: v, field: v === "open" ? String(open[0]?.field_id ?? "") || null : v === "settled" ? String(settled[0]?.field_id ?? "") || null : params.get("field") })}
+            onChange={(v) => setParam({ show: v, field: phone() ? null
+              : v === "open" ? String(open[0]?.field_id ?? "") || null : v === "settled" ? String(settled[0]?.field_id ?? "") || null : params.get("field") })}
             options={[
               { value: "open", label: <>Open <span className="num">{fmtInt(open.length)}</span></> },
               { value: "settled", label: <>Settled <span className="num">{fmtInt(settled.length)}</span></> },
@@ -181,8 +189,19 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
         <ErrorAlert error={queue.error ?? fields.error} />
         {item && catalog ? (
           <>
+            <div className="tr-phone-back">
+              <button type="button" className="ghost" aria-label="Back to the queue" onClick={() => setParam({ field: null })}>
+                <Icon name="chevron-left" />
+              </button>
+              <span className="tr-phone-title">
+                <b>{item.name}</b>
+                <span className="muted small-text num">
+                  {item.resolved ? "Settled" : "Open"}{ownAt >= 0 ? ` ${fmtInt(ownAt + 1)} of ${fmtInt(own.length)}` : ""} · {version}
+                </span>
+              </span>
+            </div>
             <header className="tr-head">
-              <div className="stack" style={{ gap: 4, minWidth: 0 }}>
+              <div className="stack tr-head-text">
                 <h1 className="tr-name">{item.name}</h1>
                 <p className="secondary num small-text">
                   Inferred as {typeLabel(item.inferred_type).toLowerCase()}
@@ -220,6 +239,9 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
       {item && catalog ? (
         <TeamDecision key={item.field_id} ref={panel} item={item} ds={ds} catalog={catalog} data={field.data} error={field.error}
           review={review.data} readOnly={access.canEdit ? null : access.note}
+          footLine={[item.resolved ? "Settled" : "Open", item.comments ? `${fmtInt(item.comments)} comment${item.comments === 1 ? "" : "s"}` : "no comments",
+            ...(ownAt >= 0 ? [`field ${fmtInt(ownAt + 1)} of ${fmtInt(own.length)} ${item.resolved ? "settled" : "open"}`] : [])].join(" · ")}
+          footNote={item.resolved ? undefined : nextOpen(items, item.field_id) !== null ? "Settling moves you to the next open field" : "The last open field: settling it leaves nothing open"}
           onSettled={() => select(nextOpen(items, item.field_id))} />
       ) : <aside className="decision" aria-label="Team decision" />}
     </div>
@@ -370,7 +392,7 @@ function Discussion({ item, review, users, canComment }: { item: QueueItem; revi
       {comments.map((c) => (
         <div key={c.id} className="tr-comment">
           <Avatar user={{ id: c.user_id, name: c.user_name, avatar_url: users.get(c.user_id)?.avatar_url }} size={28} />
-          <div className="stack" style={{ gap: 2, minWidth: 0 }}>
+          <div className="stack tr-comment-text">
             <span className="small-text"><b>{c.user_name}</b> <span className="muted" title={fmtDate(c.created_at)}>· {fmtAgo(c.created_at)}</span></span>
             <p className="tr-body">{c.body}</p>
           </div>
@@ -379,7 +401,7 @@ function Discussion({ item, review, users, canComment }: { item: QueueItem; revi
       {canComment && me && (
         <form className="tr-composer" onSubmit={(e) => { e.preventDefault(); send(); }}>
           <span className="tr-composer-avatar"><Avatar user={me} size={28} /></span>
-          <div className="stack grow" style={{ gap: 8, minWidth: 0 }}>
+          <div className="stack grow tr-composer-body">
             <textarea rows={2} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Add to the discussion" aria-label="Comment"
               maxLength={4000} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }} />
             <div className="row tr-composer-foot">
@@ -404,7 +426,7 @@ function FieldProfile({ ds, id, data }: { ds: Dataset; id: number; data: FieldRe
         <div className="stack tr-profile-body">
           <Link to={`/d/${ds.id}/review/${id}`} className="small-text">Open in Fields · Focus</Link>
           {data && data.field.id === id ? <FieldDetailView data={data} position={null} stale={false} onOpenField={() => undefined} />
-            : <span className="skeleton" style={{ width: 240, height: 22 }} />}
+            : <span className="skeleton skel-title" />}
         </div>
       )}
     </details>
@@ -439,13 +461,14 @@ function votesFor(review: FieldReview | undefined, data: FieldResponse, catalog:
 
 const TeamDecision = forwardRef<DecisionPanelHandle, {
   item: QueueItem; ds: Dataset; catalog: OptionCatalog; data: FieldResponse | undefined; error: unknown; review: FieldReview | undefined;
-  readOnly: string | null; onSettled: () => void;
-}>(function TeamDecision({ item, ds, catalog, data, error, review, readOnly, onSettled }, ref) {
+  readOnly: string | null; onSettled: () => void; footLine: string; footNote?: string;
+}>(function TeamDecision({ item, ds, catalog, data, error, review, readOnly, onSettled, footLine, footNote }, ref) {
   if (!data || data.field.id !== item.field_id) return <aside className="decision" aria-label="Team decision"><ErrorAlert error={error} /></aside>;
   return (
     <DecisionPanel ref={ref} data={data} catalog={catalog} familyLabel={familyShort(ds.model_family)} typing={false}
       owner="Team decision" readOnly={readOnly} onShowShortcuts={() => undefined}
       lens="team" votes={votesFor(review, data, catalog)} settleLabel
+      footLine={footLine} footNote={readOnly ?? footNote}
       onConfirmed={() => { toast({ message: `${item.name}: team decision set` }); onSettled(); }} />
   );
 });

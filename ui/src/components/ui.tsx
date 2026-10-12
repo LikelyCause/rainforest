@@ -73,8 +73,8 @@ export function ReviewMeter({ kept, dropped, targets, total, width, label, keptC
     <span className="stack-meter" style={{ width }}
       {...(label ? { role: "progressbar", "aria-label": label, "aria-valuenow": done, "aria-valuemin": 0, "aria-valuemax": total } : { "aria-hidden": true })}>
       <i style={{ width: pct(kept), background: keptColor }} />
-      <i style={{ width: pct(dropped), background: "var(--border-strong)" }} />
-      <i style={{ width: pct(targets), background: "var(--target)" }} />
+      <i className="dropped" style={{ width: pct(dropped) }} />
+      <i className="target" style={{ width: pct(targets) }} />
     </span>
   );
 }

@@ -102,6 +102,7 @@
 .review .chart-card h2 .info-tip summary { display: inline-grid; place-items: center; }
 .review .chart-card p { margin: 0; }
 .quantile-strip { height: 72px; }
+.quantile-strip .whisker { left: 0; right: 0; }
 .quantile-strip .middle-half { position: absolute; top: 58px; left: 50%; transform: translateX(-50%); font-size: var(--fs-small); color: var(--text-secondary); white-space: nowrap; }
 .review details.more > summary { min-height: 40px; align-items: center; flex-wrap: wrap; }
 /* Distribution, then associations, each across the column (never side by side). */
@@ -198,10 +199,32 @@
 .decision-foot .foot-line button.link { height: auto; padding: 0; font-size: var(--fs-small); }
 .decision-foot .confirm { width: 100%; height: auto; min-height: 40px; padding: 6px 12px; justify-content: space-between; font-size: var(--fs-body); }
 .decision-foot .revert-all { align-self: flex-start; gap: 6px; }
+.decision-foot .foot-note { margin-top: -6px; }
+.decision .dropped-note { margin: 0; font-size: var(--fs-small); color: var(--text-muted); }
+.decision .positive-picker { gap: 4px; margin-top: 6px; }
+.decision .band-settings { gap: 6px; }
 .key-hints { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: var(--fs-small); color: var(--text-muted); align-items: center; }
 .key-hints span { display: inline-flex; align-items: center; gap: 4px; }
 .key-hints button.link { color: var(--text-muted); font-size: var(--fs-small); gap: 4px; display: inline-flex; align-items: center; }
 .key-hints button.link:hover { color: var(--text-primary); }
+
+/* ------------------------------------------------------------------ small pieces that used to be inline styles */
+.type-filter { gap: 2px; }
+.type-filter-all { align-self: flex-start; padding: 4px 6px; }
+.type-filter-name { gap: 8px; }
+.card-tools { gap: 6px; }
+.stack-meter > i.dropped { background: var(--border-strong); }
+.stack-meter > i.target { background: var(--target); }
+.skeleton.skel-title { width: 240px; height: 22px; }
+.skeleton.skel-line { width: 360px; max-width: 100%; }
+.skeleton.skel-block { height: 220px; }
+
+/* ------------------------------------------------------------------ team review (the queue page) */
+.tr-head-text { gap: 4px; min-width: 0; }
+.tr-comment-text { gap: 2px; min-width: 0; }
+.tr-composer-body { gap: 8px; min-width: 0; }
+/* On a phone the open field gets a back-to-the-queue header; elsewhere the queue sits beside it. */
+.tr-phone-back { display: none; }
 
 /* ------------------------------------------------------------------ phone bar */
 .phone-bar { display: none; }
@@ -243,4 +266,19 @@
   .review .field-sidebar button.ghost { min-height: 44px; }
   .decision .setting-row { grid-template-columns: 104px minmax(0, 1fr); }
   .decision .suggested, .decision .vote, .decision .inline-warn { padding-left: 112px; }
+
+  /* Team review: the queue is one screen, a field another (with a way back); the comparison stacks. */
+  .tr.team-review > .tr-queue { max-height: none; border-right: 0; }
+  .tr.team-review:not(.tr-field-open) > .tr-main,
+  .tr.team-review:not(.tr-field-open) > .decision,
+  .tr.team-review.tr-field-open > .tr-queue { display: none; }
+  .tr.team-review > .decision { border-left: 0; }
+  .tr-phone-back {
+    display: flex; align-items: center; gap: 4px; margin: -16px -16px 0; padding: 0 16px 0 4px; min-height: 56px;
+    background: var(--surface-1); border-bottom: 1px solid var(--border);
+  }
+  .tr-phone-back button { width: 44px; height: 44px; padding: 0; flex: none; }
+  .tr-phone-title { display: flex; flex-direction: column; min-width: 0; }
+  .tr-phone-title b { font-size: var(--fs-section); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tr-head .tr-name { display: none; }
 }

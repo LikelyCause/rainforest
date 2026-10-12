@@ -283,12 +283,9 @@ function FieldFinder({ datasetId, presetLabel, canEdit, view }: {
                       <td><span className="type-tag">{TYPE_SHORT[r.semantic_type] ?? r.semantic_type}</span></td>
                       <td>
                         {r.action === "target" ? <Chip tone="accent" icon="target">target</Chip> : (
-                          <div className="segmented mini-seg" role="radiogroup" aria-label={`Decision for ${r.name}`}>
-                            {(["keep", "drop"] as const).map((a) => (
-                              <button key={a} type="button" role="radio" aria-checked={r.action === a} className={r.action === a ? `on ${a}` : ""}
-                                disabled={!canEdit} onClick={() => r.action !== a && inline.mutate({ id: r.field_id, action: a })}>{a}</button>
-                            ))}
-                          </div>
+                          <Segmented size="small" className="mini-seg" label={`Decision for ${r.name}`} value={r.action}
+                            options={(["keep", "drop"] as const).map((a) => ({ value: a, label: a === "keep" ? "Keep" : "Drop", disabled: !canEdit }))}
+                            onChange={(a) => r.action !== a && inline.mutate({ id: r.field_id, action: a })} />
                         )}
                       </td>
                       <td className={differs ? "tools-differs" : "muted"}>{r.suggested_action ?? "—"}</td>

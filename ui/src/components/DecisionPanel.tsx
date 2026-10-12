@@ -1,10 +1,10 @@
-import { forwardRef, Fragment, useEffect, useImperativeHandle, useRef, useState, type ChangeEvent } from "react";
+import { forwardRef, Fragment, useEffect, useImperativeHandle, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import { flushSave, pendingDraft, queueSave, useFailedSaves } from "../saveQueue";
 import { bandCount, bandsText, defaultTask, NUMERIC, paramProblem, parseEdges, retype, taskLabel, toInput, withEncoding, type ParamRule } from "../decision";
 import { baselineDiff, revertedInput } from "../experiments";
-import type { DecisionInput, Dim, FieldResponse, OptionCatalog, TargetBins, TargetTask } from "../types";
+import type { Action, DecisionInput, Dim, FieldResponse, OptionCatalog, TargetBins, TargetTask } from "../types";
 import { parseView, type View } from "../view";
 import { useDataset } from "../hooks";
 import { Chip, Icon, LensChip, Segmented } from "./kit";
@@ -61,6 +61,13 @@ interface Props {
   onNext?: () => void;
   /** A carried-over field: moves on to the next field still to do. */
   onNextTodo?: () => void;
+  /** The footer's status line in place of the assessing one ("Open · 2 comments · field 1 of 6 open", "12 fields
+   * differ from Trees v1", "Finalized by … You can view, not change."); a failed save still says so after it. */
+  footLine?: ReactNode;
+  /** A second, quieter footer line: what the button does next ("Settling moves you to the next open field"). */
+  footNote?: string;
+  /** Told the decision on screen (keep, drop, target) whenever it changes, for the phone bar's confirm button. */
+  onAction?: (a: Action) => void;
 }
 
 function retypeWarning(type: string, data: FieldResponse): string | null {
@@ -85,7 +92,8 @@ function taskWords(task: TargetTask, bins: TargetBins | null | undefined): strin
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function DecisionPanel(
-  { data, catalog, familyLabel, typing, onConfirmed, onShowShortcuts, readOnly, owner, view = null, lens: lensProp, votes, settleLabel, onNext, onNextTodo }, ref,
+  { data, catalog, familyLabel, typing, onConfirmed, onShowShortcuts, readOnly, owner, view = null, lens: lensProp, votes, settleLabel, onNext, onNextTodo,
+    footLine, footNote, onAction }, ref,
 ) {
   const f = data.field;
   const sugg = f.suggestion;
@@ -98,6 +106,7 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
   const [noteOpen, setNoteOpen] = useState(Boolean(draft.notes));
   const ds = useDataset(f.dataset_id);
   const saveFailed = useFailedSaves(view).has(f.id);
+  useEffect(() => onAction?.(draft.action), [draft.action]);
   const v = parseView(view);
   const lens: PanelLens = lensProp ?? (owner === "Your assessment" ? "private" : v?.kind === "experiment" ? "experiment"
     : v?.kind === "baseline" || ds.data?.phase === "finalized" ? "frozen" : "team");
@@ -222,6 +231,11 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
       onRevert={() => data.baseline && commit(revertedInput(draftRef.current, data.baseline), 0)} />
   );
 
+  // In an experiment a drop keeps the field's settings, so a revert brings them back as they were.
+  const droppedNote = data.baseline !== undefined && draft.action === "drop" && (
+    <p className="dropped-note">Dropped fields aren't exported; their settings are kept in case you revert.</p>
+  );
+
   const header = (
     <div className="decision-head">
       <h2>{title}</h2>
@@ -276,6 +290,7 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
               <div className="setting-row"><dt>Missing flag</dt><dd className={draft.add_missing_indicator ? "" : "off"}>{draft.add_missing_indicator ? "On" : "Off"}{was("add_missing_indicator", suggested.add_missing_indicator ? "on" : "off")}{vote("add_missing_indicator")}</dd></div>
             )}
           </dl>
+          {droppedNote}
           {lockedLine}
           {draft.notes && (
             <div className="plain-note">
@@ -286,7 +301,8 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
           {why}
         </div>
         <div className="decision-foot">
-          <span className="foot-line">{readOnly}</span>
+          <span className="foot-line">{footLine ?? readOnly}</span>
+          {footNote && <span className="foot-line foot-note">{footNote}</span>}
           {carried && onNextTodo ? (
             <button type="button" className="primary large confirm" onClick={onNextTodo}><span>Next to-do field</span><kbd>U</kbd></button>
           ) : onNext && (
@@ -428,6 +444,7 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
           {lockedLine}
         </div>
 
+        {droppedNote}
         {why}
 
         {noteOpen ? (
@@ -445,7 +462,7 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
       <div className="decision-foot">
         <span className={`foot-line${saveFailed && !typing ? " error" : ""}`}>
           {typing ? "Esc to return to review" : <>
-            {[
+            {footLine !== undefined ? <>{footLine}{saveFailed && " · Not saved"}</> : [
               draft.reviewed && server.reviewed ? "Reviewed" : "Not reviewed yet",
               edited.length ? `${edited.length} change${edited.length === 1 ? "" : "s"} from the suggestion` : "matches the suggestion",
               saveFailed ? "Not saved" : "saved as you go",
@@ -454,6 +471,7 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
             {saveFailed && <>{" · "}<button type="button" className="link" onClick={() => void flushSave(f.id, view)}>Retry</button></>}
           </>}
         </span>
+        {footNote && !typing && <span className="foot-line foot-note">{footNote}</span>}
         <button type="button" className="primary large confirm" onClick={confirm} aria-keyshortcuts="Enter">
           <span>{confirmLabel}</span><kbd>↵</kbd>
         </button>
@@ -539,7 +557,7 @@ function PositivePicker({ levels, positive, readOnly, onChange }: {
     if (next.length && next.length < levels.length) onChange(next);
   };
   return (
-    <div className="stack" style={{ gap: 4, marginTop: 6 }}>
+    <div className="stack positive-picker">
       <span className="muted small-text">Predict these against all the others:</span>
       {levels.map((l) => (
         <label key={l} className="check small-text">
@@ -564,7 +582,7 @@ function BandSettings({ fieldId, bins, readOnly, onChange }: {
     else if (typeof parsed !== "string") onChange({ edges: parsed });
   };
   return (
-    <div className="stack band-settings" style={{ gap: 6 }}>
+    <div className="stack band-settings">
       <Segmented full size="small" label="Bands" value={mode}
         options={(["k", "edges"] as const).map((m) => ({ value: m, label: m === "k" ? "Equal-sized" : "Cut points", disabled: readOnly }))}
         onChange={pick} />

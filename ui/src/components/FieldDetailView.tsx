@@ -24,7 +24,7 @@ function QuantileStrip({ box }: { box: BoxSummary }) {
     <div className="quantile-strip" role="img" aria-label={`Quantiles: p1 ${fmtNum(p01)}, p25 ${fmtNum(p25)}, median ${fmtNum(p50)}, p75 ${fmtNum(p75)}, p99 ${fmtNum(p99)}`}
       title={`p1 ${fmtNum(p01)} · p25 ${fmtNum(p25)} · median ${fmtNum(p50)} · p75 ${fmtNum(p75)} · p99 ${fmtNum(p99)}`}>
       <div className="track" />
-      <div className="whisker" style={{ left: 0, right: 0 }} />
+      <div className="whisker" />
       <div className="box" style={{ left: x(p25!), width: `calc(${x(p75!)} - ${x(p25!)})` }} />
       <div className="median" style={{ left: x(p50!) }} />
       {stripLabels({ p01: lo, p50: p50!, p99: hi }).map((l) => (
@@ -224,7 +224,7 @@ export function FieldDetailView({ data, position, stale, onOpenField, onPrev, on
         <section className={`card chart-card${stale ? " dim" : ""}`}>
           <div className="card-head">
             <h2>Distribution</h2>
-            <div className="row" style={{ gap: 6 }}>
+            <div className="row card-tools">
               {dist?.kind === "bars" && barCount > BAR_ROWS && (
                 <button type="button" className="link small-text" onClick={() => setMoreBars(!moreBars)}>
                   top {moreBars ? Math.min(20, barCount) : BAR_ROWS} of {fmtInt(f.n_unique)} · show {moreBars ? "fewer" : "20"}
@@ -249,7 +249,7 @@ export function FieldDetailView({ data, position, stale, onOpenField, onPrev, on
         {(corrRows.length > 0 || corr.isLoading || corr.error) && (
           <section className={`card chart-card${stale || corr.isLoading ? " dim" : ""}`}>
             <div className="card-head">
-              <h2 className="row" style={{ gap: 6 }}>
+              <h2 className="row card-tools">
                 Strongest associations
                 <InfoTip label={<Icon name="info" size={14} />} ariaLabel="About these associations"
                   text={`Spearman ρ for numeric pairs (signed), Cramér's V for categorical pairs, correlation ratio η for mixed pairs, on a ${fmtInt(corr.data?.[0]?.n_obs)}-row sample. ◎ marks a target. Click a bar to open that field.`} />

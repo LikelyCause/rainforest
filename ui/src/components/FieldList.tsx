@@ -158,12 +158,12 @@ export function FieldList(p: Props) {
                   {(["todo", "all", "kept", "dropped"] as const).map((k) => statusChip(k, { todo: "To do", all: "All", kept: "Kept", dropped: "Dropped" }[k]))}
                 </div>
                 <hr />
-                <div role="group" aria-label="Filter by type" className="stack" style={{ gap: 2 }}>
-                  <button type="button" className="link small-text" style={{ alignSelf: "flex-start", padding: "4px 6px" }}
+                <div role="group" aria-label="Filter by type" className="stack type-filter">
+                  <button type="button" className="link small-text type-filter-all"
                     onClick={() => { p.onTypes([]); setTypesOpen(false); }}>All types</button>
                   {[...typeCounts.entries()].sort((a, b) => b[1] - a[1]).map(([t, n]) => (
                     <label key={t} className="check">
-                      <span className="row" style={{ gap: 8 }}>
+                      <span className="row type-filter-name">
                         <input type="checkbox" checked={p.types.has(t)}
                           onChange={() => p.onTypes(p.types.has(t) ? [...p.types].filter((x) => x !== t) : [...p.types, t])} />
                         {t.replace("_", " ")}

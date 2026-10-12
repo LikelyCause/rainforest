@@ -17,7 +17,7 @@ import { queueSave, useFailedSaves } from "../saveQueue";
 import { baselineLabel, familyShort, fmtInt } from "../format";
 import { toast } from "../toast";
 import type { Access } from "../team";
-import type { Dataset, FieldListItem } from "../types";
+import type { Action, Dataset, FieldListItem } from "../types";
 
 function useSessionState<T>(key: string, initial: T): [T, (v: T) => void] {
   const [v, setV] = useState<T>(() => {
@@ -56,18 +56,37 @@ const SHORTCUTS: [string[], string][] = [
   [["N"], "add a note"], [["/"], "search fields"], [["Esc"], "leave a control, back to review"], [["?"], "show or hide this list"],
 ];
 
-/** Whose decisions are on screen, and the name the decision panel gives them; matches the lens in the bar above. */
-function usePanelLens(ds: Dataset, view: View, access: Access): { lens: PanelLens; owner: string } {
+/** "11 Oct", with the year when it isn't this one. */
+const dayMonth = (s: string) => {
+  const d = new Date(s);
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", ...(d.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }) });
+};
+
+/** Whose decisions are on screen, the name the decision panel gives them, and its footer line where the lens has
+ * one of its own (an experiment's adjusted count, who finalized a frozen baseline); matches the lens in the bar above. */
+function usePanelLens(ds: Dataset, view: View, access: Access): { lens: PanelLens; owner: string; footLine?: string } {
   const v = parseView(view);
   const x = useExperiment(v?.kind === "experiment" ? v.id : null);
-  if (v?.kind === "experiment") return { lens: "experiment", owner: x.data?.name ?? "This experiment" };
+  const b = ds.baseline;
+  // The frozen version on screen: the one in the view, else the current one once it is finalized.
+  const frozenId = v?.kind === "baseline" ? v.id : !v && ds.phase === "finalized" ? b?.id ?? null : null;
+  const lines = useQuery({ queryKey: ["baselines", ds.id], queryFn: () => api.baselines(ds.id), enabled: frozenId !== null, staleTime: 60_000 });
+  const frozen = frozenId === null ? undefined : lines.data?.flatMap((l) => l.versions).find((r) => r.id === frozenId);
+  const frozenLine = frozen?.finalized_at
+    ? `Finalized${frozen.finalized_by_name ? ` by ${frozen.finalized_by_name}` : ""} on ${dayMonth(frozen.finalized_at)}. You can view, not change.`
+    : undefined;
+  if (v?.kind === "experiment") {
+    const n = x.data?.adjustments?.count;
+    const from = x.data ? baselineLabel(x.data.recipe_family, x.data.recipe_version, true, x.data.recipe_name) : null;
+    return { lens: "experiment", owner: x.data?.name ?? "This experiment",
+      footLine: n !== undefined && from ? `${fmtInt(n)} field${n === 1 ? "" : "s"} differ${n === 1 ? "s" : ""} from ${from}` : undefined };
+  }
   if (v?.kind === "baseline") {
     const line = ds.baselines.find((l) => l.latest_finalized_id === v.id || l.id === v.id);
-    return { lens: "frozen", owner: line ? baselineLabel(line.family, line.version, true, line.name) : "Finalized baseline" };
+    return { lens: "frozen", owner: line ? baselineLabel(line.family, line.version, true, line.name) : "Finalized baseline", footLine: frozenLine };
   }
   if (access.source === "mine") return { lens: "private", owner: "Your assessment" };
-  const b = ds.baseline;
-  if (ds.phase === "finalized") return { lens: "frozen", owner: b ? baselineLabel(b.family, b.version, true, b.name) : "Finalized baseline" };
+  if (ds.phase === "finalized") return { lens: "frozen", owner: b ? baselineLabel(b.family, b.version, true, b.name) : "Finalized baseline", footLine: frozenLine };
   if (ds.phase === "review" && !b?.setup) return { lens: "team", owner: "Team decision" };
   return { lens: "suggestions", owner: "Suggestions" };
 }
@@ -94,7 +113,9 @@ export function ReviewPage() {
   const assessor = access.source === "mine";
   const fields = useFields(datasetId, true, view);
   const options = useOptions();
-  const { lens, owner } = usePanelLens(ds, view, access);
+  const { lens, owner, footLine } = usePanelLens(ds, view, access);
+  // The decision on screen, so the phone bar's button says what it confirms ("Confirm · keep").
+  const [action, setAction] = useState<Action | null>(null);
 
   const setKey = query.get("set");
   const workingSet = useMemo(() => readWorkingSet(setKey), [setKey]);
@@ -333,9 +354,9 @@ export function ReviewPage() {
           <Empty title="No fields match these filters" action={<button type="button" onClick={clearFilters}>Clear filters</button>} />
         ) : (
           <div className="stack" aria-hidden="true">
-            <span className="skeleton" style={{ width: 240, height: 22 }} />
-            <span className="skeleton" style={{ width: 360 }} />
-            <span className="skeleton" style={{ height: 220 }} />
+            <span className="skeleton skel-title" />
+            <span className="skeleton skel-line" />
+            <span className="skeleton skel-block" />
           </div>
         )}
       </section>
@@ -344,7 +365,8 @@ export function ReviewPage() {
           catalog={options.data} familyLabel={familyShort(current.family)} typing={typing} view={view}
           onConfirmed={onConfirmed} onShowShortcuts={() => setOverlay(true)}
           readOnly={access.canEdit ? (current.locked ?? null) : access.note}
-          owner={owner} lens={lens} onNext={next} onNextTodo={nextUnreviewed} />
+          owner={owner} lens={lens} onNext={next} onNextTodo={nextUnreviewed} onAction={setAction}
+          footLine={footLine && (!access.canEdit || lens === "experiment") && !current.locked ? footLine : undefined} />
       ) : (
         <aside className="decision" data-lens={lens} aria-label="Decision" />
       )}
@@ -354,7 +376,7 @@ export function ReviewPage() {
           Fields · {position ? `${fmtInt(position.index + 1)} of ${fmtInt(position.total)}` : fmtInt(scope.length)}
         </button>
         {confirmable ? (
-          <button type="button" className="primary phone-confirm" onClick={() => panel.current?.confirm()}>Confirm</button>
+          <button type="button" className="primary phone-confirm" onClick={() => panel.current?.confirm()}>Confirm{action ? ` · ${action}` : ""}</button>
         ) : (
           <button type="button" className="phone-confirm" onClick={next} aria-label="Next field">Next <Icon name="chevron-right" /></button>
         )}
