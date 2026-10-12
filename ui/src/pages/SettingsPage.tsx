@@ -155,7 +155,7 @@ function Integrations() {
   return (
     <Section title="Integrations" intro="Connections to the services Rainforest works with.">
       <div className="card stack">
-        <div className="row" style={{ justifyContent: "space-between" }}>
+        <div className="row tools-between">
           <h2>MLflow</h2>
           {system.data && (
             <Chip tone={system.data.mlflow ? "good" : "plain"}>{system.data.mlflow ? "Logging on" : "Logging off"}</Chip>

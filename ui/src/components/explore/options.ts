@@ -1,5 +1,5 @@
 import type { EChartsCoreOption } from "echarts/core";
-import { axisCommon, base, BAR_RADIUS_RIGHT, esc } from "../../charts";
+import { axisCommon, base, BAR_RADIUS_RIGHT, esc, FS } from "../../charts";
 import { fmtInt, fmtNum, fmtPct, METHOD_LABEL } from "../../format";
 import type { ChartTheme } from "../../theme";
 import type { CorrMatrix, ImportanceResult, MapResult, TestDetail } from "../../types";
@@ -10,7 +10,7 @@ const tip = (t: ChartTheme) => (base(t) as any).tooltip;
 const catColor = (t: ChartTheme, i: number) => t.categorical[i] ?? t.muted;
 const legend = (t: ChartTheme) => ({
   type: "scroll", top: 0, left: 0, right: 0, icon: "circle", itemWidth: 10, itemHeight: 10,
-  textStyle: { color: t.textSecondary, fontSize: 12 }, pageTextStyle: { color: t.textMuted },
+  textStyle: { color: t.textSecondary, fontSize: FS.small }, pageTextStyle: { color: t.textMuted },
 });
 
 /** value = [col, row, strength, cell index]; cells below the threshold drop to the neutral colour. */
@@ -33,8 +33,8 @@ export function corrHeatmapOption(t: ChartTheme, m: CorrMatrix, threshold: numbe
   return {
     ...base(t),
     grid: { left: 8, right: 8, top: 8, bottom: 8, containLabel: true },
-    xAxis: { ...axis, position: "top", axisLabel: { color: t.textSecondary, fontSize: 10, rotate: 90, interval: 0 } },
-    yAxis: { ...axis, inverse: true, axisLabel: { color: t.textSecondary, fontSize: 10, interval: 0 } },
+    xAxis: { ...axis, position: "top", axisLabel: { color: t.textSecondary, fontSize: FS.small, rotate: 90, interval: 0, hideOverlap: true } },
+    yAxis: { ...axis, inverse: true, axisLabel: { color: t.textSecondary, fontSize: FS.small, interval: 0, hideOverlap: true } },
     visualMap: {
       show: false, type: "continuous", dimension: 2, min: 0, max: 1, range: [threshold, 1],
       inRange: { color: [t.seq0, t.seqLo, t.seqHi] }, outOfRange: { color: [t.divMid] },
@@ -86,7 +86,7 @@ export function mapOption(t: ChartTheme, r: MapResult): EChartsCoreOption {
       grid: { left: 8, right: 84, top: 8, bottom: 8 },
       visualMap: {
         type: "continuous", dimension: 2, seriesIndex: 0, min: lo, max: hi, calculable: true, right: 0, top: "middle",
-        inRange: { color: [t.seqLo, t.seqHi] }, textStyle: { color: t.textSecondary, fontSize: 11 },
+        inRange: { color: [t.seqLo, t.seqHi] }, textStyle: { color: t.textSecondary, fontSize: FS.small },
         itemHeight: 160, formatter: (v: number) => fmtNum(v),
       },
       tooltip: { ...tip(t), formatter: (p: any) => { const v = p.value; return head(v.length === 4 ? v[2] : null) + hover(v[v.length - 1]); } },
@@ -128,15 +128,15 @@ export function mapOption(t: ChartTheme, r: MapResult): EChartsCoreOption {
 export function testDetailOption(t: ChartTheme, d: TestDetail, labels: { field: string; target: string; classes: string[] }): EChartsCoreOption {
   const valueAxis = (name?: string) => ({
     type: "value", scale: true, name, nameLocation: "middle", nameGap: 36,
-    nameTextStyle: { color: t.textMuted, fontSize: 11 }, ...axisCommon(t),
-    axisLabel: { color: t.textMuted, fontSize: 11, formatter: (v: number) => fmtNum(v) },
+    nameTextStyle: { color: t.textMuted, fontSize: FS.small }, ...axisCommon(t),
+    axisLabel: { color: t.textMuted, fontSize: FS.small, formatter: (v: number) => fmtNum(v) },
   });
   if (d.kind === "box") {
     return {
       ...base(t),
       grid: { left: 8, right: 12, top: 12, bottom: 8, containLabel: true },
       xAxis: { type: "category", data: d.groups.map((g) => short(g.class, 16)), ...axisCommon(t), splitLine: { show: false },
-        axisLabel: { color: t.textSecondary, fontSize: 11, interval: 0, rotate: d.groups.length > 6 ? 30 : 0 } },
+        axisLabel: { color: t.textSecondary, fontSize: FS.small, interval: 0, rotate: d.groups.length > 6 ? 30 : 0 } },
       yAxis: valueAxis(),
       tooltip: {
         ...tip(t),
@@ -159,8 +159,8 @@ export function testDetailOption(t: ChartTheme, d: TestDetail, labels: { field: 
       legend: legend(t),
       grid: { left: 8, right: 12, top: 36, bottom: 8, containLabel: true },
       xAxis: { type: "category", data: cats, ...axisCommon(t), splitLine: { show: false },
-        axisLabel: { color: t.textSecondary, fontSize: 11, interval: 0, rotate: cats.length > 6 ? 30 : 0 } },
-      yAxis: { type: "value", max: 1, ...axisCommon(t), axisLabel: { color: t.textMuted, fontSize: 11, formatter: (v: number) => fmtPct(v, 0) } },
+        axisLabel: { color: t.textSecondary, fontSize: FS.small, interval: 0, rotate: cats.length > 6 ? 30 : 0 } },
+      yAxis: { type: "value", max: 1, ...axisCommon(t), axisLabel: { color: t.textMuted, fontSize: FS.small, formatter: (v: number) => fmtPct(v, 0) } },
       tooltip: {
         ...tip(t),
         formatter: (p: any) => {
@@ -190,7 +190,7 @@ export function miOption(t: ChartTheme, rows: ImportanceResult["mi"]): EChartsCo
     ...base(t),
     grid: { left: 8, right: 56, top: 4, bottom: 4, containLabel: true },
     xAxis: { type: "value", show: false },
-    yAxis: { type: "category", data: rows.map((r) => short(r.name, 30)), inverse: true, ...axisCommon(t), axisLabel: { color: t.textSecondary, fontSize: 11.5 } },
+    yAxis: { type: "category", data: rows.map((r) => short(r.name, 30)), inverse: true, ...axisCommon(t), axisLabel: { color: t.textSecondary, fontSize: FS.small } },
     tooltip: {
       ...tip(t),
       formatter: (p: any) => {
@@ -201,7 +201,7 @@ export function miOption(t: ChartTheme, rows: ImportanceResult["mi"]): EChartsCo
     series: [{
       type: "bar", data: rows.map((r) => r.value), barMaxWidth: 16, barCategoryGap: "35%", cursor: "pointer",
       itemStyle: { color: t.series, borderRadius: BAR_RADIUS_RIGHT },
-      label: { show: true, position: "right", color: t.textSecondary, fontSize: 11, formatter: (p: any) => fmtNum(p.value, 2) },
+      label: { show: true, position: "right", color: t.textSecondary, fontSize: FS.small, formatter: (p: any) => fmtNum(p.value, 2) },
     }],
   };
 }
@@ -213,8 +213,8 @@ export function pcaOption(t: ChartTheme, explained: number[], cumulative: number
     ...base(t),
     legend: { ...legend(t), data: ["Explained", "Cumulative"] },
     grid: { left: 8, right: 12, top: 36, bottom: 8, containLabel: true },
-    xAxis: { type: "category", data: names, ...axisCommon(t), splitLine: { show: false }, axisLabel: { color: t.textMuted, fontSize: 11, hideOverlap: true } },
-    yAxis: { type: "value", min: 0, max: 1, ...axisCommon(t), axisLabel: { color: t.textMuted, fontSize: 11, formatter: (v: number) => fmtPct(v, 0) } },
+    xAxis: { type: "category", data: names, ...axisCommon(t), splitLine: { show: false }, axisLabel: { color: t.textMuted, fontSize: FS.small, hideOverlap: true } },
+    yAxis: { type: "value", min: 0, max: 1, ...axisCommon(t), axisLabel: { color: t.textMuted, fontSize: FS.small, formatter: (v: number) => fmtPct(v, 0) } },
     tooltip: {
       ...tip(t), trigger: "axis",
       formatter: (ps: any[]) => {
@@ -244,16 +244,16 @@ export function loadingsOption(t: ChartTheme, comps: number[], features: string[
     ...base(t),
     grid: { left: 8, right: 8, top: 8, bottom: 40, containLabel: true },
     xAxis: { type: "category", data: comps.map((c) => `PC${c + 1}`), position: "top", ...axisCommon(t), splitLine: { show: false }, axisLine: { show: false } },
-    yAxis: { type: "category", data: features.map((f) => short(f, 30)), inverse: true, ...axisCommon(t), splitLine: { show: false }, axisLine: { show: false }, axisLabel: { color: t.textSecondary, fontSize: 11 } },
+    yAxis: { type: "category", data: features.map((f) => short(f, 30)), inverse: true, ...axisCommon(t), splitLine: { show: false }, axisLine: { show: false }, axisLabel: { color: t.textSecondary, fontSize: FS.small } },
     visualMap: {
       type: "continuous", min: -maxAbs, max: maxAbs, orient: "horizontal", left: "center", bottom: 0, itemWidth: 10, itemHeight: 160,
-      inRange: { color: [t.negative, t.divMid, t.series] }, textStyle: { color: t.textSecondary, fontSize: 11 },
+      inRange: { color: [t.negative, t.divMid, t.series] }, textStyle: { color: t.textSecondary, fontSize: FS.small },
       text: [`+${fmtNum(maxAbs, 2)}`, `−${fmtNum(maxAbs, 2)}`], calculable: false,
     },
     tooltip: { ...tip(t), formatter: (p: any) => `<b>${esc(features[p.value[1]])}</b><br/>PC${comps[p.value[0]] + 1} loading ${p.value[2] >= 0 ? "+" : ""}${p.value[2].toFixed(3)}` },
     series: [{
       type: "heatmap", data,
-      label: { show: true, color: t.text, fontSize: 10, formatter: (p: any) => p.value[2].toFixed(2) },
+      label: { show: true, color: t.text, fontSize: FS.small, formatter: (p: any) => p.value[2].toFixed(2) },
       itemStyle: { borderColor: t.surface, borderWidth: 1 },
     }],
   };

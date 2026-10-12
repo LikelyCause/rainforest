@@ -54,7 +54,7 @@ function TestsTable({ ds, r }: { ds: Dataset; r: TestsResult }) {
     <div className="stack tools-gap-12">
       <div className="row secondary small-text">
         <span>
-          Each field tested against <code>{r.target}</code> ({r.target_kind}) · <b>{significant}</b> of {r.rows.length} significant
+          Each field tested against <b>{r.target}</b> ({r.target_kind}) · <b>{significant}</b> of {r.rows.length} significant
           at adjusted p &lt; {ALPHA} (Benjamini–Hochberg)
         </span>
       </div>
@@ -79,7 +79,7 @@ function TestsTable({ ds, r }: { ds: Dataset; r: TestsResult }) {
                       tabIndex={0} onKeyDown={(e) => e.key === "Enter" && setSel(sel === i ? null : i)} aria-selected={sel === i}>
                       <td>
                         <span className="row tools-nowrap tools-gap-6">
-                          <span className="mono tools-ellipsis tools-test-name">{row.name}</span>
+                          <span className="tools-ellipsis tools-test-name">{row.name}</span>
                           <span className="type-tag">{TYPE_SHORT[row.type] ?? row.type}</span>
                         </span>
                       </td>
@@ -117,7 +117,7 @@ function TestDetailPanel({ ds, r, row, onClose }: { ds: Dataset; r: TestsResult;
   return (
     <aside className="card side-panel stack" aria-label={`Test details for ${row.name}`}>
       <div className="row tools-between tools-nowrap">
-        <h2 className="mono tools-ellipsis">{row.name}</h2>
+        <h2 className="tools-ellipsis">{row.name}</h2>
         <button type="button" className="ghost small tools-icon-btn" aria-label="Close" onClick={onClose}><Icon name="x" /></button>
       </div>
       {row.field_id !== null && <Link className="small-text" to={`/d/${ds.id}/review/${row.field_id}`}>Open field</Link>}

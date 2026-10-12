@@ -49,7 +49,7 @@ function MiCard({ ds, r }: { ds: Dataset; r: ImportanceResult }) {
   return (
     <section className="card chart-card">
       <div className="card-head">
-        <h2>Mutual information with <code>{r.target}</code></h2>
+        <h2>Mutual information with {r.target}</h2>
         {r.mi.length > TOP_MI && (
           <label className="check small-text">
             <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> Show all {r.mi.length}

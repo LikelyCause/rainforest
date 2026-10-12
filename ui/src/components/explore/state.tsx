@@ -158,7 +158,7 @@ export function SkippedList({ skipped }: { skipped: Skipped[] }) {
     <details className="more">
       <summary><b>{skipped.length}</b> field{skipped.length === 1 ? "" : "s"} skipped</summary>
       <ul className="skipped-list">
-        {skipped.map((s) => <li key={s.name}><span className="mono">{s.name}</span> <span className="muted">— {s.reason}</span></li>)}
+        {skipped.map((s) => <li key={s.name}>{s.name} <span className="muted">— {s.reason}</span></li>)}
       </ul>
     </details>
   );

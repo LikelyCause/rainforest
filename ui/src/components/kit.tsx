@@ -137,7 +137,7 @@ export function ProgressBar({ value, max, label, color, width, className }: { va
   const pct = max > 0 ? Math.min(100, (100 * value) / max) : 0;
   return (
     <span className={`meter${className ? ` ${className}` : ""}`} role="progressbar" aria-valuenow={value} aria-valuemin={0} aria-valuemax={max}
-      aria-label={label} style={{ width, display: "block" }}>
+      aria-label={label} style={{ width }}>
       <span style={{ width: `${pct}%`, background: color }} />
     </span>
   );

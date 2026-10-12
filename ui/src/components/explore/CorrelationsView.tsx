@@ -65,7 +65,7 @@ function Heatmap({ ds, st }: { ds: Dataset; st: ExploreState }) {
         <span className="spacer" />
         {m && (
           <span className="muted small-text">
-            {m.order.length} fields, {st.target ? <>most associated with <code>{st.target}</code></> : "strongest associations"}{q.isFetching && " · updating…"}
+            {m.order.length} fields, {st.target ? <>most associated with <b>{st.target}</b></> : "strongest associations"}{q.isFetching && " · updating…"}
           </span>
         )}
       </div>
@@ -74,7 +74,7 @@ function Heatmap({ ds, st }: { ds: Dataset; st: ExploreState }) {
       {m && m.order.length > 0 && option && (
         <div className={`explore-split${sel !== null ? " with-panel" : ""}`}>
           <div className="card chart-card tools-chart-pad">
-            <Chart option={option} height={Math.max(380, m.order.length * 14 + 190)} ariaLabel="Association heatmap"
+            <Chart option={option} height={Math.max(380, m.order.length * 16 + 200)} ariaLabel="Association heatmap"
               onItemClick={(p) => p.componentType === "series" && setSel(p.value[3])} />
             <div className="row muted small-text tools-chart-foot">
               <span>Colour = association strength 0–1 (|Spearman ρ|, Cramér's V or correlation ratio η, by field types). Clustered order.</span>
@@ -103,7 +103,7 @@ function CellPanel({ ds, m, cell, onClose }: { ds: Dataset; m: CorrMatrix; cell:
         return (
           <div key={id} className="pair-field">
             <div className="row tools-between tools-nowrap">
-              <b className="mono tools-ellipsis">{x?.name ?? `#${id}`}</b>
+              <b className="tools-ellipsis">{x?.name ?? `#${id}`}</b>
               {x && <span className="type-tag">{TYPE_SHORT[x.type] ?? x.type}</span>}
             </div>
             <div className="row small-text tools-between">
@@ -146,7 +146,7 @@ function FieldAdder({ datasetId, shown, onAdd }: { datasetId: number; shown: num
             {matches.length === 0 && <span className="muted small-text tools-pad-6">No other fields match</span>}
             {matches.map((f) => (
               <button key={f.id} type="button" className="ghost menu-item" onClick={() => { onAdd(f.id); setQ(""); setOpen(false); }}>
-                <span className="mono grow tools-ellipsis tools-left">{f.name}</span>
+                <span className="grow tools-ellipsis tools-left">{f.name}</span>
                 <span className="type-tag">{TYPE_SHORT[f.semantic_type] ?? f.semantic_type}</span>
               </button>
             ))}

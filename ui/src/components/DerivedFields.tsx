@@ -78,7 +78,7 @@ export function DerivedFields({ ds }: { ds: Dataset }) {
               <tbody>
                 {list.data.map((f) => (
                   <tr key={f.id}>
-                    <td className="mono">{f.name}</td><td>{KIND_LABEL[f.kind]}</td><td><code>{describeDerived(f)}</code></td>
+                    <td>{f.name}</td><td>{KIND_LABEL[f.kind]}</td><td><code>{describeDerived(f)}</code></td>
                     <td className="tools-actions">
                       <button type="button" className="ghost small" disabled={remove.isPending || locked} onClick={async () => {
                         const ok = await confirmDialog({

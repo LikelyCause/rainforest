@@ -69,7 +69,7 @@ function MapChart({ r }: { r: MapResult }) {
       <div className="card chart-card tools-chart-pad">
         <Chart option={option} height={580} ariaLabel={`${r.method === "umap" ? "UMAP" : "t-SNE"} map of ${r.n} rows`} />
         <span className="muted small-text tools-chart-foot">
-          {r.target ? <>Coloured by <code>{r.target}</code>{r.target_kind === "categorical" && "; click legend entries to hide classes"}. </> : "No target chosen, so points are uncoloured. "}
+          {r.target ? <>Coloured by <b>{r.target}</b>{r.target_kind === "categorical" && "; click legend entries to hide classes"}. </> : "No target chosen, so points are uncoloured. "}
           Distances between far-apart clusters aren't meaningful; nearby points are similar rows.
         </span>
       </div>

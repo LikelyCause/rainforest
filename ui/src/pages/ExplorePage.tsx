@@ -78,7 +78,7 @@ function Toolbar({ ds, st, sampled }: { ds: Dataset; st: ExploreState; sampled: 
       {st.targets.length > 0 && (
         <label className="tools-control">
           <span className="secondary small-text">Target</span>
-          {st.targets.length === 1 ? <Chip tone="accent" icon="target" className="mono">{st.target}</Chip> : (
+          {st.targets.length === 1 ? <Chip tone="accent" icon="target">{st.target}</Chip> : (
             <select value={st.target ?? ""} onChange={(e) => st.set({ target: e.target.value === st.targets[0] ? null : e.target.value })}>
               {st.targets.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
