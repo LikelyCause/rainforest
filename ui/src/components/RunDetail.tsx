@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { can } from "../can";
@@ -31,15 +31,15 @@ function ConfusionMatrix({ ev, accuracy }: { ev: TargetEvaluation; accuracy?: nu
   const rowTotals = cm.map((r) => r.reduce((a, b) => a + b, 0));
   const total = rowTotals.reduce((a, b) => a + b, 0);
   return (
-    <div className="stack" style={{ gap: 6 }}>
-      <div className="row" style={{ justifyContent: "space-between" }}>
+    <div className="stack exp-gap-2">
+      <div className="row exp-between">
         <span className="muted small-text">
           Confusion matrix · {fmtInt(total)} rows{accuracy !== undefined ? ` · accuracy ${fmtMetric(accuracy)}` : ""}
         </span>
         <Segmented label="Show as" pressed size="small" value={mode} onChange={setMode}
           options={[{ value: "count", label: "Counts" }, { value: "row", label: "Row %" }]} />
       </div>
-      <div style={{ overflowX: "auto" }}>
+      <div className="exp-scroll-x">
         <table className="cm" role="grid">
           <thead>
             <tr>
@@ -73,7 +73,7 @@ function RocChart({ curves, binary }: { curves: RocCurve[]; binary: boolean }) {
   const t = useChartTheme();
   const option = useMemo(() => rocOption(t, curves), [t, curves]);
   return (
-    <div className="stack" style={{ gap: 4 }}>
+    <div className="stack exp-gap-1">
       <span className="muted small-text">
         ROC curve{binary ? ` · positive class ${curves[0]?.label}` : "s · each class against the rest"}
       </span>
@@ -126,7 +126,7 @@ function RangesView({ ev, m }: { ev: RegressionEvaluation; m: Record<string, num
   const asClasses = { labels: b.labels, confusion_matrix: b.confusion_matrix, per_class: b.per_class } as unknown as TargetEvaluation;
   const macro = (k: "precision" | "recall" | "f1") => b.per_class.reduce((a, c) => a + c[k], 0) / Math.max(b.per_class.length, 1);
   return (
-    <div className="stack" style={{ gap: 10 }}>
+    <div className="stack exp-gap-3">
       <span className="muted small-text">
         Actual and predicted values put in {b.labels.length} ranges of roughly equal count, cut on the training rows (tied
         values can make fewer), then scored as classes: how often the model predicts the right range.
@@ -148,7 +148,7 @@ function RangesView({ ev, m }: { ev: RegressionEvaluation; m: Record<string, num
         <tbody>
           {b.per_class.map((c) => (
             <tr key={c.label}>
-              <td className="mono">{c.label}</td>
+              <td className="num">{c.label}</td>
               <td className="num">{fmtMetric(c.precision)}</td>
               <td className="num">{fmtMetric(c.recall)}</td>
               <td className="num">{fmtMetric(c.f1)}</td>
@@ -167,6 +167,7 @@ function RegressionCard({ target, m, ev, features }: { target: string; m: Record
   const t = useChartTheme();
   const [tab, setTab] = useState<RegressionTab>("scatter");
   const steady = useSteadyHeight();
+  const uid = useId();
   const scatter = useMemo(() => (ev ? scatterOption(t, ev.scatter.actual, ev.scatter.predicted) : null), [t, ev]);
   const residuals = useMemo(() => (ev ? histogramOption(t, { kind: "histogram", edges: ev.residuals.edges, counts: ev.residuals.counts } as HistogramChart,
     { xLabel: "Error (predicted − actual)" }) : null), [t, ev]);
@@ -174,7 +175,7 @@ function RegressionCard({ target, m, ev, features }: { target: string; m: Record
   const shown = tabs.some((x) => x.key === tab) ? tab : "scatter";
   return (
     <section className="card stack target-card">
-      <div className="card-head" style={{ marginBottom: 0 }}>
+      <div className="card-head exp-flush">
         <h3><Icon name="target" size={14} /> {target}</h3>
         <span className="muted small-text">predicted as a number</span>
       </div>
@@ -188,10 +189,10 @@ function RegressionCard({ target, m, ev, features }: { target: string; m: Record
       </div>
       {ev && scatter && residuals ? (
         <>
-          <ResultTabs tabs={tabs} value={shown} onChange={(k) => { steady.hold(); setTab(k); }} label={`Results for ${target}`} />
-          <div ref={steady.box} className="stack" style={{ gap: 8 }}>
+          <ResultTabs id={uid} tabs={tabs} value={shown} onChange={(k) => { steady.hold(); setTab(k); }} label={`Results for ${target}`} />
+          <div ref={steady.box} className="stack" role="tabpanel" id={`${uid}-panel`} aria-labelledby={`${uid}-tab-${shown}`}>
           {shown === "scatter" && (
-            <div className="stack" style={{ gap: 4 }}>
+            <div className="stack exp-gap-1">
               <span className="muted small-text">
                 {fmtInt(ev.n)} rows{ev.n > ev.scatter.actual.length ? `, showing ${fmtInt(ev.scatter.actual.length)}` : ""} · on the dashed line the prediction is exact
               </span>
@@ -199,7 +200,7 @@ function RegressionCard({ target, m, ev, features }: { target: string; m: Record
             </div>
           )}
           {shown === "errors" && (
-            <div className="stack" style={{ gap: 4 }}>
+            <div className="stack exp-gap-1">
               <span className="muted small-text">How far off each prediction was: left of 0 too low, right of 0 too high</span>
               <Chart option={residuals} height={260} ariaLabel="Histogram of prediction errors" />
             </div>
@@ -232,7 +233,7 @@ function ThresholdView({ rows, positive }: { rows: NonNullable<TargetEvaluation[
   const at = rows.reduce((a, r) => (Math.abs(r.threshold - t) < Math.abs(a.threshold - t) ? r : a));
   const best = rows.reduce((a, r) => (r.f1 > a.f1 ? r : a));
   return (
-    <div className="stack" style={{ gap: 8 }}>
+    <div className="stack">
       <label className="field">
         <span>Flag as <b>{positive ?? "positive"}</b> when its probability is at least <b>{fmtNum(at.threshold)}</b></span>
         <input type="range" min={0.05} max={0.95} step={0.05} value={t} onChange={(e) => setT(Number(e.target.value))} aria-label="Threshold" />
@@ -258,14 +259,25 @@ function useSteadyHeight() {
   return { box, hold };
 }
 
-/** A card's views, one at a time, under its tiles. */
-function ResultTabs<K extends string>({ tabs, value, onChange, label }: {
-  tabs: { key: K; label: string }[]; value: K; onChange: (k: K) => void; label: string;
+/** A card's views, one at a time, under its tiles: a tablist in the kit's underline tabs, with the arrow keys, Home
+ * and End moving between them. The panel it controls takes `${id}-panel` and is labelled by the tab shown. */
+function ResultTabs<K extends string>({ id, tabs, value, onChange, label }: {
+  id: string; tabs: { key: K; label: string }[]; value: K; onChange: (k: K) => void; label: string;
 }) {
+  const onKey = (ev: KeyboardEvent) => {
+    const i = tabs.findIndex((x) => x.key === value);
+    const next = ev.key === "ArrowRight" ? (i + 1) % tabs.length : ev.key === "ArrowLeft" ? (i - 1 + tabs.length) % tabs.length
+      : ev.key === "Home" ? 0 : ev.key === "End" ? tabs.length - 1 : null;
+    if (next === null) return;
+    ev.preventDefault();
+    onChange(tabs[next].key);
+    document.getElementById(`${id}-tab-${tabs[next].key}`)?.focus();
+  };
   return (
-    <div className="view-tabs" role="tablist" aria-label={label}>
+    <div className="tabs sub lined run-tabs" role="tablist" aria-label={label} onKeyDown={onKey}>
       {tabs.map((x) => (
-        <button key={x.key} type="button" role="tab" aria-selected={value === x.key} className={value === x.key ? "on" : ""}
+        <button key={x.key} id={`${id}-tab-${x.key}`} type="button" role="tab" aria-selected={value === x.key} aria-controls={`${id}-panel`}
+          tabIndex={value === x.key ? 0 : -1} className={`tab${value === x.key ? " on" : ""}`}
           onClick={() => onChange(x.key)}>{x.label}</button>
       ))}
     </div>
@@ -278,9 +290,10 @@ function TargetCard({ target, m, ev, features }: { target: string; m: Record<str
   const tiles = headlineTiles(m, binary);
   const [tab, setTab] = useState<ClassTab>("matrix");
   const steady = useSteadyHeight();
+  const uid = useId();
   return (
     <section className="card stack target-card">
-      <div className="card-head" style={{ marginBottom: 0 }}>
+      <div className="card-head exp-flush">
         <h3><Icon name="target" size={14} /> {target}</h3>
         {binary && ev?.positive_label && <span className="muted small-text">positive class: <b>{ev.positive_label}</b></span>}
       </div>
@@ -292,8 +305,8 @@ function TargetCard({ target, m, ev, features }: { target: string; m: Record<str
           </div>
         ))}
       </div>
-      <ResultTabs tabs={classTabs(Boolean(ev?.thresholds), Boolean(features?.length))} value={tab} onChange={(k) => { steady.hold(); setTab(k); }} label={`Results for ${target}`} />
-      <div ref={steady.box} className="stack" style={{ gap: 8 }}>
+      <ResultTabs id={uid} tabs={classTabs(Boolean(ev?.thresholds), Boolean(features?.length))} value={tab} onChange={(k) => { steady.hold(); setTab(k); }} label={`Results for ${target}`} />
+      <div ref={steady.box} className="stack" role="tabpanel" id={`${uid}-panel`} aria-labelledby={`${uid}-tab-${tab}`}>
       {tab === "threshold" && ev?.thresholds && <ThresholdView rows={ev.thresholds} positive={ev.positive_label} />}
       {tab === "features" && features && <TopFeatures rows={features} />}
       {tab === "matrix" && (ev ? <ConfusionMatrix ev={ev} accuracy={m.accuracy} /> : (
@@ -352,7 +365,7 @@ function CvCard({ target, cv }: { target: string; cv: CrossValidation }) {
   const folds = Array.from({ length: cv.folds }, (_, i) => tiles(pick((v) => v.folds[i])));
   return (
     <section className="card stack target-card">
-      <div className="card-head" style={{ marginBottom: 0 }}>
+      <div className="card-head exp-flush">
         <h3><Icon name="target" size={14} /> {target}</h3>
         <span className="muted small-text">
           {cv.folds}-fold cross-validation on the training rows{cv.stratified_on ? ` · stratified on ${cv.stratified_on}` : ""}
@@ -408,12 +421,12 @@ function RunChoice({ run }: { run: ModelRun }) {
   return (
     <div className={`run-choice${chosen ? " chosen" : ""}`}>
       {chosen && <Icon name="check" className="run-choice-icon" />}
-      <div className="exp-grow stack" style={{ gap: 6 }}>
+      <div className="exp-grow stack exp-gap-2">
         <b>{chosen ? `Chosen model${run.chosen_by_name ? ` · ${run.chosen_by_name}` : ""}` : "Note"}</b>
         {canNote ? (
           <textarea aria-label="Note" rows={2} placeholder="Why this run: what changed, what it showed" value={note}
             onChange={(e) => setNote(e.target.value)} onBlur={() => { if (edited) save.mutate({ note }); }} />
-        ) : run.note && <p className="secondary" style={{ margin: 0, whiteSpace: "pre-wrap" }}>“{run.note}”</p>}
+        ) : run.note && <p className="secondary exp-flush exp-pre">“{run.note}”</p>}
       </div>
       {/* Mouse down keeps focus in the note, so its blur doesn't save it a moment before this click saves it again. */}
       {lead && run.status === "done" && (
@@ -489,7 +502,7 @@ export function RunDetail({ run, targets, kinds, onTrainAgain = null, onClose, s
   const prediction = predicts(run, targets, kinds);
   const head = (
     <div className="run-head">
-      <div className="stack" style={{ gap: 2, minWidth: 0 }}>
+      <div className="stack exp-gap-1 run-title">
         <h2 id={`run-${run.id}-title`}>{label}</h2>
         <span className="secondary small-text">
           Run {run.id} · <span title="Settings changed from the defaults">{settingsText}</span>{prediction ? ` · predicts ${prediction}` : ""}
@@ -511,7 +524,7 @@ export function RunDetail({ run, targets, kinds, onTrainAgain = null, onClose, s
         <Banner tone="bad" title="Failed.">
           {whyFailed(run.error)}
           {run.error && run.error.includes("\n") && (
-            <details><summary className="small-text">Details</summary><pre style={{ whiteSpace: "pre-wrap" }}>{run.error}</pre></details>
+            <details><summary className="small-text">Details</summary><pre className="exp-pre">{run.error}</pre></details>
           )}
         </Banner>
       </div>
@@ -527,7 +540,7 @@ export function RunDetail({ run, targets, kinds, onTrainAgain = null, onClose, s
       {!run.mlflow_url && run.report?.mlflow_error && (
         <Banner tone="warn">Not logged to MLflow: {run.report.mlflow_error} (log it later with make mlflow-backfill)</Banner>
       )}
-      <div className="row" style={{ justifyContent: "space-between" }}>
+      <div className="row exp-between">
         <Segmented label="Scores on" size="small" value={split} onChange={(s) => { steady.hold(); setSplit(s); }}
           options={(["test", "valid", ...(cv && run.metrics?.cv ? ["cv"] : [])] as Split[]).map((s) => ({
             value: s, label: s === "valid" ? "Validation" : s === "cv" ? "Cross-validation" : "Test" }))} />
@@ -559,11 +572,11 @@ export function RunDetail({ run, targets, kinds, onTrainAgain = null, onClose, s
 function TopFeatures({ rows }: { rows: Features }) {
   const max = Math.max(...rows.map((r) => r.importance), 1e-12);
   return (
-    <div className="stack top-features" style={{ gap: 3 }}>
+    <div className="stack top-features">
       <span className="muted small-text">What the model relied on most, scaled to the largest</span>
       {rows.slice(0, 15).map((r) => (
-        <div key={r.feature} className="row small-text" style={{ gap: 8, flexWrap: "nowrap" }} title={r.source !== r.feature ? `from ${r.source}` : undefined}>
-          <span className="mono tf-name">{r.feature}</span>
+        <div key={r.feature} className="row small-text exp-nowrap" title={r.source !== r.feature ? `from ${r.source}` : undefined}>
+          <span className="tf-name">{r.feature}</span>
           <span className="tf-track" role="img" aria-label={`${r.feature}: ${fmtNum((100 * r.importance) / max, 0)}% of the largest`}>
             <span style={{ width: `${(100 * r.importance) / max}%` }} />
           </span>

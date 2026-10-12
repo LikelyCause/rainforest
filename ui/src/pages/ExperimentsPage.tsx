@@ -113,7 +113,7 @@ function FinalizedCard({ ds, recipeId, canCreate, onCreate, onDismiss }: {
   if (!label) return null;
   return (
     <section className="card finalized-card" aria-label={`${label} is final`}>
-      <div className="stack" style={{ gap: 4 }}>
+      <div className="stack exp-gap-1">
         <b>{label} is final</b>
         <span className="secondary">Build an experiment on it to export and train.</span>
       </div>
@@ -139,21 +139,21 @@ export function ExperimentsPage() {
   const canCreate = can(me, "createExperiment");
   return (
     <div className="page experiments-page">
-      <div className="row" style={{ justifyContent: "space-between" }}>
+      <div className="row exp-between">
         <h1>Experiments</h1>
         {canCreate && <button type="button" className="primary" onClick={() => setCreating({})}><Icon name="plus" />New experiment</button>}
       </div>
-      <p className="secondary" style={{ margin: 0 }}>
+      <p className="secondary exp-flush">
         Each experiment holds exports and the models trained on them. Build one from a finalized baseline, or from your own assessment while you assess; that one stays private to you until team review opens.
       </p>
       {prompt !== null && (
         <FinalizedCard ds={ds} recipeId={prompt} canCreate={canCreate} onCreate={() => setCreating({ source: `recipe:${prompt}` })}
           onDismiss={finalizedParam ? () => setParams({}, { replace: true }) : null} />
       )}
-      <section className="card stack" style={{ gap: 12 }} aria-label="Experiment list">
+      <section className="card stack exp-gap-3" aria-label="Experiment list">
         <Segmented label="Show" size="small" value={filter} onChange={setFilter} options={FILTERS} className="exp-self-start" />
         <ErrorAlert error={list.error} />
-        {!list.data && !list.error && <span className="skeleton" style={{ width: "100%", height: 80 }} />}
+        {!list.data && !list.error && <span className="skeleton exp-skel-block" />}
         {list.data && (shown.length ? (
           <div className="table-wrap">
             <table className="data experiments">
@@ -167,7 +167,7 @@ export function ExperimentsPage() {
                 {shown.map((x) => (
                   <tr key={x.id}>
                     <td>
-                      <div className="row" style={{ gap: 6 }}>
+                      <div className="row exp-gap-1">
                         <Link to={`/d/${ds.id}/experiments/${x.id}`} className="exp-link">{x.name}</Link>
                         <PrivateBadge x={x} /><AdjustedBadges x={x} /><ChosenBadge x={x} />{x.archived_at && <Chip>Archived</Chip>}
                       </div>
@@ -226,7 +226,7 @@ function NotesTab({ ds, x, me, blocked }: { ds: Dataset; x: ExperimentDetail; me
       {blocked && <Banner>{blocked}</Banner>}
       {note && <Banner>{note}</Banner>}
       <section className="card stack" aria-labelledby="notes-title">
-        <div className="card-head" style={{ marginBottom: 0 }}>
+        <div className="card-head exp-flush">
           {renaming ? (
             <form className="row" onSubmit={(e) => { e.preventDefault(); if (name.trim()) patch.mutate({ name: name.trim() }); }}>
               <input autoFocus value={name} maxLength={200} aria-label="Experiment name" onChange={(e) => setName(e.target.value)}
@@ -256,7 +256,7 @@ function NotesTab({ ds, x, me, blocked }: { ds: Dataset; x: ExperimentDetail; me
               onChange={(e) => setNotes(e.target.value)}
               onBlur={() => notes !== (x.notes ?? "") && patch.mutate({ notes: notes || null })} />
           </label>
-        ) : x.notes ? <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{x.notes}</p> : <span className="muted">No notes.</span>}
+        ) : x.notes ? <p className="exp-flush exp-pre">{x.notes}</p> : <span className="muted">No notes.</span>}
         <ErrorAlert error={patch.error} />
         {editable && (
           <div className="row exp-manage">
@@ -303,8 +303,8 @@ function AdjustmentsTab({ ds, x }: { ds: Dataset; x: ExperimentDetail }) {
   return (
     <div className="page exp-narrow">
       <section className="card stack" aria-labelledby="adjust-title">
-        <div className="card-head" style={{ marginBottom: 0 }}>
-          <div className="stack" style={{ gap: 2 }}>
+        <div className="card-head exp-flush">
+          <div className="stack exp-gap-1">
             <h2 id="adjust-title">Adjustments</h2>
             <span className="muted small-text">{same ? `Same as ${base}` : `Changes to ${base}, this experiment only`}</span>
           </div>
@@ -324,7 +324,7 @@ function AdjustmentsTab({ ds, x }: { ds: Dataset; x: ExperimentDetail }) {
                 )}
                 {a.fields.map((f) => (
                   <tr key={f.name}>
-                    <td className="mono">{x.can_adjust ? <Link to={withView(`/d/${ds.id}/review/${idOf(f.name) ?? ""}`, `experiment:${x.id}`)}>{f.name}</Link> : f.name}</td>
+                    <td>{x.can_adjust ? <Link to={withView(`/d/${ds.id}/review/${idOf(f.name) ?? ""}`, `experiment:${x.id}`)}>{f.name}</Link> : f.name}</td>
                     <td><ul className="plain">{f.changes.map((c) => <li key={`${c.family}:${c.key}`}>{fmtChange({ ...c, family: null }, familyShort)}</li>)}</ul></td>
                     {x.can_adjust && (
                       <td><button type="button" className="ghost small" disabled={revert.isPending || idOf(f.name) === undefined}
@@ -337,7 +337,7 @@ function AdjustmentsTab({ ds, x }: { ds: Dataset; x: ExperimentDetail }) {
           </div>
         )}
         {x.can_adjust && !same && (
-          <div className="row" style={{ justifyContent: "flex-end" }}>
+          <div className="row exp-end">
             <button type="button" className="small" disabled={revert.isPending}
               onClick={async () => {
                 if (await confirmDialog({ title: "Revert everything?", body: `Every field goes back to ${base}. Exports already made keep their data.`, confirm: "Revert everything", danger: true })) revert.mutate(null);
@@ -374,17 +374,19 @@ export function ExperimentPage() {
       </div>
     );
   }
-  if (!x.data || !me) return <div className="page" aria-busy="true"><span className="skeleton" style={{ width: 240, height: 22 }} /></div>;
+  if (!x.data || !me) return <div className="page" aria-busy="true"><span className="skeleton exp-skel-line short" /></div>;
   const trainAgain = (p: TrainPrefill) => nav(`${base}?tab=train&export=${p.exportId}`, { state: { prefill: p } });
   const onStarted = (runs: ModelRun[], e: ExportJob, label: string) => {
     setFresh(runs.map((r) => r.id));
     toast({ message: runs.length > 1 ? `Training ${runs.length} ${label} runs on Export #${e.id}` : `Training ${label} on Export #${e.id}` });
     nav(`${base}?tab=runs&export=${e.id}`);
+    // The new runs are at the top of Runs: land there, not where Train was scrolled to.
+    document.querySelector("main")?.scrollTo({ top: 0 });
   };
   const reason = blocked && <div className="exp-page-banner"><Banner>{blocked}</Banner></div>;
   switch (tab) {
     case "train":
-      return canAdd ? <TrainTab exports={jobs.exports.data} onStarted={onStarted} />
+      return canAdd ? <TrainTab exports={jobs.exports.data} onStarted={onStarted} private={x.data.private} />
         : <div className="page exp-narrow"><Banner>{blocked}</Banner></div>;
     case "exports":
       return (

@@ -49,7 +49,7 @@ function Control({ s, value, onChange }: { s: ModelSetting; value: SettingValue;
   if (s.kind === "int_or_none") {
     const none = value === s.none_value;
     return (
-      <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
+      <div className="row exp-nowrap">
         <select aria-label={`${s.label}: limit`} value={none ? "none" : "set"}
           onChange={(e) => onChange(e.target.value === "none" ? s.none_value : Math.max(s.min ?? 1, Math.min(s.max ?? 8, 8)))}>
           <option value="none">{s.none_label}</option>
@@ -107,7 +107,7 @@ export function ModelSettings({ settings, values, onChange, kinds }: {
     <section className="card model-settings" aria-labelledby="ms-title">
       <div className="ms-head">
         <h2 id="ms-title">Settings <span className="muted num ms-count">{n ? `${n} changed from defaults` : "all at defaults"}</span></h2>
-        <div className="row" style={{ gap: 8 }}>
+        <div className="row">
           <label className="ms-search">
             <Icon name="search" size={14} />
             <input type="search" placeholder="Find a setting" aria-label="Find a setting" value={q} onChange={(e) => setQ(e.target.value)} />

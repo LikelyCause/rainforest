@@ -3,10 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { fmtInt, fmtPct } from "../format";
 import { changed, describeSettings, fmtSetting, isVisible, prefillValues, problems, restore, runFields, suitsTargets } from "../settings";
-import { combinations, parseSweep, SWEEP_MAX } from "../sweep";
+import { addSweepValues, combinations, parseSweep, readSweepValue, SWEEP_MAX } from "../sweep";
 import { modelDescription, modelLabel, pickExport } from "../runs";
 import type { ExportJob, ModelRun, ModelSetting, SettingValue, TrainPrefill } from "../types";
-import { Chip, Icon, Segmented } from "./kit";
+import { Icon, Segmented } from "./kit";
 import { ModelSettings } from "./ModelSettings";
 import { ErrorAlert } from "./ui";
 
@@ -18,44 +18,80 @@ function remembered(exportId: number, model: string): unknown {
 /** Which export the panel trains on and, for Train again, the run to start from. `nonce` makes a repeat request new. */
 export interface TrainRequest { exportId: number; prefill?: TrainPrefill; nonce: number }
 
+type Axis = { name: string; values: string[] };
+
+/** One setting's values to try: a chip per value (with its own remove), and a box that adds what's typed on Enter, on
+ * a comma's worth of values, or when it loses focus. Backspace in the empty box takes the last value back. */
+function SweepValues({ s, axis, onChange }: { s: ModelSetting; axis: Axis; onChange: (values: string[]) => void }) {
+  const [draft, setDraft] = useState("");
+  const add = () => {
+    if (!draft.trim()) return;
+    onChange(addSweepValues(s, axis.values, draft));
+    setDraft("");
+  };
+  const remove = (i: number) => onChange(axis.values.filter((_, j) => j !== i));
+  const example = s.options ? s.options.map((o) => o.label).slice(0, 3).join(", ") : s.kind === "float" ? "0.01, 0.05, 0.1" : "15, 31, 63";
+  return (
+    <div className="sweep-values" role="group" aria-label={`Values for ${s.label}`}>
+      {axis.values.map((t, i) => {
+        const { value, problem } = readSweepValue(s, t);
+        const label = problem ? t : fmtSetting(s, value);
+        return (
+          <span key={`${t}:${i}`} className={`sweep-chip num${problem ? " bad" : ""}`} title={problem ? `${t}: ${problem}` : undefined}>
+            {label}
+            <button type="button" className="ghost" aria-label={`Remove ${label}`} onClick={() => remove(i)}><Icon name="x" size={12} /></button>
+          </span>
+        );
+      })}
+      <input aria-label={`Add a value for ${s.label}`} value={draft} placeholder={axis.values.length ? "Add a value" : `e.g. ${example}`}
+        onChange={(ev) => setDraft(ev.target.value)} onBlur={add}
+        onKeyDown={(ev) => {
+          if (ev.key === "Enter") { ev.preventDefault(); add(); }
+          else if (ev.key === "Backspace" && !draft && axis.values.length) { ev.preventDefault(); remove(axis.values.length - 1); }
+        }} />
+      <button type="button" className="ghost small sweep-add" disabled={!draft.trim()} onMouseDown={(ev) => ev.preventDefault()} onClick={add}>
+        <Icon name="plus" />Add a value
+      </button>
+    </div>
+  );
+}
+
 /** Up to two settings, each with values to try; Train then starts one run per combination. */
 function Sweep({ catalog, values, kinds, axes, onChange }: {
   catalog: ModelSetting[]; values: Record<string, SettingValue>; kinds: string[];
-  axes: { name: string; text: string }[]; onChange: (a: { name: string; text: string }[]) => void;
+  axes: Axis[]; onChange: (a: Axis[]) => void;
 }) {
   const choices = catalog.filter((s) => s.group !== "run" && isVisible(s, values, catalog) && suitsTargets(s, kinds));
-  const set = (i: number, a: { name: string; text: string } | null) =>
+  const set = (i: number, a: Axis | null) =>
     onChange(a ? axes.map((x, j) => (j === i ? a : x)) : axes.filter((_, j) => j !== i));
-  const add = () => onChange([...axes, { name: choices.find((c) => !axes.some((x) => x.name === c.name))!.name, text: "" }]);
+  const add = () => onChange([...axes, { name: choices.find((c) => !axes.some((x) => x.name === c.name))!.name, values: [] }]);
   const canAdd = axes.length < 2 && choices.length > axes.length;
   return (
     <section className="card stack sweep" aria-labelledby="sweep-title">
-      <div className="row" style={{ justifyContent: "space-between" }}>
+      <div className="row exp-between">
         <h2 id="sweep-title">Try several values</h2>
         {canAdd && axes.length > 0 && <button type="button" className="small ghost" onClick={add}><Icon name="plus" />Add a second setting</button>}
       </div>
       {axes.map((a, i) => {
         const s = catalog.find((x) => x.name === a.name);
-        const parsed = s && a.text.trim() ? parseSweep(s, a.text) : null;
+        const parsed = s && a.values.length ? parseSweep(s, a.values.join(", ")) : null;
         return (
-          <div key={i} className="stack" style={{ gap: 6 }}>
+          <div key={i} className="stack exp-gap-6">
             <div className="row sweep-row">
-              <select aria-label={`Setting to vary${axes.length > 1 ? ` ${i + 1}` : ""}`} value={a.name} onChange={(ev) => set(i, { name: ev.target.value, text: "" })}>
+              <select aria-label={`Setting to vary${axes.length > 1 ? ` ${i + 1}` : ""}`} value={a.name} onChange={(ev) => set(i, { name: ev.target.value, values: [] })}>
                 {choices.map((c) => <option key={c.name} value={c.name} disabled={c.name !== a.name && axes.some((x) => x.name === c.name)}>{c.label}</option>)}
               </select>
-              <input aria-label={`Values for ${s?.label ?? a.name}`} value={a.text} onChange={(ev) => set(i, { ...a, text: ev.target.value })}
-                placeholder={s?.options ? s.options.map((o) => o.label).slice(0, 3).join(", ") : s?.kind === "float" ? "0.01, 0.05, 0.1" : "15, 31, 63"} />
-              <button type="button" className="ghost small" onClick={() => set(i, null)}>Remove</button>
+              {s && <SweepValues key={a.name} s={s} axis={a} onChange={(v) => set(i, { ...a, values: v })} />}
+              <button type="button" className="ghost small" aria-label={`Remove ${s?.label ?? a.name}`} onClick={() => set(i, null)}>Remove</button>
             </div>
-            {parsed?.error ? <span className="small-text" role="alert" style={{ color: "var(--bad)" }}>{parsed.error}</span>
-              : parsed && s && <div className="chips">{parsed.values.map((v) => <Chip key={String(v)} className="num">{fmtSetting(s, v)}</Chip>)}</div>}
+            {parsed?.error && <span className="small-text exp-bad" role="alert">{parsed.error}</span>}
           </div>
         );
       })}
       {axes.length === 0 ? (
         canAdd && <div><button type="button" className="small" onClick={add}><Icon name="plus" />Choose a setting to vary</button></div>
       ) : null}
-      <p className="muted small-text" style={{ margin: 0 }}>
+      <p className="muted small-text exp-flush">
         {axes.length === 0 ? "Compare values of one or two settings: one run per value, or per combination of two. "
           : axes.length === 1 ? "One run per value; everything else as set above. " : "One run per combination; everything else as set above. "}
         Up to {SWEEP_MAX} runs.
@@ -76,7 +112,7 @@ function TargetOrder({ targets, order, onChange }: { targets: string[]; order: s
       {rows.map((t) => {
         const i = order.indexOf(t);
         return (
-          <div key={t} className="row" style={{ gap: 8 }}>
+          <div key={t} className="row">
             <label className="check">
               <input type="checkbox" checked={i >= 0}
                 onChange={(ev) => onChange(ev.target.checked ? [...order, t] : order.filter((x) => x !== t))} />
@@ -97,8 +133,10 @@ function TargetOrder({ targets, order, onChange }: { targets: string[]; order: s
 
 /** Train a model on one of the experiment's exports: what to train (the export, the model, cross-validation, where it
  * trains, which targets in which order), the model's settings, values to sweep, and a summary with the Train button. */
-export function TrainPanel({ exports, request, onStarted }: {
+export function TrainPanel({ exports, request, onStarted, private: personal = false }: {
   exports: ExportJob[]; request: TrainRequest | null; onStarted: (runs: ModelRun[], e: ExportJob, label: string) => void;
+  /** A private experiment's runs reach MLflow only once its baseline version is in team review. */
+  private?: boolean;
 }) {
   const qc = useQueryClient();
   const done = exports.filter((e) => e.status === "done");
@@ -115,7 +153,7 @@ export function TrainPanel({ exports, request, onStarted }: {
   const [dropped, setDropped] = useState<string[]>([]);
   const [showAll, setShowAll] = useState(false);
   const [pending, setPending] = useState<TrainPrefill | null>(null);
-  const [axes, setAxes] = useState<{ name: string; text: string }[]>([]);
+  const [axes, setAxes] = useState<Axis[]>([]);
 
   // A request picks the export; Train again also brings the run's model, order and settings once the export's
   // models have loaded.
@@ -170,7 +208,7 @@ export function TrainPanel({ exports, request, onStarted }: {
   const gpu = system.data?.gpu;
   const gpuChoice = Boolean(gpu?.available && selected?.devices?.includes("cuda"));
   const useGpu = gpuChoice && gpuOn;
-  const parsedAxes = catalog ? axes.map((a) => ({ name: a.name, ...parseSweep(catalog.find((s) => s.name === a.name)!, a.text) })) : [];
+  const parsedAxes = catalog ? axes.map((a) => ({ name: a.name, ...parseSweep(catalog.find((s) => s.name === a.name)!, a.values.join(", ")) })) : [];
   const combos = catalog && axes.length ? combinations(values, parsedAxes) : [];
   const comboProblem = combos.map((c) => Object.entries(problems(c, catalog!, kinds))[0]).find(Boolean);
   const startOne = (v: Record<string, SettingValue>) => api.startRun(e!.id, {
@@ -299,7 +337,7 @@ export function TrainPanel({ exports, request, onStarted }: {
           {gpuChoice && <><dt>Device</dt><dd>{useGpu ? "GPU" : "CPU"}</dd></>}
           <dt>Runs</dt><dd><b>{count}</b></dd>
         </dl>
-        {blocked && <span className="small-text" role={settingProblems ? "alert" : undefined} style={settingProblems ? { color: "var(--bad)" } : undefined}>{blocked}</span>}
+        {blocked && <span className={`small-text${settingProblems ? " exp-bad" : ""}`} role={settingProblems ? "alert" : undefined}>{blocked}</span>}
         <button type="button" className="primary large" disabled={Boolean(blocked) || start.isPending} onClick={() => start.mutate()}>
           <Icon name="play" />
           {start.isPending ? "Starting…" : combos.length > 1 ? `Train ${combos.length} runs` : order.length > 1 ? "Train chain" : "Train"}
@@ -308,7 +346,10 @@ export function TrainPanel({ exports, request, onStarted }: {
           <span className="muted small-text">Not carried over (no longer settings of this model): {dropped.join(", ")}</span>
         )}
         <ErrorAlert error={start.error} />
-        <p className="muted small-text" style={{ margin: 0 }}>You'll go to Runs, where {count > 1 ? "they appear" : "it appears"} at the top as {count > 1 ? "they train" : "it trains"}.</p>
+        <p className="muted small-text exp-flush">
+          You'll go to Runs, where {count > 1 ? "they appear" : "it appears"} at the top as {count > 1 ? "they train" : "it trains"}.
+          {system.data?.mlflow && ` ${count > 1 ? "Each one is" : "It's"} logged to MLflow${personal ? " once review opens" : ""}.`}
+        </p>
       </aside>
     </div>
   );

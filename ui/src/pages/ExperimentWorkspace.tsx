@@ -33,9 +33,9 @@ function Pop({ label, children, primary, align = "right" }: {
   const close = useCallback(() => setOpen(false), []);
   useDismiss(ref, open, close);
   return (
-    <div ref={ref} style={{ position: "relative" }}>
+    <div ref={ref} className="exp-pop-anchor">
       <button type="button" className={`small${primary ? " primary" : ""}`} aria-expanded={open} onClick={() => setOpen(!open)}>{label}</button>
-      {open && <div className="popover stack exp-pop" style={align === "left" ? { left: 0, right: "auto" } : undefined}>{children(close)}</div>}
+      {open && <div className={`popover stack exp-pop${align === "left" ? " left" : ""}`}>{children(close)}</div>}
     </div>
   );
 }
@@ -112,25 +112,25 @@ function RowRulesEditor({ rules, onChange, from, names }: { rules: RowRules; onC
   return (
     <details className="advanced" open={active || undefined}>
       <summary className="small-text secondary">Rows{active ? (from ? ` · same rules as Export #${from}` : " · rules set") : ""}</summary>
-      <div className="stack" style={{ gap: 8, marginTop: 8 }}>
+      <div className="stack exp-rules">
         <label className="check small-text">
           <input type="checkbox" checked={rules.dedupe} onChange={(e) => set({ dedupe: e.target.checked })} /> Leave out exact duplicate rows
         </label>
-        <div className="row small-text" style={{ gap: 6, flexWrap: "wrap" }}>
+        <div className="row small-text">
           One row per {pick(rules.first_per?.key ?? null, (k) => set({ first_per: k ? { key: k, order: rules.first_per?.order ?? null } : null }), "every row", "One row per")}
           {rules.first_per && <>first by {pick(rules.first_per.order, (o) => set({ first_per: { key: rules.first_per!.key, order: o } }), "file order", "First by")}</>}
         </div>
         {rules.exclude.map((r, i) => (
-          <div key={i} className="row small-text" style={{ gap: 6, flexWrap: "wrap" }}>
+          <div key={i} className="row small-text">
             Leave out rows where {pick(r.field || null, (f) => set({ exclude: rules.exclude.map((x, j) => (j === i ? { ...x, field: f ?? "" } : x)) }), "choose a field", "Field")}
-            is <input type="text" placeholder="values, comma-separated" defaultValue={r.values.join(", ")} style={{ width: 200 }}
+            is <input type="text" placeholder="values, comma-separated" defaultValue={r.values.join(", ")} className="exp-values-input"
               onBlur={(e) => set({ exclude: rules.exclude.map((x, j) => (j === i ? { ...x, values: e.target.value.split(",").map((v) => v.trim()).filter(Boolean) } : x)) })} />
             <button type="button" className="link small-text" onClick={() => set({ exclude: rules.exclude.filter((_, j) => j !== i) })}>remove</button>
           </div>
         ))}
-        <button type="button" className="link small-text" style={{ alignSelf: "flex-start" }}
+        <button type="button" className="link small-text exp-self-start"
           onClick={() => set({ exclude: [...rules.exclude, { field: "", values: [] }] })}>+ Leave out rows by value</button>
-        <div className="row small-text" style={{ gap: 6, flexWrap: "wrap" }}>
+        <div className="row small-text">
           Keep rows together by {pick(rules.group_by, (g) => set({ group_by: g }), "no field (split rows freely)", "Keep rows together by")}
           <span className="muted">each value's rows stay in one split and one CV fold, e.g. a patient's visits</span>
         </div>
@@ -200,9 +200,9 @@ function BuildPanel({ datasetId, family, rows, x }: { datasetId: number; family:
 
   return (
     <section className="card build-panel">
-      <div className="stack" style={{ gap: 10, minWidth: 0 }}>
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <h2>What will be exported <InfoTip className="muted" style={{ fontWeight: 400 }} label={<Icon name="info" size={14} label="How the export works" />} text={`${HOW_IT_WORKS}\n\n${familyShort(family)}: ${FAMILY_EXPLAINER[family] ?? ""}`} /></h2>
+      <div className="stack build-col">
+        <div className="row exp-between">
+          <h2>What will be exported <InfoTip className="muted exp-normal" label={<Icon name="info" size={14} label="How the export works" />} text={`${HOW_IT_WORKS}\n\n${familyShort(family)}: ${FAMILY_EXPLAINER[family] ?? ""}`} /></h2>
           <span className="secondary small-text" title={personal ? "Your assessment as it stands when you export; later edits don't change an export already made." : "The version's frozen snapshot."}>
             from {sourceLabel(x)}{personal ? ", as it stands now" : ""}
           </span>
@@ -211,7 +211,7 @@ function BuildPanel({ datasetId, family, rows, x }: { datasetId: number; family:
         {p && (
           <>
             <div className="secondary num">
-              <b>{p.kept}</b> kept · <b>{p.dropped}</b> dropped · targets {p.targets.length ? p.targets.map((x) => <code key={x} className="target-code">{x}</code>) : <span className="muted">none</span>} · <b>{p.customized}</b> customized
+              <b>{p.kept}</b> kept · <b>{p.dropped}</b> dropped · targets {p.targets.length ? p.targets.map((x) => <span key={x} className="exp-target">{x}</span>) : <span className="muted">none</span>} · <b>{p.customized}</b> customized
             </div>
             <div className="chips">
               {Object.entries(p.kept_by_type).map(([type, n]) => <span key={type} className="badge"><span className="mono">{type.replace("_", " ")}</span> {n}</span>)}
@@ -234,7 +234,7 @@ function BuildPanel({ datasetId, family, rows, x }: { datasetId: number; family:
           </>
         )}
       </div>
-      <div className="stack" style={{ gap: 10 }}>
+      <div className="stack build-col">
         <h2>Split</h2>
         <SplitBar valid={Math.max(v, 0) || 0} test={Math.max(t, 0) || 0} counts={counts} about={about} />
         {counted.data && (
@@ -246,28 +246,28 @@ function BuildPanel({ datasetId, family, rows, x }: { datasetId: number; family:
           </p>
         )}
         <ErrorAlert error={counted.error} />
-        <div className="row" style={{ gap: 12, alignItems: "flex-end" }}>
+        <div className="row exp-split-inputs">
           <label className="field">Validation
-            <span className="value-pct"><input type="number" min={0} max={45} step={5} value={valid} onChange={(e) => setValid(e.target.value)} style={{ width: 80 }} /> %</span>
+            <span className="value-pct"><input type="number" min={0} max={45} step={5} value={valid} onChange={(e) => setValid(e.target.value)} className="exp-pct-input" /> %</span>
           </label>
           <label className="field">Test
-            <span className="value-pct"><input type="number" min={0} max={45} step={5} value={test} onChange={(e) => setTest(e.target.value)} style={{ width: 80 }} /> %</span>
+            <span className="value-pct"><input type="number" min={0} max={45} step={5} value={test} onChange={(e) => setTest(e.target.value)} className="exp-pct-input" /> %</span>
           </label>
         </div>
-        {splitError && <span className="small-text" style={{ color: "var(--bad)" }} role="alert">{splitError}</span>}
+        {splitError && <span className="small-text exp-bad" role="alert">{splitError}</span>}
         <RowRulesEditor rules={rules} onChange={changeRules} from={rulesFrom} names={(fields.data ?? []).map((f) => f.name)} />
         <details className="advanced">
           <summary className="small-text secondary">Advanced</summary>
-          <div className="row" style={{ gap: 12, marginTop: 8 }}>
-            <label className="field">Random seed<input type="number" value={seed} onChange={(e) => setSeed(Number(e.target.value))} style={{ width: 110 }} /></label>
+          <div className="row exp-advanced-row">
+            <label className="field">Random seed<input type="number" value={seed} onChange={(e) => setSeed(Number(e.target.value))} className="exp-seed-input" /></label>
             <label className="field">Max rows to fit on
-              <input type="number" min={1000} max={maxFit} step={10_000} value={fitText ?? fit} style={{ width: 130 }}
+              <input type="number" min={1000} max={maxFit} step={10_000} value={fitText ?? fit} className="exp-fit-input"
                 onChange={(e) => setFitText(e.target.value)}
                 onBlur={() => { if (fitText !== null) { setFitRows(Math.max(1000, Math.min(Number(fitText) || maxFit, maxFit))); setFitText(null); } }} />
             </label>
           </div>
         </details>
-        <div className="row" style={{ justifyContent: "flex-end", marginTop: "auto" }}>
+        <div className="row exp-export-go">
           <span className="muted small-text">Prepared as {baselineLabel(x.recipe_family, x.recipe_version, false, x.recipe_name)} decided</span>
           <button type="button" className="primary" disabled={!p || p.blocking.length > 0 || Boolean(splitError) || start.isPending}
             onClick={() => start.mutate({ valid_size: v, test_size: t, seed, fit_sample_rows: Math.max(1000, Math.min(fitText !== null ? Number(fitText) || maxFit : fit, maxFit)) })}>
@@ -295,7 +295,7 @@ function CopyCommand({ command }: { command: string }) {
     }
   };
   return (
-    <div className="stack" style={{ gap: 6 }}>
+    <div className="stack exp-gap-2">
       <code ref={ref} className="cmd">{command}</code>
       <div className="row">
         <button type="button" className="small" onClick={copy}>{state === "copied" ? <><Icon name="check" size={14} />Copied</> : "Copy"}</button>
@@ -318,7 +318,7 @@ function ExportRow({ e, canAdd, onTrain }: { e: ExportJob; canAdd: boolean; onTr
   const inputs = by ? Object.values(by).reduce((a, x) => a + x.fields, 0) : null;
   return (
     <div className="export-row">
-      <div className="stack" style={{ gap: 4, minWidth: 0, flex: 1 }}>
+      <div className="stack exp-gap-1 exp-grow">
         <div className="row">
           <b>Export #{e.id}</b>
           <Chip>{familyShort(e.model_family)}</Chip>
@@ -521,11 +521,15 @@ export function RunsTab({ x, exports, runs, error, canAdd, fresh, onTrainAgain }
   }
   const targets: string[] = e?.summary?.targets ?? [];
   const kinds: Record<string, string> = e?.summary?.target_kinds ?? {};
+  // The batch just started, counted while any of it still trains.
+  const batch = all.filter((r) => fresh.includes(r.id));
+  const batchDone = batch.filter((r) => !isActive(r.status)).length;
+  const batchOn = fresh.length > 1 && batch.some((r) => isActive(r.status)) ? batch[0].export_id : null;
   return (
     <div className={`exp-runs${selected ? " with-aside" : ""}`}>
       <div className="exp-runs-main stack">
         <ErrorAlert error={error} />
-        {!runs && <span className="skeleton" style={{ width: 320, height: 22 }} />}
+        {!runs && <span className="skeleton exp-skel-line" />}
         {e && (
           <>
             <div className="runs-toolbar">
@@ -544,10 +548,16 @@ export function RunsTab({ x, exports, runs, error, canAdd, fresh, onTrainAgain }
                 { value: "cv", label: "Cross-validation", title: "Cross-validation on the training rows: mean ± spread over the folds (— for runs without it)" },
               ]} />
               <span className="spacer" />
+              {batchOn !== null && (
+                <span className="batch-progress small-text num" role="status">
+                  <ProgressBar value={batchDone} max={fresh.length} label={`Runs just started: ${batchDone} of ${fresh.length} done`} />
+                  <span><b>{batchDone} of {fresh.length}</b> done{batchOn !== e.id ? ` on Export #${batchOn}` : ""}</span>
+                </span>
+              )}
               <span className="star-legend small-text"><Icon name="star" size={14} className="star" />best on validation, whichever split is shown</span>
             </div>
             <RunsTable e={e} runs={shown} targets={targets} kinds={kinds} split={split} fresh={fresh} selectedId={selected?.id ?? null} onSelect={select} />
-            <p className="muted small-text" style={{ margin: 0 }}>
+            <p className="muted small-text exp-flush">
               {x.private ? "Runs are logged to MLflow once this baseline version reaches review. " : "Every run is logged to MLflow with its full preparation. "}
               Select a run to see its detail{selected ? " here" : ""}.
             </p>
@@ -598,6 +608,7 @@ function RunsTable({ e, runs, targets, kinds, split, fresh, selectedId, onSelect
         <thead>
           <tr>
             <th scope="col">Model</th>
+            <th scope="col" className="run-params-col">Changed settings</th>
             {multi && <th scope="col">Chain order</th>}
             {cols.map((c) => <th key={c.t + c.m} scope="col" className="num">{multi ? `${c.t} ` : ""}{c.label}</th>)}
             <th scope="col" className="num">Fit</th>
@@ -612,11 +623,12 @@ function RunsTable({ e, runs, targets, kinds, split, fresh, selectedId, onSelect
             const label = runLabel(r, models.data?.find((m) => m.key === r.model));
             const on = selectedId === r.id;
             const params = (r.config?.params ?? {}) as Record<string, SettingValue>;
+            const changes = describeSettings(params, settingsOf(r.model));
             return (
               <tr key={r.id} className={`run-row${on ? " selected" : ""}${fresh.includes(r.id) ? " fresh" : ""}${opens(r) ? "" : " inert"}`}
                 onClick={() => opens(r) && onSelect(on ? null : r.id)}>
                 <td className="run-model">
-                  <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
+                  <div className="row exp-nowrap">
                     {opens(r) ? (
                       <button type="button" className="run-open" data-run-open={r.id} aria-pressed={on} aria-controls={on ? "run-detail" : undefined}
                         onClick={(ev) => { ev.stopPropagation(); onSelect(on ? null : r.id); }}>{label}</button>
@@ -624,8 +636,9 @@ function RunsTable({ e, runs, targets, kinds, split, fresh, selectedId, onSelect
                     {r.chosen_at && <Chip tone="good" title={r.chosen_by_name ? `Chosen by ${r.chosen_by_name}` : undefined}>Chosen</Chip>}
                     {r.note && <span title={r.note}><Icon name="comment" size={14} className="muted" label="Has a note" /></span>}
                   </div>
-                  <div className="muted small-text run-params">{describeSettings(params, settingsOf(r.model))}</div>
+                  <div className="muted small-text run-params-inline">{changes}</div>
                 </td>
+                <td className={`run-params run-params-col ${changes === "defaults" ? "muted" : "secondary"}`}>{changes}</td>
                 {multi && <td className="secondary">{order.join(" → ")}</td>}
                 {isActive(r.status) ? (
                   <td colSpan={cols.length + 1}>
@@ -659,7 +672,7 @@ export function ExportsTab({ ds, x, exports, error, canAdd, onTrain }: {
   return (
     <div className="page exports-tab">
       {canAdd && <BuildPanel datasetId={ds.id} family={x.recipe_family} rows={ds.row_count} x={x} />}
-      <section className="card stack" style={{ gap: 0 }} aria-labelledby="exports-title">
+      <section className="card stack exports-list" aria-labelledby="exports-title">
         <div className="card-head"><h2 id="exports-title">Exports</h2></div>
         <ErrorAlert error={error} />
         {exports?.length === 0 && <div className="empty">No exports yet.{canAdd ? " Make one above, then train models on it." : ""}</div>}
@@ -671,14 +684,16 @@ export function ExportsTab({ ds, x, exports, error, canAdd, onTrain }: {
 
 /** Train on one of the experiment's finished exports. `?export=` picks the export; Train again brings a run's
  * settings in the navigation state. */
-export function TrainTab({ exports, onStarted }: { exports: ExportJob[] | undefined; onStarted: (runs: ModelRun[], e: ExportJob, label: string) => void }) {
+export function TrainTab({ exports, onStarted, private: personal = false }: {
+  exports: ExportJob[] | undefined; onStarted: (runs: ModelRun[], e: ExportJob, label: string) => void; private?: boolean;
+}) {
   const loc = useLocation();
   const [params] = useSearchParams();
   const prefill = (loc.state as { prefill?: TrainPrefill } | null)?.prefill;
   const asked = Number(params.get("export")) || null;
   const request = useMemo<TrainRequest | null>(() => (prefill ? { exportId: prefill.exportId, prefill, nonce: Date.now() }
     : asked ? { exportId: asked, nonce: Date.now() } : null), [loc.key]);
-  if (!exports) return <div className="page" aria-busy="true"><span className="skeleton" style={{ width: 240, height: 22 }} /></div>;
+  if (!exports) return <div className="page" aria-busy="true"><span className="skeleton exp-skel-line short" /></div>;
   if (!exports.some((e) => e.status === "done")) {
     const running = exports.some((e) => isActive(e.status));
     return (
@@ -692,7 +707,7 @@ export function TrainTab({ exports, onStarted }: { exports: ExportJob[] | undefi
       </div>
     );
   }
-  return <div className="page exp-wide"><TrainPanel exports={exports} request={request} onStarted={onStarted} /></div>;
+  return <div className="page exp-wide"><TrainPanel exports={exports} request={request} onStarted={onStarted} private={personal} /></div>;
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;

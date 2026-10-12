@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { combinations, parseSweep, SWEEP_MAX } from "./sweep";
+import { addSweepValues, combinations, parseSweep, readSweepValue, SWEEP_MAX } from "./sweep";
 import type { ModelSetting } from "./types";
 
 const base = { help: "", group: "trees", step: null, log: false, options: null, applies: "both", when: null, none_value: null, none_label: null } as const;
@@ -35,5 +35,21 @@ describe("combinations", () => {
   });
   it("is capped", () => {
     expect(SWEEP_MAX).toBe(50);
+  });
+});
+
+describe("value lists", () => {
+  it("adds typed values one per entry, skipping repeats", () => {
+    expect(addSweepValues(leaves, ["15"], "31 63, 15")).toEqual(["15", "31", "63"]);
+    expect(addSweepValues(depth, ["4"], "no limit, 8")).toEqual(["4", "no limit", "8"]);
+    expect(addSweepValues(boost, ["gbdt"], "GBDT, DART")).toEqual(["gbdt", "DART"]);
+  });
+  it("reads each value with its problem", () => {
+    expect(readSweepValue(leaves, "1").problem).toMatch(/from 2/);
+    expect(readSweepValue(depth, "no limit")).toEqual({ value: -1, problem: null });
+  });
+  it("joins back into what parseSweep reads", () => {
+    const list = addSweepValues(depth, [], "4, no limit");
+    expect(parseSweep(depth, list.join(", ")).values).toEqual([4, -1]);
   });
 });
