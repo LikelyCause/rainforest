@@ -56,6 +56,7 @@ export function DerivedFields({ ds }: { ds: Dataset }) {
   // The API only adds or removes fields before the first baseline is set up or once a version is finalized.
   const locked = ds.phase !== "finalized" && !ds.baseline?.setup;
   const shown = (fields ?? []).filter((f) => !countFilter || f.name.toLowerCase().includes(countFilter.toLowerCase()));
+  const addable = shown.filter((f) => !countFields.includes(f.name)).length;
   return (
     <div className="stack tools-derived">
       <p className="secondary small-text tools-lead">
@@ -118,8 +119,17 @@ export function DerivedFields({ ds }: { ds: Dataset }) {
         )}
         {kind === "count" && (
           <>
-            <input type="search" aria-label="Filter fields" placeholder={`Filter fields (${countFields.length} chosen)`} value={countFilter}
-              onChange={(e) => setCountFilter(e.target.value)} />
+            <div className="row tools-count-bar">
+              <input type="search" aria-label="Filter fields" placeholder={`Filter fields (${countFields.length} chosen)`} value={countFilter}
+                onChange={(e) => setCountFilter(e.target.value)} />
+              <button type="button" className="small" disabled={!addable}
+                title={countFilter ? `Choose every field matching "${countFilter}"` : "Choose every field"}
+                onClick={() => setCountFields([...countFields, ...shown.map((f) => f.name).filter((n) => !countFields.includes(n))])}>
+                Add all shown{addable ? ` (${addable})` : ""}
+              </button>
+              <button type="button" className="small ghost" disabled={!countFields.length} onClick={() => setCountFields([])}>Clear</button>
+              <span className="muted small-text num" aria-live="polite">{countFields.length} chosen</span>
+            </div>
             <div className="chips tools-count-fields" role="group" aria-label="Fields to count across">
               {shown.map((f) => {
                 const on = countFields.includes(f.name);

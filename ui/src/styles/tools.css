@@ -50,6 +50,8 @@ button.tools-danger-text, button.ghost.tools-danger-text { color: var(--bad); }
 .tools-derived h2 .muted { font-weight: 400; }
 .tools-narrow { max-width: 360px; }
 .tools-count-fields { max-height: 160px; overflow-y: auto; }
+.tools-count-bar { gap: 8px; flex-wrap: wrap; }
+.tools-count-bar input { flex: 1 1 240px; min-width: 0; }
 .tools-derived-actions input { flex: 1 1 200px; min-width: 0; }
 
 /* ---------------------------------------------------------------- Explore */
@@ -98,6 +100,7 @@ button.tools-danger-text, button.ghost.tools-danger-text { color: var(--bad); }
   .tools-fields .filter-row > :nth-child(3) { grid-column: 2 / 4; grid-row: 2; }
   .tools-fields .bulk-bar button { min-height: 40px; }
   .tools-fields .chips .chip, .tools-derived .chips .chip { height: 36px; padding: 0 12px; }
+  .tools-count-bar button { min-height: 44px; }
   .tools-icon-btn { width: 44px; height: 44px; }
   .tools-explore .explore-toolbar { flex-direction: column; align-items: stretch; gap: 10px; }
   .tools-explore .explore-toolbar select { max-width: 100%; width: 100%; }

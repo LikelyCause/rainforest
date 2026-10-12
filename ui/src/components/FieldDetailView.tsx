@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import { Chart } from "./Chart";
@@ -40,6 +40,33 @@ function QuantileStrip({ box }: { box: BoxSummary }) {
 
 function readOpen(): boolean {
   try { return localStorage.getItem("rf:moreStats") === "1"; } catch { return false; }
+}
+
+const NARROW = "(max-width: 759px)";
+function useNarrow(): boolean {
+  return useSyncExternalStore(
+    (l) => { const m = window.matchMedia(NARROW); m.addEventListener("change", l); return () => m.removeEventListener("change", l); },
+    () => window.matchMedia(NARROW).matches,
+  );
+}
+
+/** One labelled number in More stats; the less obvious ones explain themselves on hover or tap. */
+function Stat({ label, tip, title, children }: { label: string; tip?: string; title?: string; children: ReactNode }) {
+  return (
+    <div className="stat-row">
+      <dt>{tip ? <InfoTip label={label} text={tip} ariaLabel={`${label}: what this means`} /> : label}</dt>
+      <dd title={title}>{children}</dd>
+    </div>
+  );
+}
+
+function StatGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="stat-group" aria-label={title}>
+      <h3>{title}</h3>
+      <dl>{children}</dl>
+    </section>
+  );
 }
 
 interface Props {
@@ -90,7 +117,21 @@ export function FieldDetailView({ data, position, stale, onOpenField, onPrev, on
     }
     return histogramOption(t, dist, { time: dist.kind === "time_histogram", xLabel: dist.xlabel });
   }, [t, dist, useLog, moreBars, f.charts.log_distribution, f.row_count]);
-  const corrOption = useMemo(() => correlationOption(t, corrRows), [t, corrRows]);
+  const narrow = useNarrow();
+  // The card spans the column, so names get more room than the shared helper's 26 characters; echarts trims to the width.
+  const corrOption = useMemo(() => {
+    const o = correlationOption(t, corrRows) as { yAxis: { axisLabel: object } };
+    const anyNegative = corrRows.some((r) => r.value < 0);
+    return {
+      ...o,
+      yAxis: {
+        ...o.yAxis,
+        data: corrRows.map((r) => (r.is_target ? `◎ ${r.name}` : r.name)),
+        // The margin keeps a long negative bar's value label off the names.
+        axisLabel: { ...o.yAxis.axisLabel, width: narrow ? 130 : 300, overflow: "truncate", margin: anyNegative ? 40 : 8 },
+      },
+    };
+  }, [t, corrRows, narrow]);
   const extra = f.charts.tokens ?? f.charts.weekday;
   const extraOption = useMemo(() => (extra ? barsOption(t, { ...extra, labels: extra.labels.slice(0, BAR_ROWS), counts: extra.counts.slice(0, BAR_ROWS) }) : null), [t, extra]);
 
@@ -100,6 +141,11 @@ export function FieldDetailView({ data, position, stale, onOpenField, onPrev, on
   const distHeight = dist?.kind === "bars" ? Math.max(BAR_ROWS, Math.min(moreBars ? 20 : BAR_ROWS, barCount)) * 22 + 8 : 220;
   const outside = dist && dist.kind !== "bars" ? (dist.below ?? 0) + (dist.above ?? 0) : 0;
   const typeName = typeLabel?.(f.inferred_type) ?? f.inferred_type.replace("_", " ");
+  const isText = f.inferred_type === "text";
+  // Free text runs long: fewer examples, a line each.
+  const examples: string[] = (s.examples ?? []).slice(0, isText ? 4 : 8);
+  const topLevels: { value: string; count: number; pct: number }[] = isLabelled ? (s.top_values ?? []).slice(0, 6) : [];
+  const missing = <>{fmtInt(f.null_count)} <span className="stat-soft">({fmtPct(f.null_pct)})</span></>;
 
   const toggleStats = (open: boolean) => {
     setStatsOpen(open);
@@ -150,7 +196,31 @@ export function FieldDetailView({ data, position, stale, onOpenField, onPrev, on
         )}
       </dl>
 
-      <div className={`chart-cards${corrRows.length || corr.isLoading ? " pair" : ""}`}>
+      {(examples.length > 0 || topLevels.length > 0) && (
+        <section className={`card sample-values${stale ? " dim" : ""}`} aria-labelledby="sample-values-title">
+          <div className="sample-head">
+            <h2 id="sample-values-title">Sample values</h2>
+            <span className="muted small-text">The first few distinct values, as stored in the file</span>
+          </div>
+          {examples.length > 0 && (
+            <ul className={`sample-chips${isText ? " long" : ""}`} aria-label="Example values">
+              {examples.map((v, i) => <li key={i}><code title={v}>{v === "" ? "(empty)" : v}</code></li>)}
+            </ul>
+          )}
+          {topLevels.length > 0 && (
+            <div className="sample-levels">
+              <span className="small-text muted">Most common{f.null_count > 0 ? ", as a share of rows with a value" : ""}</span>
+              <ul className="sample-chips" aria-label="Most common values with their share of rows">
+                {topLevels.map((l) => (
+                  <li key={l.value}><code title={`${l.value}: ${fmtInt(l.count)} rows`}>{l.value}</code> <span className="num small-text secondary">{fmtPct(l.pct, 0)}</span></li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
+      )}
+
+      <div className="chart-cards stacked">
         <section className={`card chart-card${stale ? " dim" : ""}`}>
           <div className="card-head">
             <h2>Distribution</h2>
@@ -191,7 +261,7 @@ export function FieldDetailView({ data, position, stale, onOpenField, onPrev, on
             <div className="chart-body">
               {corr.error ? <ErrorAlert error={corr.error} /> : (
                 <Chart key={f.id} option={corrOption} ariaLabel={`Fields most associated with ${f.name}`}
-                  height={Math.max(220, corrRows.length * 20 + 32)} onBarClick={(i) => onOpenField(corrRows[i].field_id)} />
+                  height={Math.max(120, corrRows.length * 20 + 40)} onBarClick={(i) => onOpenField(corrRows[i].field_id)} />
               )}
               {!corr.error && corrRows.some((r) => r.value < 0) && <p className="muted small-text">Bars run from 0; blue goes up together, red goes opposite.</p>}
             </div>
@@ -211,48 +281,78 @@ export function FieldDetailView({ data, position, stale, onOpenField, onPrev, on
         <summary>
           <b>More stats</b>
           <span className="muted num small-text">
-            {isNum ? `mean ${fmtNum(f.mean)} · std ${fmtNum(f.std)} · min ${fmtNum(f.min_value)} · max ${fmtNum(f.max_value)}`
-              : `${fmtInt(f.n_unique)} distinct · top ${f.top_value ?? "—"}`}
+            {isNum ? `min ${fmtNum(f.min_value)} · median ${fmtNum(f.median)} · max ${fmtNum(f.max_value)}`
+              : `${fmtInt(f.n_unique)} distinct · ${fmtInt(f.null_count)} missing`}
           </span>
         </summary>
-        <div className="kv">
-          <div><span>Distinct</span><b>{fmtInt(f.n_unique)} ({fmtPct(f.unique_pct)})</b></div>
-          <div><span>Missing</span><b>{fmtInt(f.null_count)}</b></div>
+        <div className="stat-groups num">
           {isNum && <>
-            <div><span>Mean</span><b>{fmtNum(f.mean)}</b></div>
-            <div><span>Std dev</span><b>{fmtNum(f.std)}</b></div>
-            <div><span>Min</span><b>{fmtNum(f.min_value)}</b></div>
-            <div><span>Median</span><b>{fmtNum(f.median)}</b></div>
-            <div><span>Max</span><b>{fmtNum(f.max_value)}</b></div>
-            <div><span>Kurtosis</span><b>{fmtNum(f.kurtosis, 2)}</b></div>
-            <div><span>Zeros</span><b>{fmtPct(f.zeros_pct)}</b></div>
-            <div><span>Negative</span><b>{fmtPct(s.negative_pct)}</b></div>
+            <StatGroup title="Spread">
+              <Stat label="Min">{fmtNum(f.min_value)}</Stat>
+              <Stat label="Median">{fmtNum(f.median)}</Stat>
+              <Stat label="Max">{fmtNum(f.max_value)}</Stat>
+              <Stat label="Mean ± std" tip="The average, and the standard deviation: how far a typical value sits from the average.">
+                {fmtNum(f.mean)} <span className="stat-soft">± {fmtNum(f.std)}</span>
+              </Stat>
+              {s.quantiles?.p25 != null && (
+                <Stat label="Middle half" tip="Half of the values fall between these two (the 25th and 75th percentiles).">
+                  {fmtNum(s.quantiles.p25)} to {fmtNum(s.quantiles.p75)}
+                </Stat>
+              )}
+            </StatGroup>
+            <StatGroup title="Shape">
+              <Stat label="Skew" tip="Lopsidedness. 0 is symmetric; positive means a long tail of large values, negative a long tail of small ones. Beyond ±2 is strongly skewed.">
+                {fmtNum(f.skewness, 2)}
+              </Stat>
+              <Stat label="Kurtosis" tip="How heavy the tails are compared with a bell curve (which scores 0). Large positive values mean more extreme values than a bell curve would have.">
+                {fmtNum(f.kurtosis, 2)}
+              </Stat>
+              <Stat label="Outliers" tip="Share of values more than 1.5 × the middle half's width beyond it.">{fmtPct(f.outlier_pct)}</Stat>
+              <Stat label="Zeros">{fmtPct(f.zeros_pct)}</Stat>
+              <Stat label="Negative">{fmtPct(s.negative_pct)}</Stat>
+            </StatGroup>
           </>}
-          {(f.inferred_type === "categorical" || f.inferred_type === "binary") && <>
-            <div><span>Top value</span><b title={f.top_value ?? ""}>{f.top_value ?? "—"}</b></div>
-            <div><span>Top value share</span><b>{fmtPct(f.top_value_pct)}</b></div>
-            <div><span>Rare levels (&lt;1%)</span><b>{fmtInt(s.rare_levels)}</b></div>
-            <div><span>Entropy (norm.)</span><b>{fmtNum(s.normalized_entropy, 2)}</b></div>
+          {isLabelled && (
+            <StatGroup title="Levels">
+              <Stat label="Top value" title={f.top_value ?? ""}><span className="stat-text">{f.top_value ?? "—"}</span></Stat>
+              <Stat label="Top value share">{fmtPct(f.top_value_pct)}</Stat>
+              <Stat label="Rare levels" tip="Values that each appear in fewer than 1% of rows. Many rare levels are hard to learn from; grouping them often helps.">
+                {fmtInt(s.rare_levels)}
+              </Stat>
+              <Stat label="Evenness" tip="Normalized entropy, from 0 to 1. Near 1 the values are spread evenly across the levels; near 0 one value dominates.">
+                {fmtNum(s.normalized_entropy, 2)}
+              </Stat>
+            </StatGroup>
+          )}
+          {isText && <>
+            <StatGroup title="Length">
+              <Stat label="Avg characters">{fmtNum(f.avg_length, 1)}</Stat>
+              <Stat label="Max characters">{fmtInt(s.length?.max)}</Stat>
+              <Stat label="Avg words">{fmtNum(s.words?.mean, 1)}</Stat>
+            </StatGroup>
+            <StatGroup title="Content">
+              <Stat label="Empty strings">{fmtPct(s.empty_pct)}</Stat>
+              <Stat label="Vocabulary" tip="Distinct words found in a sample of the rows, ignoring case and common words like 'the'.">
+                {fmtInt(s.vocabulary_sampled)}
+              </Stat>
+            </StatGroup>
           </>}
-          {f.inferred_type === "text" && <>
-            <div><span>Avg chars</span><b>{fmtNum(f.avg_length, 1)}</b></div>
-            <div><span>Avg words</span><b>{fmtNum(s.words?.mean, 1)}</b></div>
-            <div><span>Max chars</span><b>{fmtInt(s.length?.max)}</b></div>
-            <div><span>Empty strings</span><b>{fmtPct(s.empty_pct)}</b></div>
-            <div><span>Vocabulary (sample)</span><b>{fmtInt(s.vocabulary_sampled)}</b></div>
-          </>}
-          {f.inferred_type === "datetime" && <>
-            <div><span>Earliest</span><b>{s.min?.slice(0, 10) ?? "—"}</b></div>
-            <div><span>Latest</span><b>{s.max?.slice(0, 10) ?? "—"}</b></div>
-            <div><span>Span (days)</span><b>{fmtInt(Math.round(s.span_days ?? 0))}</b></div>
-            <div><span>Has time</span><b>{s.has_time_component ? "yes" : "no"}</b></div>
-          </>}
+          {f.inferred_type === "datetime" && (
+            <StatGroup title="Range">
+              <Stat label="Earliest">{s.min?.slice(0, 10) ?? "—"}</Stat>
+              <Stat label="Latest">{s.max?.slice(0, 10) ?? "—"}</Stat>
+              <Stat label="Span">{fmtInt(Math.round(s.span_days ?? 0))} days</Stat>
+              <Stat label="Has time of day">{s.has_time_component ? "Yes" : "No"}</Stat>
+            </StatGroup>
+          )}
+          <StatGroup title="Counts">
+            <Stat label="Distinct" tip="How many different values the field holds, and that as a share of the rows that aren't missing.">
+              {fmtInt(f.n_unique)} <span className="stat-soft">({fmtPct(f.unique_pct)})</span>
+            </Stat>
+            <Stat label="Missing">{missing}</Stat>
+            <Stat label="Rows">{fmtInt(f.row_count)}</Stat>
+          </StatGroup>
         </div>
-        {s.examples?.length > 0 && (
-          <div className="examples">
-            {s.examples.map((v: string, i: number) => <code key={i}>{v}</code>)}
-          </div>
-        )}
       </details>
     </>
   );
