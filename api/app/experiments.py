@@ -22,6 +22,10 @@ from .semantics import SETTING_KEYS
 
 log = logging.getLogger(__name__)
 
+# Advisory-lock class id (two-key form) for creating a version's team experiment. It must differ from jobs.py's
+# classes (7_311_205–7_311_207): the job queue counts every granted lock of the ticket class as a queued job.
+TEAM_LOCK = 7_311_208
+
 COLS = """x.id, x.dataset_id, x.name, x.owner, x.recipe_id, x.assessor_id, x.source, x.notes, x.created_at,
           x.archived_at, x.is_default, x.target_order, xr.family AS recipe_family, xr.version AS recipe_version,
           xr.phase AS recipe_phase, meta.baseline_name(xr.dataset_id, xr.family) AS recipe_name,
@@ -129,7 +133,7 @@ def create(conn, dataset_id: int, name: str, source: str, user: dict, notes: str
 
 def team_for(conn, recipe: dict) -> dict:
     """The default team experiment of a finalized version, created on first use."""
-    conn.execute("SELECT pg_advisory_xact_lock(7311207, %s)", (recipe["id"],))
+    conn.execute("SELECT pg_advisory_xact_lock(%s, %s)", (TEAM_LOCK, recipe["id"]))
     row = conn.execute(
         f"SELECT {COLS} FROM {FROM} WHERE x.recipe_id = %s AND x.is_default ORDER BY x.id LIMIT 1",
         (recipe["id"],),

@@ -32,7 +32,8 @@ from .db import connection
 
 log = logging.getLogger(__name__)
 
-# Advisory-lock class ids (two-key form, a separate key space from db.py's single-key schema lock).
+# Advisory-lock class ids (two-key form, a separate key space from db.py's single-key schema lock). Other two-key
+# locks need their own class: experiments.TEAM_LOCK is 7_311_208.
 OWNER_LOCK = 7_311_205
 SLOT_LOCK = 7_311_206
 TICKET_LOCK = 7_311_207
