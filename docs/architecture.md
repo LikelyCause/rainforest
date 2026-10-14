@@ -22,7 +22,7 @@ for one run.
 
 | Module | Responsibility |
 |---|---|
-| `main.py` | App, middleware (gzip for API responses, not file downloads; CORS for the Vite dev server), router registration, `/health`, `/api/options`. Startup loads the session secret, runs `db.bootstrap()` and `jobs.start()`, removes orphaned uploads, queues `experiments.startup_flush` (MLflow logging of runs that waited for review) and starts GPU detection. |
+| `main.py` | App, middleware (gzip for API responses, not file downloads; `auth.SecurityMiddleware`), router registration, `/health`, `/api/options`. Startup loads the session secret, runs `db.bootstrap()` and `jobs.start()`, removes orphaned uploads, queues `experiments.startup_flush` (MLflow logging of runs that waited for review) and starts GPU detection. |
 | `auth.py` | Sign-in routes (`/api/auth/*`: config, me, check, logout, the open profile pictures, pick mode's users and pick, and the OIDC login / callback), the signed session cookie, the session secret, `SecurityMiddleware` (with the Viewer write refusal, `viewer_refused` and its `VIEWER_ALLOWED` list), and the `current_user` / `require_lead` dependencies. |
 | `oidc.py` | The OIDC relying party: discovery and JWKS (cached; an unknown key id refetches), the authorization URL with PKCE, the code exchange, ID token verification, role from the groups claim. Uses httpx and PyJWT. |
 | `recipes.py` | Baselines (rows of `meta.recipes`, one per version of one model family): `FAMILY_LABEL`, `label` (`Dropout risk v2 (Trees)`, or `Trees baseline v2` unnamed; it requires the row's `name`, so a query that leaves it out fails rather than mislabels) and `short_label`, the name rules and storage (`clean_name`, `set_name`), the current version (the latest started, with the row lock phase changes and decision writes take), the latest finalized one (of a family), creating the first and the next version (`create_first`, `start_version`, `next_version`), the one-in-progress rule (`require_none_in_progress`, serialised by `lock_dataset`), `is_setup`, `load_working` (makes the working tables a baseline's starting point), which fields a version works on (`open_field_ids`) and the lock on the rest (`locked_problem`), the snapshot and schema fingerprint, finalizing, snapshotting versions migrated without one, the export spec rows read from a snapshot (`spec_rows`, `snapshot_targets`, `snapshot_target_tasks`) and the diff between two snapshots. |
@@ -46,7 +46,7 @@ for one run.
 | `export_code/` | *Export to code*: one finished export as a standalone Python script. `gather.info_for` reads what it is written from (the export's manifest, frozen snapshot and config, the data's source: an upload, a library dataset or a generated sample, from `meta.datasets.source_spec` or worked out for older datasets, the derived fields the export uses, and per-column summaries of the dataset's Parquet copy and of `model_ready.parquet` for the script's checks, cached per file version). `render` writes the script: the decisions as `keep.*` / `predict.*` calls, the driver `script.py` (reading, `prepare` mirroring `run_export`, `load_clean`, `xy`, the checks and the CLI) and the app functions it reaches, which `bundle.Bundle` copies verbatim from their modules (definitions, constants and imports, transitively; one flat namespace, so two definitions of a name refuse to bundle). Names and notes only ever reach the script as literals or comment lines. |
 | `bands.py` | Cutting a numeric target into bands: equal-count edges, chosen cut points, labels (`< 10`, `[10, 25)`, `≥ 80`), assignment and the fewer-than-2-rows check. |
 | `parquet_rows.py` | `read_rows`: selected rows of a Parquet file, read a few column chunks at a time (export fit sample, Explore samples). |
-| `modeling/params.py` | Each model's settings as data (LightGBM's and XGBoost's so far): groups, kinds, ranges, options, defaults, which links a value reaches (`applies`) and which settings another depends on (`when`, filled with their default once switched on); the checks and routing a run's `params` go through. |
+| `modeling/params.py` | Each model's settings as data (`CATALOG`, every registered model): groups, kinds, ranges, options, defaults, which links a value reaches (`applies`) and which settings another depends on (`when`, filled with their default once switched on); the checks and routing a run's `params` go through. |
 | `modeling/registry.py`, `modeling/train.py` | Model catalog (a classifier and a regressor per model, with the classifier-only parameters left out of regressors), compatibility and device params; training (`ClassifierChain` when every target is classes, `TargetChain` when any is a number; `make_chain` and `score` serve the final fit and every cross-validation fold), classification and regression evaluation, CLI. |
 | `modeling/xgb_compact.py` | XGBoost classifier that maps labels with gaps ({0, 2}, from a fold or an empty band) to 0..k-1 and back. |
 | `modeling/crossval.py` | Cross-validation folds of a run's training rows (stratified on the chain's first class target when its rarest class has K rows; group-aware when the export keeps rows together) and the per-target, per-metric mean, spread and fold values. |
@@ -107,7 +107,7 @@ Every request first passes `auth.SecurityMiddleware`, before routing (so file do
    avatar_url}` is left in `request.state.user`. In `oidc` mode with settings missing, nothing but those paths is
    served (`503`).
 4. **Viewer.** A Viewer's unsafe method gets `403` unless it matches `auth.VIEWER_ALLOWED` (Explore analysis
-   requests, the field finder, their own picture), so a route added later is refused by default; the SQL console isn't
+   requests, the field finder, their own name and picture), so a route added later is refused by default; the SQL console isn't
    among them, since it reads every table. On `/api/auth/check` the method judged is the `X-Original-Method` nginx
    sends, and a `POST` passes only for MLflow's search endpoints (`X-Original-URI`), so a Viewer browses MLflow but
    can't change it.
@@ -372,9 +372,9 @@ state in Postgres, so any worker can serve the polling.
   default), shared by every process, and runs with its native thread pools limited to `jobs.cpu_threads()`
   (usable CPUs `// JOB_SLOTS`, at least 1). Model runs pass that as `n_jobs` to estimators that take one; Explore's t-SNE and
   mutual information use it too.
-* **Queue order.** `jobs.submit` takes a ticket from the `meta.job_ticket` sequence and locks it (class
+* **Queue order.** A job takes a ticket from the `meta.job_ticket` sequence once a local thread picks it up, and locks it (class
   `jobs.TICKET_LOCK`) on the owner connection. A waiting job takes a free slot only when no lower ticket is locked, then
-  releases its ticket, so jobs start in submission order across every process. A process that dies releases its
+  releases its ticket, so jobs start in ticket order across every process. A process that dies releases its
   tickets with its connection.
 
 | Job | Entry point | State in |
@@ -392,14 +392,14 @@ state in Postgres, so any worker can serve the polling.
 
 1. `AnalysisParams.normalised(kind)` keeps only the keys that affect that kind; for raw data the route adds the
    decision source (`decisions`). The canonical JSON of the result is `params_key`.
-2. `runner.data_version`: for raw data, an md5 over every field's `(field_id, action, semantic_type)` in the params'
+2. `runner.data_version`: for raw data, an md5 over every field's `(field_id, action, semantic_type, target_task, target_bins)` in the params'
    decision source (`decisions`: `team`, `assessment:<recipe>:<user>` for an assessor's *kept only*, or from the
    request's `view` `experiment:<id>` or `baseline:<recipe>`), so any write
    path (single save, bulk, undo, target change) invalidates without hooking into it; for export data,
    `export:<id>`.
 3. `runner.find_or_create` (under a lock on the dataset row) returns, in order: a done row for the same key and
    version; a pending or running one; a done row from an older version (returned with `stale: true`, no new job).
-   Otherwise, or with `recompute`, it marks older pending/running rows of the same dataset, kind and decision source as
+   Otherwise, or with `recompute`, it marks older pending/running rows of the same dataset, kind and params as
    failed (`Superseded`), inserts a row, prunes old done and failed results (keeping, per dataset and kind, the newest
    done row per key on the current data version or on an export, plus the 3 newest others) and submits
    `run_analysis`.
@@ -438,6 +438,11 @@ grants it `SELECT` on `meta` and `raw`, except the tables in `db.PRIVATE_TABLES`
 | `015_profile_accounts.sql` | `key` (unique; an account from `RAINFOREST_USERS`) and `avatar` (the picture's hash) on `meta.users`; `viewer` in the role check |
 | `016_baseline_names.sql` | `meta.baseline_names` (one name per dataset and family, unique ignoring case) and `meta.baseline_name()` |
 | `017_cascade_indexes.sql` | `field_id` indexes on `assessments`, `assessment_settings` and `recipe_reopened`, and `export_id` on `model_runs`, for dataset deletes and per-export run lists |
+| `018_one_vs_rest_targets.sql` | the task trigger lets a binary or categorical target be `bins` with `target_bins` `{"positive": [...]}` (one-vs-rest) |
+| `019_derived_fields.sql` | `derived` (a derived field's `{kind, spec}`) on `meta.fields` |
+| `020_chosen_runs.sql` | `note`, `chosen_at` and `chosen_by` on `meta.model_runs`, at most one chosen run per experiment |
+| `021_ridge_run_labels.sql` | renames finished `logistic_regression` runs that trained numbers *Ridge regression* (or *Logistic and ridge regression*) |
+| `022_review_summaries.sql` | `review_summary` on `meta.recipes` (how a finalized version's team review went) |
 | `023_dataset_source.sql` | `source_spec` on `meta.datasets`: a library dataset's key or a generated sample's settings, so an export's script can get the same data |
 
 Child tables reference `meta.datasets` with `ON DELETE CASCADE`; `DELETE /api/datasets/{id}` removes the rows and then
@@ -468,8 +473,8 @@ stamp `owner = jobs.owner_id()` where its rows are created and add it to `jobs.s
 6. Tests go in `api/tests/test_explore.py` (unit tests on `compute` with synthetic data; API tests need the database).
 
 **A UI page.** Add the component under `ui/src/pages/`, a `<Route>` under `/d/:datasetId` in `App.tsx` (it gets the
-dataset from `useDatasetContext()`, and `DatasetLayout` handles loading, processing and failed states), a `NavLink` in
-`DatasetSteps` if it's a workflow step, and its endpoints in `api.ts` / `types.ts`. Invalidate its query keys from
+dataset from `useDatasetContext()`, and `DatasetLayout` handles loading, processing and failed states), a tab in
+`DatasetTabs` (`App.tsx`) if it's a workflow step, and its endpoints in `api.ts` / `types.ts`. Invalidate its query keys from
 mutations that change what it shows (see the `invalidate` helper in `BulkEditPage.tsx`).
 
 **Anything that reads field decisions.** Take the user (and a `view` query parameter where a page can work on an
@@ -494,7 +499,8 @@ its startup hook and with an in-memory user store, so it needs no database. `tes
 in-process provider (`tests/oidc_provider.py`, served through `httpx.MockTransport` by setting `oidc.transport`): the
 redirect and token checks need no database, the provisioning flows do. The API tests in `test_explore.py`,
 `test_sql_console.py`, `test_data_correctness.py`, `test_api_cleanup.py`, `test_users.py`, `test_team.py`,
-`test_experiments.py`, `test_recipes.py`, `test_baselines.py`, `test_baseline_names.py`, `test_sample_library.py`, `test_target_tasks.py`, `test_adjustments.py`, `test_target_tasks.py` and
+`test_experiments.py`, `test_recipes.py`, `test_baselines.py`, `test_baseline_names.py`, `test_sample_library.py`, `test_target_tasks.py`, `test_adjustments.py`, `test_derived.py`, `test_crossval.py`,
+`test_rows_and_groups.py`, `test_team_glance.py`, `test_run_names_and_rows.py` and
 `test_profile_accounts.py` (its `RAINFOREST_USERS` parsing tests need none; helpers in
 `team_helpers.py`) start the app against `RAINFOREST_TEST_DATABASE_URL` and skip without it;
 `test_jobs.py` (job ownership, the restart sweep and the slots) needs that database too. `test_mlflow.py` logs to a temporary MLflow file store
@@ -527,4 +533,5 @@ retype rules, the *Fields · Table* and Explore URL state, error parsing, run ra
 helpers (including a field's differences from its baseline), the start form's defaults and target rule, the view
 URL helpers, `can` for every role and action, initials, and the reuse summary, diff formatting and reopen picker. Tests sit next to the code as
 `*.test.ts`. CI (`.github/workflows/ci.yml`, on pushes to `main` and pull requests) runs the API tests with a
-Postgres service and an MLflow server container, the UI typecheck, tests and build, and `docker compose build`.
+Postgres service and an MLflow server container, the UI typecheck, tests and build, and `docker compose --profile
+keycloak build`.

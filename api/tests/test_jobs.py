@@ -5,8 +5,9 @@ import time
 
 import psycopg
 import pytest
+from psycopg.rows import dict_row
 
-from app import db, jobs
+from app import db, experiments, jobs, recipes
 from app.config import get_settings
 
 DB_URL = os.environ.get("RAINFOREST_TEST_DATABASE_URL")
@@ -177,6 +178,26 @@ def test_queued_jobs_start_oldest_first(database, monkeypatch):
         other.close()
         monkeypatch.undo()
         get_settings.cache_clear()
+
+
+def test_creating_a_team_experiment_is_not_a_queued_job(database):
+    """team_for's lock has its own class: it neither waits on a job's ticket nor holds queued jobs back."""
+    ds = _dataset()
+    rid = db.fetch_one("INSERT INTO meta.recipes (dataset_id, version) VALUES (%s, 1) RETURNING id", (ds,))["id"]
+    other = psycopg.connect(DB_URL, autocommit=True)
+    try:
+        # A job in another process queued with the same number as the recipe id.
+        other.execute("SELECT pg_advisory_lock(%s, %s)", (jobs.TICKET_LOCK, rid))
+        with psycopg.connect(DB_URL, row_factory=dict_row) as conn:
+            conn.execute("SET lock_timeout = '2s'")
+            x = experiments.team_for(conn, recipes.get(conn, rid))
+            assert x["recipe_id"] == rid and x["is_default"]
+            other.execute("SELECT pg_advisory_unlock(%s, %s)", (jobs.TICKET_LOCK, rid))
+            # Still inside team_for's transaction: a job queued after it has nothing ahead.
+            assert not other.execute(jobs._AHEAD, (rid + 1,)).fetchone()[0]
+            conn.rollback()
+    finally:
+        other.close()
 
 
 def test_cpu_threads_divides_cpus_between_slots(monkeypatch):

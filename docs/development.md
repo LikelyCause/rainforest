@@ -42,9 +42,8 @@ API tests live in `api/tests`. Most need no database. These include:
 - the OIDC redirect and ID-token checks in `test_oidc.py`, against an in-process provider (`tests/oidc_provider.py`)
 
 The API tests that need a database run against an empty Postgres. They skip unless `RAINFOREST_TEST_DATABASE_URL` is
-set. They use the fixtures in `tests/team_helpers.py`, and their module docstrings say "Needs
-RAINFOREST_TEST_DATABASE_URL". They include the OIDC sign-in flows in `test_oidc.py` and the job tests in
-`test_jobs.py`. They sign in with the `login_as(client, role)` fixture in `conftest.py`.
+set. Many use the fixtures in `tests/team_helpers.py`. They include the OIDC sign-in flows in `test_oidc.py` and
+the job tests in `test_jobs.py`. They sign in with the `login_as(client, role)` fixture in `conftest.py`.
 
 `test_mlflow.py` logs to a temporary file store, so it needs no MLflow server. Its database-backed tests follow the
 same rule. One more test runs against a real tracking server when `MLFLOW_TEST_URI` is set. CI runs one.
@@ -62,7 +61,7 @@ same rule. One more test runs against a real tracking server when `MLFLOW_TEST_U
 
 - the API tests, with a Postgres service (so nothing skips) and an MLflow server container
 - the UI typecheck, tests and build
-- `docker compose build` for the images
+- `docker compose --profile keycloak build` for the images
 
 ## Schema changes
 

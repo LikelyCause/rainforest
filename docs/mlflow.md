@@ -12,7 +12,7 @@ Open `http://localhost:8080/mlflow/`, or *MLflow ↗* in your profile menu.
 
 - MLflow sits behind the Rainforest sign-in. Before every request, nginx asks the API whether the session cookie is
   valid. If it isn't, you go to the sign-in page and back.
-- A Viewer can browse MLflow but not change it (`GET` and `HEAD` only).
+- A Viewer can browse MLflow but not change it.
 - The server has no published port of its own.
 
 The runs table has an *MLflow ↗* link per logged run, and the run's detail links to it too. An experiment's page
@@ -82,13 +82,13 @@ proxies uploads and downloads, so clients only talk HTTP to it.
 MLflow has no access control of its own. Anyone who can sign in to Rainforest can browse everything in it.
 
 So a run in a [private experiment](experiments-and-training.md#privacy) is not logged while its baseline version is
-assessing. The runs table shows *after review*. When review opens, those runs are logged. Runs that finish after that
-are logged at once. The API also logs any still waiting when it starts.
+assessing. The runs table shows *MLflow after review*. When review opens, those runs are logged. Runs that finish
+after that are logged at once. The API also logs any still waiting when it starts.
 
 ## When MLflow is down
 
 The run still finishes. Logging gives up after a short timeout: 15 seconds per request, with two retries. The run
-records the reason as `mlflow_error` in its report. The runs table shows *not logged* with the reason.
+records the reason as `mlflow_error` in its report. The runs table shows *Not in MLflow*, with the reason on hover.
 
 Nothing is lost. `make mlflow-backfill` logs every finished run that has no MLflow run, such as one trained while
 MLflow was down or turned off. It skips runs of an experiment that is still private. It runs only when you start it.

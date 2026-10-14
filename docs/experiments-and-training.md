@@ -12,7 +12,7 @@ finalizes a version, *New experiment from vN* does the same with that version ch
 
 | Built from | Kind | Who sees it | Who adds exports and runs |
 |---|---|---|---|
-| A finalized baseline, such as *Trees baseline v2 (finalized)* | Team experiment | Everyone | Anyone who can experiment |
+| A finalized baseline, such as *Trees baseline v2 · finalized* | Team experiment | Everyone | Anyone who can experiment |
 | *My assessment (Trees v2)*, offered while you assess the version being worked | Personal experiment | You only, until team review opens | You only |
 
 If you export a finalized baseline from the API without naming an experiment, the export goes into that version's
@@ -69,7 +69,7 @@ ones don't fit.
 1. Choose *Adjust fields* on the experiment's *Adjustments* tab. It opens *Fields · Focus* and *Fields · Table* on the
    experiment's copy (`?view=experiment:<id>`). The top bar's second row names the experiment, with the *Experiment
    copy* chip and *Back to the experiment*.
-2. Change fields as in *Focus*. The decision panel says what differs from the baseline, with *Revert to baseline*.
+2. Change fields as in *Focus*. The decision panel says what differs from the baseline, with *Revert*.
 3. Check the experiment's *Adjustments* tab. It lists every changed field, and the targets when they differ, with a
    per-field *Revert* and *Revert everything*. *Revert everything* asks to confirm.
 
@@ -102,8 +102,8 @@ The model family is always the baseline's.
 
 ### What an export records
 
-Each export records its baseline (`recipe_id`) and its experiment. The list shows the baseline as *Trees v2*, with
-*N fields adjusted* and *targets changed* when they apply.
+Each export records its baseline (`recipe_id`) and its experiment. The list shows the baseline as *Trees v2*. On *Runs*,
+the export is noted with *N fields adjusted* and *targets changed* when they apply.
 
 The manifest's `config` records:
 
@@ -112,7 +112,7 @@ The manifest's `config` records:
 | `source` | `recipe` or `assessment` |
 | `recipe_id`, `recipe_version` | the baseline version |
 | `experiment_id` | the experiment |
-| `baseline` | `recipe_id`, `family`, `version`, `label` |
+| `baseline` | `recipe_id`, `family`, `version`, `name`, `label` |
 | `adjustments` | `count`, `fields`, `targets_changed`, `targets`, and `detail`: each adjusted field's changes |
 | `assessor_id` | for a personal export only |
 
@@ -149,7 +149,7 @@ Under *Rows* in the export panel, you can leave rows out before anything else ha
 |---|---|---|
 | *Leave out exact duplicate rows* | drops exact duplicates | — |
 | *Leave out rows where …* | drops rows whose field holds given values | `discharge_disposition_id` 11, 13, 14, 19–21, for patients who died or went to hospice |
-| *One row per* … *First by* … | keeps only the first row per key | one row per patient number, first by encounter number |
+| *One row per* … *first by* … | keeps only the first row per key | one row per patient number, first by encounter number |
 
 Under the split bar, the panel counts what the rules leave, with the export's own row-rule and split code, so the
 preview and the export agree: *69,990 rows after the row rules (1,246 left out)*, then the exact train, validation and
@@ -165,13 +165,15 @@ The export row says how many rows each rule removed (`split_info.rows_removed`).
 and, for cross-validation, the same fold. So a model is never scored on someone it trained on.
 
 The split then uses scikit-learn's `GroupShuffleSplit`. Its shares are of groups, so row shares come out close but
-not exact; the panel shows the split's actual counts and how many groups there are. Folds use `StratifiedGroupKFold`. The manifest records `split_info.grouped_on`, and the export writes
+not exact; the panel shows the split's actual counts and how many groups there are. Folds use `StratifiedGroupKFold`
+(`GroupKFold` when every target is a number). The manifest records `split_info.grouped_on`, and the export writes
 `groups.npy`.
 
 ### Leakage-safe split
 
 Rainforest assigns the train, validation and test split first. Then it fits every statistic on training rows only,
-up to 500k of them by default. Then it transforms the full file in chunks.
+up to *Max rows to fit on* (every row from the UI, 500k from the API) and the [Memory](#memory) budget. Then it
+transforms the full file in chunks.
 
 The split is stratified on the combination of targets. Details:
 
@@ -242,7 +244,8 @@ The manifest records:
 
 - Tree models train on any export.
 - Linear and neural models need an export prepared for their family. They are refused if the export contains NaN.
-- The *Train* tab hides incompatible models. *Show incompatible models* lists them, disabled, with the reason.
+- The *Train* tab hides incompatible models. *Show incompatible models* lists them, disabled and marked *not
+  compatible*.
 - Planned models (linear SVM, k-nearest neighbours, convolutional and recurrent networks) are listed as *planned*.
   You can't train them yet.
 
@@ -264,7 +267,7 @@ of runs, above *Train*. Starting a run takes you to *Runs*, where it appears at 
 Each export, on *Exports*, has:
 
 - *Train on it*, which opens *Train* with that export
-- *Files ▾*: Parquet, preprocessor, manifest
+- *Files ▾*: *Dataset (.parquet)*, *Pipeline (.joblib)*, *Manifest (.json)*
 - *Use from code*: *Python script (.py)* (see [Rebuild an export in Python](#rebuild-an-export-in-python)), the CLI
   command and class mappings
 
@@ -323,8 +326,8 @@ library versions differ says so in the script's header; its check then shows whe
 
 ### Chains
 
-A run trains one model per target, in the export's target order unless you choose another. With two targets, the UI
-offers both orders. Chains use `cv=5` (*Chain folds*).
+A run trains one model per target, in the export's target order unless you choose another. Chains use `cv=5` by
+default (*Chain folds*: *Off* or 2–10; *Off* passes the true values down).
 
 During training, each chained prediction is **out-of-fold**. So a later target's model learns from realistic
 predictions of the earlier targets, not the ground truth.
@@ -338,7 +341,8 @@ predictions of the earlier targets, not the ground truth.
 
 - Every model has a regressor: LightGBM, XGBoost on CPU or GPU, histogram GBM, random forest, ridge for the linear
   family, and the MLP.
-- Classifier-only parameters (`class_weight`, `objective`, `scale_pos_weight`, `C`, …) are left out for a regressor.
+- Classifier-only parameters (`class_weight`, `scale_pos_weight`, `C`, …) are left out for a regressor, and the
+  number-target loss (`objective`) for a classifier.
 - The report records `chain_kind` (`classifier_chain` or `target_chain`) and `target_tasks`.
 - The linear model (`logistic_regression`) trains ridge regression for a number, so a run whose targets are all
   numbers is named *Ridge regression*, and one with both kinds *Logistic and ridge regression*. *Train* names it the
@@ -355,20 +359,22 @@ predictions of the earlier targets, not the ground truth.
 ### Model settings
 
 *Train* lays out the chosen model's parameters. Every trainable model has them: LightGBM, XGBoost, histogram GBM,
-random forest, logistic or ridge regression, and the MLP. You write the MLP's layers like `128,64`.
+random forest, logistic or ridge regression, and the MLP. The MLP's layers are a choice of presets, such as *128 × 64*.
 
-Each parameter has its own control: a dropdown for a choice (boosting type, loss, class weights), a number with its
-range, or an on/off switch. The controls change with the model. They are grouped:
+Each parameter has its own control: a dropdown for a choice (boosting type, loss, class weights), a number, or an
+on/off checkbox. The controls change with the model. They are grouped:
 
 1. run
-2. trees
-3. learning
-4. sampling
-5. regularization
-6. settings for class targets, shown only when the export has one
-7. settings for number targets, shown only when the export has one
+2. network (the MLP's)
+3. trees
+4. learning
+5. sampling
+6. regularization
+7. *For class targets*, shown only when you train one
+8. *For number targets*, shown only when you train one
 
-Every other parameter that changes the model sits under a folded, searchable *Advanced*.
+Every other parameter that changes the model sits under *Advanced*. Groups start folded unless they hold a change,
+and *Find a setting* searches them all.
 
 Each setting shows a one-line explanation. A changed setting is marked, shows its default and has *Reset*. *Reset
 all* puts every setting back. A folded group sums up its settings in a line.
@@ -393,8 +399,8 @@ Under the settings, *Try several values* takes up to two settings and the values
 `15, 31, 63` leaves, or `0.03, 0.1` learning rate.
 
 *Train* becomes *Train N runs*. It starts one run per combination, at most 50. Each is a normal run of the
-experiment, so the runs table and its ★ compare them. Every combination is checked like a single run before any
-starts.
+experiment, so the runs table and its ★ compare them. Every combination's values are checked before any starts.
+The runs then start one by one, and one the API refuses stops the rest.
 
 ### Cross-validation
 
@@ -445,8 +451,7 @@ Every run is scored per target on the validation and test splits.
 ## The runs table
 
 *Runs* lists the runs of one export at a time; the picker above the table chooses the export. The export's targets are
-the columns. Each column shows AUC and macro-F1, or R² and RMSE
-for a number.
+the columns: AUC, PR AUC and F1 (macro) for each, or R² and RMSE for a number.
 
 The *Validation / Test / Cross-validation* switch picks the split. *Cross-validation* shows each mean ± spread, and —
 for runs without cross-validation.
@@ -466,9 +471,9 @@ Select a run to open its detail beside the table (below it on a phone). The deta
   macro averages.
 - for a class target, tabs for the confusion matrix (correct predictions shaded blue, errors red), the ROC curves, and
   the per-class table ending in the macro and weighted averages, plus *Threshold* for a binary target
-- for a number, R², RMSE, MAE and MAPE tiles over three tabs: the predicted-vs-actual scatter, the error histogram,
+- for a number, R², RMSE, MAE and MAPE tiles over tabs: the predicted-vs-actual scatter, the error histogram,
   and *Ranges* (the range confusion matrix and per-range precision, recall and F1)
-- *Top features*, when the run recorded them
+- a *Top features* tab, when the run recorded them
 
 A *Test / Validation* switch applies to every target. With cross-validation, the switch adds *Cross-validation*. It
 shows each target's headline metrics as mean ± spread, with every fold's value on hover, and a note when the folds
@@ -523,10 +528,10 @@ Add one `ModelSpec` to `api/app/modeling/registry.py`. It needs:
 - its family
 - whether it supports NaN
 - a builder and default parameters
-- how to read its importances
 
-Optionally, it takes a description, the package it requires, and `cuda_params` for GPU training. The model then
-appears in the CLI, the API and the UI.
+Optionally, it takes how to read its importances, a description, the package it requires, `cuda_params` for GPU
+training, and `build_regressor` for number targets. The model then appears in the CLI, the API and the UI. *Train*
+shows its settings once they are listed in `CATALOG` in `api/app/modeling/params.py`.
 
 To bake an extra package into the API image, set `API_EXTRA_PIP` in `.env` (for example, `catboost`). See
 [Configuration](configuration.md).

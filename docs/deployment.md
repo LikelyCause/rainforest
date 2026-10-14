@@ -5,11 +5,11 @@ How to run Rainforest for a team, and how to keep it running. Every setting name
 
 ## Team deployment checklist
 
-`.env` is the whole configuration. Compose reads it on every command, so every `make up` applies it. The commented
-*team deployment* block in `.env.example` has every setting below.
+`.env` is the whole configuration. Compose reads it on every command, so every `make up` applies it. `.env.example`
+has every setting below, most in its commented *team deployment* block.
 
-1. **Set the passwords** before the first start: `POSTGRES_PASSWORD` and `READONLY_PASSWORD`. Postgres reads them only
-   when it creates its data volume.
+1. **Set the passwords** before the first start: `POSTGRES_PASSWORD` and `READONLY_PASSWORD`. Postgres reads
+   `POSTGRES_PASSWORD` only when it creates its data volume.
 2. **Set up OIDC sign-in.** Set `RAINFOREST_AUTH_MODE=oidc` and the `RAINFOREST_OIDC_*` settings for your provider.
    See [Sign-in](#sign-in) and [Registering with an OIDC provider](#registering-with-an-oidc-provider).
 3. **Set the allowed hosts.** Set `RAINFOREST_ALLOWED_HOSTS` to the names and addresses people use, such as
@@ -277,4 +277,4 @@ The API applies new database migrations once on start, under an advisory lock, a
 | `make up-keycloak` stops with an error about `RAINFOREST_AUTH_MODE` | `.env` sets another mode. Set it to `oidc`, or remove it. |
 | The API doesn't start after you edited `RAINFOREST_USERS` | The list has a problem. `make logs` shows the message naming it. |
 | No CPU / GPU switch in the *Train a model* panel | Run `make gpu-check`. It says whether the API sees a GPU and why XGBoost can't use it. Check the [host prerequisites](#host-prerequisites). |
-| The runs table shows *not logged* | MLflow was down or turned off. The reason is in the run's report as `mlflow_error`. Run `make mlflow-backfill` once MLflow is up. See [MLflow](mlflow.md#when-mlflow-is-down). |
+| The runs table shows *Not in MLflow* | MLflow was down. The reason is in the run's report as `mlflow_error`. Run `make mlflow-backfill` once MLflow is up. See [MLflow](mlflow.md#when-mlflow-is-down). |

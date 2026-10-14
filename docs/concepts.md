@@ -19,9 +19,9 @@ binary, categorical or numeric.
 
 | Predict as | Meaning |
 |---|---|
-| *Classes* | One of the field's values (classification). Includes *One vs rest*: chosen classes against the rest. |
+| *Classes* | One of the field's values (classification). |
 | *Number* | The value itself (regression). |
-| *Bands* | The number cut into ranges, each treated as a class. |
+| *Bands* | The number cut into ranges, each treated as a class. On a class target it is *One vs rest*: chosen classes against the rest. |
 
 See [Predicting numbers and bands](data-preparation.md#predicting-numbers-and-bands).
 
@@ -126,7 +126,8 @@ Rainforest logs model runs to [MLflow](mlflow.md). The word "experiment" means d
 | How many per dataset | As many as people create | One, named `rainforest/<dataset id>-<dataset name>` |
 | Link between them | — | Each MLflow run carries the tags `rainforest.experiment_id` and `rainforest.experiment_name` |
 
-An experiment's *MLflow ↗* link opens the dataset's MLflow experiment filtered to that experiment's runs.
+An experiment's *Open its runs in MLflow ↗* link, on its *Notes* tab, opens the dataset's MLflow experiment filtered to
+that experiment's runs.
 
 ## Roles
 
@@ -146,7 +147,7 @@ See [Roles and permissions](team-workflow.md#roles-and-permissions).
 | Model type | `family` (`tree`, `linear`, `neural`; `model_family`) |
 | *Assessing* / *Team review* / *Finalized* | phase `assessing` / `review` / `finalized` |
 | Reopened version | `scope = 'reopened'` (a full version is `all`) |
-| *Classes* / *Number* / *Bands* | `target_task` `classes` / `regression` / `bins` |
+| *Classes* / *Number* / *Bands* or *One vs rest* | `target_task` `classes` / `regression` / `bins` |
 | Bands definition | `target_bins` |
 | Settings | `meta.field_settings` (per family) |
 | Team decision | `meta.field_decisions` |

@@ -19,8 +19,8 @@ The first row says where you are:
 
 The second row says where the baseline version stands:
 
-- The version switcher, such as *Trees v2*. It lists the dataset's baselines with their phases, and opens
-  *Versions and compare*. Leads also get *New version or baseline…*.
+- The version switcher, such as *Trees v2*. It lists every version of the dataset's baselines with its phase, and
+  opens *Versions and compare*. Leads also get *New version or baseline…*.
 - The phase rail: *Set up · Assessing · Team review · Finalized*. Next to it, what opens the next phase, such as
   *Team review opens when all 3 submit · 1 in*, or *4 adopted · 2 open*.
 - The lens chip. It says whose decisions are on screen:
@@ -97,7 +97,7 @@ The *Datasets* page has two parts.
 *Waiting on you* holds a card for each thing you can move forward, your own work first:
 
 - *Finish your assessment*, with your progress, while you assess a version.
-- *Settle open fields*, for a lead, when a version is in team review.
+- *Settle open fields*, for a lead, when a version is in team review. Members get *Team review is open*.
 - *Set up the first baseline*, for a lead, when a dataset has none yet.
 - *Mark a chosen model*, for a lead, when a dataset has runs but no chosen model.
 
@@ -118,7 +118,7 @@ On a phone, the table becomes a list of cards.
 - **Upload CSV or Parquet**, or drop a file anywhere on the page. Text files may separate columns with commas,
   semicolons, tabs or pipes. Rainforest detects the separator and notes any separator other than a comma on the dataset.
 - **Add a sample ▾ → Real datasets** adds one of five real datasets that ship with the app, with targets already set.
-  They go through the same processing as an upload. See [Data attribution](../README.md#data-attribution) for the
+  They go through the same processing as an upload. See the [README](../README.md#license) for the
   list.
 - **Add a sample ▾ → Generate** makes a synthetic dataset. You choose 1k–2M rows and 30–400 fields, up to 60M cells in
   all (`SAMPLE_MAX_CELLS`). It has two targets, `column_a` and `column_b`: binary and 3-class, both binary, or both
@@ -172,6 +172,7 @@ A new dataset's first baseline (*Trees v1*) waits for a lead to set it up on the
 
 Each field shows:
 
+- its sample values, as stored in the file
 - its signals: missing share, skew, outliers, levels, and target association with a leak flag
 - its distribution and quantile strip
 - its top tokens (text) or weekdays (dates)
@@ -197,9 +198,8 @@ The field list filters fields:
 - A field still at its suggestion and not yet reviewed follows target changes. A new leak flag drops it.
 - In a new version, carried-over fields show 🔒 in the list, and the decision panel says why they are locked.
 - While you adjust an experiment, the second row of the top bar names the experiment, with the *Experiment copy*
-  chip. The decision panel says what differs from the baseline and offers *Revert to baseline*.
-- On a phone, the field list opens from *Fields · 3 of 9* above the field, and *Previous*, *Next* and confirm sit in a
-  bar at the bottom.
+  chip. The decision panel says what differs from the baseline and offers *Revert*.
+- On a phone, a bar at the bottom moves back, opens the field list from *Fields · 3 of 9*, and confirms.
 
 ## Keyboard shortcuts
 
@@ -260,8 +260,8 @@ The dataset's *Baseline* tab runs the team process for the baseline version in p
   a lead, *Start a new version*.
 - When a baseline started from another dataset's baseline, its summary stays here.
 
-Below, *Versions* lists the dataset's baselines and their versions. For a lead, *Other model types* starts a
-*Linear* or *Neural* baseline.
+Alongside, *Versions* lists the dataset's baselines and their versions. For a lead, *Other model types* starts a
+*Linear* or *Neural* baseline. After set-up, the tab's sub-tabs are *Progress*, *Queue* in team review, and *Versions*.
 
 *People*, in your profile menu, is different: it lists users. Leads manage users there. See
 [Managing people](team-workflow.md#managing-people).
@@ -276,8 +276,8 @@ team decision panel. A lead settles each field there. See [Team review](team-wor
 
 ## Versions and compare
 
-*Versions and compare* opens from the version switcher and from *Compare* on the *Baseline* tab. It lists every
-version of every baseline, with:
+*Versions and compare* opens from the version switcher, and from *Versions* or *Compare* on the *Baseline* tab. It
+lists every version of every baseline, with:
 
 - who started and finalized it, and when
 - its phase

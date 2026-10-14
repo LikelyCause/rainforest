@@ -157,4 +157,4 @@ How each choice is written to an export is in
 
 A derived field is profiled, reviewed, exported and trained on like any other. You can add or remove one while the
 baseline is still being set up, or once it is finalized. After a baseline is finalized, start a new version so the
-new field gets assessed. You can't add or remove one while a version is assessing.
+new field gets assessed. You can't add or remove one while a version is in progress.
