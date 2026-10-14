@@ -10,11 +10,11 @@ from pathlib import Path
 
 import polars as pl
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 import numpy as np
 
-from .. import bands, experiments, jobs, recipes
+from .. import bands, experiments, export_code, jobs, recipes
 from ..auth import CurrentUser
 from ..config import get_settings
 from ..db import connection, execute, fetch_all, fetch_one, jsonb
@@ -33,6 +33,8 @@ FILES = {
     "preprocessor": ("preprocessor.joblib", "application/octet-stream"),
     "manifest": ("manifest.json", "application/json"),
 }
+# Written on request rather than stored: a Python script that rebuilds the export outside the app (export_code).
+CODE = "code"
 
 
 EXPORT_COLS = """e.id, e.dataset_id, e.status, e.progress, e.status_message, e.error, e.model_family, e.config,
@@ -340,6 +342,10 @@ def start_export(dataset_id: int, req: ExportRequest, user: CurrentUser) -> dict
                                   "detail": adj["fields"]}}
         if personal:
             config["assessor_id"] = x["assessor_id"]
+        # The derived fields as defined now, so the export's script can compute them even if one is removed later.
+        config["derived"] = [{"name": r["name"], **r["derived"]} for r in conn.execute(
+            """SELECT name, derived FROM meta.fields WHERE dataset_id = %s AND derived IS NOT NULL ORDER BY ordinal""",
+            (dataset_id,)).fetchall()]
         exp = conn.execute(
             """INSERT INTO meta.exports (dataset_id, status, status_message, model_family, config, owner, created_by,
                                          recipe_id, experiment_id, snapshot)
@@ -405,18 +411,33 @@ def _backfill_features_by_type(exp: dict) -> dict:
     return {**exp, "summary": {**summary, "features_by_type": by_type}}
 
 
-@router.get("/exports/{export_id}/files/{kind}")
-def download(export_id: int, kind: str, user: CurrentUser) -> FileResponse:
+@router.get("/exports/{export_id}/files/{kind}", response_model=None)
+def download(export_id: int, kind: str, user: CurrentUser) -> FileResponse | Response:
     exp = visible_export(export_id, user)
-    if kind not in FILES:
+    if kind not in FILES and kind != CODE:
         raise HTTPException(404, f"Unknown file {kind!r}")
     if exp["status"] != "done":
         raise HTTPException(409, "Export is not finished")
+    if kind == CODE:
+        return _script(export_id)
     fname, media = FILES[kind]
     path = Path(exp["output_dir"]) / fname
     if not path.exists():
         raise HTTPException(410, "Export files were removed")
     return FileResponse(path, media_type=media, filename=f"export{export_id}_{fname}")
+
+
+def _script(export_id: int) -> Response:
+    """The export as a standalone Python script: it reads the original data the way the app did and rebuilds the
+    export with its decisions, outside the app (see export_code)."""
+    try:
+        with connection() as conn:
+            info = export_code.info_for(conn, export_id)
+        text = export_code.render(info)
+    except export_code.CodeUnavailable as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return Response(text, media_type="text/x-python; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{export_code.file_name(info)}"'})
 
 
 def export_spec(conn, dataset_id: int, snap: dict, family: str) -> tuple[list[FieldSpec], list[str], dict[str, dict]]:

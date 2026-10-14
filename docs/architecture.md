@@ -43,6 +43,7 @@ for one run.
 | `derived.py` | Derived fields: the formula parser (an AST walk to a polars expression, nothing else evaluated), value groups and counts, spec checks. |
 | `processing.py` | The dataset pipeline (`process_dataset`), suggestion seeding, target-derived state (`refresh_target_state`), file cleanup. |
 | `transform.py` | Export: row rules (`row_rules`: duplicates, excluded values, first row per key, group codes), targets and split (`prepare_targets`: class codes, one-vs-rest, float64 numbers, bands cut on the training rows; numbers stratified on bands; `GroupShuffleSplit` when rows are kept together), fit preprocessing on train rows, chunked transform, manifest. |
+| `export_code/` | *Export to code*: one finished export as a standalone Python script. `gather.info_for` reads what it is written from (the export's manifest, frozen snapshot and config, the data's source: an upload, a library dataset or a generated sample, from `meta.datasets.source_spec` or worked out for older datasets, the derived fields the export uses, and per-column summaries of the dataset's Parquet copy and of `model_ready.parquet` for the script's checks, cached per file version). `render` writes the script: the decisions as `keep.*` / `predict.*` calls, the driver `script.py` (reading, `prepare` mirroring `run_export`, `load_clean`, `xy`, the checks and the CLI) and the app functions it reaches, which `bundle.Bundle` copies verbatim from their modules (definitions, constants and imports, transitively; one flat namespace, so two definitions of a name refuse to bundle). Names and notes only ever reach the script as literals or comment lines. |
 | `bands.py` | Cutting a numeric target into bands: equal-count edges, chosen cut points, labels (`< 10`, `[10, 25)`, `≥ 80`), assignment and the fewer-than-2-rows check. |
 | `parquet_rows.py` | `read_rows`: selected rows of a Parquet file, read a few column chunks at a time (export fit sample, Explore samples). |
 | `modeling/params.py` | Each model's settings as data (LightGBM's and XGBoost's so far): groups, kinds, ranges, options, defaults, which links a value reaches (`applies`) and which settings another depends on (`when`, filled with their default once switched on); the checks and routing a run's `params` go through. |
@@ -187,7 +188,9 @@ the UI polls (`pending → running → done | failed`, with `progress` and `stat
    `exports.snapshot` with the baseline and adjustments in `exports.config`, checks the preview's blocking issues and
    submits `exports._run`, which reads that snapshot, calls
    `transform.run_export` with each target's task (`exports.target_tasks`) and writes
-   `exports/<id>/{model_ready.parquet, preprocessor.joblib, manifest.json}`. The preview runs the numeric target
+   `exports/<id>/{model_ready.parquet, preprocessor.joblib, manifest.json}`. The config also freezes the dataset's
+   derived fields (`derived`), which the export's script (`export_code`, written on request by
+   `GET /api/exports/{id}/files/code`) computes from the original data. The preview runs the numeric target
    checks first (`exports._numeric_target_problems`), so values that don't read as numbers block before queueing.
 8. **Training.** `POST /api/exports/{id}/runs` checks model compatibility and the requested device (see `gpu.py`) and submits `runs._run`, which calls
    `modeling.train.train` and writes `models/run<id>_…/{classifier_chain.joblib, report.json}` (the joblib holds a
@@ -435,6 +438,7 @@ grants it `SELECT` on `meta` and `raw`, except the tables in `db.PRIVATE_TABLES`
 | `015_profile_accounts.sql` | `key` (unique; an account from `RAINFOREST_USERS`) and `avatar` (the picture's hash) on `meta.users`; `viewer` in the role check |
 | `016_baseline_names.sql` | `meta.baseline_names` (one name per dataset and family, unique ignoring case) and `meta.baseline_name()` |
 | `017_cascade_indexes.sql` | `field_id` indexes on `assessments`, `assessment_settings` and `recipe_reopened`, and `export_id` on `model_runs`, for dataset deletes and per-export run lists |
+| `023_dataset_source.sql` | `source_spec` on `meta.datasets`: a library dataset's key or a generated sample's settings, so an export's script can get the same data |
 
 Child tables reference `meta.datasets` with `ON DELETE CASCADE`; `DELETE /api/datasets/{id}` removes the rows and then
 the dataset's Parquet copy, raw table, export and model directories.
