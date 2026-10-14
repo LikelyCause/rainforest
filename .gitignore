@@ -7,5 +7,7 @@ api/.venv/
 ui/node_modules/
 ui/dist/
 *.tsbuildinfo
+# Working notes from the superpowers Claude Code plugin (specs and plans); kept local.
+docs/superpowers/
 # The sample library ships its datasets.
 !api/app/sample_library/data/
