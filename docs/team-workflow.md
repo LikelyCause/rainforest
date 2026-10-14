@@ -33,7 +33,7 @@ uploads, exports, model runs and *Explore* analyses.
 | Upload, recompute *Explore* results, experiment (export a finalized baseline or your own assessment, train) | | ✓ | ✓ |
 | Adjust the experiments they own | | ✓ | ✓ |
 | Assess in *Fields · Focus* and *Fields · Table* when assigned; comment in team review | | ✓ | ✓ |
-| Start baselines and versions, assign assessors, set the team decision in review, finalize | | | ✓ |
+| Start baselines and versions, assign assessors, set the team decision in review, finalize, mark a chosen model | | | ✓ |
 | Delete datasets | | | ✓ |
 | Manage users on the *People* page; change anyone's picture | | | ✓ |
 
@@ -87,7 +87,7 @@ The form asks for:
 | *Name* | Optional. Shown for a model type without a baseline yet. See [Baseline names](#baseline-names). |
 | *Start from* | *the suggestions* for that model type; *another baseline of this dataset*; or, for a new dataset's first baseline only, *another dataset's baseline*. |
 | *Targets* | Fixed for the baseline. Experiments can change them. |
-| *Assessors* | Any active users. Tick yourself to assess too. |
+| *Assessors* | Any active user but a Viewer. Tick yourself to assess too. |
 
 *Another baseline of this dataset* can be a finalized baseline of any type. It copies keep, drop and target, types
 and notes. It copies each field's settings where they are valid for the new type. The rest take the new type's
@@ -139,7 +139,8 @@ With a single assessor, every field is adopted and the queue is empty.
 
 ## Finalizing
 
-A lead finalizes once the queue is settled, with *Finalize vN* in the top bar or *Finalize…* on the *Baseline* tab.
+A lead finalizes once the queue is settled, with *Finalize Trees v2* (the version's name) in the top bar or *Finalize…*
+on the *Baseline* tab.
 Rainforest asks to confirm, and says how many fields are agreed, settled and still open. A lead can also finalize
 with fields left open: they keep their current team decision. Finalizing takes you to *Experiments*.
 
@@ -151,7 +152,7 @@ change them, start a new version.
 
 1. Choose *Start a new version* on the *Baseline* tab, or *New version…* on a baseline on *Versions and compare*. It
    starts from the baseline's latest finalized version.
-2. Pick the fields to reopen. You can search them, and filter by type and by *Needs attention*. None are picked by
+2. Pick the fields to reopen. You can search them, and filter by type and by *Needs a look*. None are picked by
    default. Choose *Start vN, reopening N fields*, or *Start vN and edit directly* with none picked.
 3. Assign assessors on the *Baseline* tab.
 
@@ -171,8 +172,8 @@ card on *Versions and compare*. A blank name removes it.
 
 | | Named baseline | Unnamed baseline |
 |---|---|---|
-| Top bar, dataset list, export badges | Dropout risk v2 | Trees v2 |
-| Pickers and messages | Dropout risk v2 (Trees) | Trees baseline v2 |
+| Top bar, export badges | Dropout risk v2 | Trees v2 |
+| Dataset list, pickers and messages | Dropout risk v2 (Trees) | Trees baseline v2 |
 
 - Names are up to 60 characters.
 - A dataset's baselines have different names, ignoring case.
