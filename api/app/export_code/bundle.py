@@ -6,9 +6,11 @@ module-level name it reaches: other definitions of the same module, names it imp
 `SimpleNamespace`). Each is copied verbatim, comments and docstrings included, so the bundle runs the app's own code
 rather than a rewrite of it. Third-party and standard-library imports are collected and emitted once at the top.
 
-The bundle is flat: every copied name lives in one namespace, so two different definitions with the same name refuse
-to bundle (rename one in the app). A name can be `provided` (the caller defines it elsewhere in the file) or
-`override`n with replacement source (for the odd helper that reaches into the web framework).
+The bundle is flat: every copied name lives in one namespace, so two different things bound to the same name (two
+definitions, a definition and an import, two imports) refuse to bundle (rename one in the app). A name can be
+`provided`: the `provider` module's placeholders for names the caller defines elsewhere in the file, which no other
+module may define or use. A definition can be `override`n with replacement source (for the odd helper that reaches
+into the web framework).
 """
 from __future__ import annotations
 
@@ -170,8 +172,10 @@ def _is_app(module: str) -> bool:
 
 
 class Bundle:
-    def __init__(self, provided: set[str] | None = None, overrides: dict[tuple[str, str], str] | None = None):
+    def __init__(self, provided: set[str] | None = None, overrides: dict[tuple[str, str], str] | None = None,
+                 provider: str | None = None):
         self.provided = set(provided or ())
+        self.provider = provider  # the module whose uses of `provided` names the caller supplies (None: any)
         self.overrides = dict(overrides or {})
         self.units: dict[tuple[str, str], _Unit] = {}  # keyed by (module, first name)
         self.by_name: dict[str, tuple[str, str]] = {}
@@ -185,8 +189,11 @@ class Bundle:
     def add(self, module: str, name: str) -> None:
         self._need(module, name, frm=f"{module}.{name}")
 
+    def _is_provided(self, module: str, name: str) -> bool:
+        return name in self.provided and (self.provider is None or module == self.provider)
+
     def _need(self, module: str, name: str, frm: str) -> None:
-        if name in self.provided:
+        if self._is_provided(module, name):
             return
         key = (module, name)
         if key in self.seen:
@@ -224,6 +231,9 @@ class Bundle:
 
     def _claim(self, unit: _Unit) -> None:
         for n in unit.names:
+            if n in self.provided or n in self.imports or n in self.namespaces:
+                raise BundleError(f"{unit.module} defines {n!r}, which the bundle already binds to something else; "
+                                  "rename it")
             other = self.by_name.get(n)
             if other is not None and other[0] != unit.module:
                 theirs = self.units[other]
@@ -236,7 +246,7 @@ class Bundle:
 
     def _resolve(self, m: _Module, n: str, unit: _Unit, node: ast.AST, defines: bool, frm: str,
                  strict: bool = True) -> None:
-        if n in self.provided or n == "__name__":
+        if self._is_provided(m.name, n) or n == "__name__":
             return
         dep: tuple[str, str] | None = None
         if n in m.defs:
@@ -248,6 +258,9 @@ class Bundle:
                 if imp.name is None or _is_module(imp.module, imp.name):
                     target = imp.module if imp.name is None else f"{imp.module}.{imp.name}"
                     attrs = _module_attrs(node, n)
+                    if n in self.by_name or n in self.imports or n in self.provided:
+                        raise BundleError(f"{m.name} uses {n!r} for {target}, which the bundle already binds to "
+                                          "something else")
                     ns = self.namespaces.setdefault(n, (target, set()))
                     if ns[0] != target:
                         raise BundleError(f"{n!r} names both {ns[0]} and {target}")
@@ -278,6 +291,11 @@ class Bundle:
     def _external(self, imp: _Import) -> None:
         if imp.module == "__future__":
             return
+        had = self.imports.get(imp.local)
+        if (had is not None and (had.module, had.name) != (imp.module, imp.name)) or imp.local in self.by_name \
+                or imp.local in self.namespaces or imp.local in self.provided:
+            raise BundleError(f"{imp.local!r} is imported from {imp.module} but the bundle already binds it to "
+                              "something else; rename one in the app")
         self.imports[imp.local] = imp
         self.packages.add(imp.module.split(".")[0])
 

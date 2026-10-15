@@ -19,15 +19,20 @@ import sklearn
 from .. import derived as derived_fields
 from .. import recipes
 from ..config import get_settings
-from ..db import jsonb
+from ..db import connection, execute, jsonb
 from ..ingest import _sink
 from ..sample_library import LIBRARY, path_of
 from ..semantics import NON_FEATURE_TYPES
-from ..transform import FieldSpec
+from ..transform import FieldSpec, estimated_width, rows_for_budget
 from .render import ExportInfo
-from .script import column_summary, output_summary
+from .script import input_summary, output_summary
 
 RULE_KEYS = {"dedupe": False, "exclude": [], "first_per": None, "group_by": None}
+# Columns are summarised a batch at a time, about this many bytes of float64 each, so a wide file never sits in memory
+# whole and the file's footer is read once.
+BATCH_BYTES = 256 << 20
+SAMPLE_UNKNOWN = ("This sample was generated before Rainforest recorded how it made samples, and its settings can't be "
+                  "worked out. Generate the sample again to export it as code.")
 # How the Datasets page names a sample it generates (routers/datasets.create_sample), for samples made before the
 # settings were recorded; it always passes seed 42.
 SAMPLE_NAME = re.compile(r"^sample-(\d+)k-(\d+)f-(mixed|binary|multiclass)(-num)?$")
@@ -37,29 +42,37 @@ class CodeUnavailable(Exception):
     """Why this export can't be written as a script."""
 
 
-def info_for(conn, export_id: int) -> ExportInfo:
+def info_for(export_id: int) -> ExportInfo:
+    """Reads the database briefly, then works on the files without holding a connection: summarising a large export
+    takes a while."""
     from ..routers.exports import export_spec, target_tasks  # the export's own readers (and that module imports us)
 
-    e = conn.execute(
-        """SELECT e.*, r.family AS recipe_family, r.version AS recipe_version,
-                  meta.baseline_name(r.dataset_id, r.family) AS recipe_name, x.name AS experiment_name,
-                  u.name AS created_by_name
-             FROM meta.exports e LEFT JOIN meta.recipes r ON r.id = e.recipe_id
-             LEFT JOIN meta.experiments x ON x.id = e.experiment_id LEFT JOIN meta.users u ON u.id = e.created_by
-            WHERE e.id = %s""", (export_id,)).fetchone()
-    if e is None:
-        raise CodeUnavailable("Export not found")
-    if e["status"] != "done":
-        raise CodeUnavailable("The export isn't finished.")
-    ds = conn.execute("""SELECT id, name, source_filename, file_format, parquet_path, source_spec FROM meta.datasets
-                          WHERE id = %s""", (e["dataset_id"],)).fetchone()
+    with connection() as conn:
+        e = conn.execute(
+            """SELECT e.*, r.family AS recipe_family, r.version AS recipe_version,
+                      meta.baseline_name(r.dataset_id, r.family) AS recipe_name, x.name AS experiment_name,
+                      u.name AS created_by_name
+                 FROM meta.exports e LEFT JOIN meta.recipes r ON r.id = e.recipe_id
+                 LEFT JOIN meta.experiments x ON x.id = e.experiment_id LEFT JOIN meta.users u ON u.id = e.created_by
+                WHERE e.id = %s""", (export_id,)).fetchone()
+        if e is None:
+            raise CodeUnavailable("Export not found")
+        if e["status"] != "done":
+            raise CodeUnavailable("The export isn't finished.")
+        ds = conn.execute("""SELECT id, name, source_filename, file_format, parquet_path, source_spec FROM meta.datasets
+                              WHERE id = %s""", (e["dataset_id"],)).fetchone()
+        out_dir = Path(e["output_dir"]) if e["output_dir"] else None
+        manifest = _json(out_dir / "manifest.json") if out_dir else None
+        snap = e["snapshot"] or recipes.snapshot_of(conn, recipes.get(conn, e["recipe_id"]))
+        from_db = None if manifest is not None else export_spec(conn, ds["id"], snap, e["model_family"])
+        tasks = target_tasks(conn, ds["id"], snap)
+        fields_rows = conn.execute("""SELECT name, derived FROM meta.fields WHERE dataset_id = %s ORDER BY ordinal""",
+                                   (ds["id"],)).fetchall()
+
     raw = Path(ds["parquet_path"] or "")
     if not ds["parquet_path"] or not raw.exists():
         raise CodeUnavailable("The dataset's data is missing.")
-    out_dir = Path(e["output_dir"]) if e["output_dir"] else None
-    manifest = _json(out_dir / "manifest.json") if out_dir else None
     config, summary = e["config"] or {}, e["summary"] or {}
-    snap = e["snapshot"] or recipes.snapshot_of(conn, recipes.get(conn, e["recipe_id"]))
     family = e["model_family"]
     warnings: list[str] = []
 
@@ -68,16 +81,19 @@ def info_for(conn, export_id: int) -> ExportInfo:
         specs = [FieldSpec(**{k: v for k, v in f.items() if k in known}) for f in manifest["fields"]]
         names = list(manifest["targets"])
     else:
-        specs = [s for s in export_spec(conn, ds["id"], snap, family)[0] if s.semantic_type not in NON_FEATURE_TYPES]
+        specs = [s for s in from_db[0] if s.semantic_type not in NON_FEATURE_TYPES]
         names = recipes.snapshot_targets(snap)
+        kept = [n for n, f in snap["fields"].items()
+                if f["decision"]["action"] == "keep" and f["decision"]["semantic_type"] not in NON_FEATURE_TYPES]
+        if gone := [n for n in kept if n not in {s.name for s in specs}]:
+            raise CodeUnavailable(f"The export's files were removed from the app and {', '.join(map(repr, gone))} "
+                                  f"{'is' if len(gone) == 1 else 'are'} no longer in the dataset, so its script can't "
+                                  "be written.")
         warnings.append("The export's files were removed from the app, so this script can't check its result "
                         "against them.")
-    tasks = target_tasks(conn, ds["id"], snap)
     if set(tasks) != set(names):
         raise CodeUnavailable("The export's targets no longer match its snapshot.")
 
-    fields_rows = conn.execute("""SELECT name, derived FROM meta.fields WHERE dataset_id = %s ORDER BY ordinal""",
-                               (ds["id"],)).fetchall()
     now_derived = [{"name": r["name"], **r["derived"]} for r in fields_rows if r["derived"] is not None]
     derived_list = config["derived"] if "derived" in config else now_derived
     columns = list(pl.read_parquet_schema(raw))
@@ -89,12 +105,8 @@ def info_for(conn, export_id: int) -> ExportInfo:
     uses = [s.name for s in specs] + names + rule_fields
     used_derived = _needed(derived_list, originals, uses)
 
-    expected_input = {"rows": _rows(raw), "columns": {
-        **_input_summary(str(raw), raw.stat().st_mtime_ns, tuple(originals)),
-        **{d["name"]: None for d in used_derived},
-        **_input_summary(str(raw), raw.stat().st_mtime_ns, tuple(d["name"] for d in used_derived if d["name"] in columns)),
-    }}
-    source = _source(conn, ds, expected_input, originals)
+    expected_input = input_expectation(raw, originals, [d["name"] for d in used_derived])
+    source = _source(ds, expected_input, originals)
 
     model_ready = out_dir / "model_ready.parquet" if out_dir else None
     expected_output: dict[str, Any] = {}
@@ -119,8 +131,7 @@ def info_for(conn, export_id: int) -> ExportInfo:
         row_rules={k: v if config.get(k) is None else config[k] for k, v in RULE_KEYS.items()},
         split={"valid_size": config.get("valid_size", 0.15), "test_size": config.get("test_size", 0.15),
                "seed": config.get("seed", 42)},
-        fit_sample_rows=(manifest or {}).get("fit_sample_rows") or summary.get("fit_sample_rows"),
-        chunk_rows=int((manifest or {}).get("chunk_rows") or config.get("chunk_rows") or 200_000),
+        **fit_settings(config, manifest, specs),
         source=source,
         derived=[{"name": d["name"], "kind": d["kind"], "spec": d["spec"]} for d in used_derived],
         notes={n: f["decision"].get("notes") for n, f in snap["fields"].items() if f["decision"].get("notes")},
@@ -144,8 +155,36 @@ def info_for(conn, export_id: int) -> ExportInfo:
     )
 
 
+def input_expectation(raw: Path, originals: list[str], derived: list[str]) -> dict[str, Any]:
+    """What the script checks the data it reads against: each original column as the app read it. Derived fields
+    get none: they are computed from those columns with the export's own definitions (which a field removed and
+    added again no longer has in the app's copy), and their last digits can differ by machine; the check of the
+    result covers them."""
+    return {"rows": _rows(raw), "columns": {**_input_summary(str(raw), raw.stat().st_mtime_ns, tuple(originals)),
+                                            **{n: None for n in derived}}}
+
+
+def fit_settings(config: dict, manifest: dict | None, specs: list[FieldSpec]) -> dict[str, Any]:
+    """The export's settings for the fit sample and the transform's batches, as run_export applies them: a requested
+    number of rows within a memory budget. A script whose decisions are edited then fits as the app would. When the
+    recorded settings don't account for what the export did (the budget was changed since), the outcome itself."""
+    s = get_settings()
+    fit_rows, chunk_rows = int(config.get("fit_sample_rows", 500_000)), int(config.get("chunk_rows", 200_000))
+    m = manifest or {}
+    fit_mb, chunk_mb = int(m.get("fit_mb") or s.export_fit_mb), int(m.get("chunk_mb") or s.export_chunk_mb)
+    out = {"fit_sample_rows": fit_rows, "fit_mb": fit_mb, "chunk_rows": chunk_rows, "chunk_mb": chunk_mb}
+    train = (m.get("split_counts") or {}).get("train")
+    if m.get("fit_sample_rows") is not None and train is not None and \
+            min(fit_rows, rows_for_budget(fit_mb, estimated_width(specs)), train) != m["fit_sample_rows"]:
+        out.update(fit_sample_rows=int(m["fit_sample_rows"]), fit_mb=None)
+    if m.get("chunk_rows") is not None and m.get("n_features") is not None and \
+            min(chunk_rows, rows_for_budget(chunk_mb, m["n_features"])) != m["chunk_rows"]:
+        out.update(chunk_rows=int(m["chunk_rows"]), chunk_mb=None)
+    return out
+
+
 # ---- the data -------------------------------------------------------------------------------------------------------
-def _source(conn, ds: dict, expected: dict, originals: list[str]) -> dict[str, Any]:
+def _source(ds: dict, expected: dict, originals: list[str]) -> dict[str, Any]:
     """How the script gets the data: the uploaded file, a library dataset rebuilt from its public source, or the
     sample generator run again."""
     spec = ds["source_spec"] or {}
@@ -153,11 +192,18 @@ def _source(conn, ds: dict, expected: dict, originals: list[str]) -> dict[str, A
         key = spec.get("key") or Path(ds["source_filename"]).stem
         return {"kind": "library", "key": key, "file": f"{key}.parquet", "source_url": LIBRARY[key]["source_url"]}
     if spec.get("kind") == "generated":
+        if not spec.get("settings"):  # worked out once already, and couldn't be
+            raise CodeUnavailable(SAMPLE_UNKNOWN)
         return {"kind": "generated", "settings": spec["settings"]}
     if ds["file_format"] == "generated":
-        settings = _inferred_sample(ds, expected, originals)
-        conn.execute("UPDATE meta.datasets SET source_spec = %s WHERE id = %s",
-                     (jsonb({"kind": "generated", "settings": settings}), ds["id"]))
+        try:
+            settings = _inferred_sample(ds, expected, originals)
+        except CodeUnavailable:
+            settings = None
+        execute("UPDATE meta.datasets SET source_spec = %s WHERE id = %s",
+                (jsonb({"kind": "generated", "settings": settings}), ds["id"]))
+        if settings is None:
+            raise CodeUnavailable(SAMPLE_UNKNOWN)
         return {"kind": "generated", "settings": settings}
     return {"kind": "upload", "format": ds["file_format"], "file": ds["source_filename"]}
 
@@ -179,7 +225,7 @@ def _library_summary(key: str) -> tuple[int, dict[str, dict]]:
         out = Path(tmp) / "raw.parquet"
         _sink(path_of(key), "parquet", out)
         df = pl.read_parquet(out)
-    return df.height, {c: column_summary(df[c]) for c in df.columns}
+    return df.height, {c: input_summary(df[c]) for c in df.columns}
 
 
 def _inferred_sample(ds: dict, expected: dict, originals: list[str]) -> dict[str, Any]:
@@ -195,14 +241,13 @@ def _inferred_sample(ds: dict, expected: dict, originals: list[str]) -> dict[str
                 settings["rows"], settings["fields"], 42, settings["target_kind"], settings["numeric_target"]),
                 expected, originals):
             return settings
-    raise CodeUnavailable("This sample was generated before Rainforest recorded how it made samples, and its settings "
-                          "can't be worked out. Generate the sample again to export it as code.")
+    raise CodeUnavailable(SAMPLE_UNKNOWN)
 
 
 def _same(df: pl.DataFrame, expected: dict, originals: list[str]) -> bool:
     if df.height != expected["rows"] or list(df.columns) != originals:
         return False
-    return all(column_summary(df[c]) == expected["columns"][c] for c in originals)
+    return all(input_summary(df[c]) == expected["columns"][c] for c in originals)
 
 
 def _needed(derived_list: list[dict], originals: list[str], uses: list[str]) -> list[dict]:
@@ -226,19 +271,28 @@ def _needed(derived_list: list[dict], originals: list[str], uses: list[str]) -> 
     return [d for d in derived_list if d["name"] in need]
 
 
+def _batches(path: str, columns: list[str]):
+    """The columns of a Parquet file as DataFrames of a few columns each, the file opened once."""
+    pf = pq.ParquetFile(path)
+    per = max(1, BATCH_BYTES // max(8 * pf.metadata.num_rows, 1))
+    for i in range(0, len(columns), per):
+        yield pl.from_arrow(pf.read(columns=columns[i:i + per]))
+
+
 @lru_cache(maxsize=32)
 def _input_summary(path: str, mtime_ns: int, columns: tuple[str, ...]) -> dict[str, dict]:
-    """Per column of the dataset's Parquet copy, what the script checks the data it reads against. One column at a
-    time, so a wide file never sits in memory whole."""
-    return {c: column_summary(pl.read_parquet(path, columns=[c])[c]) for c in columns}
+    """Per column of the dataset's Parquet copy, what the script checks the data it reads against."""
+    out = {}
+    for df in _batches(path, list(columns)):
+        out.update({c: input_summary(df[c]) for c in df.columns})
+    return {c: out[c] for c in columns}
 
 
 @lru_cache(maxsize=32)
 def _output_summary(path: str, mtime_ns: int, features: tuple[str, ...]) -> dict[str, Any]:
-    names = pq.read_schema(path).names
-    summary = {"rows": pq.ParquetFile(path).metadata.num_rows, "columns": {}}
-    for c in names:
-        summary["columns"].update(output_summary(pl.read_parquet(path, columns=[c]), list(features))["columns"])
+    summary = {"rows": _rows(Path(path)), "columns": {}}
+    for df in _batches(path, pq.read_schema(path).names):
+        summary["columns"].update(output_summary(df, list(features))["columns"])
     return summary
 
 

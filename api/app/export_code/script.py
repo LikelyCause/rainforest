@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import sys
 import tempfile
+import traceback
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,10 +32,18 @@ from ..parquet_rows import read_rows
 from ..sample_library.build import build
 from ..semantics import DEFAULT_PARAMS, FAMILIES, NON_FEATURE_TYPES
 from ..transform import (ROW_ID, SPLIT_COL, FieldSpec, _feature_sources, build_preprocessor, coercion_exprs,
-                         prepare_targets, readable_feature_names, safe_feature_names, to_pandas_frame, transform_into)
+                         estimated_width, prepare_targets, readable_feature_names, rows_for_budget, safe_feature_names,
+                         to_pandas_frame, transform_into)
 
 PROVIDED = {"SCRIPT", "SOURCE", "raw_frame", "DERIVED", "FAMILY", "kept_fields", "targets", "ROW_RULES", "SPLIT",
-            "FIT_SAMPLE_ROWS", "CHUNK_ROWS", "EXPECTED_INPUT", "EXPECTED_OUTPUT"}
+            "FIT_SAMPLE_ROWS", "FIT_MB", "CHUNK_ROWS", "CHUNK_MB", "EXPECTED_INPUT", "EXPECTED_OUTPUT"}
+
+# Exit codes: the result matches the app's export (exactly or but for floating-point rounding), it differs, the
+# command line was wrong (argparse's own), the data doesn't read as the app read it, or the rebuild failed.
+MATCHES, DIFFERS, USAGE, DATA_DIFFERS, FAILED = 0, 1, 2, 3, 4
+# How far a float may move and still count as rounding: relative to the column's sums for the export's check, and
+# relative to the column's largest value for --compare (scikit-learn's linear algebra differs a little by CPU).
+OUTPUT_RTOL, INPUT_RTOL, COMPARE_RTOL = 1e-5, 1e-9, 1e-4
 
 # ---- placeholders for PROVIDED (each script defines these) -----------------------------------------------------------
 SCRIPT: dict[str, Any] = {"export_id": 0, "file": "export.py"}
@@ -44,7 +53,9 @@ FAMILY = "tree"
 ROW_RULES: dict[str, Any] = {}
 SPLIT: dict[str, Any] = {"valid_size": 0.15, "test_size": 0.15, "seed": 42}
 FIT_SAMPLE_ROWS: int | None = None
+FIT_MB: int | None = None
 CHUNK_ROWS = 200_000
+CHUNK_MB: int | None = None
 EXPECTED_INPUT: dict[str, Any] = {}
 EXPECTED_OUTPUT: dict[str, Any] = {}
 
@@ -131,10 +142,14 @@ class SourceMismatch(Exception):
     """The data read doesn't match what the app read for this export."""
 
 
+class UsageError(ValueError):
+    """The data file is missing or isn't the kind this export reads."""
+
+
 def read_upload(path: str | Path | None, fmt: str) -> pl.DataFrame:
     """A file as the app ingested it: the same separator guess, missing-value markers, column names and types."""
     if path is None:
-        raise SystemExit(f"Give the path of {SOURCE.get('file') or 'the data file'}: python {SCRIPT['file']} PATH")
+        raise UsageError(f"Give the path of {SOURCE.get('file') or 'the data file'}: python {SCRIPT['file']} PATH")
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "raw.parquet"
         for note in _sink(Path(path), fmt, out):
@@ -146,6 +161,9 @@ def read_library(path: str | Path | None, key: str) -> pl.DataFrame:
     """One of the app's sample datasets: the given copy of its file, else rebuilt from its public source the way
     the app's copy was built."""
     if path is not None:
+        if Path(path).suffix.lower() != ".parquet":
+            raise UsageError(f"Give the app's own copy of this dataset, {key}.parquet (api/app/sample_library/data/ in "
+                             f"Rainforest's code), or no file to rebuild it from its public source.")
         return read_upload(path, "parquet")
     print(f"Downloading {key} from its public source ({SOURCE.get('source_url')}) and building it as the app's copy "
           "was built…", file=sys.stderr)
@@ -165,9 +183,19 @@ def read_source(path: str | Path | None = None, check: bool = True) -> pl.DataFr
     if problems:
         raise SourceMismatch(
             "This data doesn't match what the app read for this export:\n  - " + "\n  - ".join(problems[:12])
-            + (f"\n  - and {len(problems) - 12} more" if len(problems) > 12 else "")
-            + "\nUse the file that was uploaded, or pass check=False (--no-check) to go on anyway.")
+            + (f"\n  - and {len(problems) - 12} more" if len(problems) > 12 else "") + "\n" + _remedy())
     return df
+
+
+def _remedy() -> str:
+    kind = SOURCE["kind"]
+    if kind == "generated":
+        return ("The sample made again here differs from the app's. Pass check=False (--no-check) to go on; the result "
+                "is still checked against the app's export.")
+    if kind == "library":
+        return ("Use the app's copy of the file, or no file to rebuild it from its public source; or pass check=False "
+                "(--no-check) to go on anyway.")
+    return "Use the file that was uploaded, or pass check=False (--no-check) to go on anyway."
 
 
 def input_problems(df: pl.DataFrame) -> list[str]:
@@ -184,14 +212,14 @@ def input_problems(df: pl.DataFrame) -> list[str]:
     if out:
         return out
     for name, exp in want["columns"].items():
-        if exp is None:  # a derived field the app's copy no longer has: the export's own check covers it
+        if exp is None:  # a derived field: computed from the columns checked here, and the export's check covers it
             continue
-        got = column_summary(df[name])
+        got = input_summary(df[name])
         if got["dtype"] != exp["dtype"]:
             out.append(f"{name}: read as {got['dtype']}; the app read {exp['dtype']}")
         elif got["nulls"] != exp["nulls"]:
             out.append(f"{name}: {got['nulls']:,} missing values; the app read {exp['nulls']:,}")
-        elif got["digest"] != exp["digest"]:
+        elif got["digest"] != exp["digest"] and not ("sum" in exp and rounding_only(got, exp, INPUT_RTOL)):
             out.append(f"{name}: different values")
     return out
 
@@ -242,15 +270,18 @@ def prepare(path: str | Path | None = None, check: bool = True) -> Prepared:
         # Preprocessing is fitted on a sample of the training rows, drawn as the app drew it.
         train_idx = np.flatnonzero(split == 0)
         size = train_idx.size if FIT_SAMPLE_ROWS is None else min(FIT_SAMPLE_ROWS, train_idx.size)
+        if FIT_MB is not None:  # fitting holds the sample's whole output, so wide exports fit on fewer rows
+            size = min(size, rows_for_budget(FIT_MB, estimated_width(specs)))
         fit_idx = np.sort(np.random.default_rng(seed).choice(train_idx, size=size, replace=False))
         cols = [f.name for f in specs]
         pre = build_preprocessor(specs, seed)
         pre.fit(to_pandas_frame(read_rows(raw, cols, fit_idx), specs, coercion_exprs(specs), consume=True))
         feat_names = safe_feature_names(readable_feature_names(pre), reserved=[ROW_ID, SPLIT_COL, *names])
         coercers = coercion_exprs(specs)
+        chunk_rows = CHUNK_ROWS if CHUNK_MB is None else min(CHUNK_ROWS, rows_for_budget(CHUNK_MB, len(feat_names)))
         blocks, kept_rows, offset = [], [], 0
         nan_counts = np.zeros(len(feat_names), dtype=np.int64)
-        for batch in pq.ParquetFile(raw).iter_batches(batch_size=CHUNK_ROWS, columns=cols):
+        for batch in pq.ParquetFile(raw).iter_batches(batch_size=chunk_rows, columns=cols):
             chunk = pl.from_arrow(batch)
             rows = np.arange(offset, offset + chunk.height)
             offset += chunk.height
@@ -326,24 +357,53 @@ def column_digest(s: pl.Series) -> str:
     return h.hexdigest()[:20]
 
 
+def _weights(n: int) -> np.ndarray:
+    """A fixed weight in [-1, 1) for each row position, the same on every machine. A sum weighted by them changes when
+    values move to other rows, which plain sums don't notice."""
+    h = (np.arange(n, dtype=np.uint64) * np.uint64(0x9E3779B97F4A7C15)) >> np.uint64(40)
+    return h.astype(np.float64) / float(1 << 23) - 1.0
+
+
 def column_summary(s: pl.Series, sums: bool = False) -> dict[str, Any]:
-    """dtype, missing values and digest; with `sums`, the NaN count and the sums a float column is compared by when
-    it isn't identical."""
+    """dtype, missing values and digest; with `sums`, what a float column is compared by when it isn't identical:
+    where its NaN and infinite values are, and plain and row-weighted sums of the finite ones."""
     out: dict[str, Any] = {"dtype": str(s.dtype), "nulls": int(s.null_count()), "digest": column_digest(s)}
     if sums:
         x = s.cast(pl.Float64).to_numpy()
-        ok = ~np.isnan(x)
-        out.update(nans=int((~ok).sum()), sum=float(x[ok].sum()), abs=float(np.abs(x[ok]).sum()))
+        finite = np.isfinite(x)
+        v = np.where(finite, x, 0.0)
+        wv = _weights(len(x)) * v
+        special = hashlib.sha256(np.packbits(np.isnan(x)).tobytes() + np.packbits(np.isposinf(x)).tobytes()
+                                 + np.packbits(np.isneginf(x)).tobytes()).hexdigest()[:20]
+        out.update(nans=int(np.isnan(x).sum()), special=special, sum=float(v.sum()), abs=float(np.abs(v).sum()),
+                   wsum=float(wv.sum()), wabs=float(np.abs(wv).sum()))
     return out
+
+
+def input_summary(s: pl.Series) -> dict[str, Any]:
+    """What the script checks a column of the data it reads against: sums too for floats, whose last digits a
+    computed column (a generated sample) can round differently on another machine."""
+    return column_summary(s, s.dtype.is_float())
 
 
 def output_summary(df: pl.DataFrame, features: list[str]) -> dict[str, Any]:
     feats = set(features)
-    return {"rows": df.height, "columns": {c: column_summary(df[c], c in feats) for c in df.columns}}
+    return {"rows": df.height,
+            "columns": {c: column_summary(df[c], c in feats or df[c].dtype.is_float()) for c in df.columns}}
 
 
-def output_problems(data: pd.DataFrame, rtol: float = 1e-5) -> tuple[list[str], list[str]]:
-    """(differences, features that differ only by floating-point rounding) against the app's export."""
+def rounding_only(got: dict[str, Any], exp: dict[str, Any], rtol: float) -> bool:
+    """Whether a float column that isn't identical differs only as floating-point rounding would: the same NaN and
+    infinite values in the same rows, and plain, absolute and row-weighted sums within `rtol`."""
+    if got["dtype"] != exp["dtype"] or got.get("special") != exp.get("special"):
+        return False
+    scale, wscale = max(exp["abs"], 1e-12), max(exp["wabs"], 1e-12)
+    return (abs(got["sum"] - exp["sum"]) <= rtol * scale and abs(got["abs"] - exp["abs"]) <= rtol * scale
+            and abs(got["wsum"] - exp["wsum"]) <= rtol * wscale)
+
+
+def output_problems(data: pd.DataFrame, rtol: float = OUTPUT_RTOL) -> tuple[list[str], list[str]]:
+    """(differences, columns that differ only by floating-point rounding) against the app's export."""
     want = EXPECTED_OUTPUT
     df = pl.from_pandas(data, nan_to_null=False)  # NaN stays NaN, as in the app's Parquet
     if df.height != want["rows"]:
@@ -358,37 +418,47 @@ def output_problems(data: pd.DataFrame, rtol: float = 1e-5) -> tuple[list[str], 
         got = column_summary(df[c], "sum" in exp)
         if got["digest"] == exp["digest"]:
             continue
-        if "sum" not in exp or got["dtype"] != exp["dtype"] or got["nans"] != exp["nans"]:
-            diffs.append(f"{c}: different values")
-        elif abs(got["sum"] - exp["sum"]) <= rtol * max(exp["abs"], 1e-12) and \
-                abs(got["abs"] - exp["abs"]) <= rtol * max(exp["abs"], 1e-12):
+        if "sum" in exp and rounding_only(got, exp, rtol):
             rounding.append(c)
-        else:
+        elif "sum" in exp and got["dtype"] == exp["dtype"] and got["special"] == exp["special"]:
             diffs.append(f"{c}: values differ (sum {got['sum']:.6g}; the app's {exp['sum']:.6g})")
+        else:
+            diffs.append(f"{c}: different values")
     return diffs, rounding
 
 
-def compare_files(data: pd.DataFrame, path: str | Path, rtol: float = 1e-5, atol: float = 1e-6) -> list[str]:
-    """Value-by-value differences from the app's model_ready.parquet at `path`."""
+def compare_files(data: pd.DataFrame, path: str | Path, rtol: float = COMPARE_RTOL) -> tuple[list[str], list[str]]:
+    """Value by value against the app's model_ready.parquet at `path`: (differences, float columns whose values
+    differ only by floating-point rounding, each with its largest difference). Row ids, the split and class codes
+    must be equal; a feature (float32) may differ by `rtol` of its column's largest value, a number target (float64)
+    by INPUT_RTOL of it."""
     theirs = pl.read_parquet(path)
     mine = pl.from_pandas(data, nan_to_null=False)
     if mine.columns != theirs.columns:
-        return [f"columns differ: {len(mine.columns)} here, {len(theirs.columns)} in {Path(path).name}"]
+        return [f"columns differ: {len(mine.columns)} here, {len(theirs.columns)} in {Path(path).name}"], []
     if mine.height != theirs.height:
-        return [f"{mine.height:,} rows here, {theirs.height:,} in {Path(path).name}"]
-    out = []
+        return [f"{mine.height:,} rows here, {theirs.height:,} in {Path(path).name}"], []
+    diffs, rounding = [], []
     for c in mine.columns:
         a, b = mine[c], theirs[c]
         if a.dtype != b.dtype:
-            out.append(f"{c}: {a.dtype} here, {b.dtype} there")
+            diffs.append(f"{c}: {a.dtype} here, {b.dtype} there")
         elif a.dtype.is_float():
+            tol = rtol if a.dtype == pl.Float32 else INPUT_RTOL  # features are float32; number targets float64
             x, y = a.to_numpy(), b.to_numpy()
-            close = np.isclose(x, y, rtol=rtol, atol=atol, equal_nan=True)
-            if not close.all():
-                out.append(f"{c}: {int((~close).sum()):,} value(s) differ, by up to {np.nanmax(np.abs(x - y)):.3g}")
+            same = (x == y) | (np.isnan(x) & np.isnan(y))
+            if same.all():
+                continue
+            finite = np.isfinite(x) & np.isfinite(y)
+            gap = float(np.max(np.abs(x[finite] - y[finite]), initial=0.0))
+            scale = float(np.max(np.abs(y[np.isfinite(y)]), initial=0.0))
+            if (np.isfinite(x) == np.isfinite(y)).all() and (same | finite).all() and gap <= tol * max(scale, 1e-12):
+                rounding.append(f"{c} (by up to {gap:.3g})")
+            else:
+                diffs.append(f"{c}: {int((~same).sum()):,} value(s) differ, by up to {gap:.3g}")
         elif not a.equals(b):
-            out.append(f"{c}: {int((a != b).sum()):,} value(s) differ")
-    return out
+            diffs.append(f"{c}: {int((a != b).sum()):,} value(s) differ")
+    return diffs, rounding
 
 
 # ---- the command line -----------------------------------------------------------------------------------------------
@@ -404,47 +474,74 @@ def write_model_ready(data: pd.DataFrame, path: str | Path, regression: set[str]
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog=SCRIPT["file"], description=f"Rebuild Rainforest export #{SCRIPT['export_id']}.")
-    needs_file = SOURCE["kind"] == "upload"
-    ap.add_argument("source", nargs=None if needs_file else "?",
-                    help=f"the data file ({SOURCE.get('file') or 'as uploaded'})" if needs_file else
-                    "a copy of the data file (default: rebuild it from its source)")
+    ap = argparse.ArgumentParser(prog=SCRIPT["file"], description=f"Rebuild Rainforest export #{SCRIPT['export_id']}.",
+                                 epilog="Exit status: 0 the result matches the app's export, 1 it differs, 2 the "
+                                        "command line is wrong, 3 the data doesn't read as the app read it, 4 the "
+                                        "rebuild failed.")
+    kind = SOURCE["kind"]
+    if kind == "upload":
+        name = str(SOURCE.get("file") or "as uploaded").replace("%", "%%")  # argparse formats help with %
+        ap.add_argument("source", help=f"the data file ({name})")
+    elif kind == "library":
+        ap.add_argument("source", nargs="?", help="the app's copy of the data file (default: rebuild it from its "
+                                                  "public source)")
     ap.add_argument("--out", metavar="PARQUET", help="write the model-ready data (as the app's model_ready.parquet)")
     ap.add_argument("--clean", metavar="PARQUET", help="write the clean data: decisions applied, nothing fitted")
     ap.add_argument("--compare", metavar="PARQUET", help="compare value by value with the app's model_ready.parquet")
-    ap.add_argument("--no-check", action="store_true", help="don't stop when the data doesn't match the app's")
+    ap.add_argument("--no-check", action="store_true",
+                    help="go on when the data doesn't read as the app read it (the result is still checked)")
     args = ap.parse_args(argv)
-    check = not args.no_check
     try:
-        prepared = prepare(args.source, check)
+        return _run(args, getattr(args, "source", None))
+    except UsageError as exc:
+        print(exc, file=sys.stderr)
+        return USAGE
     except SourceMismatch as exc:
         print(exc, file=sys.stderr)
-        return 2
+        return DATA_DIFFERS
+    except Exception:  # noqa: BLE001 - a crash must not read as "differs"
+        traceback.print_exc()
+        print("The rebuild failed.", file=sys.stderr)
+        return FAILED
+
+
+def _run(args: argparse.Namespace, source: str | None) -> int:
+    check = not args.no_check
+    if not check:
+        print("Not checking the data against what the app read (--no-check).", file=sys.stderr)
+    prepared = prepare(source, check)
     data = prepared.data
     counts = data[SPLIT_COL].value_counts()
     print(f"Rebuilt export #{SCRIPT['export_id']}: {len(data):,} rows (train {counts.get('train', 0):,} · valid "
           f"{counts.get('valid', 0):,} · test {counts.get('test', 0):,}), {len(prepared.feature_names):,} features, "
           f"target(s) {', '.join(targets())}.")
-    status = 0
-    if EXPECTED_OUTPUT and check:
+    status = MATCHES
+    if EXPECTED_OUTPUT:
         diffs, rounding = output_problems(data)
         if diffs:
-            status = 1
+            status = DIFFERS
             print("It differs from the app's export:\n  - " + "\n  - ".join(diffs[:20]), file=sys.stderr)
         elif rounding:
-            print(f"Matches the app's export; {len(rounding)} feature(s) differ only by floating-point rounding "
+            print(f"Matches the app's export; {len(rounding)} column(s) differ only by floating-point rounding "
                   f"({', '.join(rounding[:5])}{'…' if len(rounding) > 5 else ''}).")
         else:
             print("Identical to the app's export.")
+    else:
+        print("Not checked against the app's export: the app no longer has its files.", file=sys.stderr)
     if args.compare:
-        found = compare_files(data, args.compare)
-        print("Same values as " + args.compare if not found else
-              f"Differs from {args.compare}:\n  - " + "\n  - ".join(found[:20]))
-        status = status or (1 if found else 0)
+        found, rounding = compare_files(data, args.compare)
+        if found:
+            status = DIFFERS
+            print(f"Differs from {args.compare}:\n  - " + "\n  - ".join(found[:20]), file=sys.stderr)
+        elif rounding:
+            print(f"Same values as {args.compare} but for floating-point rounding in {len(rounding)} column(s): "
+                  f"{', '.join(rounding[:5])}{'…' if len(rounding) > 5 else ''}.")
+        else:
+            print("Same values as " + args.compare)
     if args.out:
         write_model_ready(data, args.out, {t for t, v in targets().items() if v["task"] == "regression"})
         print(f"Wrote {args.out}")
     if args.clean:
-        load_clean(args.source, check).to_parquet(args.clean, index=False)
+        load_clean(source, check).to_parquet(args.clean, index=False)
         print(f"Wrote {args.clean}")
     return status

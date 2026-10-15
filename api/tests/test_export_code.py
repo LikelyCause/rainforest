@@ -1,19 +1,24 @@
 """Export to code: the script rebuilds an export exactly, from the original file, outside the app (no database)."""
 import ast
+import dataclasses
+import re
 import subprocess
 import sys
+import tomllib
 import types
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import polars as pl
 import pytest
 
 from app import derived, ingest, profiling
 from app.export_code import ExportInfo, render
-from app.export_code.bundle import Bundle, BundleError, _Unit, undefined_names
-from app.export_code.gather import _input_summary, _output_summary
-from app.export_code.render import field_call, target_call
+from app.export_code import script as driver
+from app.export_code.bundle import Bundle, BundleError, _Import, _Unit, undefined_names
+from app.export_code.gather import _output_summary, fit_settings, input_expectation
+from app.export_code.render import _literal, field_call, target_call
 from app.export_code.script import keep, predict
 from app.semantics import DEFAULT_PARAMS
 from app.transform import FieldSpec, run_export
@@ -107,7 +112,7 @@ def app_export(tmp: Path, csv: str, family: str, config: dict, targets: list[str
     """The app's way: ingest the upload, add the derived fields, export. Returns the upload, the export's data and
     what the script is written from."""
     tmp.mkdir(parents=True, exist_ok=True)
-    upload = tmp / "customers.csv"
+    upload = tmp / "customers [v2].csv"  # brackets: a name, never a glob
     upload.write_text(csv)
     raw = tmp / "app" / "raw.parquet"
     ingest.to_parquet(upload, "csv", raw)
@@ -119,20 +124,18 @@ def app_export(tmp: Path, csv: str, family: str, config: dict, targets: list[str
     out = tmp / "app" / "export"
     manifest = run_export(raw, specs, targets, out, config, lambda *_: None, family=family,
                           target_tasks={t: TASKS[t] for t in targets})
-    columns = originals + [d["name"] for d in DERIVED]
     info = ExportInfo(
         export_id=7, dataset_name="Customers 'n\" churn\nimport os", family=family, specs=specs,
         targets={t: TASKS[t] for t in targets},
         row_rules={k: config.get(k, v) for k, v in {"dedupe": False, "exclude": [], "first_per": None,
                                                    "group_by": None}.items()},
         split={k: config[k] for k in ("valid_size", "test_size", "seed")},
-        fit_sample_rows=manifest["fit_sample_rows"], chunk_rows=manifest["chunk_rows"],
-        source={"kind": "upload", "format": "csv", "file": "customers.csv"}, derived=DERIVED,
+        **fit_settings(config, manifest, specs),
+        source={"kind": "upload", "format": "csv", "file": upload.name}, derived=DERIVED,
         notes={"age": 'Ages over 80 are typos """\nimport os; os.system("echo pwned")', "city": " x = 1"},
         adjusted={"income": "imputation none → mean"},
         left_out=[("id", "identifier", "dropped"), ("household", "categorical", "dropped")],
-        expected_input={"rows": pl.scan_parquet(raw).select(pl.len()).collect().item(),
-                        "columns": _input_summary(str(raw), raw.stat().st_mtime_ns, tuple(columns))},
+        expected_input=input_expectation(raw, originals, [d["name"] for d in DERIVED]),
         expected_output=_output_summary(str(out / "model_ready.parquet"), (out / "model_ready.parquet").stat().st_mtime_ns,
                                         tuple(manifest["feature_names"])),
         baseline="Trees baseline v1", experiment="tries", adjustments=1, split_counts=manifest["split_counts"],
@@ -184,13 +187,49 @@ def test_script_stops_on_different_data(tmp_path):
     lines[9] = lines[9].replace(";Oslo;", ";Lima;").replace(";Pune;", ";Lima;").replace(";Kyiv;", ";Lima;")
     upload.write_text("\n".join(lines[:-3]) + "\n")
     r = run_script(tmp_path, info, str(upload))
-    assert r.returncode == 2
+    assert r.returncode == 3
     assert "doesn't match what the app read" in r.stderr and "rows; the app's copy has" in r.stderr
+    assert "Use the file that was uploaded" in r.stderr
     upload.write_text("\n".join(lines) + "\n")
     r = run_script(tmp_path, info, str(upload))
-    assert r.returncode == 2 and "different values" in r.stderr
+    assert r.returncode == 3 and "different values" in r.stderr
+    # --no-check goes on, and still checks the result: these rows' plan and city changed.
     r = run_script(tmp_path, info, str(upload), "--no-check")
-    assert r.returncode == 0, r.stderr
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "Not checking the data" in r.stderr and "It differs from the app's export" in r.stderr
+    r = run_script(tmp_path, info, str(tmp_path / "nowhere.csv"))
+    assert r.returncode == 4 and "The rebuild failed." in r.stderr
+
+
+def test_edited_split_fits_on_the_rows_the_app_would(tmp_path):
+    """The script records the export's settings for the fit sample (Max rows to fit on, the memory budget), not how
+    many rows that came to, so a changed split fits on the rows the app would fit on."""
+    upload, _, info = app_export(tmp_path, messy_csv(), "linear", CONFIGS["first_per"], ["grade"])
+    assert (info.fit_sample_rows, info.fit_mb) == (500_000, 512)
+    text = render(info).replace("SPLIT = {'valid_size': 0.2, 'test_size': 0.1, 'seed': 11}",
+                                "SPLIT = {'valid_size': 0.05, 'test_size': 0.05, 'seed': 11}")
+    assert "'valid_size': 0.05" in text
+    script = tmp_path / "edited.py"
+    script.write_text(text)
+    r = subprocess.run([sys.executable, "-I", str(script), str(upload), "--out", "edited.parquet"],
+                       capture_output=True, text=True, cwd=tmp_path, timeout=600)
+    assert r.returncode == 1, r.stdout + r.stderr
+    config = {**CONFIGS["first_per"], "valid_size": 0.05, "test_size": 0.05}
+    run_export(tmp_path / "app" / "raw.parquet", info.specs, ["grade"], tmp_path / "again", config, lambda *_: None,
+               family="linear", target_tasks={"grade": TASKS["grade"]})
+    assert pl.read_parquet(tmp_path / "edited.parquet").equals(pl.read_parquet(tmp_path / "again" / "model_ready.parquet"))
+
+
+def test_fit_settings_fall_back_to_what_the_export_did():
+    specs = [FieldSpec("a", "numeric_continuous", "none", None, False, "none", "none", "none", {})]
+    m = {"fit_sample_rows": 349, "chunk_rows": 200_000, "split_counts": {"train": 349}, "n_features": 1,
+         "fit_mb": 512, "chunk_mb": 256}
+    assert fit_settings({}, m, specs) == {"fit_sample_rows": 500_000, "fit_mb": 512, "chunk_rows": 200_000,
+                                          "chunk_mb": 256}
+    # The budget was different then, and the settings don't account for the rows used: write the outcome.
+    assert fit_settings({"fit_sample_rows": 100_000}, {**m, "fit_sample_rows": 300}, specs)[
+        "fit_sample_rows"] == 300
+    assert fit_settings({"fit_sample_rows": 100_000}, {**m, "fit_sample_rows": 300}, specs)["fit_mb"] is None
 
 
 def test_edited_decisions_rebuild_what_the_app_would_export(tmp_path):
@@ -333,3 +372,105 @@ def test_bundle_refuses_two_definitions_of_one_name():
 
 def test_undefined_names_sees_inside_lambdas():
     assert undefined_names("X = {'a': lambda: Missing()}\ndef f():\n    return X") == {"Missing"}
+
+
+# ---- the checks -------------------------------------------------------------------------------------------------------
+def _model_ready(n: int = 5000) -> pd.DataFrame:
+    rng = np.random.default_rng(0)
+    f = rng.normal(size=n).astype(np.float32)
+    f[3], f[4], f[7] = np.inf, -np.inf, np.nan
+    return pd.DataFrame({"__row_id": np.arange(n, dtype=np.int64), "__split": np.array(["train"] * n, dtype=object),
+                         "f": f, "label": rng.integers(0, 3, n).astype(np.int32), "score": rng.normal(10, 3, n)})
+
+
+def test_the_result_check_tells_rounding_from_real_differences(monkeypatch):
+    data = _model_ready()
+    expected = driver.output_summary(pl.from_pandas(data, nan_to_null=False), ["f"])
+    assert "inf" not in _literal(expected)  # infinite features are counted, not summed, so the script can be written
+    monkeypatch.setattr(driver, "EXPECTED_OUTPUT", expected)
+    assert driver.output_problems(data) == ([], [])
+    f, score = data["f"].to_numpy(), data["score"].to_numpy()
+    last_digit = data.assign(f=np.where(np.isfinite(f), np.nextafter(f, np.float32(np.inf)), f),
+                             score=np.nextafter(score, np.inf))
+    assert driver.output_problems(last_digit) == ([], ["f", "score"])
+    swapped = f.copy()
+    swapped[100], swapped[200] = f[200], f[100]
+    assert driver.output_problems(data.assign(f=swapped))[0]  # values in other rows aren't rounding
+    moved = f.copy()
+    moved[7], moved[8] = f[8], np.nan
+    assert driver.output_problems(data.assign(f=moved))[0]
+    shifted = f.copy()
+    shifted[50] += 3.0
+    assert driver.output_problems(data.assign(f=shifted))[0]
+    label = data["label"].to_numpy().copy()
+    label[0] = (label[0] + 1) % 3
+    assert driver.output_problems(data.assign(label=label))[0]
+
+
+def test_compare_allows_rounding_in_features_only(tmp_path):
+    data = _model_ready()
+    theirs = tmp_path / "theirs.parquet"
+    pl.from_pandas(data, nan_to_null=False).write_parquet(theirs)
+    f, score = data["f"].to_numpy(), data["score"].to_numpy()
+    assert driver.compare_files(data, theirs) == ([], [])
+    diffs, rounding = driver.compare_files(data.assign(f=f * np.float32(1 + 2e-5)), theirs)
+    assert diffs == [] and rounding[0].startswith("f (by up to")
+    assert driver.compare_files(data.assign(f=f + np.float32(0.01)), theirs)[0]
+    assert driver.compare_files(data.assign(score=score * (1 + 1e-6)), theirs)[0]  # number targets: tight
+    label = data["label"].to_numpy().copy()
+    label[5] = (label[5] + 1) % 3
+    assert driver.compare_files(data.assign(label=label), theirs)[0]
+
+
+def test_the_command_line_by_source(tmp_path):
+    upload, _, info = app_export(tmp_path, messy_csv(300), "tree", CONFIGS["first_per"], ["label"])
+    # argparse formats help with %: a file name holding one must not break --help.
+    r = run_script(tmp_path, dataclasses.replace(info, source={**info.source, "file": "growth 50%.csv"}), "--help")
+    assert r.returncode == 0 and "growth 50%.csv" in r.stdout and "Exit status" in r.stdout
+    generated = dataclasses.replace(info, source={"kind": "generated", "settings": {
+        "rows": 300, "fields": 30, "seed": 42, "target_kind": "mixed", "numeric_target": False}})
+    r = run_script(tmp_path, generated, str(upload))
+    assert r.returncode == 2 and "unrecognized arguments" in r.stderr  # a generated sample takes no file
+    library = dataclasses.replace(info, source={"kind": "library", "key": "concrete_strength",
+                                                "file": "concrete_strength.parquet", "source_url": "https://x"})
+    r = run_script(tmp_path, library, str(upload))
+    assert r.returncode == 2 and "concrete_strength.parquet" in r.stderr
+
+
+def test_encoding_settings_never_become_other_code():
+    for params in ({"max_categories": 30, "min_frequency": 0.01, "class": 1},
+                   {"max_categories": 30, "\uff4din_frequency": 0.5},  # NFKC reads it as min_frequency
+                   {"max_categories": 30, "min_frequency": 0.01, "lambda": [1, {"x": 2}]}):
+        spec = FieldSpec("city", "categorical", "constant", "__missing__", False, "none", "none", "onehot", params)
+        call = field_call(spec)
+        ast.parse(call)
+        assert "params=" in call and eval(call, {"keep": keep}) == spec, call
+
+
+PEP723 = r"(?m)^# /// (?P<type>[a-zA-Z0-9-]+)$\s(?P<content>(^#(| .*)$\s)+)^# ///$"
+
+
+def test_nothing_in_the_header_extends_the_script_metadata(tmp_path):
+    _, _, info = app_export(tmp_path, messy_csv(300), "tree", CONFIGS["first_per"], ["label"])
+    info.warnings = ["when\n///\nx", "/// script", "x" * 112 + " /// script", "x" * 112 + " ///"]
+    info.dataset_name = "///"
+    text = render(info)
+    blocks = [m for m in re.finditer(PEP723, text) if m.group("type") == "script"]
+    assert len(blocks) == 1
+    meta = tomllib.loads("".join(ln[2:] if ln.startswith("# ") else ln[1:]
+                                 for ln in blocks[0].group("content").splitlines(keepends=True)))
+    assert meta["requires-python"] and meta["dependencies"]
+    ast.parse(text)
+
+
+# ---- the bundle, binding names --------------------------------------------------------------------------------------
+def test_bundle_refuses_a_name_bound_to_two_things():
+    b = Bundle()
+    b.add("app.bands", "thin_bands")  # imports numpy as np
+    with pytest.raises(BundleError, match="already binds"):
+        b._external(_Import("numpy.random", None, "np"))
+    with pytest.raises(BundleError, match="already binds"):
+        b._claim(_Unit("app.other", ("np",), "np = 1", 1))
+    b = Bundle(provided={"SPLIT"}, provider="app.export_code.script")
+    with pytest.raises(BundleError, match="already binds"):
+        b._claim(_Unit("app.other", ("SPLIT",), "SPLIT = '__split'", 1))

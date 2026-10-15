@@ -825,6 +825,8 @@ def run_export(
         "split_info": split_info,
         "fit_sample_rows": int(fit_idx.size),
         "chunk_rows": chunk_rows,
+        "fit_mb": settings.export_fit_mb,  # the budgets that capped them, so an export's script can apply them too
+        "chunk_mb": settings.export_chunk_mb,
         "config": config,
         "fields": [f.__dict__ for f in specs],
         "versions": {"sklearn": sklearn.__version__, "polars": pl.__version__, "numpy": np.__version__},

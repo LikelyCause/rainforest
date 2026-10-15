@@ -306,25 +306,41 @@ function CopyCommand({ command }: { command: string }) {
 }
 
 
+/** Scripts being written, by export: the menu holding the button can close and open again meanwhile. */
+const writingScripts = new Map<number, Promise<void>>();
+
 /** Downloads the export's script: a Python file that reads the original data the way Rainforest did and rebuilds this
  * export with its decisions, then checks its result against the export. Fetched rather than linked, so a refusal (a
- * sample made before Rainforest recorded how) shows here. */
+ * sample made before Rainforest recorded how) shows here, and as a toast if the menu has closed. */
 function ScriptDownload({ exportId }: { exportId: number }) {
-  const [state, setState] = useState<"idle" | "busy" | Error>("idle");
+  const [state, setState] = useState<"idle" | "busy" | Error>(writingScripts.has(exportId) ? "busy" : "idle");
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    writingScripts.get(exportId)?.finally(() => { if (mounted.current) setState((s) => (s === "busy" ? "idle" : s)); });
+    return () => { mounted.current = false; };
+  }, [exportId]);
   const save = async () => {
+    if (writingScripts.has(exportId)) return;
     setState("busy");
-    try {
-      const { name, blob } = await api.exportScript(exportId);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = name;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 0);
-      setState("idle");
-    } catch (err) {
-      setState(err as Error);
-    }
+    const job = (async () => {
+      try {
+        const { name, blob } = await api.exportScript(exportId);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = name;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+        if (mounted.current) setState("idle");
+      } catch (err) {
+        if (mounted.current) setState(err as Error);
+        else toast({ tone: "bad", message: `The script of export #${exportId} couldn't be written`, detail: (err as Error).message });
+      }
+    })();
+    writingScripts.set(exportId, job);
+    await job;
+    writingScripts.delete(exportId);
   };
   return (
     <div className="stack exp-gap-2">

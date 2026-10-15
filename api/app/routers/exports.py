@@ -431,11 +431,14 @@ def _script(export_id: int) -> Response:
     """The export as a standalone Python script: it reads the original data the way the app did and rebuilds the
     export with its decisions, outside the app (see export_code)."""
     try:
-        with connection() as conn:
-            info = export_code.info_for(conn, export_id)
+        info = export_code.info_for(export_id)
         text = export_code.render(info)
     except export_code.CodeUnavailable as exc:
         raise HTTPException(409, str(exc)) from exc
+    except Exception as exc:
+        log.exception("writing the script of export %s failed", export_id)
+        raise HTTPException(500, "Rainforest couldn't write this export's script; the API's log has the details.") \
+            from exc
     return Response(text, media_type="text/x-python; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="{export_code.file_name(info)}"'})
 

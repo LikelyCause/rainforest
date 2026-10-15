@@ -90,7 +90,7 @@ def to_parquet(src: Path, fmt: str, dest: Path) -> list[str]:
 
 def _sink(src: Path, fmt: str, out: Path) -> list[str]:
     if fmt == "parquet":
-        lf, warnings = _normalize(pl.scan_parquet(src))
+        lf, warnings = _normalize(pl.scan_parquet(src, glob=False))  # a name with [ ] is a name
         lf.sink_parquet(out, row_group_size=100_000)
         return warnings
 
@@ -100,6 +100,7 @@ def _sink(src: Path, fmt: str, out: Path) -> list[str]:
         try:
             lf, warnings = _normalize(pl.scan_csv(
                 src,
+                glob=False,
                 separator=sep,
                 infer_schema_length=None if full else 50_000,
                 null_values=NULL_TOKENS,

@@ -78,6 +78,18 @@ def test_the_script_of_an_adjusted_export_rebuilds_it_from_the_upload(app_, peop
         # Removing the derived field later doesn't break the export's script: it keeps the definition it was made with.
         assert lead.delete(f"/api/datasets/{ds['id']}/derived/{zw}").status_code == 200
         _rebuild(lead, tmp_path / "b", e["id"], str(tmp_path / "t.csv"))
+        # Nor does adding it again with another definition: the app's copy now holds other values under that name.
+        r = lead.post(f"/api/datasets/{ds['id']}/derived", json={"name": "zw", "kind": "formula",
+                                                                 "spec": {"expr": "z + w"}})
+        assert r.status_code == 201, r.text
+        _rebuild(lead, tmp_path / "c", e["id"], str(tmp_path / "t.csv"))
+
+        # With the export's files gone too, the field can't be rebuilt from the dataset: refused, not left out.
+        assert lead.delete(f"/api/datasets/{ds['id']}/derived/{r.json()['id']}").status_code == 200
+        for f in Path(e["output_dir"]).iterdir():
+            f.unlink()
+        r = lead.get(f"/api/exports/{e['id']}/files/code")
+        assert r.status_code == 409 and "'zw' is no longer in the dataset" in r.json()["detail"]
     finally:
         lead.delete(f"/api/datasets/{ds['id']}")
 
@@ -107,6 +119,10 @@ def test_a_generated_sample_is_made_again_by_the_script(people, tmp_path):
         execute("UPDATE meta.datasets SET source_spec = NULL, name = 'my sample' WHERE id = %s", (ds["id"],))
         r = lead.get(f"/api/exports/{e['id']}/files/code")
         assert r.status_code == 409 and "Generate the sample again" in r.json()["detail"]
+        # Remembered, so asking again doesn't make the sample again.
+        assert fetch_one("SELECT source_spec FROM meta.datasets WHERE id = %s", (ds["id"],))["source_spec"] == {
+            "kind": "generated", "settings": None}
+        assert lead.get(f"/api/exports/{e['id']}/files/code").status_code == 409
     finally:
         lead.delete(f"/api/datasets/{ds['id']}")
 
@@ -158,9 +174,9 @@ def test_what_the_script_endpoint_refuses(people):
 
 def test_inputs_the_script_checks_are_the_apps_data(people):
     """The input summary the script checks is the app's own Parquet copy, column by column."""
-    from app.db import connection, fetch_one
+    from app.db import fetch_one
     from app.export_code import info_for
-    from app.export_code.script import column_summary
+    from app.export_code.script import input_summary
 
     lead = people["lead"]
     ds = upload(lead)
@@ -168,12 +184,28 @@ def test_inputs_the_script_checks_are_the_apps_data(people):
         start(lead, ds, "tree", [lead])
         submit_and_finalize(lead, ds)
         e = _export(lead, ds)
-        with connection() as conn:
-            info = info_for(conn, e["id"])
+        info = info_for(e["id"])
         raw = pl.read_parquet(fetch_one("SELECT parquet_path FROM meta.datasets WHERE id = %s", (ds["id"],))["parquet_path"])
         assert info.expected_input["rows"] == raw.height
-        assert info.expected_input["columns"] == {c: column_summary(raw[c]) for c in raw.columns}
+        assert info.expected_input["columns"] == {c: input_summary(raw[c]) for c in raw.columns}
         assert info.source == {"kind": "upload", "format": "csv", "file": "t.csv"}
         assert np.isclose(info.split["valid_size"], 0.15)
+    finally:
+        lead.delete(f"/api/datasets/{ds['id']}")
+
+
+def test_an_export_with_infinite_features_is_written(people, tmp_path):
+    """A value beyond float32's range is infinite in the export; the script is still written, and still matches."""
+    lead = people["lead"]
+    lines = _csv().splitlines()
+    lines[3] = "1e39," + lines[3].split(",", 1)[1]
+    csv = "\n".join(lines) + "\n"
+    ds = upload(lead, csv)
+    try:
+        start(lead, ds, "tree", [lead])
+        submit_and_finalize(lead, ds)
+        e = _export(lead, ds)
+        (tmp_path / "t.csv").write_text(csv)
+        _rebuild(lead, tmp_path / "inf", e["id"], str(tmp_path / "t.csv"))
     finally:
         lead.delete(f"/api/datasets/{ds['id']}")
