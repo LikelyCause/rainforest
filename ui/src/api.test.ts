@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ApiError, errorFromBody, isServerPath, safeNext } from "./api";
+import { ApiError, attachmentName, errorFromBody, isServerPath, safeNext } from "./api";
 
 describe("errorFromBody", () => {
   it("keeps the message and the details of every error shape", () => {
@@ -37,5 +37,15 @@ describe("isServerPath", () => {
     expect(isServerPath("/mlflow/#/experiments/1")).toBe(true);
     expect(isServerPath("/mlflowx")).toBe(false);
     expect(isServerPath("/d/1/export")).toBe(false);
+  });
+});
+
+describe("attachmentName", () => {
+  it("takes the file name a download names, and nothing that could leave the downloads folder", () => {
+    expect(attachmentName('attachment; filename="export12_concrete_strength.py"', "x.py")).toBe("export12_concrete_strength.py");
+    expect(attachmentName(null, "export12.py")).toBe("export12.py");
+    expect(attachmentName("attachment", "export12.py")).toBe("export12.py");
+    expect(attachmentName('attachment; filename="../x.py"', "export12.py")).toBe("export12.py");
+    expect(attachmentName('attachment; filename=".bashrc"', "export12.py")).toBe("export12.py");
   });
 });

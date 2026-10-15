@@ -41,13 +41,13 @@ def edges_for(bins: dict, train_values: np.ndarray) -> list[float]:
     return edges
 
 
-def _num(v: float) -> str:
+def _fmt(v: float) -> str:
     return f"{v:.12g}"
 
 
 def band_labels(edges: list[float]) -> list[str]:
-    return ([f"< {_num(edges[0])}"] + [f"[{_num(a)}, {_num(b)})" for a, b in zip(edges, edges[1:])]
-            + [f"≥ {_num(edges[-1])}"])
+    return ([f"< {_fmt(edges[0])}"] + [f"[{_fmt(a)}, {_fmt(b)})" for a, b in zip(edges, edges[1:])]
+            + [f"≥ {_fmt(edges[-1])}"])
 
 
 def assign(values: np.ndarray, edges: list[float]) -> np.ndarray:
