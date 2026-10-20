@@ -6,12 +6,17 @@ The API serves `option_catalog()` to the UI so dropdowns never drift from valida
 Rainforest is tree-first: `tree` is the default family. Tree ensembles split on value *order*, so
 scaling and monotonic transforms (log, clipping) cannot change a single split — they are not offered
 for the tree family at all, and missing values are left for the model to route natively.
+
+`transforms/` holds the options a registry adds; none of its built-ins is offered to trees either.
 """
 from __future__ import annotations
 
 import math
 from copy import deepcopy
 from typing import Any
+
+from . import transforms
+from .transforms import ENCODING_SETTINGS
 
 SEMANTIC_TYPES = [
     "numeric_continuous",
@@ -249,20 +254,30 @@ def allowed(t: str, family: str = DEFAULT_FAMILY) -> dict[str, list[str]]:
     if fam["needs_onehot"] and t == "categorical":
         # Integer codes impose a fake order that linear / neural models take literally.
         a["encoding"] = ["onehot", "frequency"]
+    for spec in transforms.specs():
+        if t in spec.types and family in spec.families:
+            a[spec.dimension].append(spec.key)
     return a
 
 
 def option_catalog() -> dict[str, Any]:
+    labels = {"imputation": IMPUTATIONS, "transform": dict(TRANSFORMS), "scaling": SCALINGS,
+              "encoding": dict(ENCODINGS)}
+    for spec in transforms.specs():
+        labels[spec.dimension][spec.key] = spec.label
     return {
         "types": [{"value": t, "label": TYPE_LABELS[t]} for t in SEMANTIC_TYPES],
         "families": [{"value": k, **v} for k, v in FAMILIES.items()],
         "default_family": DEFAULT_FAMILY,
         "family_notes": FAMILY_NOTES,
-        "labels": {"imputation": IMPUTATIONS, "transform": TRANSFORMS, "scaling": SCALINGS, "encoding": ENCODINGS},
+        "labels": labels,
         "allowed": {f: {t: allowed(t, f) for t in SEMANTIC_TYPES} for f in FAMILIES},
-        "default_params": DEFAULT_PARAMS,
+        "default_params": {**DEFAULT_PARAMS, **{s.key: s.defaults() for s in transforms.specs() if s.settings}},
         "param_rules": {enc: {k: {"integer": kind is int, "min": lo, "max": hi} for k, (kind, lo, hi) in rules.items()}
                         for enc, rules in PARAM_RULES.items()},
+        "settings": {**{k: [s.to_json() for s in v] for k, v in ENCODING_SETTINGS.items()},
+                     **{s.key: [x.to_json() for x in s.settings] for s in transforms.specs()}},
+        "transforms": [s.to_json() for s in transforms.specs()],
         "non_feature_types": sorted(NON_FEATURE_TYPES),
         "target_rule": {"types": list(TARGET_TYPES), "numeric_types": sorted(NUMERIC), "max_levels": MAX_TARGET_LEVELS,
                         "tasks": list(TARGET_TASKS), "default_k": DEFAULT_BIN_COUNT},
@@ -297,7 +312,12 @@ def validate_decision(d: dict[str, Any], family: str = DEFAULT_FAMILY, n_unique:
     a = allowed(t, family)
     for dim in DIMS:
         v = d.get(dim)
-        if v not in a[dim]:
+        if v in a[dim]:
+            continue
+        spec = transforms.get(v)
+        if (spec is not None and not spec.available) or (spec is None and isinstance(v, str) and "." in v):
+            errors.append(f"{dim}={v!r} is unavailable: it isn't installed on this server")
+        else:
             errors.append(f"{dim}={v!r} is not valid for {t} with {family} models (allowed: {', '.join(a[dim])})")
     if d.get("imputation") == "constant" and t in NUMERIC:
         try:
@@ -308,6 +328,13 @@ def validate_decision(d: dict[str, Any], family: str = DEFAULT_FAMILY, n_unique:
             if not math.isfinite(fill):
                 errors.append(f"impute_value must be a finite number (got {d.get('impute_value')!r})")
     errors += param_errors(d.get("encoding"), d.get("params") or {})
+    for dim in ("transform", "encoding"):
+        spec = transforms.get(d.get(dim))
+        if spec is None or spec.key not in a[dim]:
+            continue
+        errors += transforms.param_problems(spec, d.get("params"))
+        if not spec.handles_nan and d.get("imputation") == "none":
+            errors.append(f"{spec.label} needs missing values filled; choose an imputation")
     return errors
 
 

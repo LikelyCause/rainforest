@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -7,7 +8,7 @@ import pytest
 
 from app import transforms
 from app.modeling.params import Setting
-from app.semantics import DEFAULT_PARAMS, PARAM_RULES
+from app.semantics import DEFAULT_PARAMS, PARAM_RULES, allowed, option_catalog, suggest, validate_decision
 from app.transforms import registry
 from app.transforms.builtin import ENCODING_SETTINGS, YEO_JOHNSON
 
@@ -81,3 +82,51 @@ def test_the_registry_does_not_import_semantics():
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True,
                          cwd=Path(__file__).resolve().parents[1])
     assert out.stdout.strip() == "False"
+
+
+SKEWED = {"skewness": 3.0, "null_pct": 0.1}
+
+
+def _numeric(family, **kw):
+    return {**suggest("numeric_continuous", SKEWED, False, family), **kw}
+
+
+def test_yeo_johnson_is_offered_to_linear_and_neural_only():
+    for fam in ("linear", "neural"):
+        for t in ("numeric_continuous", "numeric_discrete"):
+            assert "yeo_johnson" in allowed(t, fam)["transform"], (fam, t)
+        assert validate_decision(_numeric(fam, transform="yeo_johnson"), fam) == []
+    assert allowed("numeric_continuous", "tree")["transform"] == ["none"]
+    assert "yeo_johnson" not in allowed("categorical", "linear")["transform"]
+    errors = validate_decision(_numeric("tree", transform="yeo_johnson"), "tree")
+    assert errors == ["transform='yeo_johnson' is not valid for numeric_continuous with tree models (allowed: none)"]
+
+
+def test_an_unavailable_key_is_named_not_replaced(scratch_registry):
+    registry.register(_spec("gone", requires="no_such_module_rf"))
+    for key in ("gone", "acme.iqr_clip"):
+        assert validate_decision(_numeric("linear", transform=key), "linear") == [
+            f"transform={key!r} is unavailable: it isn't installed on this server"]
+
+
+def test_spec_params_and_missing_values_are_checked(scratch_registry):
+    registry.register(_spec("strict", families=("tree", "linear"), handles_nan=False,
+                            settings=(Setting("k", "K", "", "field", "int", 5, 2, 10, 1),)))
+    tree = _numeric("tree", transform="strict")
+    assert tree["imputation"] == "none"
+    assert validate_decision(tree, "tree") == ["Strict needs missing values filled; choose an imputation"]
+    assert validate_decision({**tree, "imputation": "median"}, "tree") == []
+    assert validate_decision({**tree, "imputation": "median", "params": {"k": 50}}, "tree") == [
+        "params.k must be from 2 to 10"]
+
+
+def test_the_catalog_publishes_registry_options():
+    cat = option_catalog()
+    assert cat["labels"]["transform"]["yeo_johnson"] == "Yeo-Johnson (power transform)"
+    assert cat["labels"]["transform"]["log1p"] == "Signed log1p"
+    assert [t["key"] for t in cat["transforms"]] == ["yeo_johnson"]
+    assert cat["settings"]["yeo_johnson"] == []
+    assert [s["name"] for s in cat["settings"]["tfidf_svd"]] == ["svd_components", "max_features", "min_df"]
+    assert cat["param_rules"]["onehot"]["max_categories"] == {"integer": True, "min": 2, "max": 1000}
+    assert "yeo_johnson" in cat["allowed"]["neural"]["numeric_discrete"]["transform"]
+    json.dumps(cat)
