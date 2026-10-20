@@ -62,7 +62,7 @@ Long-running work returns `202` with a row to poll; its `status` is `pending`, `
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/health` | Liveness; runs `SELECT 1`. |
-| GET | `/api/options` | Option catalog: semantic types, model families, setting labels, allowed settings per family × type, family notes, default encoder params, `default_family`, non-feature types, `param_rules` (per encoding: each parameter's `integer`, `min` and `max`) and `target_rule` (`types`, `numeric_types`, `max_levels` for classes, `tasks`, `default_k`). |
+| GET | `/api/options` | Option catalog: semantic types, model families, setting labels, allowed settings per family × type, family notes, default params per option, `default_family`, non-feature types, `param_rules` (per encoding: each parameter's `integer`, `min` and `max`), `settings` (each option's parameters, an encoding's or a registry option's, shaped like the Train menu's settings), `transforms` (the registry options: `key`, `dimension`, `types`, `families`, `label`, `help`, `settings`, `handles_nan`, `needs_target`, `source`) and `target_rule` (`types`, `numeric_types`, `max_levels` for classes, `tasks`, `default_k`). `labels`, `allowed` and `default_params` include the registry options. |
 
 ## Sign-in (`auth.py`)
 

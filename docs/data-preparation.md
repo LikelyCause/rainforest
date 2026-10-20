@@ -84,6 +84,17 @@ leaves missing values for the model to route.
 \* XGBoost trains on the CPU in the default image and on an NVIDIA GPU in the GPU image. See
 [GPU](deployment.md#gpu).
 
+## Other transforms you can choose
+
+Rainforest suggests the defaults above. It also offers options it never suggests, which you can pick in a field's
+*Transform* or *Encoding* menu.
+
+| Option | Fields | Families | What it does |
+|---|---|---|---|
+| Yeo-Johnson (power transform) | numeric | Linear, Neural / distance | Makes skewed numbers closer to normal, and handles zero and negative values, unlike a log. It doesn't standardize: scaling stays its own setting. |
+
+Tree ensembles aren't offered it, because a monotonic transform can't change a split.
+
 ## Associations and the leak screen
 
 Rainforest measures how strongly each pair of fields is associated. It uses a seeded 100k-row sample
