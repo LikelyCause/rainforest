@@ -323,7 +323,7 @@ def settings_for(model: str) -> list[Setting] | None:
     return CATALOG.get(model)
 
 
-def _value_problem(s: Setting, v: Any) -> str | None:
+def value_problem(s: Setting, v: Any) -> str | None:
     if s.kind == "choice":
         return None if v in [o["value"] for o in s.options or ()] else (
             f"{s.name} must be one of {', '.join(repr(o['value']) for o in s.options or ())}")
@@ -350,7 +350,7 @@ def setting_problems(model: str, params: dict) -> list[str]:
         if s is None:
             out.append(f"{name} isn't a setting of this model")
             continue
-        if problem := _value_problem(s, v):
+        if problem := value_problem(s, v):
             out.append(problem)
             continue
         for other, allowed in (s.when or {}).items():
