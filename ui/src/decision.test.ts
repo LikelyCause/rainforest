@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bandsText, defaultTask, paramProblem, parseEdges, retype, taskLabel, withEncoding } from "./decision";
+import { bandsText, defaultTask, parseEdges, retype, taskLabel, withOption } from "./decision";
 import type { DecisionInput, OptionCatalog, Suggestion } from "./types";
 
 const NUM = { imputation: ["none", "mean", "median", "constant"], transform: ["none"], scaling: ["none"], encoding: ["none"] };
@@ -67,25 +67,38 @@ describe("retype", () => {
     expect(retype(input({}), "identifier", catalog, sugg({})).action).toBe("drop");
     expect(retype(input({ action: "target" }), "identifier", catalog, sugg({})).action).toBe("target");
   });
-});
 
-describe("withEncoding", () => {
-  it("starts from the new encoding's default params", () => {
-    const d = input({ semantic_type: "categorical", encoding: "onehot", params: { max_categories: 5, min_frequency: 0.2 } });
-    expect(withEncoding(d, "ordinal", catalog).params).toEqual({ min_frequency: 0.001 });
-    expect(withEncoding(d, "frequency", catalog).params).toEqual({});
+  it("starts a kept transform and the encoding from their default params", () => {
+    const linear = { ...catalog.allowed.linear, numeric_discrete: { ...NUM_LINEAR, transform: ["none", "log1p", "power"] } };
+    const cat = { ...withSettings, allowed: { ...catalog.allowed, linear } } as unknown as OptionCatalog;
+    const d = input({ family: "linear", imputation: "median", transform: "power", params: { k: 9 } });
+    expect(retype(d, "numeric_discrete", cat, sugg({})).params).toEqual({ k: 5 });
   });
 });
 
-describe("paramProblem", () => {
-  const rule = { integer: true, min: 2, max: 1000 };
-  it("accepts in-range values and explains the rest", () => {
-    expect(paramProblem("30", rule)).toBeNull();
-    expect(paramProblem("", rule)).toBe("Enter a number");
-    expect(paramProblem("2.5", rule)).toBe("Enter a whole number");
-    expect(paramProblem("1", rule)).toBe("Between 2 and 1000");
-    expect(paramProblem("0.05", { integer: false, min: 0, max: 0.99 })).toBeNull();
-    expect(paramProblem("7", undefined)).toBeNull();
+const withSettings = {
+  ...catalog,
+  settings: {
+    onehot: [{ name: "max_categories" }, { name: "min_frequency" }],
+    ordinal: [{ name: "min_frequency" }],
+    power: [{ name: "k" }],
+  },
+  default_params: { ...catalog.default_params, power: { k: 5 } },
+} as unknown as OptionCatalog;
+
+describe("withOption", () => {
+  it("starts a new encoding from its default params", () => {
+    const d = input({ semantic_type: "categorical", encoding: "onehot", params: { max_categories: 5, min_frequency: 0.2 } });
+    expect(withOption(d, "encoding", "ordinal", withSettings).params).toEqual({ min_frequency: 0.001 });
+    expect(withOption(d, "encoding", "frequency", withSettings).params).toEqual({});
+  });
+
+  it("starts a new transform from its defaults and keeps the encoding's", () => {
+    const d = input({ transform: "none", encoding: "onehot", params: { max_categories: 5, left_over: 1 } });
+    const out = withOption(d, "transform", "power", withSettings);
+    expect(out.transform).toBe("power");
+    expect(out.params).toEqual({ max_categories: 5, k: 5 });
+    expect(withOption(input({ transform: "power", params: { k: 9 } }), "transform", "none", withSettings).params).toEqual({});
   });
 });
 

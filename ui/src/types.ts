@@ -84,6 +84,20 @@ export interface ModelSetting {
   none_label: string | null;
 }
 
+/** A transformer from the registry, as GET /api/options publishes it. */
+export interface RegistryOption {
+  key: string;
+  dimension: "transform" | "encoding";
+  types: string[];
+  families: string[];
+  label: string;
+  help: string;
+  settings: ModelSetting[];
+  handles_nan: boolean;
+  needs_target: boolean;
+  source: string;
+}
+
 /** How a numeric field would be cut into bands, on the whole column (GET /api/fields/{id}/bands). */
 export interface BandPreview { edges: number[]; labels: string[]; counts: number[]; missing: number }
 
@@ -256,6 +270,9 @@ export interface OptionCatalog {
   default_params: Record<string, Record<string, any>>;
   /** param_rules[encoding][param] */
   param_rules?: Record<string, Record<string, { integer: boolean; min: number; max: number }>>;
+  /** Each option's parameters, in form order: an encoding's, or a registry option's. */
+  settings: Record<string, ModelSetting[]>;
+  transforms: RegistryOption[];
   non_feature_types: string[];
   target_rule: { types: string[]; numeric_types: string[]; max_levels: number; tasks: TargetTask[]; default_k: number };
 }

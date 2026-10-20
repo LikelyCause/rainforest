@@ -42,6 +42,7 @@ export function retype(d: DecisionInput, type: string, catalog: OptionCatalog, s
     if (dim === "imputation" && NUMERIC.has(type)) return handlesNan ? "none" : "median";
     return allowed[dim][0];
   };
+  const transform = pick("transform");
   const encoding = pick("encoding");
   const imputation = pick("imputation");
   const nonFeature = catalog.non_feature_types.includes(type);
@@ -59,30 +60,22 @@ export function retype(d: DecisionInput, type: string, catalog: OptionCatalog, s
     target_bins: keepTask ? d.target_bins : null,
     action: d.action === "target" ? "target" : nonFeature ? "drop" : d.action,
     imputation,
-    transform: pick("transform"),
+    transform,
     scaling: pick("scaling"),
     encoding,
     impute_value: fill,
-    params: suggested ? sugg.params : { ...(catalog.default_params[encoding] ?? {}) },
+    params: suggested ? sugg.params : { ...(catalog.default_params[transform] ?? {}), ...(catalog.default_params[encoding] ?? {}) },
     add_missing_indicator: NUMERIC.has(type) ? d.add_missing_indicator : false,
   };
 }
 
-export interface ParamRule { integer: boolean; min: number; max: number }
-
-/** Why typed text isn't a valid encoder parameter, or null; mirrors the API's check. */
-export function paramProblem(text: string, rule: ParamRule | undefined): string | null {
-  const n = Number(text);
-  if (text.trim() === "" || !Number.isFinite(n)) return "Enter a number";
-  if (!rule) return null;
-  if (rule.integer && !Number.isInteger(n)) return "Enter a whole number";
-  if (n < rule.min || n > rule.max) return `Between ${rule.min} and ${rule.max}`;
-  return null;
-}
-
-/** Switching encodings starts from the new encoding's default parameters; the old ones don't apply. */
-export function withEncoding(d: DecisionInput, encoding: string, catalog: OptionCatalog): DecisionInput {
-  return { ...d, encoding, params: { ...(catalog.default_params[encoding] ?? {}) } };
+/** Choosing another transform or encoding starts it from its default parameters; the other one's stay. */
+export function withOption(d: DecisionInput, dim: "transform" | "encoding", value: string, catalog: OptionCatalog): DecisionInput {
+  const other = dim === "transform" ? d.encoding : d.transform;
+  const names = new Set((catalog.settings[other] ?? []).map((s) => s.name));
+  const kept = Object.fromEntries(Object.entries(d.params ?? {}).filter(([k]) => names.has(k)));
+  const params = { ...kept, ...(catalog.default_params[value] ?? {}) };
+  return dim === "transform" ? { ...d, transform: value, params } : { ...d, encoding: value, params };
 }
 
 const MAX_CLASSES = 100;
