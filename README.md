@@ -1,12 +1,40 @@
 # 🌲 Rainforest
 
-Rainforest is a self-hosted web app for preparing wide, mixed-type tabular data for machine learning. A team reviews
-every field of a dataset, agrees on how each one is prepared, and freezes that as a versioned **baseline**. Rainforest
-then exports model-ready Parquet from it, trains models, and logs every run to MLflow.
-
-It is for data science teams who need to agree on, and record, how a dataset is prepared. It works solo too.
+Rainforest is a self-hosted web app for preparing wide, mixed-type tabular data for machine learning, on your own or as
+a team. Upload a CSV or Parquet file, and Rainforest profiles every column and suggests how to prepare it, with the
+evidence for each suggestion. You review the fields, agree on the decisions and freeze them as a versioned **baseline**.
+Rainforest then builds model-ready Parquet from the baseline, trains models on it, and logs every run to MLflow.
 
 ![Reviewing a field: its profile, distribution and suggested settings, with the reasons](docs/images/review.png)
+
+## Why use it
+
+Much of a tabular model's quality is decided while its data is prepared: which columns to keep, what a missing value
+means, how to encode a code. Those choices usually live in one person's notebook. When someone else picks the data
+up, or the model is retrained a year later, nobody can say exactly how the data was prepared, or why.
+
+Rainforest makes data preparation reviewed, recorded and repeatable:
+
+- **Every field gets looked at.** Each column gets a profile, its distribution, its strongest associations and a
+  suggested decision, so the 150th field of a wide file gets the same care as the first.
+- **Suggestions explain themselves.** Each one names its evidence, such as *97% of values are missing*. Fields that
+  could leak the target are flagged before they reach a model.
+- **Agreement is part of the process.** Several people assess the same fields without seeing each other's choices, so
+  nobody anchors on the first opinion. What they agree on is adopted, and only the disagreements need a discussion.
+- **A baseline exports the same way every time.** A finalized baseline is frozen. Every export and model run records
+  the baseline it came from, and every change to the team's decisions is logged with who made it.
+- **Preparation matches the model.** *Trees* baselines never scale or log-transform, and leave missing values for the
+  model to route. *Linear* and *Neural* baselines get their own defaults.
+- **Exports are leakage-safe.** The rows are split first. The preprocessing is fitted on the training rows only, then
+  applied to every row.
+- **Training is in the same place.** Train and compare models on an export without writing code, and open any run in
+  MLflow. You can also download the export, its fitted preprocessor and the trained models for your own code.
+- **It runs on your own hardware.** Docker Compose runs the app, Postgres and MLflow on a machine you control, and
+  your data stays there.
+
+Rainforest is built for data science teams who need to agree on, and record, how a dataset is prepared. It works solo
+too: you are the lead and the only assessor, and you still get the suggestions, the leak checks, the frozen baselines
+and the tracked runs.
 
 ## How it works
 
@@ -14,25 +42,62 @@ It is for data science teams who need to agree on, and record, how a dataset is 
 Upload → Assess → Team review → Finalize baseline → Experiment → Export → Train
 ```
 
-1. **Upload** a CSV or Parquet file. Rainforest profiles it and suggests a decision for every field.
-2. **Assess.** Each assessor keeps, drops or retypes every field and checks its settings, on their own, then submits.
-3. **Team review.** Fields everyone agreed on are adopted. A lead settles the rest.
-4. **Finalize.** A lead freezes the decisions as a numbered baseline version that always exports the same way.
-5. **Experiment.** Start an experiment from the baseline, and adjust its copy if you want to.
-6. **Export.** Rainforest splits the rows, fits the preprocessing on training rows only, and writes Parquet.
-7. **Train** a chain of models on the export, compare the runs, and open each one in MLflow.
+The screenshots below use the real datasets that ship with Rainforest.
 
-Along the way:
+### 1. Upload
 
-- **Suggestions come with reasons.** Every field gets an inferred type and settings, with the evidence. Possible
-  target leaks are flagged.
-- **Defaults depend on the model type.** *Trees* baselines never scale or log-transform, and leave missing values for
-  the model to route. *Linear* and *Neural* baselines get their own defaults.
+Upload a CSV or Parquet file, or add one of the sample datasets. Rainforest loads it into Postgres, profiles every
+column and suggests a decision for each field. The *Datasets* page shows where each dataset stands and what is waiting
+on you.
+
+![The Datasets page: cards for the work waiting on you, then every dataset with its stage, targets, assessment progress and best model](docs/images/datasets.png)
+
+### 2. Assess
+
+A lead sets up the dataset's baseline: its model type, targets and assessors. Each assessor then works through the
+fields on their own, keeping, dropping or retyping each one and checking its settings. *Fields · Focus*, at the top of
+this page, walks the fields one at a time with keyboard shortcuts. *Fields · Table* filters the fields and changes many
+at once.
+
+![Fields · Table: the Unreviewed preset, with bulk actions for every matching field](docs/images/fields-table.png)
+
+An assessment is private until everyone has submitted. The lead sees each assessor's progress, never their choices.
+
+![The Baseline tab while assessing: your own progress, each assessor's progress, and what happens next](docs/images/assessment-progress.png)
+
+### 3. Team review
+
+When the last assessor submits, the fields everyone agreed on are adopted. The rest form a review queue, with every
+assessor's choice and notes side by side and a discussion. A lead settles each field, then finalizes.
+
+![Team review: three assessors disagree on whether to keep the weight field, with their notes and a discussion beside the team decision](docs/images/team-review.png)
+
+### 4. Finalize, experiment and train
+
+Finalizing freezes the decisions as a numbered baseline version, such as *Trees v1*. A lead changes it later by starting
+a new version. Anyone but a Viewer can start an experiment from the baseline, and adjust the experiment's copy without
+touching the baseline. An export splits the rows, fits the preprocessing on the training rows and writes Parquet. You
+train a chain of models on it, one per target, and compare the runs with their metrics, charts and MLflow links.
+
+![An experiment's runs: four tree models compared on the test split, beside the chosen XGBoost run's metrics and confusion matrix](docs/images/runs.png)
+
+### Explore at any point
+
+*Explore* shows a dataset's correlations, a 2-D map of its rows coloured by the target, a test of each field against
+the target, and feature importance. *Fields · SQL* is a read-only SQL console over the data and the decisions.
+
+![Explore · Map: a t-SNE map of the Student dropout rows, coloured by outcome](docs/images/explore-map.png)
+
+## What's included
+
+- **Type inference** for every column: numeric, categorical, binary, text, date, identifier or constant, with a
+  confidence and the reasons.
 - **Several targets at once.** Each target is predicted as classes, a number or bands, and each model in the chain
   also learns from the predictions for the targets before it.
 - **Models:** LightGBM, XGBoost (CPU or NVIDIA GPU), scikit-learn's histogram GBM and random forest, logistic and ridge
   regression, and an MLP, with cross-validation and parameter sweeps.
-- **Explore** correlations, a row map, feature tests and importance, or query the data in a read-only SQL console.
+- **Derived fields** computed from a dataset's own fields, such as a ratio or a grouping of codes.
+- **Sign-in** by picking a profile, or with OIDC for teams, and three roles: *Team Lead*, *Team Member* and *Viewer*.
 
 ## Quick start
 
