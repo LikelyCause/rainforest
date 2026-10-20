@@ -193,3 +193,37 @@ def test_prepare_export_keeps_regression_target_numeric(tmp_path):
                    {"seed": 1}, lambda *_: None, target_tasks={"price": {"task": "regression", "bins": None}})
     p = prepare_export(tmp_path / "o", m, "price", 200)
     assert p.target_kind == "numeric" and np.any(p.y % 1 != 0)
+
+
+def test_yeo_johnson_runs_after_imputation_and_before_scaling():
+    from sklearn.preprocessing import PowerTransformer, StandardScaler
+
+    rng = np.random.default_rng(0)
+    x = rng.lognormal(0, 1, 300)
+    x[::10] = np.nan
+    spec = _spec("x", "numeric_continuous", family="linear", transform="yeo_johnson", scaling="standard")
+    pre, out, names = _fit(pl.DataFrame({"x": x}), [spec])
+    steps = pre.named_transformers_["x"].named_steps
+    assert list(steps) == ["impute", "transform", "scale"]
+    assert isinstance(steps["transform"], PowerTransformer) and steps["transform"].standardize is False
+    filled = np.where(np.isnan(x), np.nanmedian(x), x).reshape(-1, 1)
+    ref = StandardScaler().fit_transform(PowerTransformer(method="yeo-johnson", standardize=False).fit_transform(filled))
+    assert names == ["x"] and np.allclose(out, ref)
+
+
+def test_a_linear_export_with_yeo_johnson(tmp_path):
+    rng = np.random.default_rng(1)
+    n = 400
+    df = pl.DataFrame({"x": rng.lognormal(0, 1, n), "y": rng.choice(["a", "b"], n)})
+    spec = _spec("x", "numeric_continuous", family="linear", transform="yeo_johnson")
+    manifest, out = _export(tmp_path, df, [spec], ["y"], family="linear")
+    assert manifest["feature_names"] == ["x"] and manifest["feature_source_field"] == {"x": "x"}
+    col = pq.read_table(out / "model_ready.parquet", columns=["x"]).column("x").to_numpy()
+    assert np.isfinite(col).all()
+
+
+def test_an_unknown_transform_or_encoding_fails_loudly():
+    with pytest.raises(ValueError, match="'acme.gone' isn't available"):
+        build_preprocessor([_spec("x", "numeric_continuous", family="linear", transform="acme.gone")])
+    with pytest.raises(ValueError, match="'acme.gone' isn't available"):
+        build_preprocessor([_spec("c", "categorical", encoding="acme.gone")])

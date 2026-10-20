@@ -1,7 +1,7 @@
 """Turn reviewed field decisions into a fitted sklearn preprocessing pipeline + model-ready Parquet.
 
 Pipeline per field (only `action == keep`):
-    numeric      : [SimpleImputer] -> [clip | signed-log1p] -> [scaler]   (+ optional missing indicator)
+    numeric      : [SimpleImputer] -> [clip | signed-log1p | a registry transform] -> [scaler]   (+ optional missing indicator)
     categorical  : SimpleImputer -> OneHot | Ordinal | Frequency
     binary       : 0/1 (+ missing indicator when missing values get their own label)
     text         : TF-IDF -> TruncatedSVD   |   length / word-count stats
@@ -41,7 +41,7 @@ from sklearn.preprocessing import (
     StandardScaler,
 )
 
-from . import bands
+from . import bands, transforms
 from .config import get_settings
 from .parquet_rows import read_rows
 from .profiling import coerce_numeric, null_infinite, parse_datetime
@@ -263,7 +263,7 @@ SCALERS = {
 }
 
 
-def _numeric_pipeline(f: FieldSpec) -> Pipeline | str:
+def _numeric_pipeline(f: FieldSpec, seed: int = 0) -> Pipeline | str:
     steps: list[tuple[str, Any]] = []
     # Fill first, so a constant fill value is in the field's own units, not log or clipped ones.
     if f.imputation != "none":
@@ -275,9 +275,19 @@ def _numeric_pipeline(f: FieldSpec) -> Pipeline | str:
         steps.append(("clip", Winsorizer()))
     elif f.transform == "log1p":
         steps.append(("log1p", SignedLog1p()))
+    elif f.transform != "none":
+        steps.append(("transform", _registered(f, f.transform, seed)))
     if f.scaling in SCALERS:
         steps.append(("scale", SCALERS[f.scaling]()))
     return Pipeline(steps) if steps else "passthrough"
+
+
+def _registered(f: FieldSpec, key: str, seed: int):
+    spec = transforms.get(key)
+    if spec is None or not spec.available:
+        # The export preview blocks unavailable options; reaching here means a check was skipped.
+        raise ValueError(f"{f.name}: {key!r} isn't available on this server")
+    return spec.build(transforms.params_for(spec, f.params), transforms.BuildContext(seed=seed))
 
 
 def _categorical_pipeline(f: FieldSpec) -> Pipeline | BinaryEncoder:
@@ -297,8 +307,10 @@ def _categorical_pipeline(f: FieldSpec) -> Pipeline | BinaryEncoder:
     elif f.encoding == "ordinal":
         enc = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1, dtype=np.float32,
                              min_frequency=float(p.get("min_frequency", 0.001)))
-    else:
+    elif f.encoding == "frequency":
         enc = FrequencyEncoder()
+    else:
+        raise ValueError(f"{f.name}: {f.encoding!r} isn't available on this server")
     return Pipeline([("impute", imputer), ("encode", enc)])
 
 
@@ -322,7 +334,7 @@ def build_preprocessor(specs: list[FieldSpec], seed: int = 0) -> ColumnTransform
     for f in specs:
         t = f.semantic_type
         if t in NUMERIC:
-            transformers.append((tname(f.name), _numeric_pipeline(f), [f.name]))
+            transformers.append((tname(f.name), _numeric_pipeline(f, seed), [f.name]))
             if f.add_missing_indicator:
                 transformers.append(
                     (tname(f.name, "_isna"), MissingIndicator(features="all", error_on_new=False), [f.name])
