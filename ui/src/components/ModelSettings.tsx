@@ -29,8 +29,10 @@ function NumberInput({ s, value, onChange, id }: { s: ModelSetting; value: numbe
   );
 }
 
-function Control({ s, value, onChange }: { s: ModelSetting; value: SettingValue; onChange: (v: SettingValue) => void }) {
-  const id = `ms-${s.name}`;
+export function SettingControl({ s, value, onChange, id: idProp }: {
+  s: ModelSetting; value: SettingValue; onChange: (v: SettingValue) => void; id?: string;
+}) {
+  const id = idProp ?? `ms-${s.name}`;
   if (s.kind === "choice") {
     return (
       <select id={id} value={JSON.stringify(value)} onChange={(e) => onChange(JSON.parse(e.target.value))}>
@@ -70,7 +72,7 @@ function Row({ s, values, onChange, problem }: {
   return (
     <div className={`setting ms-row${isChanged ? " edited" : ""}${problem ? " invalid" : ""}`}>
       <label htmlFor={`ms-${s.name}`} title={s.help}>{s.label}</label>
-      <Control s={s} value={value} onChange={(v) => onChange(s.name, v)} />
+      <SettingControl s={s} value={value} onChange={(v) => onChange(s.name, v)} />
       <div className="ms-help muted small-text">
         {problem ? <span className="ms-problem" role="alert">{s.label} {problem}</span>
           : isChanged ? (

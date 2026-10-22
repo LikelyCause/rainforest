@@ -2,12 +2,14 @@ import { forwardRef, Fragment, useEffect, useImperativeHandle, useRef, useState,
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import { flushSave, pendingDraft, queueSave, useFailedSaves } from "../saveQueue";
-import { bandCount, bandsText, defaultTask, NUMERIC, paramProblem, parseEdges, retype, taskLabel, toInput, withEncoding, type ParamRule } from "../decision";
+import { bandCount, bandsText, defaultTask, NUMERIC, parseEdges, retype, taskLabel, toInput, withOption } from "../decision";
 import { baselineDiff, revertedInput } from "../experiments";
-import type { Action, DecisionInput, Dim, FieldResponse, OptionCatalog, TargetBins, TargetTask } from "../types";
+import { fmtSetting, settingProblem } from "../settings";
+import type { Action, DecisionInput, Dim, FieldResponse, ModelSetting, OptionCatalog, SettingValue, TargetBins, TargetTask } from "../types";
 import { parseView, type View } from "../view";
 import { useDataset } from "../hooks";
 import { Chip, Icon, LensChip, Segmented } from "./kit";
+import { SettingControl } from "./ModelSettings";
 import { InfoTip } from "./ui";
 
 const DIMS: Dim[] = ["imputation", "transform", "scaling", "encoding"];
@@ -196,18 +198,11 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
       </span>
     ) : null;
 
-  const param = (key: string, title: string, step = 1) => (
-    <ParamInput key={`${draft.encoding}-${key}`} id={`p-${key}`} title={title} step={step}
-      value={draft.params?.[key] ?? catalog.default_params[draft.encoding]?.[key]}
-      rule={catalog.param_rules?.[draft.encoding]?.[key]}
-      onChange={(n) => update({ params: { ...draftRef.current.params, [key]: n } })} />
-  );
-  const paramValue = (key: string) => draft.params?.[key] ?? catalog.default_params[draft.encoding]?.[key];
-  const PARAMS: Record<string, [string, string][]> = {
-    onehot: [["max_categories", "Max categories"], ["min_frequency", "Min frequency"]],
-    ordinal: [["min_frequency", "Min frequency"]],
-    tfidf_svd: [["svd_components", "SVD components"], ["max_features", "Max vocabulary"]],
-  };
+  const paramsOf = (dim: Dim) => (dim === "transform" || dim === "encoding" ? catalog.settings[draft[dim]] ?? [] : []);
+  const paramValue = (s: ModelSetting) => (draft.params?.[s.name] as SettingValue | undefined) ?? s.default;
+  const setParam = (s: ModelSetting, v: SettingValue) => update({ params: { ...draftRef.current.params, [s.name]: v } });
+  const registryOption = (dim: Dim) => catalog.transforms.find((o) => o.dimension === dim && o.key === draft[dim]);
+  const unavailable = (dim: Dim) => !allowed[dim].includes(draft[dim]) && labels[dim][draft[dim]] === undefined;
 
   const warning = retypeWarning(draft.semantic_type, data);
   const carried = Boolean(readOnly && data.locked && readOnly === data.locked);
@@ -281,8 +276,8 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
                 {dim === "imputation" && draft.imputation === "constant" && (
                   <div className="setting-row"><dt>{fillLabel}</dt><dd className="mono">{draft.impute_value ?? "—"}{vote("impute_value")}</dd></div>
                 )}
-                {dim === "encoding" && (PARAMS[draft.encoding] ?? []).map(([k, l]) => (
-                  <div key={k} className="setting-row"><dt>{l}</dt><dd>{String(paramValue(k) ?? "—")}</dd></div>
+                {paramsOf(dim).map((s) => (
+                  <div key={s.name} className="setting-row"><dt>{s.label}</dt><dd>{fmtSetting(s, paramValue(s))}</dd></div>
                 ))}
               </Fragment>
             ))}
@@ -393,9 +388,10 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
                 <div className="setting-row">
                   <label htmlFor={`d-${dim}`}>{DIM_LABEL[dim]}</label>
                   <select id={`d-${dim}`} value={draft[dim]}
-                    onChange={blurAfter((e) => dim === "encoding"
-                      ? commit(withEncoding(draftRef.current, e.target.value, catalog), 0)
+                    onChange={blurAfter((e) => dim === "encoding" || dim === "transform"
+                      ? commit(withOption(draftRef.current, dim, e.target.value, catalog), 0)
                       : update({ [dim]: e.target.value } as Partial<DecisionInput>, 0))}>
+                    {!allowed[dim].includes(draft[dim]) && <option value={draft[dim]} disabled>{optLabel(dim, draft[dim])}</option>}
                     {allowed[dim].map((o) => <option key={o} value={o}>{optLabel(dim, o)}</option>)}
                   </select>
                 </div>
@@ -420,9 +416,13 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
                   {vote("impute_value")}
                 </>
               )}
-              {dim === "encoding" && draft.encoding === "onehot" && <>{param("max_categories", "Max categories")}{param("min_frequency", "Min frequency", 0.005)}</>}
-              {dim === "encoding" && draft.encoding === "ordinal" && param("min_frequency", "Min frequency", 0.001)}
-              {dim === "encoding" && draft.encoding === "tfidf_svd" && <>{param("svd_components", "SVD components")}{param("max_features", "Max vocabulary", 1000)}</>}
+              {unavailable(dim) && (
+                <span className="inline-warn">Unavailable: {draft[dim]} isn't installed on this server. Choose another option.</span>
+              )}
+              {registryOption(dim) && <span className="secondary option-help">{registryOption(dim)!.help}</span>}
+              {paramsOf(dim).map((s) => (
+                <ParamRow key={`${draft[dim]}-${s.name}`} s={s} value={paramValue(s)} onChange={(v) => setParam(s, v)} />
+              ))}
             </div>
           ))}
 
@@ -493,29 +493,20 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
   );
 });
 
-/** A number field that can be cleared and retyped: only valid values are saved, and leaving it while it's
- * empty or out of range puts the saved value back. */
-function ParamInput({ id, title, step, value, rule, onChange }: {
-  id: string; title: string; step: number; value: number | undefined; rule: ParamRule | undefined;
-  onChange: (n: number) => void;
-}) {
-  const [text, setText] = useState(value === undefined ? "" : String(value));
-  useEffect(() => {
-    if (value !== undefined && Number(text) !== value) setText(String(value));
-    // Deliberately narrow deps: only an outside change (revert, retype) resyncs.
-  }, [value]);
-  const problem = paramProblem(text, rule);
+/** One parameter of the chosen transform or encoding. Only values that pass the rule are saved; the typed value
+ * shows until the field is left, so a number can pass through out-of-range digits on the way. */
+function ParamRow({ s, value, onChange }: { s: ModelSetting; value: SettingValue; onChange: (v: SettingValue) => void }) {
+  const [typed, setTyped] = useState<SettingValue | undefined>(undefined);
+  const problem = typed === undefined ? null : settingProblem(s, typed);
   return (
-    <div className="setting-row">
-      <label htmlFor={id}>{title}</label>
-      <input id={id} type="number" step={step} min={rule?.min} max={rule?.max} value={text}
-        aria-invalid={problem !== null} title={problem ?? undefined}
-        onChange={(e) => {
-          setText(e.target.value);
-          if (paramProblem(e.target.value, rule) === null) onChange(Number(e.target.value));
-        }}
-        onBlur={() => problem && setText(value === undefined ? "" : String(value))} />
-    </div>
+    <>
+      <div className="setting-row" onBlur={() => setTyped(undefined)}>
+        <label htmlFor={`p-${s.name}`} title={s.help}>{s.label}</label>
+        <SettingControl s={s} id={`p-${s.name}`} value={typed ?? value}
+          onChange={(v) => { setTyped(v); if (settingProblem(s, v) === null) onChange(v); }} />
+      </div>
+      {problem && <span className="inline-warn" role="alert">{s.label} {problem}</span>}
+    </>
   );
 }
 

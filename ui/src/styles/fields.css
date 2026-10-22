@@ -149,7 +149,8 @@
 .decision .setting.edited { border-left-color: var(--warn); }
 .decision .setting-row { grid-template-columns: 120px minmax(0, 1fr); min-height: 32px; }
 .decision .setting-row > label:first-child, .decision .setting-row > span:first-child, .decision .setting-row > dt { font-size: var(--fs-ui); color: var(--text-secondary); }
-.decision .suggested, .decision .vote, .decision .inline-warn { padding-left: 128px; font-size: var(--fs-small); }
+.decision .suggested, .decision .vote, .decision .inline-warn, .decision .option-help { padding-left: 128px; font-size: var(--fs-small); }
+.decision .option-help { display: block; color: var(--text-muted); }
 .decision .suggested { color: var(--text-muted); display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
 .decision .suggested button.link { height: auto; padding: 0; font-size: var(--fs-small); }
 .decision .vote { color: var(--text-muted); display: block; }
@@ -265,7 +266,7 @@
   .review .segmented button, .review .decision select, .review .decision input:not([type="checkbox"]),
   .review .field-sidebar button.ghost { min-height: 44px; }
   .decision .setting-row { grid-template-columns: 104px minmax(0, 1fr); }
-  .decision .suggested, .decision .vote, .decision .inline-warn { padding-left: 112px; }
+  .decision .suggested, .decision .vote, .decision .inline-warn, .decision .option-help { padding-left: 112px; }
 
   /* Team review: the queue is one screen, a field another (with a way back); the comparison stacks. */
   .tr.team-review > .tr-queue { max-height: none; border-right: 0; }
