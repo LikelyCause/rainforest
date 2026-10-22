@@ -86,9 +86,10 @@ ruff = docker run --rm --user $$(id -u):$$(id -g) -e RUFF_NO_CACHE=true -v "$(CU
 # `npm run dev`, because the container installs Linux builds.
 ui_node = docker run --rm --user $$(id -u):$$(id -g) -e HOME=/tmp -v "$(CURDIR)/ui":/w -w /w node:20 sh -c
 
-lint:          ## ruff and ESLint, as CI runs them, in containers (no local Python or Node needed)
+lint:          ## ruff, ESLint and both formatters' checks, as CI runs them, in containers (no local Python or Node needed)
 	$(ruff) check .
-	$(ui_node) 'npm ci --no-audit --no-fund --loglevel=error && npm run -s lint'
+	$(ruff) format --check .
+	$(ui_node) 'npm ci --no-audit --no-fund --loglevel=error && npm run -s lint && npm run -s format:check'
 
 format:        ## sort imports and format api/ and ui/src in place, in containers
 	$(ruff) check --select I --fix .

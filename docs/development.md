@@ -70,6 +70,9 @@ Ruff lints and formats the API (`api/ruff.toml`). ESLint lints the UI (`ui/eslin
 ESLint warns on hook dependency lists it can't confirm, and `npm run lint` allows the warnings that exist today and no
 more.
 
+`.git-blame-ignore-revs` lists the formatting commit, so blame skips it. GitHub reads it already. For `git blame`
+locally, run `git config blame.ignoreRevsFile .git-blame-ignore-revs` once per clone.
+
 ## CI
 
 `.github/workflows/ci.yml` runs on pushes to `main` and on pull requests. It runs:
@@ -77,7 +80,7 @@ more.
 - the API tests, with a Postgres service (so nothing skips) and an MLflow server container
 - the UI typecheck, tests and build
 - `docker compose --profile keycloak build` for the images
-- ruff and ESLint (the *Lint* job)
+- ruff, ESLint, and the formatters' checks (the *Lint* job)
 
 ## Schema changes
 
