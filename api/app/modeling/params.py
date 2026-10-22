@@ -16,7 +16,7 @@ class Setting:
     label: str
     help: str
     group: str
-    kind: str  # choice | int | float | bool | int_or_none
+    kind: str  # choice | int | float | bool | int_or_none | float_or_none | target
     default: Any
     min: float | None = None
     max: float | None = None
@@ -25,7 +25,7 @@ class Setting:
     options: tuple[dict, ...] | None = None
     applies: str = "both"
     when: dict[str, tuple] | None = None
-    none_value: int | None = None
+    none_value: float | None = None
     none_label: str | None = None
 
     def to_json(self) -> dict:
@@ -1195,7 +1195,9 @@ def value_problem(s: Setting, v: Any) -> str | None:
         )
     if s.kind == "bool":
         return None if isinstance(v, bool) else f"{s.name} must be true or false"
-    if s.kind == "int_or_none" and v == s.none_value:
+    if s.kind == "target":
+        return None if v is None or (isinstance(v, str) and v) else f"{s.name} must be a target's name"
+    if s.kind in ("int_or_none", "float_or_none") and v == s.none_value:
         return None
     if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
         return f"{s.name} must be a number"

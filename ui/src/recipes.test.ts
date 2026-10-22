@@ -66,6 +66,7 @@ describe("fmtChange", () => {
     expect(fmtValue(true)).toBe("yes");
     expect(fmtValue({})).toBe("—");
     expect(fmtValue({ max_categories: 30 })).toBe("max_categories=30");
+    expect(fmtValue({ target: null, cv: 5 })).toBe("target=auto, cv=5");
   });
 });
 

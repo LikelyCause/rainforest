@@ -10,7 +10,10 @@ from __future__ import annotations
 import importlib.util
 import re
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Literal
+
+import numpy as np
+from sklearn.base import BaseEstimator, TransformerMixin, clone
 
 from ..modeling.params import Setting, value_problem
 
@@ -19,8 +22,53 @@ _BUILTIN_KEY = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 @dataclass(frozen=True)
+class TargetInfo:
+    name: str
+    kind: Literal["binary", "multiclass", "continuous"]
+    classes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class BuildContext:
     seed: int = 0
+    targets: tuple[TargetInfo, ...] = ()
+    target: TargetInfo | None = None
+
+
+class PickTarget(TransformerMixin, BaseEstimator):
+    """Fits a target-aware transformer on one column of the export's encoded targets, so a spec's builder returns a
+    plain sklearn transformer that takes a 1-D y. Multiclass codes reach it as labels, so its output names carry the
+    class; binary ones as 0/1, so it encodes the share of the second class in target_classes."""
+
+    def __init__(self, transformer=None, target: str = "", kind: str = "binary", classes: tuple[str, ...] = ()):
+        self.transformer = transformer
+        self.target = target
+        self.kind = kind
+        self.classes = classes
+
+    def _y(self, y):
+        if y is None:
+            raise ValueError(f"{self.target}: fitting needs the targets (a DataFrame with a {self.target!r} column)")
+        col = np.asarray(y[self.target])
+        if self.kind == "continuous":
+            return col.astype(np.float64)
+        codes = col.astype(np.int64)
+        return codes if self.kind == "binary" else np.asarray(self.classes, dtype=object)[codes]
+
+    def fit(self, X, y=None):
+        self.transformer_ = clone(self.transformer).fit(X, self._y(y))
+        return self
+
+    def fit_transform(self, X, y=None, **fit_params):
+        # TargetEncoder.fit_transform is what cross-fits; fit followed by transform would not.
+        self.transformer_ = clone(self.transformer)
+        return self.transformer_.fit_transform(X, self._y(y))
+
+    def transform(self, X):
+        return self.transformer_.transform(X)
+
+    def get_feature_names_out(self, input_features=None):
+        return self.transformer_.get_feature_names_out(input_features)
 
 
 @dataclass(frozen=True)

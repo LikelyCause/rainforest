@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   changed,
+  fmtSetting,
   groupSummary,
   isVisible,
   prefillValues,
@@ -8,6 +9,7 @@ import {
   restore,
   runFields,
   settingProblem,
+  targetChoice,
 } from "./settings";
 import type { ModelSetting } from "./types";
 
@@ -150,5 +152,58 @@ describe("groupSummary", () => {
   it("lists the first values when nothing changed", () => {
     expect(groupSummary(trees, {})).toBe("X 63 · X No limit · X GBDT · defaults");
     expect(groupSummary(trees, {}, 1)).toBe("X 63 · 2 more · defaults");
+  });
+});
+
+describe("optional numbers and targets", () => {
+  it("checks optional numbers and target names", () => {
+    const smooth = S({
+      name: "smooth",
+      kind: "float_or_none",
+      default: null,
+      min: 0,
+      max: 1000,
+      none_value: null,
+      none_label: "Auto",
+    });
+    expect(settingProblem(smooth, null)).toBeNull();
+    expect(settingProblem(smooth, 12.5)).toBeNull();
+    expect(settingProblem(smooth, 1001)).toBe("must be from 0 to 1000 (or Auto)");
+    expect(fmtSetting(smooth, null)).toBe("Auto");
+    const target = S({
+      name: "target",
+      kind: "target",
+      default: null,
+      min: null,
+      max: null,
+      none_label: "First target",
+    });
+    expect(settingProblem(target, null)).toBeNull();
+    expect(settingProblem(target, "G1")).toBeNull();
+    expect(settingProblem(target, "")).toBe("must be a target's name");
+  });
+
+  it("offers a target setting as the source's targets, keeping a stale one visible", () => {
+    const target = S({
+      name: "target",
+      kind: "target",
+      default: null,
+      min: null,
+      max: null,
+      none_label: "First target",
+    });
+    const c = targetChoice(target, ["readmitted"], null);
+    expect(c.kind).toBe("choice");
+    expect(c.options).toEqual([
+      { value: null, label: "First target (readmitted)" },
+      { value: "readmitted", label: "readmitted" },
+    ]);
+    expect(fmtSetting(c, null)).toBe("First target (readmitted)");
+    expect(targetChoice(target, ["G1", "G3"], "G2").options!.at(-1)).toEqual({
+      value: "G2",
+      label: "G2 (not a target here)",
+      disabled: true,
+    });
+    expect(targetChoice(target, [], null).options).toEqual([{ value: null, label: "First target" }]);
   });
 });

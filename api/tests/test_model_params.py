@@ -1,7 +1,15 @@
 import lightgbm
 import pytest
 
-from app.modeling.params import CATALOG, objective_problem, route, setting_problems, settings_for
+from app.modeling.params import (
+    CATALOG,
+    Setting,
+    objective_problem,
+    route,
+    setting_problems,
+    settings_for,
+    value_problem,
+)
 from app.modeling.registry import MODELS, _lightgbm_native_params
 
 LGB = settings_for("lightgbm")
@@ -283,3 +291,14 @@ def test_xgboost_bad_values_are_named():
     )
     assert "objective" in setting_problems("xgboost", {"huber_slope": 2.0})[0]
     assert setting_problems("xgboost", {"booster": "gblinear"})
+
+
+def test_float_or_none_and_target_kinds():
+    smooth = Setting("smooth", "Smoothing", "", "field", "float_or_none", None, 0, 1000, none_label="Auto")
+    assert value_problem(smooth, None) is None and value_problem(smooth, 12.5) is None
+    assert value_problem(smooth, 1001) == "smooth must be from 0 to 1000 (or Auto)"
+    assert value_problem(smooth, "x") == "smooth must be a number"
+    target = Setting("target", "Target", "", "field", "target", None, none_label="First target")
+    assert value_problem(target, None) is None and value_problem(target, "readmitted") is None
+    assert value_problem(target, "") == value_problem(target, 3) == "target must be a target's name"
+    assert smooth.to_json()["none_value"] is None and target.to_json()["kind"] == "target"

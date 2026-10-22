@@ -1,12 +1,24 @@
 """Registered transformers; see registry.py."""
 
 from .builtin import BUILTINS, ENCODING_SETTINGS
-from .registry import BuildContext, TransformSpec, get, param_problems, params_for, register, specs
+from .registry import (
+    BuildContext,
+    PickTarget,
+    TargetInfo,
+    TransformSpec,
+    get,
+    param_problems,
+    params_for,
+    register,
+    specs,
+)
 
 __all__ = [
     "BUILTINS",
     "ENCODING_SETTINGS",
     "BuildContext",
+    "PickTarget",
+    "TargetInfo",
     "TransformSpec",
     "get",
     "param_problems",

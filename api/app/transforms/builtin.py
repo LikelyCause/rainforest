@@ -1,5 +1,6 @@
-"""The transformers Rainforest registers itself, and the existing encoders' parameters as settings for the decision
-panel's form (semantics.PARAM_RULES and DEFAULT_PARAMS stay their checks and defaults; a test keeps them equal)."""
+"""The transformers Rainforest registers itself (Yeo-Johnson and target encoding), and the existing encoders'
+parameters as settings for the decision panel's form (semantics.PARAM_RULES and DEFAULT_PARAMS stay their checks and
+defaults; a test keeps them equal)."""
 
 from __future__ import annotations
 
@@ -26,7 +27,62 @@ YEO_JOHNSON = TransformSpec(
     build=_yeo_johnson,
 )
 
-BUILTINS = [YEO_JOHNSON]
+
+def _target(params: dict[str, Any], ctx: BuildContext):
+    from sklearn.preprocessing import TargetEncoder
+
+    smooth = "auto" if params["smooth"] is None else float(params["smooth"])
+    return TargetEncoder(
+        target_type=ctx.target.kind, smooth=smooth, cv=int(params["cv"]), shuffle=True, random_state=ctx.seed
+    )
+
+
+TARGET = TransformSpec(
+    key="target",
+    dimension="encoding",
+    types=("categorical",),
+    families=("tree", "linear", "neural"),
+    label="Target encoding",
+    help="Replaces each level with the target's average for it, learned on other rows so no row sees its own answer. "
+    "One column, or one per class for a target with several classes.",
+    build=_target,
+    needs_target=True,
+    settings=(
+        Setting(
+            "target",
+            "Target",
+            "Whose averages. The first target follows the chain's order.",
+            "field",
+            "target",
+            None,
+            none_label="First target",
+        ),
+        Setting(
+            "smooth",
+            "Smoothing",
+            "How far rare levels are pulled towards the overall average.",
+            "field",
+            "float_or_none",
+            None,
+            0,
+            1000,
+            none_label="Auto",
+        ),
+        Setting(
+            "cv",
+            "Folds",
+            "Folds for the out-of-fold averages on the rows the encoding is learned from.",
+            "field",
+            "int",
+            5,
+            2,
+            10,
+            1,
+        ),
+    ),
+)
+
+BUILTINS = [YEO_JOHNSON, TARGET]
 
 
 def _param(name: str, label: str, help: str, kind: str, default: Any, lo: float, hi: float, step: float) -> Setting:

@@ -61,6 +61,14 @@ def _family(src: Source, family: str | None) -> str:
     return src.family
 
 
+def source_targets(conn, src: Source, dataset_id: int) -> list[str]:
+    """The targets a source predicts, in chain order."""
+    if src.team:
+        row = conn.execute("SELECT target_columns FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()
+        return list(row["target_columns"] or [])
+    return view_targets(conn, src)
+
+
 def view_targets(conn, src: Source) -> list[str]:
     """The targets a non-team source decides on, in chain order (an experiment's own order first)."""
     names = [
@@ -113,6 +121,7 @@ def get_field(field_id: int, user: CurrentUser, family: str | None = None, view:
             if src.kind in ("experiment", "baseline", "suggested")
             else recipes.locked_problem(conn, src.recipe, [field_id])
         )
+        source = source_targets(conn, src, f["dataset_id"])
         if src.team:
             targets = conn.execute(
                 """SELECT other_field_id AS field_id, other_field_name AS name, method, value, strength
@@ -124,7 +133,7 @@ def get_field(field_id: int, user: CurrentUser, family: str | None = None, view:
                 """SELECT other_field_id AS field_id, other_field_name AS name, method, value, strength
                      FROM meta.v_correlations WHERE field_id = %s AND other_field_name = ANY(%s)
                     ORDER BY other_field_name""",
-                (field_id, view_targets(conn, src)),
+                (field_id, source),
             ).fetchall()
         if src.kind == "experiment":
             entry = recipes.snapshot_of(conn, src.recipe)["fields"].get(f["name"])
@@ -132,7 +141,14 @@ def get_field(field_id: int, user: CurrentUser, family: str | None = None, view:
                 baseline = {**entry["decision"], "settings": entry["settings"].get(fam)}
     suggestions = f.pop("suggestion") or {}
     f["suggestion"] = suggestions.get(fam, {})
-    out = {"field": f, "family": fam, "decision": decision, "target_associations": targets, "locked": locked}
+    out = {
+        "field": f,
+        "family": fam,
+        "decision": decision,
+        "target_associations": targets,
+        "targets": source,
+        "locked": locked,
+    }
     if src.kind == "experiment":
         out["baseline"] = baseline
     return out
@@ -203,14 +219,15 @@ def save_decision(field_id: int, body: DecisionIn, user: CurrentUser, view: str 
         src = source_for(conn, f["dataset_id"], user, lock="share", view=view)
         fam = _family(src, body.family)
         d = _with_stored_task(d, _merged(conn, field_id, fam, src))
-        errors = validate_decision(d, fam, n_unique=f["n_unique"])
+        source = source_targets(conn, src, f["dataset_id"])
+        errors = validate_decision(d, fam, n_unique=f["n_unique"], targets=source)
         if errors:
             # A type change brings the new type's suggested settings when the ones sent were for the old type.
             was = _merged(conn, field_id, fam, src)
             if was is not None and was["semantic_type"] != d["semantic_type"]:
                 sugg = suggest(d["semantic_type"], {k: f[k] for k in STAT_KEYS}, False, fam)
                 d = {**d, **settings_of(sugg)}
-                errors = validate_decision(d, fam, n_unique=f["n_unique"])
+                errors = validate_decision(d, fam, n_unique=f["n_unique"], targets=source)
         if errors:
             raise HTTPException(422, {"message": "Invalid decision", "errors": errors})
         src.require_write()
