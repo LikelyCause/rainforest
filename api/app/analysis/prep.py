@@ -1,4 +1,5 @@
 """Seeded row samples of typed columns for the Explore analyses."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -85,8 +86,9 @@ def categorical_column(name: str, field_id: int | None, s: pl.Series, type_: str
     return Column(name, field_id, "categorical", out, levels, type_)
 
 
-def target_values(s: pl.Series, semantic_type: str | None,
-                  task: str | None = None) -> tuple[str, np.ndarray, list[str]]:
+def target_values(
+    s: pl.Series, semantic_type: str | None, task: str | None = None
+) -> tuple[str, np.ndarray, list[str]]:
     """(kind, y, classes): float values with NaN for a numeric target, else codes with -1 for missing. A target predicted
     as classes is compared as classes whatever its type."""
     if semantic_type in NUMERIC and task != "classes":
@@ -99,8 +101,9 @@ def target_values(s: pl.Series, semantic_type: str | None,
     return "categorical", codes.fill_null(-1).to_numpy().astype(np.int32), classes
 
 
-def sample_rows(n_rows: int, k: int, y: np.ndarray | None = None, kind: str | None = None,
-                seed: int = SEED) -> np.ndarray:
+def sample_rows(
+    n_rows: int, k: int, y: np.ndarray | None = None, kind: str | None = None, seed: int = SEED
+) -> np.ndarray:
     """Sorted row indices: proportional per class when `y` holds class codes; rows without a target are left out."""
     rng = np.random.default_rng(seed)
     if y is None:
@@ -121,8 +124,9 @@ def sample_rows(n_rows: int, k: int, y: np.ndarray | None = None, kind: str | No
     return np.sort(np.concatenate(picked))
 
 
-def prepare_raw(path: Path, fields: list[dict], kept: bool, target: str | None, sample: int,
-                seed: int = SEED) -> Prepared:
+def prepare_raw(
+    path: Path, fields: list[dict], kept: bool, target: str | None, sample: int, seed: int = SEED
+) -> Prepared:
     """`fields`: dicts with id, name, action, semantic_type, target_task and datetime_format, in column order."""
     n_rows = pl.scan_parquet(path).select(pl.len()).collect().item()
     target_field = next((f for f in fields if f["name"] == target), None) if target else None
@@ -140,8 +144,10 @@ def prepare_raw(path: Path, fields: list[dict], kept: bool, target: str | None, 
     kind, y_full, classes = None, None, []
     if target_field is not None:
         kind, y_full, classes = target_values(
-            pl.read_parquet(path, columns=[target]).to_series(), target_field["semantic_type"],
-            target_field.get("target_task"))
+            pl.read_parquet(path, columns=[target]).to_series(),
+            target_field["semantic_type"],
+            target_field.get("target_task"),
+        )
     idx = sample_rows(n_rows, sample, y_full, kind, seed)
     df = read_rows(path, [f["name"] for f in use], idx)
 
@@ -167,8 +173,7 @@ def prepare_raw(path: Path, fields: list[dict], kept: bool, target: str | None, 
     return Prepared(columns, skipped, target, kind, y, classes)
 
 
-def prepare_export(export_dir: Path, manifest: dict, target: str | None, sample: int,
-                   seed: int = SEED) -> Prepared:
+def prepare_export(export_dir: Path, manifest: dict, target: str | None, sample: int, seed: int = SEED) -> Prepared:
     """Train-split rows of an export's model_ready.parquet; every feature is numeric there."""
     path = export_dir / "model_ready.parquet"
     if not path.exists():
@@ -181,8 +186,11 @@ def prepare_export(export_dir: Path, manifest: dict, target: str | None, sample:
     if target:
         kind = "numeric" if (manifest.get("target_kinds") or {}).get(target) == "regression" else "categorical"
         col = pl.read_parquet(path, columns=[target]).to_series()
-        y_full = (col.cast(pl.Float64).fill_null(np.nan).to_numpy() if kind == "numeric"
-                  else col.fill_null(-1).to_numpy().astype(np.int32))[train]
+        y_full = (
+            col.cast(pl.Float64).fill_null(np.nan).to_numpy()
+            if kind == "numeric"
+            else col.fill_null(-1).to_numpy().astype(np.int32)
+        )[train]
     idx = sample_rows(train.size, sample, y_full, kind, seed)
     names = [c for c in pl.read_parquet_schema(path) if c not in (ROW_ID, SPLIT_COL, *targets)]
     df = read_rows(path, names, train[idx])
@@ -235,6 +243,8 @@ def display_values(c: Column) -> list:
     if c.kind == "categorical":
         return [c.levels[v] for v in c.values]
     if c.type == "datetime":
-        return [None if np.isnan(v) else datetime.fromtimestamp(v, timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-                for v in c.values]
+        return [
+            None if np.isnan(v) else datetime.fromtimestamp(v, timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            for v in c.values
+        ]
     return [None if np.isnan(v) else round(float(v), 6) for v in c.values]

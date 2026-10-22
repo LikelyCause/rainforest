@@ -1,5 +1,6 @@
 """OIDC sign-in against an in-process provider (tests/oidc_provider.py). The redirect and token checks need no
 database; the flows that provision users run against RAINFOREST_TEST_DATABASE_URL and skip without it."""
+
 import os
 import time
 from urllib.parse import parse_qs, urlsplit
@@ -15,8 +16,11 @@ from .oidc_provider import CLIENT_ID, CLIENT_SECRET, ISSUER, FakeProvider, new_k
 
 DB_URL = os.environ.get("RAINFOREST_TEST_DATABASE_URL")
 OIDC_ENV = {
-    "RAINFOREST_AUTH_MODE": "oidc", "RAINFOREST_OIDC_ISSUER": ISSUER, "RAINFOREST_OIDC_CLIENT_ID": CLIENT_ID,
-    "RAINFOREST_OIDC_CLIENT_SECRET": CLIENT_SECRET, "RAINFOREST_OIDC_PROVIDER_NAME": "Keycloak",
+    "RAINFOREST_AUTH_MODE": "oidc",
+    "RAINFOREST_OIDC_ISSUER": ISSUER,
+    "RAINFOREST_OIDC_CLIENT_ID": CLIENT_ID,
+    "RAINFOREST_OIDC_CLIENT_SECRET": CLIENT_SECRET,
+    "RAINFOREST_OIDC_PROVIDER_NAME": "Keycloak",
     "RAINFOREST_OIDC_REDIRECT_URL": "http://testserver/api/auth/oidc/callback",
 }
 LEAD = {"sub": "u-lead", "name": "Lee Lead", "email": "lead@example.com", "groups": ["rainforest-lead"]}
@@ -74,8 +78,14 @@ def test_login_redirect_carries_pkce_state_and_nonce(oidc_env):
 
 def test_config_names_the_provider(oidc_env):
     cfg = TestClient(app).get("/api/auth/config").json()
-    assert cfg == {"mode": "oidc", "provider_name": "Keycloak", "lead_group": "rainforest-lead",
-                   "member_group": "rainforest-member", "problem": None, "accounts_from_env": False}
+    assert cfg == {
+        "mode": "oidc",
+        "provider_name": "Keycloak",
+        "lead_group": "rainforest-lead",
+        "member_group": "rainforest-member",
+        "problem": None,
+        "accounts_from_env": False,
+    }
 
 
 def test_callback_refuses_a_missing_or_mismatched_state(oidc_env, provider):
@@ -96,8 +106,9 @@ def test_callback_refuses_a_missing_or_mismatched_state(oidc_env, provider):
 def test_callback_reports_a_provider_error(oidc_env, provider):
     client = TestClient(app)
     _, q = start_login(client)
-    r = client.get("/api/auth/oidc/callback", params={"state": q["state"], "error": "access_denied"},
-                   follow_redirects=False)
+    r = client.get(
+        "/api/auth/oidc/callback", params={"state": q["state"], "error": "access_denied"}, follow_redirects=False
+    )
     assert r.headers["location"] == "/login?error=provider"
 
 
@@ -133,15 +144,18 @@ class TestIdTokenChecks:
     def test_valid(self, provider):
         assert oidc.verify_id_token(provider.id_token(self.claims(provider)), "n-1")["sub"] == "abc"
 
-    @pytest.mark.parametrize("change, message", [
-        ({"iss": "https://evil.example/realms/rainforest"}, "issuer"),
-        ({"aud": "someone-else"}, "audience"),
-        ({"exp": int(time.time()) - 3600, "iat": int(time.time()) - 7200}, "expired"),
-        ({"exp": None}, "exp"),
-        ({"iat": None}, "iat"),
-        ({"nonce": "other"}, "nonce"),
-        ({"aud": [CLIENT_ID, "other"]}, "azp"),
-    ])
+    @pytest.mark.parametrize(
+        "change, message",
+        [
+            ({"iss": "https://evil.example/realms/rainforest"}, "issuer"),
+            ({"aud": "someone-else"}, "audience"),
+            ({"exp": int(time.time()) - 3600, "iat": int(time.time()) - 7200}, "expired"),
+            ({"exp": None}, "exp"),
+            ({"iat": None}, "iat"),
+            ({"nonce": "other"}, "nonce"),
+            ({"aud": [CLIENT_ID, "other"]}, "azp"),
+        ],
+    )
     def test_rejected_claims(self, provider, change, message):
         token = provider.id_token(self.claims(provider), **change)
         with pytest.raises(oidc.OIDCError, match=f"(?i){message}"):
@@ -161,8 +175,19 @@ class TestIdTokenChecks:
 
     def test_symmetric_and_unsigned_tokens_are_refused(self, provider):
         import jwt
-        hs = jwt.encode({"sub": "abc", "iss": ISSUER, "aud": CLIENT_ID, "nonce": "n-1",
-                         "iat": int(time.time()), "exp": int(time.time()) + 60}, CLIENT_SECRET, algorithm="HS256")
+
+        hs = jwt.encode(
+            {
+                "sub": "abc",
+                "iss": ISSUER,
+                "aud": CLIENT_ID,
+                "nonce": "n-1",
+                "iat": int(time.time()),
+                "exp": int(time.time()) + 60,
+            },
+            CLIENT_SECRET,
+            algorithm="HS256",
+        )
         none = jwt.encode({"sub": "abc"}, None, algorithm="none")
         for token in (hs, none):
             with pytest.raises(oidc.OIDCError, match="not allowed"):
@@ -179,10 +204,17 @@ class TestIdTokenChecks:
             oidc.metadata()
 
 
-@pytest.mark.parametrize("groups, role", [
-    (["rainforest-lead", "rainforest-member"], "lead"), (["/rainforest-member"], "member"),
-    ("rainforest-lead", "lead"), (["/org/rainforest-lead"], "lead"), (["other"], None), (None, None),
-])
+@pytest.mark.parametrize(
+    "groups, role",
+    [
+        (["rainforest-lead", "rainforest-member"], "lead"),
+        (["/rainforest-member"], "member"),
+        ("rainforest-lead", "lead"),
+        (["/org/rainforest-lead"], "lead"),
+        (["other"], None),
+        (None, None),
+    ],
+)
 def test_role_from_groups(oidc_env, groups, role):
     assert oidc.role_from_claims({"groups": groups}) == role
 
@@ -216,6 +248,7 @@ def flow(db_app, provider):
 
 def _user(sub):
     from app.db import fetch_one
+
     return fetch_one("SELECT * FROM meta.users WHERE oidc_subject = %s", (sub,))
 
 
@@ -228,7 +261,11 @@ def test_first_sign_in_provisions_the_user(flow):
     assert "Max-Age=0" in cookies[auth.STATE_COOKIE], "the one-time state cookie is cleared"
     me = client.get("/api/auth/me").json()
     assert {k: me[k] for k in ("name", "email", "role", "mode")} == {
-        "name": "Lee Lead", "email": "lead@example.com", "role": "lead", "mode": "oidc"}
+        "name": "Lee Lead",
+        "email": "lead@example.com",
+        "role": "lead",
+        "mode": "oidc",
+    }
     assert _user("u-lead")["last_seen_at"] is not None
 
     member = TestClient(app)

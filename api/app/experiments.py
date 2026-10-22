@@ -10,6 +10,7 @@ Every read of experiments, exports and runs goes through `visible_ids` / `get_vi
 the same rule from row-level security (migration 010). MLflow has no access control of its own, so runs of a
 private experiment are not logged to it until the version reaches review (`flush_deferred`).
 """
+
 from __future__ import annotations
 
 import logging
@@ -40,8 +41,10 @@ HEADLINE_METRICS = ("roc_auc", "roc_auc_ovr_macro", "r2", "accuracy")
 
 def visible_ids(user_id: int) -> str:
     """SQL for the ids of the experiments `user_id` may see, to use as `experiment_id IN (...)`."""
-    return (f"SELECT x.id FROM {FROM} WHERE x.assessor_id IS NULL OR x.assessor_id = {int(user_id)} "
-            "OR xr.phase <> 'assessing'")
+    return (
+        f"SELECT x.id FROM {FROM} WHERE x.assessor_id IS NULL OR x.assessor_id = {int(user_id)} "
+        "OR xr.phase <> 'assessing'"
+    )
 
 
 def source_key(recipe_id: int, assessor_id: int | None) -> str:
@@ -88,8 +91,9 @@ def adjust_denied(x: dict, user: dict) -> tuple[int, str] | None:
     if x["assessor_id"] is not None:
         return 409, "A personal experiment follows your assessment; change your assessment instead."
     if x["is_default"] or x["owner"] != user["id"]:
-        return 403, ("Only the experiment's owner adjusts it. Start your own experiment from this baseline to try "
-                     "changes.")
+        return 403, (
+            "Only the experiment's owner adjusts it. Start your own experiment from this baseline to try changes."
+        )
     if x["archived_at"] is not None:
         return 409, f"Experiment {x['name']!r} is archived; unarchive it to adjust it."
     return None
@@ -112,13 +116,20 @@ def create(conn, dataset_id: int, name: str, source: str, user: dict, notes: str
         raise HTTPException(404, "Recipe not found")
     if assessor_id is None:
         if recipe["phase"] != "finalized":
-            raise HTTPException(409, f"{recipes.label(recipe)} isn't finalized; a team experiment needs a finalized "
-                                     "version. Experiment on your own assessment instead.")
+            raise HTTPException(
+                409,
+                f"{recipes.label(recipe)} isn't finalized; a team experiment needs a finalized "
+                "version. Experiment on your own assessment instead.",
+            )
     else:
         if assessor_id != user["id"]:
             raise HTTPException(403, "A personal experiment can only be built from your own assessment.")
-        if conn.execute("SELECT 1 FROM meta.assessments WHERE recipe_id = %s AND user_id = %s LIMIT 1",
-                        (recipe_id, assessor_id)).fetchone() is None:
+        if (
+            conn.execute(
+                "SELECT 1 FROM meta.assessments WHERE recipe_id = %s AND user_id = %s LIMIT 1", (recipe_id, assessor_id)
+            ).fetchone()
+            is None
+        ):
             raise HTTPException(403, f"You don't assess {recipes.label(recipe, lower=True)}.")
     row = conn.execute(
         """INSERT INTO meta.experiments (dataset_id, name, owner, recipe_id, assessor_id, source, notes)
@@ -156,31 +167,58 @@ def seed_copy(conn, x: dict) -> None:
         return
     snap = recipes.snapshot_of(conn, recipe)
     fam = recipe["family"]
-    fields = conn.execute("SELECT id, name, suggestion FROM meta.fields WHERE dataset_id = %s",
-                          (x["dataset_id"],)).fetchall()
+    fields = conn.execute(
+        "SELECT id, name, suggestion FROM meta.fields WHERE dataset_id = %s", (x["dataset_id"],)
+    ).fetchall()
     decisions, settings = [], []
     for f in fields:
         entry = snap["fields"].get(f["name"])
         if entry is None:
             continue
         d = entry["decision"]
-        decisions.append((x["id"], f["id"], d["action"], d["semantic_type"], d.get("notes"), d.get("target_task"),
-                          jsonb(d["target_bins"]) if d.get("target_bins") else None))
+        decisions.append(
+            (
+                x["id"],
+                f["id"],
+                d["action"],
+                d["semantic_type"],
+                d.get("notes"),
+                d.get("target_task"),
+                jsonb(d["target_bins"]) if d.get("target_bins") else None,
+            )
+        )
         s = entry["settings"].get(fam) or (f["suggestion"] or {}).get(fam) or {}
-        settings.append((x["id"], f["id"], fam, s.get("imputation") or "none", s.get("impute_value"),
-                         bool(s.get("add_missing_indicator")), s.get("transform") or "none",
-                         s.get("scaling") or "none", s.get("encoding") or "none", jsonb(s.get("params") or {})))
+        settings.append(
+            (
+                x["id"],
+                f["id"],
+                fam,
+                s.get("imputation") or "none",
+                s.get("impute_value"),
+                bool(s.get("add_missing_indicator")),
+                s.get("transform") or "none",
+                s.get("scaling") or "none",
+                s.get("encoding") or "none",
+                jsonb(s.get("params") or {}),
+            )
+        )
     with conn.cursor() as cur:
         cur.executemany(
             """INSERT INTO meta.experiment_decisions (experiment_id, field_id, action, semantic_type, notes, target_task,
                                                      target_bins)
-               VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""", decisions)
+               VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
+            decisions,
+        )
         cur.executemany(
             """INSERT INTO meta.experiment_settings (experiment_id, field_id, family, imputation, impute_value,
                           add_missing_indicator, transform, scaling, encoding, params)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""", settings)
-    conn.execute("UPDATE meta.experiments SET target_order = %s WHERE id = %s AND target_order IS NULL",
-                 (recipes.snapshot_targets(snap), x["id"]))
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
+            settings,
+        )
+    conn.execute(
+        "UPDATE meta.experiments SET target_order = %s WHERE id = %s AND target_order IS NULL",
+        (recipes.snapshot_targets(snap), x["id"]),
+    )
 
 
 def snapshot_for(conn, x: dict) -> dict:
@@ -193,8 +231,9 @@ def snapshot_for(conn, x: dict) -> dict:
         return personal_snapshot(conn, recipe, x["assessor_id"])
     if x["is_default"] or recipe["phase"] != "finalized":
         return recipes.snapshot_of(conn, recipe)
-    return recipes.snapshot(conn, x["dataset_id"], Source(recipe, experiment=x), family=recipe["family"],
-                            targets=x["target_order"] or [])
+    return recipes.snapshot(
+        conn, x["dataset_id"], Source(recipe, experiment=x), family=recipe["family"], targets=x["target_order"] or []
+    )
 
 
 NO_ADJUSTMENTS = {"fields": [], "targets": None, "count": 0, "targets_changed": False}
@@ -208,7 +247,10 @@ def adjustments(conn, x: dict, snapshots: dict[int, dict] | None = None) -> dict
     snapshots = {} if snapshots is None else snapshots
     if x["recipe_id"] not in snapshots:
         recipe = recipes.get(conn, x["recipe_id"])
-        snapshots[x["recipe_id"]] = (recipe, recipes.snapshot_of(conn, recipe) if recipe["phase"] == "finalized" else None)
+        snapshots[x["recipe_id"]] = (
+            recipe,
+            recipes.snapshot_of(conn, recipe) if recipe["phase"] == "finalized" else None,
+        )
     recipe, base = snapshots[x["recipe_id"]]
     if base is None:
         return dict(NO_ADJUSTMENTS)
@@ -218,8 +260,12 @@ def adjustments(conn, x: dict, snapshots: dict[int, dict] | None = None) -> dict
         kept = [c for c in f["changes"] if c["key"] != "notes"]
         if kept or f["change"] != "changed":
             changed.append({**f, "changes": kept})
-    return {"fields": changed, "targets": d["targets"], "count": len(changed),
-            "targets_changed": d["targets"] is not None}
+    return {
+        "fields": changed,
+        "targets": d["targets"],
+        "count": len(changed),
+        "targets_changed": d["targets"] is not None,
+    }
 
 
 def revert(conn, x: dict, field_ids: list[int] | None) -> None:
@@ -230,15 +276,22 @@ def revert(conn, x: dict, field_ids: list[int] | None) -> None:
         conn.execute("UPDATE meta.experiments SET target_order = NULL WHERE id = %s", (x["id"],))
         seed_copy(conn, {**x, "target_order": None})
         return
-    conn.execute("DELETE FROM meta.experiment_decisions WHERE experiment_id = %s AND field_id = ANY(%s)",
-                 (x["id"], field_ids))
-    conn.execute("DELETE FROM meta.experiment_settings WHERE experiment_id = %s AND field_id = ANY(%s)",
-                 (x["id"], field_ids))
+    conn.execute(
+        "DELETE FROM meta.experiment_decisions WHERE experiment_id = %s AND field_id = ANY(%s)", (x["id"], field_ids)
+    )
+    conn.execute(
+        "DELETE FROM meta.experiment_settings WHERE experiment_id = %s AND field_id = ANY(%s)", (x["id"], field_ids)
+    )
     seed_copy(conn, x)
     # The order keeps the experiment's own targets as they were, then any the revert brought back.
-    targets = [r["name"] for r in conn.execute(
-        """SELECT f.name FROM meta.experiment_decisions e JOIN meta.fields f ON f.id = e.field_id
-            WHERE e.experiment_id = %s AND e.action = 'target' ORDER BY f.ordinal""", (x["id"],)).fetchall()]
+    targets = [
+        r["name"]
+        for r in conn.execute(
+            """SELECT f.name FROM meta.experiment_decisions e JOIN meta.fields f ON f.id = e.field_id
+            WHERE e.experiment_id = %s AND e.action = 'target' ORDER BY f.ordinal""",
+            (x["id"],),
+        ).fetchall()
+    ]
     base = recipes.snapshot_targets(recipes.snapshot_of(conn, recipes.get(conn, x["recipe_id"])))
     order = [t for t in (x["target_order"] or []) if t in targets]
     order += [t for t in base if t in targets and t not in order] + [t for t in targets if t not in order]
@@ -269,7 +322,7 @@ def list_for(conn, dataset_id: int, user: dict) -> list[dict]:
                    (SELECT max(r.mlflow_experiment_id) FROM meta.model_runs r WHERE r.experiment_id = x.id)
                        AS mlflow_experiment_id
               FROM {FROM}
-             WHERE x.dataset_id = %s AND x.id IN ({visible_ids(user['id'])})
+             WHERE x.dataset_id = %s AND x.id IN ({visible_ids(user["id"])})
              ORDER BY x.archived_at IS NOT NULL, x.created_at DESC, x.id DESC""",
         (dataset_id,),
     ).fetchall()
@@ -277,8 +330,15 @@ def list_for(conn, dataset_id: int, user: dict) -> list[dict]:
     out, snapshots = [], {}
     for r in rows:
         adj = adjustments(conn, r, snapshots)
-        out.append({**r, "best": best.get(r["id"]), "adjusted_count": adj["count"],
-                    "targets_changed": adj["targets_changed"], "can_adjust": can_adjust(r, user)})
+        out.append(
+            {
+                **r,
+                "best": best.get(r["id"]),
+                "adjusted_count": adj["count"],
+                "targets_changed": adj["targets_changed"],
+                "can_adjust": can_adjust(r, user),
+            }
+        )
     return out
 
 
@@ -302,8 +362,12 @@ def best_by_experiment(conn, ids: list[int]) -> dict[int, dict]:
             have = [s for s in scored if isinstance(s.get(metric), (int, float))]
             if have:
                 top = max(have, key=lambda s: s[metric])
-                out[xid] = {"metric": metric, "value": float(top[metric]), "run_id": top["run_id"],
-                            "target": top["target"]}
+                out[xid] = {
+                    "metric": metric,
+                    "value": float(top[metric]),
+                    "run_id": top["run_id"],
+                    "target": top["target"],
+                }
                 break
     return out
 
@@ -320,9 +384,11 @@ def run_is_private(conn, run_id: int) -> bool:
     return row is not None and row["assessor_id"] is not None and row["phase"] == "assessing"
 
 
-DEFERRED = ("SELECT r.id FROM meta.model_runs r JOIN meta.experiments x ON x.id = r.experiment_id "
-            "WHERE r.status = 'done' AND r.mlflow_run_id IS NULL AND r.report ? 'mlflow_pending' "
-            "AND (%(recipe)s::bigint IS NULL OR x.recipe_id = %(recipe)s)")
+DEFERRED = (
+    "SELECT r.id FROM meta.model_runs r JOIN meta.experiments x ON x.id = r.experiment_id "
+    "WHERE r.status = 'done' AND r.mlflow_run_id IS NULL AND r.report ? 'mlflow_pending' "
+    "AND (%(recipe)s::bigint IS NULL OR x.recipe_id = %(recipe)s)"
+)
 
 
 def flush_deferred(recipe_id: int | None = None) -> int:

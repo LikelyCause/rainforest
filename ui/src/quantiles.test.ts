@@ -18,6 +18,10 @@ describe("stripLabels", () => {
 
   it("places each label at its value", () => {
     const labels = stripLabels(box(0, 25, 100));
-    expect(labels.map((l) => [l.key, l.at, l.text])).toEqual([["p1", 0, "p1 0"], ["median", 0.25, "median 25"], ["p99", 1, "p99 100"]]);
+    expect(labels.map((l) => [l.key, l.at, l.text])).toEqual([
+      ["p1", 0, "p1 0"],
+      ["median", 0.25, "median 25"],
+      ["p99", 1, "p99 100"],
+    ]);
   });
 });

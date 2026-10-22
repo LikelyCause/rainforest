@@ -14,8 +14,14 @@ from app.transforms.builtin import ENCODING_SETTINGS, YEO_JOHNSON
 
 
 def _spec(key="t", **kw):
-    base = dict(dimension="transform", types=("numeric_continuous",), families=("linear",), label=key.capitalize(),
-                help="", build=lambda p, c: None)
+    base = dict(
+        dimension="transform",
+        types=("numeric_continuous",),
+        families=("linear",),
+        label=key.capitalize(),
+        help="",
+        build=lambda p, c: None,
+    )
     return registry.TransformSpec(key=key, **{**base, **kw})
 
 
@@ -79,8 +85,13 @@ def test_encoder_settings_match_the_checks_and_defaults():
 
 def test_the_registry_does_not_import_semantics():
     code = "import sys, app.transforms; print('app.semantics' in sys.modules)"
-    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True,
-                         cwd=Path(__file__).resolve().parents[1])
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=Path(__file__).resolve().parents[1],
+    )
     assert out.stdout.strip() == "False"
 
 
@@ -106,18 +117,26 @@ def test_an_unavailable_key_is_named_not_replaced(scratch_registry):
     registry.register(_spec("gone", requires="no_such_module_rf"))
     for key in ("gone", "acme.iqr_clip"):
         assert validate_decision(_numeric("linear", transform=key), "linear") == [
-            f"transform={key!r} is unavailable: it isn't installed on this server"]
+            f"transform={key!r} is unavailable: it isn't installed on this server"
+        ]
 
 
 def test_spec_params_and_missing_values_are_checked(scratch_registry):
-    registry.register(_spec("strict", families=("tree", "linear"), handles_nan=False,
-                            settings=(Setting("k", "K", "", "field", "int", 5, 2, 10, 1),)))
+    registry.register(
+        _spec(
+            "strict",
+            families=("tree", "linear"),
+            handles_nan=False,
+            settings=(Setting("k", "K", "", "field", "int", 5, 2, 10, 1),),
+        )
+    )
     tree = _numeric("tree", transform="strict")
     assert tree["imputation"] == "none"
     assert validate_decision(tree, "tree") == ["Strict needs missing values filled; choose an imputation"]
     assert validate_decision({**tree, "imputation": "median"}, "tree") == []
     assert validate_decision({**tree, "imputation": "median", "params": {"k": 50}}, "tree") == [
-        "params.k must be from 2 to 10"]
+        "params.k must be from 2 to 10"
+    ]
 
 
 def test_the_catalog_publishes_registry_options():

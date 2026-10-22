@@ -1,6 +1,12 @@
 export const SAMPLES = [1000, 5000, 10000, 20000];
 
-export interface ExploreParams { data: string; isRaw: boolean; kept: boolean; target: string | null; sample: number }
+export interface ExploreParams {
+  data: string;
+  isRaw: boolean;
+  kept: boolean;
+  target: string | null;
+  sample: number;
+}
 
 /**
  * Explore's toolbar state from the URL, made valid for this dataset: raw data unless an export is named,

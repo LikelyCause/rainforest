@@ -1,4 +1,5 @@
 """End-to-end: profile -> suggested settings per family -> export -> ClassifierChain training (no database)."""
+
 import json
 
 import numpy as np
@@ -24,9 +25,20 @@ def _export(sample_parquet, profiles, family, out):
         if s["action"] == "target":
             targets.append(p.name)
         elif s["action"] == "keep" and p.name != "leaky_outcome_flag":
-            specs.append(FieldSpec(p.name, s["semantic_type"], s["imputation"], s.get("impute_value"),
-                                   s["add_missing_indicator"], s["transform"], s["scaling"], s["encoding"],
-                                   s["params"], p.stats.get("datetime_format")))
+            specs.append(
+                FieldSpec(
+                    p.name,
+                    s["semantic_type"],
+                    s["imputation"],
+                    s.get("impute_value"),
+                    s["add_missing_indicator"],
+                    s["transform"],
+                    s["scaling"],
+                    s["encoding"],
+                    s["params"],
+                    p.stats.get("datetime_format"),
+                )
+            )
     run_export(sample_parquet, specs, targets, out, {"seed": 1, "chunk_rows": 1500}, lambda *_: None, family=family)
     return out
 
@@ -63,8 +75,12 @@ def test_linear_export_is_complete_and_scaled(linear_export):
 
 @pytest.mark.parametrize("model", ["lightgbm", "xgboost", "hist_gradient_boosting", "random_forest"])
 def test_tree_models_train_on_tree_export(tree_export, tmp_path, model):
-    fast = {"lightgbm": {"n_estimators": 60}, "xgboost": {"n_estimators": 60},
-            "hist_gradient_boosting": {"max_iter": 60}, "random_forest": {"n_estimators": 60}}[model]
+    fast = {
+        "lightgbm": {"n_estimators": 60},
+        "xgboost": {"n_estimators": 60},
+        "hist_gradient_boosting": {"max_iter": 60},
+        "random_forest": {"n_estimators": 60},
+    }[model]
     report = train(tree_export, model, seed=0, params=fast, cv=3, out_dir=tmp_path)
     m = report["metrics"]["test"]
     assert m["column_a"]["roc_auc"] > 0.75
@@ -75,12 +91,26 @@ def test_tree_models_train_on_tree_export(tree_export, tmp_path, model):
 
 
 def test_a_run_can_train_one_target_or_reorder(tree_export, tmp_path):
-    one = train(tree_export, "lightgbm", order_names=["column_b"], seed=0, params={"n_estimators": 30}, cv=3,
-                out_dir=tmp_path / "one")
+    one = train(
+        tree_export,
+        "lightgbm",
+        order_names=["column_b"],
+        seed=0,
+        params={"n_estimators": 30},
+        cv=3,
+        out_dir=tmp_path / "one",
+    )
     assert one["order"] == ["column_b"] and set(one["metrics"]["test"]) == {"column_b"}
     assert one["metrics"]["test"]["column_b"]["accuracy"] > 0.5
-    both = train(tree_export, "lightgbm", order_names=["column_b", "column_a"], seed=0, params={"n_estimators": 30},
-                 cv=3, out_dir=tmp_path / "both")
+    both = train(
+        tree_export,
+        "lightgbm",
+        order_names=["column_b", "column_a"],
+        seed=0,
+        params={"n_estimators": 30},
+        cv=3,
+        out_dir=tmp_path / "both",
+    )
     assert both["order"] == ["column_b", "column_a"] and set(both["metrics"]["test"]) == {"column_a", "column_b"}
     for bad, msg in ((["column_a", "column_a"], "only once"), (["nope"], "Not targets")):
         with pytest.raises(ValueError, match=msg):
@@ -100,8 +130,9 @@ def test_linear_model_needs_linear_export(tree_export, linear_export, tmp_path):
     assert report["metrics"]["test"]["column_a"]["roc_auc"] > 0.75
 
 
-@pytest.mark.parametrize("kind,method,auc", [("binary", "predict_proba", "roc_auc"),
-                                             ("multiclass", "predict", "roc_auc_ovr_macro")])
+@pytest.mark.parametrize(
+    "kind,method,auc", [("binary", "predict_proba", "roc_auc"), ("multiclass", "predict", "roc_auc_ovr_macro")]
+)
 def test_chain_for_each_target_kind(tmp_path, kind, method, auc):
     from app.sample_data import generate
 
@@ -124,8 +155,10 @@ def test_sample_leak_clears_the_threshold_with_a_margin(profiles):
 
     names = [p.name for p in profiles]
     leak, target = names.index("leaky_outcome_flag"), names.index("column_a")
-    assocs = compute_associations([(i, p.corr_numeric) for i, p in enumerate(profiles) if p.corr_numeric is not None],
-                                  [(i, p.corr_codes) for i, p in enumerate(profiles) if p.corr_codes is not None])
+    assocs = compute_associations(
+        [(i, p.corr_numeric) for i, p in enumerate(profiles) if p.corr_numeric is not None],
+        [(i, p.corr_codes) for i, p in enumerate(profiles) if p.corr_codes is not None],
+    )
     (v,) = [a.value for a in assocs if {a.i, a.j} == {leak, target}]
     assert v >= LEAKAGE_THRESHOLD + 0.02
 
@@ -153,7 +186,7 @@ def test_evaluate_reports_precision_recall_f1_and_confusion():
     from app.modeling.train import evaluate
 
     y = np.array([0, 0, 0, 1, 1, 1, 1, 0])
-    proba = np.array([[.9, .1], [.8, .2], [.4, .6], [.3, .7], [.2, .8], [.6, .4], [.1, .9], [.7, .3]])
+    proba = np.array([[0.9, 0.1], [0.8, 0.2], [0.4, 0.6], [0.3, 0.7], [0.2, 0.8], [0.6, 0.4], [0.1, 0.9], [0.7, 0.3]])
     m, d = evaluate(y, proba, ["no", "yes"])
     # predictions: 0 0 1 1 1 0 1 0 -> TP=3 FP=1 FN=1 TN=3
     assert d["confusion_matrix"] == [[3, 1], [1, 3]]
@@ -167,7 +200,7 @@ def test_evaluate_reports_precision_recall_f1_and_confusion():
     assert roc["fpr"] == sorted(roc["fpr"]) and roc["tpr"] == sorted(roc["tpr"])
 
     y3 = np.array([0, 1, 2, 2])
-    p3 = np.array([[.8, .1, .1], [.2, .7, .1], [.1, .2, .7], [.5, .3, .2]])
+    p3 = np.array([[0.8, 0.1, 0.1], [0.2, 0.7, 0.1], [0.1, 0.2, 0.7], [0.5, 0.3, 0.2]])
     m3, d3 = evaluate(y3, p3, ["a", "b", "c"])
     assert d3["confusion_matrix"] == [[1, 0, 0], [0, 1, 0], [1, 0, 1]]
     assert "precision" not in m3 and {"precision_macro", "recall_weighted", "f1_macro"} <= m3.keys()
@@ -175,6 +208,7 @@ def test_evaluate_reports_precision_recall_f1_and_confusion():
     assert [c["label"] for c in d3["roc"]] == ["a", "b", "c"]  # one-vs-rest
 
     from app.modeling.train import ROC_MAX_POINTS, roc_curves
+
     rng = np.random.default_rng(0)
     yb = rng.integers(0, 2, 5000)
     pb = np.clip(yb * 0.3 + rng.random(5000) * 0.7, 0, 1)

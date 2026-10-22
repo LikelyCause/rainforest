@@ -1,4 +1,5 @@
 """Train target chains on finished exports and compare the runs."""
+
 from __future__ import annotations
 
 import json
@@ -7,17 +8,26 @@ import time
 import traceback
 from pathlib import Path
 
-from pydantic import BaseModel, Field
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 
 from .. import experiments, gpu, jobs
 from ..auth import CurrentUser
 from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..modeling import mlflow_log
 from ..modeling import params as model_params
-from ..modeling.registry import (MODELS, PLANNED, catalog, compatibility, dry_fit_problem, label_for, order_problem,
-                                param_problems, regression_problem)
+from ..modeling.registry import (
+    MODELS,
+    PLANNED,
+    catalog,
+    compatibility,
+    dry_fit_problem,
+    label_for,
+    order_problem,
+    param_problems,
+    regression_problem,
+)
 from ..schemas import RunRequest
 from .exports import visible_export
 
@@ -104,7 +114,9 @@ def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
             raise HTTPException(422, {"message": "Invalid model settings", "errors": problems})
         stats = manifest.get("target_stats") or {}
         for t, kind in zip(req.order or manifest["targets"], kinds):
-            if kind == "regression" and (p := model_params.objective_problem(req.params, (stats.get(t) or {}).get("min"))):
+            if kind == "regression" and (
+                p := model_params.objective_problem(req.params, (stats.get(t) or {}).get("min"))
+            ):
                 raise HTTPException(422, p)
         if problem := dry_fit_problem(spec, req.params, kinds):
             raise HTTPException(422, problem)
@@ -115,8 +127,17 @@ def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
         f"""INSERT INTO meta.model_runs (export_id, dataset_id, model, family, status, status_message, config, owner,
                                          created_by, experiment_id, report)
             VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s, %s, %s, %s) RETURNING {RUN_COLS}""",
-        (export_id, exp["dataset_id"], spec.key, spec.family, jsonb(req.model_dump(exclude={"experiment_id"})),
-         jobs.owner_id(), user["id"], exp["experiment_id"], jsonb({"model_label": label_for(spec, kinds)})),
+        (
+            export_id,
+            exp["dataset_id"],
+            spec.key,
+            spec.family,
+            jsonb(req.model_dump(exclude={"experiment_id"})),
+            jobs.owner_id(),
+            user["id"],
+            exp["experiment_id"],
+            jsonb({"model_label": label_for(spec, kinds)}),
+        ),
     )
     jobs.submit(_run, run["id"], exp["output_dir"], req.model_dump())
     return run
@@ -126,7 +147,7 @@ def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
 def list_runs(dataset_id: int, user: CurrentUser, experiment_id: int | None = None) -> list[dict]:
     return fetch_all(
         f"""SELECT {RUN_COLS} FROM meta.model_runs
-             WHERE dataset_id = %s AND experiment_id IN ({experiments.visible_ids(user['id'])})
+             WHERE dataset_id = %s AND experiment_id IN ({experiments.visible_ids(user["id"])})
                AND (%s::bigint IS NULL OR experiment_id = %s) ORDER BY created_at DESC""",
         (dataset_id, experiment_id, experiment_id),
     )
@@ -135,8 +156,11 @@ def list_runs(dataset_id: int, user: CurrentUser, experiment_id: int | None = No
 def run_row(run_id: int, user_id: int | None = None) -> dict | None:
     """One run with its MLflow link; with `user_id`, only if that user may see its experiment."""
     visible = "" if user_id is None else f" AND experiment_id IN ({experiments.visible_ids(user_id)})"
-    return fetch_one(f"""SELECT *, {MLFLOW_URL}, (SELECT name FROM meta.users u WHERE u.id = chosen_by) AS chosen_by_name
-                          FROM meta.model_runs WHERE id = %s{visible}""", (run_id,))
+    return fetch_one(
+        f"""SELECT *, {MLFLOW_URL}, (SELECT name FROM meta.users u WHERE u.id = chosen_by) AS chosen_by_name
+                          FROM meta.model_runs WHERE id = %s{visible}""",
+        (run_id,),
+    )
 
 
 @router.get("/runs/{run_id}")
@@ -149,8 +173,11 @@ def get_run(run_id: int, user: CurrentUser) -> dict:
 
 class RunPatch(BaseModel):
     note: str | None = Field(None, max_length=4000)
-    chosen: bool | None = Field(None, description="Lead only: mark this run as the experiment's chosen model (one per "
-                                                  "experiment; marking another moves it)")
+    chosen: bool | None = Field(
+        None,
+        description="Lead only: mark this run as the experiment's chosen model (one per "
+        "experiment; marking another moves it)",
+    )
 
 
 @router.patch("/runs/{run_id}")
@@ -167,13 +194,19 @@ def update_run(run_id: int, body: RunPatch, user: CurrentUser) -> dict:
             raise HTTPException(409, "Only a finished run can be chosen")
     with connection() as conn:
         if "note" in fields:
-            conn.execute("UPDATE meta.model_runs SET note = %s WHERE id = %s", ((body.note or "").strip() or None, run_id))
+            conn.execute(
+                "UPDATE meta.model_runs SET note = %s WHERE id = %s", ((body.note or "").strip() or None, run_id)
+            )
         if "chosen" in fields:
-            conn.execute("UPDATE meta.model_runs SET chosen_at = NULL, chosen_by = NULL WHERE experiment_id = %s "
-                         "AND chosen_at IS NOT NULL", (run["experiment_id"],))
+            conn.execute(
+                "UPDATE meta.model_runs SET chosen_at = NULL, chosen_by = NULL WHERE experiment_id = %s "
+                "AND chosen_at IS NOT NULL",
+                (run["experiment_id"],),
+            )
             if body.chosen:
-                conn.execute("UPDATE meta.model_runs SET chosen_at = now(), chosen_by = %s WHERE id = %s",
-                             (user["id"], run_id))
+                conn.execute(
+                    "UPDATE meta.model_runs SET chosen_at = now(), chosen_by = %s WHERE id = %s", (user["id"], run_id)
+                )
     return get_run(run_id, user)
 
 
@@ -181,8 +214,10 @@ def update_run(run_id: int, body: RunPatch, user: CurrentUser) -> dict:
 def download(run_id: int, kind: str, user: CurrentUser) -> FileResponse:
     run = get_run(run_id, user)
     # The file on disk keeps one name for either kind of chain; the download says which kind it is.
-    files = {"model": (mlflow_log.MODEL_FILE, mlflow_log.model_file_name(run["report"]), "application/octet-stream"),
-             "report": (mlflow_log.REPORT_FILE, mlflow_log.REPORT_FILE, "application/json")}
+    files = {
+        "model": (mlflow_log.MODEL_FILE, mlflow_log.model_file_name(run["report"]), "application/octet-stream"),
+        "report": (mlflow_log.REPORT_FILE, mlflow_log.REPORT_FILE, "application/json"),
+    }
     if kind not in files:
         raise HTTPException(404, f"Unknown file {kind!r}")
     if run["status"] != "done":
@@ -199,8 +234,14 @@ def _finish(conn, run_id: int, report: dict, logged: dict) -> None:
         """UPDATE meta.model_runs SET status = 'done', error = NULL, status_message = 'Done', metrics = %s,
                   report = %s, mlflow_experiment_id = %s, mlflow_run_id = %s,
                   model_dir = %s, finished_at = now(), updated_at = now() WHERE id = %s""",
-        (jsonb(report["metrics"]), jsonb({k: v for k, v in report.items() if k != "metrics"}),
-         logged.get("mlflow_experiment_id"), logged.get("mlflow_run_id"), report["model_dir"], run_id),
+        (
+            jsonb(report["metrics"]),
+            jsonb({k: v for k, v in report.items() if k != "metrics"}),
+            logged.get("mlflow_experiment_id"),
+            logged.get("mlflow_run_id"),
+            report["model_dir"],
+            run_id,
+        ),
     )
 
 
@@ -221,9 +262,18 @@ def _run(run_id: int, export_dir: str, req: dict) -> None:
         params = req.get("params") or {}
         if "n_jobs" in MODELS[req["model"]].default_params:
             params = {"n_jobs": jobs.cpu_threads(), **params}
-        report = train(Path(export_dir), req["model"], req.get("order"), req["seed"], params,
-                       req["cv"] or None, out_dir, progress, device=req.get("device", "cpu"),
-                       cv_folds=req.get("cv_folds", 0))
+        report = train(
+            Path(export_dir),
+            req["model"],
+            req.get("order"),
+            req["seed"],
+            params,
+            req["cv"] or None,
+            out_dir,
+            progress,
+            device=req.get("device", "cpu"),
+            cv_folds=req.get("cv_folds", 0),
+        )
         if mlflow_log.enabled():
             with connection() as conn:
                 # MLflow has no access control, so a private experiment's run is logged once review opens.

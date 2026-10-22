@@ -24,6 +24,7 @@ for a number. Runs with only class targets keep ClassifierChain, so their result
 Models come from `registry.MODELS`; which ones may train on an export depends on the
 model family the export was prepared for (see `registry.compatibility`).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -54,9 +55,22 @@ from .. import bands
 from ..gpu import effective_device
 from . import crossval
 from .mlflow_log import MODEL_FILE
-from .registry import (DEFAULT_MODEL, MODELS, ModelSpec, catalog, compatibility, device_params, get_model,
-                       classifier_params, importances, label_for, order_problem, param_problems, regression_problem,
-                       regressor_params)
+from .registry import (
+    DEFAULT_MODEL,
+    MODELS,
+    ModelSpec,
+    catalog,
+    classifier_params,
+    compatibility,
+    device_params,
+    get_model,
+    importances,
+    label_for,
+    order_problem,
+    param_problems,
+    regression_problem,
+    regressor_params,
+)
 
 log = logging.getLogger("train")
 
@@ -94,8 +108,16 @@ class TargetChain:
 
     chain_method_ = "per_target"
 
-    def __init__(self, classifier, regressor, kinds: list[str], order: list[int], cv: int | None = 5,
-                 handles_nan: bool = False, seed: int = 42):
+    def __init__(
+        self,
+        classifier,
+        regressor,
+        kinds: list[str],
+        order: list[int],
+        cv: int | None = 5,
+        handles_nan: bool = False,
+        seed: int = 42,
+    ):
         self.classifier, self.regressor, self.kinds = classifier, regressor, kinds
         self.order, self.cv, self.handles_nan, self.seed = order, cv, handles_nan, seed
 
@@ -120,8 +142,11 @@ class TargetChain:
 
         feats = np.zeros((X.shape[0], len(self.order)))
         self.estimators_ = []
-        self.scales_ = {t: (float(Y[:, t].mean()), float(Y[:, t].std()) or 1.0)
-                        for t, kind in enumerate(self.kinds) if kind == "regression"}
+        self.scales_ = {
+            t: (float(Y[:, t].mean()), float(Y[:, t].std()) or 1.0)
+            for t, kind in enumerate(self.kinds)
+            if kind == "regression"
+        }
         with config_context(assume_finite=self.handles_nan):
             for pos, t in enumerate(self.order):
                 kind = self.kinds[t]
@@ -134,8 +159,13 @@ class TargetChain:
                 if self.cv is None:
                     out = y
                 else:
-                    out = cross_val_predict(clone(base), X_aug, y, cv=self._folds(kind),
-                                            method="predict_proba" if kind == "binary" else "predict")
+                    out = cross_val_predict(
+                        clone(base),
+                        X_aug,
+                        y,
+                        cv=self._folds(kind),
+                        method="predict_proba" if kind == "binary" else "predict",
+                    )
                     out = out[:, 1] if kind == "binary" else out
                 feats[:, pos] = self._scaled(t, out) if kind == "regression" else out
         self.order_ = list(self.order)
@@ -168,8 +198,14 @@ def load_export(export_dir: Path) -> tuple[dict, pl.DataFrame]:
     return manifest, df
 
 
-def build_chain(spec: ModelSpec, target_kinds: list[str], order: list[int], seed: int,
-                params: dict | None = None, cv: int | None = 5) -> ClassifierChain:
+def build_chain(
+    spec: ModelSpec,
+    target_kinds: list[str],
+    order: list[int],
+    seed: int,
+    params: dict | None = None,
+    cv: int | None = 5,
+) -> ClassifierChain:
     all_binary = all(k == "binary" for k in target_kinds)
     estimator = spec.build(classifier_params(spec, {**spec.default_params, **(params or {})}), seed)
     chain_cls = NaNTolerantClassifierChain if spec.handles_nan else ClassifierChain
@@ -217,7 +253,7 @@ def roc_curves(y_true: np.ndarray, proba: np.ndarray, names: list[str]) -> list[
     ROC_MAX_POINTS points. A class with no positives or no negatives in the split has no curve."""
     k = proba.shape[1]
     out = []
-    for c in ([1] if k == 2 else range(k)):
+    for c in [1] if k == 2 else range(k):
         hit = y_true == c
         if hit.all() or not hit.any():
             continue
@@ -225,12 +261,20 @@ def roc_curves(y_true: np.ndarray, proba: np.ndarray, names: list[str]) -> list[
         if len(fpr) > ROC_MAX_POINTS:
             keep = np.unique(np.linspace(0, len(fpr) - 1, ROC_MAX_POINTS).round().astype(int))
             fpr, tpr = fpr[keep], tpr[keep]
-        out.append({"label": names[c], "auc": float(roc_auc_score(hit, proba[:, c])),
-                    "fpr": [round(float(v), 4) for v in fpr], "tpr": [round(float(v), 4) for v in tpr]})
+        out.append(
+            {
+                "label": names[c],
+                "auc": float(roc_auc_score(hit, proba[:, c])),
+                "fpr": [round(float(v), 4) for v in fpr],
+                "tpr": [round(float(v), 4) for v in tpr],
+            }
+        )
     return out
 
 
-def evaluate(y_true: np.ndarray, proba: np.ndarray, labels: list[str] | None = None) -> tuple[dict[str, float], dict[str, Any]]:
+def evaluate(
+    y_true: np.ndarray, proba: np.ndarray, labels: list[str] | None = None
+) -> tuple[dict[str, float], dict[str, Any]]:
     """Score one target. Predictions are the argmax class (i.e. a 0.5 threshold for binary targets).
 
     Returns (scalars, details): scalars are single numbers (stored in `metrics`, queryable via
@@ -264,7 +308,9 @@ def evaluate(y_true: np.ndarray, proba: np.ndarray, labels: list[str] | None = N
                 out["pr_auc"] = float(average_precision_score(y_true == 1, proba[:, 1]))
             else:
                 present = [c for c in classes if (y_true == c).any()]
-                out["pr_auc_macro"] = float(np.mean([average_precision_score(y_true == c, proba[:, c]) for c in present]))
+                out["pr_auc_macro"] = float(
+                    np.mean([average_precision_score(y_true == c, proba[:, c]) for c in present])
+                )
                 out["roc_auc_ovr_macro"] = float(roc_auc_score(y_true, proba, multi_class="ovr", average="macro"))
         except ValueError:  # a class absent from this split
             pass
@@ -274,8 +320,13 @@ def evaluate(y_true: np.ndarray, proba: np.ndarray, labels: list[str] | None = N
         "positive_label": names[1] if k == 2 else None,
         "confusion_matrix": cm.astype(int).tolist(),  # rows = actual, columns = predicted
         "per_class": [
-            {"label": names[c], "precision": float(p[c]), "recall": float(r[c]), "f1": float(f[c]),
-             "support": int(support[c])}
+            {
+                "label": names[c],
+                "precision": float(p[c]),
+                "recall": float(r[c]),
+                "f1": float(f[c]),
+                "support": int(support[c]),
+            }
             for c in classes
         ],
         "roc": roc_curves(y_true, proba, names),
@@ -294,8 +345,15 @@ def threshold_table(y_true: np.ndarray, p1: np.ndarray) -> list[dict[str, float]
         tp = int((flagged & (y_true == 1)).sum())
         prec = tp / int(flagged.sum()) if flagged.any() else 0.0
         rec = tp / int((y_true == 1).sum()) if (y_true == 1).any() else 0.0
-        out.append({"threshold": float(t), "precision": prec, "recall": rec,
-                    "f1": 2 * prec * rec / (prec + rec) if prec + rec else 0.0, "flagged": float(flagged.mean())})
+        out.append(
+            {
+                "threshold": float(t),
+                "precision": prec,
+                "recall": rec,
+                "f1": 2 * prec * rec / (prec + rec) if prec + rec else 0.0,
+                "flagged": float(flagged.mean()),
+            }
+        )
     return out
 
 
@@ -314,8 +372,9 @@ def _band_edges(values: np.ndarray) -> list[float] | None:
     return bands.quantile_edges(values, BAND_COUNT) or None
 
 
-def evaluate_regression(y: np.ndarray, pred: np.ndarray, seed: int = 42,
-                        edges: list[float] | None = None) -> tuple[dict[str, float], dict[str, Any]]:
+def evaluate_regression(
+    y: np.ndarray, pred: np.ndarray, seed: int = 42, edges: list[float] | None = None
+) -> tuple[dict[str, float], dict[str, Any]]:
     """Score a numeric target: RMSE, MAE, R² (when the actual values vary) and MAPE (when none is 0). Details hold up
     to SCATTER_MAX_POINTS sampled (actual, predicted) pairs and a histogram of the errors (predicted - actual).
 
@@ -324,12 +383,14 @@ def evaluate_regression(y: np.ndarray, pred: np.ndarray, seed: int = 42,
     predicts the right range."""
     if bad := int((~np.isfinite(pred)).sum()):
         # Scoring the rest would give a broken model believable numbers.
-        raise ValueError(f"The model predicted something that isn't a number for {bad:,} of {pred.size:,} rows; it "
-                         "probably diverged. Try a lower learning rate or fewer trees.")
+        raise ValueError(
+            f"The model predicted something that isn't a number for {bad:,} of {pred.size:,} rows; it "
+            "probably diverged. Try a lower learning rate or fewer trees."
+        )
     err = pred - y
-    out = {"rmse": float(np.sqrt(np.mean(err ** 2))), "mae": float(np.mean(np.abs(err)))}
+    out = {"rmse": float(np.sqrt(np.mean(err**2))), "mae": float(np.mean(np.abs(err)))}
     if y.size >= 2 and np.var(y) > 0:
-        out["r2"] = float(1 - np.sum(err ** 2) / np.sum((y - y.mean()) ** 2))
+        out["r2"] = float(1 - np.sum(err**2) / np.sum((y - y.mean()) ** 2))
     if not np.any(y == 0):
         out["mape"] = float(np.mean(np.abs(err) / np.abs(y)))
     idx = np.arange(y.size)
@@ -337,7 +398,8 @@ def evaluate_regression(y: np.ndarray, pred: np.ndarray, seed: int = 42,
         idx = np.sort(np.random.default_rng(seed).choice(y.size, SCATTER_MAX_POINTS, replace=False))
     counts, hist_edges = np.histogram(err, bins=RESIDUAL_BINS)
     details = {
-        "kind": "regression", "n": int(y.size),
+        "kind": "regression",
+        "n": int(y.size),
         "scatter": {"actual": _sig(y[idx]), "predicted": _sig(pred[idx])},
         "residuals": {"edges": _sig(hist_edges), "counts": counts.astype(int).tolist()},
     }
@@ -349,17 +411,35 @@ def evaluate_regression(y: np.ndarray, pred: np.ndarray, seed: int = 42,
         out["band_f1_macro"] = float(np.mean(f))
         labels = bands.band_labels(edges)
         details["bands"] = {
-            "labels": labels, "edges": edges,
+            "labels": labels,
+            "edges": edges,
             "confusion_matrix": confusion_matrix(actual, predicted, labels=list(range(k))).astype(int).tolist(),
-            "per_class": [{"label": labels[c], "precision": float(p[c]), "recall": float(r[c]), "f1": float(f[c]),
-                           "support": int(support[c])} for c in range(k)],
+            "per_class": [
+                {
+                    "label": labels[c],
+                    "precision": float(p[c]),
+                    "recall": float(r[c]),
+                    "f1": float(f[c]),
+                    "support": int(support[c]),
+                }
+                for c in range(k)
+            ],
         }
     return out, details
 
 
-def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] | None = None, seed: int = 42,
-          params: dict | None = None, cv: int | None = 5, out_dir: Path | None = None,
-          progress: Callable[[str], None] | None = None, device: str = "cpu", cv_folds: int = 0) -> dict[str, Any]:
+def train(
+    export_dir: Path,
+    model: str = DEFAULT_MODEL,
+    order_names: list[str] | None = None,
+    seed: int = 42,
+    params: dict | None = None,
+    cv: int | None = 5,
+    out_dir: Path | None = None,
+    progress: Callable[[str], None] | None = None,
+    device: str = "cpu",
+    cv_folds: int = 0,
+) -> dict[str, Any]:
     spec = get_model(model)
     if problems := param_problems(spec, params or {}):
         raise ValueError("; ".join(problems))
@@ -404,8 +484,10 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
             raise ValueError(f"Target {t!r} has only one class in the training split; a classifier needs at least two.")
         if absent := [c for k, c in enumerate(manifest["target_classes"][t]) if k not in seen]:
             missing_from_train[t] = absent
-    say(f"Fitting {label_for(spec, kinds)} chain {' → '.join(order_names)} on {X_tr.shape[0]:,} rows × {X_tr.shape[1]:,} features"
-        + (" on the GPU" if device == "cuda" else ""))
+    say(
+        f"Fitting {label_for(spec, kinds)} chain {' → '.join(order_names)} on {X_tr.shape[0]:,} rows × {X_tr.shape[1]:,} features"
+        + (" on the GPU" if device == "cuda" else "")
+    )
 
     def make_chain():
         if not any(numeric):
@@ -419,8 +501,9 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
             from sklearn.preprocessing import StandardScaler
 
             regressor = TransformedTargetRegressor(regressor=regressor, transformer=StandardScaler())
-        return TargetChain(spec.build(classifier_params(spec, merged), seed), regressor, kinds, order, cv,
-                           spec.handles_nan, seed)
+        return TargetChain(
+            spec.build(classifier_params(spec, merged), seed), regressor, kinds, order, cv, spec.handles_nan, seed
+        )
 
     def fit(chain, X: np.ndarray, Y: np.ndarray):
         return chain.fit(X, Y if any(numeric) else Y.astype(np.int64))
@@ -444,8 +527,11 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
         if isinstance(chain, TargetChain):
             outs = chain.predict_all(X, n_classes)
             for i, t in enumerate(targets):
-                m[t], d[t] = (evaluate_regression(Y[:, i], outs[i], seed, band_edges[i]) if numeric[i]
-                              else evaluate(Y[:, i].astype(int), outs[i], manifest["target_classes"].get(t)))
+                m[t], d[t] = (
+                    evaluate_regression(Y[:, i], outs[i], seed, band_edges[i])
+                    if numeric[i]
+                    else evaluate(Y[:, i].astype(int), outs[i], manifest["target_classes"].get(t))
+                )
             return m, d
         with config_context(assume_finite=spec.handles_nan):
             probas = chain_predict_proba(chain, X, n_classes)
@@ -472,15 +558,23 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
         if gfile := manifest["files"].get("groups"):
             rows = df.filter(pl.col(split_col) == "train")["__row_id"].to_numpy()
             groups = np.load(export_dir / gfile)[rows]
-        splits, note, stratified = crossval.folds(None if strat is None else Y_tr[:, strat], len(X_tr), cv_folds,
-                                                  seed, None if strat is None else targets[strat], groups)
+        splits, note, stratified = crossval.folds(
+            None if strat is None else Y_tr[:, strat],
+            len(X_tr),
+            cv_folds,
+            seed,
+            None if strat is None else targets[strat],
+            groups,
+        )
         per_fold: list[dict[str, Any]] = []
         t1 = time.time()
         # CV only adds scores: whatever stops a fold skips it with a note, and the run keeps its model and scores.
         for k, (rows, _) in enumerate(splits, 1):
             if lone := [t for i, t in enumerate(targets) if np.unique(Y_tr[rows, i]).size < 2]:
-                splits, note = [], (f"Cross-validation skipped: fold {k}'s training rows have a single value of "
-                                    f"{', '.join(lone)}")
+                splits, note = (
+                    [],
+                    (f"Cross-validation skipped: fold {k}'s training rows have a single value of {', '.join(lone)}"),
+                )
                 break
         for k, (rows, held) in enumerate(splits, 1):
             say(f"Cross-validating: fold {k} of {len(splits)}")
@@ -493,8 +587,13 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
                 per_fold, note = [], f"Cross-validation skipped: fold {k} of {len(splits)} failed ({exc})"
                 break
         summary = crossval.summarize(per_fold)
-        cross_validation = {"folds": len(per_fold), "stratified_on": targets[strat] if stratified and per_fold else None,
-                            "note": note, "seconds": round(time.time() - t1, 1), "targets": summary}
+        cross_validation = {
+            "folds": len(per_fold),
+            "stratified_on": targets[strat] if stratified and per_fold else None,
+            "note": note,
+            "seconds": round(time.time() - t1, 1),
+            "targets": summary,
+        }
         if summary:
             metrics["cv"] = {t: {m: v["mean"] for m, v in ms.items()} for t, ms in summary.items()}
 
@@ -506,8 +605,12 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
             continue
         top = np.argsort(imp)[::-1][:25]
         top_features[order_names[pos]] = [
-            {"feature": names[k], "source": manifest["feature_source_field"].get(names[k], names[k]),
-             "importance": float(imp[k])} for k in top
+            {
+                "feature": names[k],
+                "source": manifest["feature_source_field"].get(names[k], names[k]),
+                "importance": float(imp[k]),
+            }
+            for k in top
         ]
 
     out_dir = out_dir or export_dir.parent.parent / "models" / f"export{export_dir.name}_{spec.key}_{int(time.time())}"
@@ -532,7 +635,9 @@ def train(export_dir: Path, model: str = DEFAULT_MODEL, order_names: list[str] |
         "n_features": len(feats),
         "fit_seconds": round(fit_seconds, 1),
         "device": device,
-        "params": {k: (list(v) if isinstance(v, tuple) else v) for k, v in {**spec.default_params, **(params or {})}.items()},
+        "params": {
+            k: (list(v) if isinstance(v, tuple) else v) for k, v in {**spec.default_params, **(params or {})}.items()
+        },
         "metrics": metrics,
         "evaluation": details,
         "top_features": top_features,
@@ -551,27 +656,48 @@ def main() -> None:
     g.add_argument("--export-dir", type=Path)
     g.add_argument("--list-models", action="store_true")
     ap.add_argument("--model", default=DEFAULT_MODEL, choices=list(MODELS))
-    ap.add_argument("--order", help="targets to train, in chain order, comma-separated; a subset leaves the others out "
-                    "(default: every target, in the order listed under \"targets\" in its manifest.json)")
+    ap.add_argument(
+        "--order",
+        help="targets to train, in chain order, comma-separated; a subset leaves the others out "
+        '(default: every target, in the order listed under "targets" in its manifest.json)',
+    )
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--cv", type=int, default=5,
-                    help="folds for out-of-fold chain features: 0 chains the ground truth, else 2 or more")
-    ap.add_argument("--cv-folds", type=int, default=0, choices=[0, *range(2, 21)], metavar="K",
-                    help="cross-validate on K folds of the training rows: 0 for none (default), else 2-20")
-    ap.add_argument("--param", action="append", default=[], metavar="KEY=VALUE",
-                    help="override a model parameter, e.g. --param n_estimators=1000 (repeatable)")
+    ap.add_argument(
+        "--cv",
+        type=int,
+        default=5,
+        help="folds for out-of-fold chain features: 0 chains the ground truth, else 2 or more",
+    )
+    ap.add_argument(
+        "--cv-folds",
+        type=int,
+        default=0,
+        choices=[0, *range(2, 21)],
+        metavar="K",
+        help="cross-validate on K folds of the training rows: 0 for none (default), else 2-20",
+    )
+    ap.add_argument(
+        "--param",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="override a model parameter, e.g. --param n_estimators=1000 (repeatable)",
+    )
     ap.add_argument("--device", default="cpu", choices=["cpu", "cuda"], help="cuda needs the GPU image (XGBoost only)")
     args = ap.parse_args()
 
     if args.list_models:
         for m in catalog():
-            print(f"{m['key']:24s} {m['family']:7s} {'nan-ok' if m['handles_nan'] else 'no-nan':7s} "
-                  f"{'planned' if m['planned'] else 'available' if m['available'] else 'not installed':14s} "
-                  f"{'/'.join(m['devices']):9s} "
-                  f"{m['description']}")
+            print(
+                f"{m['key']:24s} {m['family']:7s} {'nan-ok' if m['handles_nan'] else 'no-nan':7s} "
+                f"{'planned' if m['planned'] else 'available' if m['available'] else 'not installed':14s} "
+                f"{'/'.join(m['devices']):9s} "
+                f"{m['description']}"
+            )
         return
     if args.export_dir is None:
         from ..config import get_settings
+
         export_dir = get_settings().exports_dir / str(args.export_id)
     else:
         export_dir = args.export_dir
@@ -582,16 +708,29 @@ def main() -> None:
             overrides[k] = json.loads(v)
         except json.JSONDecodeError:
             overrides[k] = v
-    report = train(export_dir, args.model, args.order.split(",") if args.order else None, args.seed, overrides,
-                   args.cv or None, device=args.device, cv_folds=args.cv_folds)
-    print(json.dumps({k: report[k] for k in ("model_dir", "model", "device", "order", "chain_method", "n_train",
-                                             "metrics")},
-                     indent=2))
+    report = train(
+        export_dir,
+        args.model,
+        args.order.split(",") if args.order else None,
+        args.seed,
+        overrides,
+        args.cv or None,
+        device=args.device,
+        cv_folds=args.cv_folds,
+    )
+    print(
+        json.dumps(
+            {k: report[k] for k in ("model_dir", "model", "device", "order", "chain_method", "n_train", "metrics")},
+            indent=2,
+        )
+    )
     for split, by_target in report["evaluation"].items():
         for target, d in by_target.items():
             if d.get("kind") == "regression":
                 m = report["metrics"][split][target]
-                print(f"\n{split} · {target} — RMSE {m['rmse']:.4g}, MAE {m['mae']:.4g}, R² {m.get('r2', float('nan')):.4f}")
+                print(
+                    f"\n{split} · {target} — RMSE {m['rmse']:.4g}, MAE {m['mae']:.4g}, R² {m.get('r2', float('nan')):.4f}"
+                )
                 continue
             print(f"\n{split} · {target} — confusion matrix (rows = actual, columns = predicted)")
             print(format_confusion(d["labels"], d["confusion_matrix"]))

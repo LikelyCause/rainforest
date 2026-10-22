@@ -1,9 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { batchSummary, bestRuns, metricFor, modelDescription, modelLabel, pickExport, runColumns, runLabel, spreadFor, starTitle, whyFailed } from "./runs";
+import {
+  batchSummary,
+  bestRuns,
+  metricFor,
+  modelDescription,
+  modelLabel,
+  pickExport,
+  runColumns,
+  runLabel,
+  spreadFor,
+  starTitle,
+  whyFailed,
+} from "./runs";
 import type { ModelRun } from "./types";
 
-const run = (id: number, valid: Record<string, Record<string, number>>, test: Record<string, Record<string, number>> = valid) =>
-  ({ id, metrics: { valid, test } }) as unknown as ModelRun;
+const run = (
+  id: number,
+  valid: Record<string, Record<string, number>>,
+  test: Record<string, Record<string, number>> = valid,
+) => ({ id, metrics: { valid, test } }) as unknown as ModelRun;
 
 describe("metricFor", () => {
   it("reads binary AUC, multiclass OvR AUC and macro F1", () => {
@@ -29,7 +44,7 @@ describe("PR AUC", () => {
 describe("bestRuns", () => {
   it("stars the best validation score, not the best test score", () => {
     const runs = [
-      run(1, { a: { roc_auc: 0.90 } }, { a: { roc_auc: 0.80 } }),
+      run(1, { a: { roc_auc: 0.9 } }, { a: { roc_auc: 0.8 } }),
       run(2, { a: { roc_auc: 0.85 } }, { a: { roc_auc: 0.95 } }),
     ];
     expect(bestRuns(runs, ["a"])).toEqual({ "a:primary": 1 });
@@ -38,8 +53,9 @@ describe("bestRuns", () => {
   it("needs two scored runs and skips runs still training", () => {
     const pending = { id: 3, metrics: null } as unknown as ModelRun;
     expect(bestRuns([run(1, { a: { roc_auc: 0.9 } }), pending], ["a"])).toEqual({});
-    expect(bestRuns([run(1, { a: { f1_macro: 0.5 } }), run(2, { a: { f1_macro: 0.7 } }), pending], ["a"]))
-      .toEqual({ "a:secondary": 2 });
+    expect(bestRuns([run(1, { a: { f1_macro: 0.5 } }), run(2, { a: { f1_macro: 0.7 } }), pending], ["a"])).toEqual({
+      "a:secondary": 2,
+    });
   });
 });
 
@@ -79,14 +95,18 @@ describe("starTitle", () => {
 describe("whyFailed", () => {
   it("explains a restart", () => {
     expect(whyFailed("Interrupted by an API restart.")).toBe(
-      "The API restarted while it was training (an update or a restart of the server), which stops running jobs.");
+      "The API restarted while it was training (an update or a restart of the server), which stops running jobs.",
+    );
   });
   it("explains running out of memory", () => {
     expect(whyFailed("MemoryError: Unable to allocate 3.1 GiB")).toMatch(/memory/i);
   });
   it("passes a run's own message through, first line only", () => {
-    expect(whyFailed("ValueError: Target 'y' has a single value in the training split; there is nothing to predict.\n\nTraceback ..."))
-      .toBe("Target 'y' has a single value in the training split; there is nothing to predict.");
+    expect(
+      whyFailed(
+        "ValueError: Target 'y' has a single value in the training split; there is nothing to predict.\n\nTraceback ...",
+      ),
+    ).toBe("Target 'y' has a single value in the training split; there is nothing to predict.");
     expect(whyFailed(null)).toBe("The run failed without a message.");
   });
 });
@@ -94,11 +114,27 @@ describe("whyFailed", () => {
 describe("cross-validation", () => {
   const cvRun = {
     id: 9,
-    metrics: { valid: { a: { roc_auc: 0.8 }, n: { r2: 0.7 } }, cv: { a: { roc_auc: 0.82, f1_macro: 0.6 }, n: { r2: 0.71, rmse: 3 } } },
-    report: { cross_validation: { folds: 3, stratified_on: "a", note: null, targets: {
-      a: { roc_auc: { mean: 0.82, std: 0.02, folds: [0.8, 0.82, 0.84] }, f1_macro: { mean: 0.6, std: 0.05, folds: [0.55, null, 0.65] } },
-      n: { r2: { mean: 0.71, std: 0.01, folds: [0.7, 0.71, 0.72] }, rmse: { mean: 3, std: 0.2, folds: [2.8, 3, 3.2] } },
-    } } },
+    metrics: {
+      valid: { a: { roc_auc: 0.8 }, n: { r2: 0.7 } },
+      cv: { a: { roc_auc: 0.82, f1_macro: 0.6 }, n: { r2: 0.71, rmse: 3 } },
+    },
+    report: {
+      cross_validation: {
+        folds: 3,
+        stratified_on: "a",
+        note: null,
+        targets: {
+          a: {
+            roc_auc: { mean: 0.82, std: 0.02, folds: [0.8, 0.82, 0.84] },
+            f1_macro: { mean: 0.6, std: 0.05, folds: [0.55, null, 0.65] },
+          },
+          n: {
+            r2: { mean: 0.71, std: 0.01, folds: [0.7, 0.71, 0.72] },
+            rmse: { mean: 3, std: 0.2, folds: [2.8, 3, 3.2] },
+          },
+        },
+      },
+    },
   } as unknown as ModelRun;
   it("reads the CV mean like a split, and its spread for the same metric", () => {
     expect(metricFor(cvRun, "cv", "a", "primary")).toBe(0.82);
@@ -126,8 +162,13 @@ describe("batchSummary", () => {
 });
 
 describe("model names", () => {
-  const linear = { label: "Logistic regression", description: "Linear baseline.", regressor_label: "Ridge regression",
-    regressor_description: "Linear baseline for numbers.", mixed_label: "Logistic and ridge regression" };
+  const linear = {
+    label: "Logistic regression",
+    description: "Linear baseline.",
+    regressor_label: "Ridge regression",
+    regressor_description: "Linear baseline for numbers.",
+    mixed_label: "Logistic and ridge regression",
+  };
   const forest = { label: "Random forest", description: "Bagged trees.", regressor_label: null };
   it("names the linear model ridge regression when every target is a number", () => {
     expect(modelLabel(linear, ["binary"])).toBe("Logistic regression");

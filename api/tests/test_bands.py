@@ -64,4 +64,3 @@ def test_rounding_never_empties_a_band_at_a_repeated_value(cap):
     v = np.r_[rng.uniform(0, cap, 700), np.full(300, cap)]
     edges = quantile_edges(v, 5)
     assert thin_bands(v, edges) == []
-

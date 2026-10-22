@@ -1,4 +1,5 @@
 """Recipe versions: their history and differences, starting the next version, and reusing a recipe on new data."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
@@ -72,12 +73,18 @@ def diff(dataset_id: int, _: CurrentUser, a: int = Query(..., ge=1), b: int = Qu
     stands; assessments are never part of it."""
     with connection() as conn:
         ra, rb = _recipe_of(conn, dataset_id, a), _recipe_of(conn, dataset_id, b)
-        out = recipes.diff(recipes.snapshot_of(conn, ra), recipes.snapshot_of(conn, rb),
-                           ra["family"] if ra["family"] == rb["family"] else None,
-                           decisions_only=ra["family"] != rb["family"])
+        out = recipes.diff(
+            recipes.snapshot_of(conn, ra),
+            recipes.snapshot_of(conn, rb),
+            ra["family"] if ra["family"] == rb["family"] else None,
+            decisions_only=ra["family"] != rb["family"],
+        )
     keys = ("id", "family", "version", "phase", "name")
-    return {"a": {**{k: ra[k] for k in keys}, "label": recipes.label(ra)},
-            "b": {**{k: rb[k] for k in keys}, "label": recipes.label(rb)}, **out}
+    return {
+        "a": {**{k: ra[k] for k in keys}, "label": recipes.label(ra)},
+        "b": {**{k: rb[k] for k in keys}, "label": recipes.label(rb)},
+        **out,
+    }
 
 
 @router.post("/datasets/{dataset_id}/recipes")
@@ -92,22 +99,33 @@ def new_version(dataset_id: int, body: NewVersionIn, user: LeadUser) -> dict:
             raise HTTPException(404, "Dataset not found")
         if status["status"] != "ready":
             raise HTTPException(409, "The dataset is still processing")
-        known = {r["id"] for r in conn.execute("SELECT id FROM meta.fields WHERE dataset_id = %s AND id = ANY(%s)",
-                                                (dataset_id, reopen)).fetchall()}
+        known = {
+            r["id"]
+            for r in conn.execute(
+                "SELECT id FROM meta.fields WHERE dataset_id = %s AND id = ANY(%s)", (dataset_id, reopen)
+            ).fetchall()
+        }
         if unknown := [i for i in reopen if i not in known]:
             raise HTTPException(422, {"message": "Unknown field(s)", "errors": [str(i) for i in unknown]})
         family = body.family or recipes.current(conn, dataset_id)["family"]
         if family not in recipes.FAMILY_LABEL:
             raise HTTPException(422, f"Unknown model family {family!r}")
-        recipe = recipes.start_version(conn, dataset_id, user["id"], family, "assessing" if reopen else "review",
-                                       "reopened" if reopen else "all")
+        recipe = recipes.start_version(
+            conn, dataset_id, user["id"], family, "assessing" if reopen else "review", "reopened" if reopen else "all"
+        )
         uncorrelated, added = recipe.pop("_target_work")
         if reopen:
-            reopen += [r["field_id"] for r in conn.execute(
-                "SELECT field_id FROM meta.field_decisions WHERE dataset_id = %s AND NOT reviewed AND field_id <> ALL(%s)",
-                (dataset_id, reopen)).fetchall()]
-            conn.execute("INSERT INTO meta.recipe_reopened (recipe_id, field_id) SELECT %s, unnest(%s::bigint[])",
-                         (recipe["id"], reopen))
+            reopen += [
+                r["field_id"]
+                for r in conn.execute(
+                    "SELECT field_id FROM meta.field_decisions WHERE dataset_id = %s AND NOT reviewed AND field_id <> ALL(%s)",
+                    (dataset_id, reopen),
+                ).fetchall()
+            ]
+            conn.execute(
+                "INSERT INTO meta.recipe_reopened (recipe_id, field_id) SELECT %s, unnest(%s::bigint[])",
+                (recipe["id"], reopen),
+            )
             # The queue of what is left to look at: reopened fields are to do again, carried ones are settled.
             conn.execute(
                 """UPDATE meta.field_decisions SET reviewed = (field_id <> ALL(%s))

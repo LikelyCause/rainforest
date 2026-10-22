@@ -10,8 +10,9 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 from . import auth, db, experiments, gpu, jobs, processing
 from .config import get_settings
-from .routers import (baselines, datasets, derived as derived_router, experiments as experiments_router, explore, exports, fields, query, recipes,
-                      runs, team, users)
+from .routers import baselines, datasets, explore, exports, fields, query, recipes, runs, team, users
+from .routers import derived as derived_router
+from .routers import experiments as experiments_router
 from .semantics import option_catalog
 
 logging.basicConfig(
@@ -30,8 +31,10 @@ async def lifespan(app: FastAPI):
     if problem := auth.config_problem():
         log.warning(problem)
     elif s.auth_mode == "pick":
-        log.warning("Sign-in mode is 'pick': anyone who can reach the UI can sign in as any user. "
-                    "Use RAINFOREST_AUTH_MODE=oidc for team deployments.")
+        log.warning(
+            "Sign-in mode is 'pick': anyone who can reach the UI can sign in as any user. "
+            "Use RAINFOREST_AUTH_MODE=oidc for team deployments."
+        )
     if os.environ.get("RAINFOREST_ADMIN_PASSWORD"):
         log.warning("RAINFOREST_ADMIN_PASSWORD has no effect; remove it. Sign-in is set by RAINFOREST_AUTH_MODE.")
     db.bootstrap()

@@ -33,6 +33,7 @@ def test_numeric_target_adds_column_c_and_changes_nothing_else():
     import polars as pl
 
     from app.sample_data import generate
+
     a = generate(2000, 40, seed=5)
     b = generate(2000, 40, seed=5, numeric_target=True)
     assert b.columns[-1] == "column_c" and b.drop("column_c").equals(a)

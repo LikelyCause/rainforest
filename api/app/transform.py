@@ -11,6 +11,7 @@ Leakage hygiene: the split is assigned first and every statistic (medians, vocab
 category levels, scaler params) is fitted on training rows only. Fitting uses a sample of
 the training split; transformation streams through the full file in chunks.
 """
+
 from __future__ import annotations
 
 import json
@@ -45,8 +46,16 @@ from . import bands, transforms
 from .config import get_settings
 from .parquet_rows import read_rows
 from .profiling import coerce_numeric, null_infinite, parse_datetime
-from .semantics import (DEFAULT_BIN_COUNT, DEFAULT_FAMILY, DEFAULT_PARAMS, FAMILIES, GROUP_REST, NON_FEATURE_TYPES,
-                        NUMERIC, grouped_target)
+from .semantics import (
+    DEFAULT_BIN_COUNT,
+    DEFAULT_FAMILY,
+    DEFAULT_PARAMS,
+    FAMILIES,
+    GROUP_REST,
+    NON_FEATURE_TYPES,
+    NUMERIC,
+    grouped_target,
+)
 
 SPLIT_COL = "__split"
 ROW_ID = "__row_id"
@@ -151,15 +160,21 @@ class BinaryEncoder(TransformerMixin, BaseEstimator):
 
     def get_feature_names_out(self, input_features=None):
         name = (input_features if input_features is not None else self.feature_names_in_)[0]
-        return np.asarray([f"{name}_{self.levels_[-1]}", *([f"{name}__isna"] if self.indicator_ else [])],
-                          dtype=object)
+        return np.asarray([f"{name}_{self.levels_[-1]}", *([f"{name}__isna"] if self.indicator_ else [])], dtype=object)
 
 
 class TextFeatures(TransformerMixin, BaseEstimator):
     """Single text column -> TF-IDF -> SVD components (and/or simple length statistics)."""
 
-    def __init__(self, mode: str = "tfidf_svd", fill_value: str = "", svd_components: int = 32,
-                 max_features: int = 20000, min_df: int = 3, random_state: int = 0):
+    def __init__(
+        self,
+        mode: str = "tfidf_svd",
+        fill_value: str = "",
+        svd_components: int = 32,
+        max_features: int = 20000,
+        min_df: int = 3,
+        random_state: int = 0,
+    ):
         self.mode = mode
         self.fill_value = fill_value
         self.svd_components = svd_components
@@ -176,8 +191,12 @@ class TextFeatures(TransformerMixin, BaseEstimator):
         docs = self._docs(X)
         if self.mode == "tfidf_svd":
             self.vectorizer_ = TfidfVectorizer(
-                max_features=self.max_features, min_df=min(self.min_df, max(1, len(docs) // 100)),
-                ngram_range=(1, 2), sublinear_tf=True, dtype=np.float32, stop_words="english",
+                max_features=self.max_features,
+                min_df=min(self.min_df, max(1, len(docs) // 100)),
+                ngram_range=(1, 2),
+                sublinear_tf=True,
+                dtype=np.float32,
+                stop_words="english",
             )
             try:
                 tf = self.vectorizer_.fit_transform(docs)
@@ -228,9 +247,19 @@ class DatetimeParts(TransformerMixin, BaseEstimator):
         for c in df.columns:
             d = pd.to_datetime(df[c], errors="coerce")
             epoch = (d - pd.Timestamp("1970-01-01")) / pd.Timedelta(days=1)
-            blocks.append(np.column_stack([
-                d.dt.year, d.dt.month, d.dt.day, d.dt.weekday, d.dt.hour, d.dt.dayofyear, epoch,
-            ]).astype(np.float64))
+            blocks.append(
+                np.column_stack(
+                    [
+                        d.dt.year,
+                        d.dt.month,
+                        d.dt.day,
+                        d.dt.weekday,
+                        d.dt.hour,
+                        d.dt.dayofyear,
+                        epoch,
+                    ]
+                ).astype(np.float64)
+            )
         return np.hstack(blocks)
 
     def get_feature_names_out(self, input_features=None):
@@ -258,8 +287,9 @@ SCALERS = {
     "standard": lambda: StandardScaler(),
     "robust": lambda: RobustScaler(),
     "minmax": lambda: MinMaxScaler(),
-    "quantile_normal": lambda: QuantileTransformer(output_distribution="normal", n_quantiles=1000,
-                                                   subsample=200_000, random_state=0),
+    "quantile_normal": lambda: QuantileTransformer(
+        output_distribution="normal", n_quantiles=1000, subsample=200_000, random_state=0
+    ),
 }
 
 
@@ -296,17 +326,26 @@ def _categorical_pipeline(f: FieldSpec) -> Pipeline | BinaryEncoder:
     if f.imputation == "most_frequent":
         imputer = SimpleImputer(strategy="most_frequent", keep_empty_features=True)
     else:
-        imputer = SimpleImputer(strategy="constant", fill_value=f.impute_value or "__missing__",
-                                keep_empty_features=True)
+        imputer = SimpleImputer(
+            strategy="constant", fill_value=f.impute_value or "__missing__", keep_empty_features=True
+        )
     p = {**DEFAULT_PARAMS.get(f.encoding, {}), **(f.params or {})}
     enc: Any
     if f.encoding == "onehot":
-        enc = OneHotEncoder(handle_unknown="infrequent_if_exist", sparse_output=False, dtype=np.float32,
-                            max_categories=int(p.get("max_categories", 30)),
-                            min_frequency=float(p.get("min_frequency", 0.01)))
+        enc = OneHotEncoder(
+            handle_unknown="infrequent_if_exist",
+            sparse_output=False,
+            dtype=np.float32,
+            max_categories=int(p.get("max_categories", 30)),
+            min_frequency=float(p.get("min_frequency", 0.01)),
+        )
     elif f.encoding == "ordinal":
-        enc = OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1, dtype=np.float32,
-                             min_frequency=float(p.get("min_frequency", 0.001)))
+        enc = OrdinalEncoder(
+            handle_unknown="use_encoded_value",
+            unknown_value=-1,
+            dtype=np.float32,
+            min_frequency=float(p.get("min_frequency", 0.001)),
+        )
     elif f.encoding == "frequency":
         enc = FrequencyEncoder()
     else:
@@ -343,10 +382,20 @@ def build_preprocessor(specs: list[FieldSpec], seed: int = 0) -> ColumnTransform
             transformers.append((tname(f.name), _categorical_pipeline(f), [f.name]))
         elif t == "text":
             p = {**DEFAULT_PARAMS["tfidf_svd"], **(f.params or {})}
-            transformers.append((tname(f.name), TextFeatures(
-                mode=f.encoding, fill_value=f.impute_value or "", svd_components=int(p["svd_components"]),
-                max_features=int(p["max_features"]), min_df=int(p["min_df"]), random_state=seed,
-            ), f.name))  # scalar column -> 1-D input
+            transformers.append(
+                (
+                    tname(f.name),
+                    TextFeatures(
+                        mode=f.encoding,
+                        fill_value=f.impute_value or "",
+                        svd_components=int(p["svd_components"]),
+                        max_features=int(p["max_features"]),
+                        min_df=int(p["min_df"]),
+                        random_state=seed,
+                    ),
+                    f.name,
+                )
+            )  # scalar column -> 1-D input
         elif t == "datetime":
             steps: list[tuple[str, Any]] = [("parts", DatetimeParts())]
             if f.imputation == "median":
@@ -354,8 +403,9 @@ def build_preprocessor(specs: list[FieldSpec], seed: int = 0) -> ColumnTransform
             if f.scaling in SCALERS:
                 steps.append(("scale", SCALERS[f.scaling]()))
             transformers.append((tname(f.name), Pipeline(steps), [f.name]))
-    ct = ColumnTransformer(transformers, remainder="drop", verbose_feature_names_out=True,
-                           sparse_threshold=0.0, n_jobs=None)
+    ct = ColumnTransformer(
+        transformers, remainder="drop", verbose_feature_names_out=True, sparse_threshold=0.0, n_jobs=None
+    )
     ct.rainforest_sources_ = sources
     return ct
 
@@ -474,8 +524,12 @@ def rows_for_budget(mb: int, width: int, floor: int = 1_000) -> int:
 
 
 def assign_splits(
-    y: pd.DataFrame, valid_size: float, test_size: float, seed: int,
-    strata_edges: dict[str, list[float]] | None = None, keep: np.ndarray | None = None,
+    y: pd.DataFrame,
+    valid_size: float,
+    test_size: float,
+    seed: int,
+    strata_edges: dict[str, list[float]] | None = None,
+    keep: np.ndarray | None = None,
     groups: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Return split codes per row (255 = dropped because a target is missing).
@@ -507,8 +561,11 @@ def assign_splits(
         if test_size <= 0 or valid_size <= 0:
             codes[rest_idx] = 1 if test_size <= 0 else 2
         else:
-            v, t = next(GroupShuffleSplit(1, test_size=test_size / holdout, random_state=seed).split(
-                rest_idx, groups=groups[rest_idx]))
+            v, t = next(
+                GroupShuffleSplit(1, test_size=test_size / holdout, random_state=seed).split(
+                    rest_idx, groups=groups[rest_idx]
+                )
+            )
             codes[rest_idx[v]], codes[rest_idx[t]] = 1, 2
         info["grouped"] = True
         return codes, info
@@ -592,7 +649,10 @@ def row_rules(parquet_path: Path, config: dict[str, Any]) -> tuple[np.ndarray | 
     keep = np.ones(df.height, dtype=bool)
     removed: dict[str, int] = {}
     if dedupe:
-        dup = df.drop("__i").is_duplicated().to_numpy() & ~df.drop("__i").select(pl.struct(pl.all()).is_first_distinct()).to_series().to_numpy()
+        dup = (
+            df.drop("__i").is_duplicated().to_numpy()
+            & ~df.drop("__i").select(pl.struct(pl.all()).is_first_distinct()).to_series().to_numpy()
+        )
         removed["duplicates"] = int((dup & keep).sum())
         keep &= ~dup
     for rule in exclude:
@@ -613,8 +673,9 @@ def row_rules(parquet_path: Path, config: dict[str, Any]) -> tuple[np.ndarray | 
     return keep, groups, removed
 
 
-def rows_after_rules(parquet_path: Path, config: dict[str, Any], targets: list[str],
-                     target_tasks: dict[str, dict] | None = None) -> dict[str, Any]:
+def rows_after_rules(
+    parquet_path: Path, config: dict[str, Any], targets: list[str], target_tasks: dict[str, dict] | None = None
+) -> dict[str, Any]:
     """How many rows an export with these row rules would split, by the export's own code: the file's rows, the rows
     the rules keep (`row_rules`), what each rule removed, the kept rows the split drops because a target is missing,
     how many groups the split rows form when it keeps a field's rows together, and `split`: the exact train, valid
@@ -637,14 +698,21 @@ def rows_after_rules(parquet_path: Path, config: dict[str, Any], targets: list[s
             split = {k: int((codes == v).sum()) for k, v in SPLIT_CODES.items()}
         except ValueError as exc:  # the export would fail the same way; the preview's blocking list says why
             split_error = str(exc)
-    return {"rows": int(total), "kept": int(kept.sum()), "removed": removed,
-            "missing_target": int((kept & ~labeled).sum()), "split_rows": int(rows.sum()),
-            "groups": None if groups is None else int(np.unique(groups[rows]).size),
-            "split": split, "split_error": split_error}
+    return {
+        "rows": int(total),
+        "kept": int(kept.sum()),
+        "removed": removed,
+        "missing_target": int((kept & ~labeled).sum()),
+        "split_rows": int(rows.sum()),
+        "groups": None if groups is None else int(np.unique(groups[rows]).size),
+        "split": split,
+        "split_error": split_error,
+    }
 
 
-def prepare_targets(parquet_path: Path, targets: list[str], target_tasks: dict[str, dict], config: dict[str, Any],
-                    seed: int):
+def prepare_targets(
+    parquet_path: Path, targets: list[str], target_tasks: dict[str, dict], config: dict[str, Any], seed: int
+):
     """Read, check and encode the targets, and split the rows. Class targets become codes; a number stays a float; bands
     become codes of bands cut on the training rows. Numeric targets are read the way profiling read them, and a value
     that doesn't read as a number fails the export rather than silently losing its row."""
@@ -663,8 +731,10 @@ def prepare_targets(parquet_path: Path, targets: list[str], target_tasks: dict[s
         num = coerce_numeric(raw[t], target_tasks[t].get("decimal_comma"))
         given = raw[t].fill_nan(None) if raw[t].dtype.is_float() else raw[t]
         if lost := int(given.is_not_null().sum() - num.is_not_null().sum()):
-            raise ValueError(f"Target {t!r} has {lost:,} value(s) that don't read as numbers (or are infinite); fix "
-                             "them or predict it as classes.")
+            raise ValueError(
+                f"Target {t!r} has {lost:,} value(s) that don't read as numbers (or are infinite); fix "
+                "them or predict it as classes."
+            )
         y_raw[t] = num.to_numpy()
     class_targets = [t for t in targets if tasks[t] == "classes"]
     check_target_classes(y_raw[class_targets])
@@ -672,9 +742,15 @@ def prepare_targets(parquet_path: Path, targets: list[str], target_tasks: dict[s
     keep, groups, removed = row_rules(parquet_path, config)
     if keep is not None and not keep.any():
         raise ValueError("The row rules leave no rows to export.")
-    split, split_info = assign_splits(y_raw, float(config.get("valid_size", 0.15)),
-                                      float(config.get("test_size", 0.15)), seed, strata_edges=chosen, keep=keep,
-                                      groups=groups)
+    split, split_info = assign_splits(
+        y_raw,
+        float(config.get("valid_size", 0.15)),
+        float(config.get("test_size", 0.15)),
+        seed,
+        strata_edges=chosen,
+        keep=keep,
+        groups=groups,
+    )
     if removed:
         split_info["rows_removed"] = removed
     if config.get("group_by"):
@@ -688,8 +764,10 @@ def prepare_targets(parquet_path: Path, targets: list[str], target_tasks: dict[s
             spec = target_tasks[t].get("bins") or {"k": DEFAULT_BIN_COUNT}
             edges = bands.edges_for(spec, vals[train_rows])
             if thin := bands.thin_bands(vals[split != 255], edges):
-                raise ValueError(f"Target {t!r}: band(s) {', '.join(thin)} have fewer than 2 rows; move or remove "
-                                 "cut points, or use fewer bands.")
+                raise ValueError(
+                    f"Target {t!r}: band(s) {', '.join(thin)} have fewer than 2 rows; move or remove "
+                    "cut points, or use fewer bands."
+                )
             y_enc[t] = bands.assign(vals, edges)
             classes[t] = bands.band_labels(edges)
             target_bins[t] = {"edges": edges, "labels": classes[t], "k": spec.get("k")}
@@ -698,8 +776,12 @@ def prepare_targets(parquet_path: Path, targets: list[str], target_tasks: dict[s
             tr = vals[train_rows & ~np.isnan(vals)]
             if np.unique(tr).size < 2:
                 raise ValueError(f"Target {t!r} has a single value in the training rows; there is nothing to predict.")
-            target_stats[t] = {"mean": float(tr.mean()), "std": float(tr.std()), "min": float(tr.min()),
-                               "max": float(tr.max())}
+            target_stats[t] = {
+                "mean": float(tr.mean()),
+                "std": float(tr.std()),
+                "min": float(tr.min()),
+                "max": float(tr.max()),
+            }
     for t, pos in grouped.items():
         target_bins[t] = {"positive": pos}
     info = {"target_tasks": tasks, "target_bins": target_bins, "target_stats": target_stats, "_groups": groups}
@@ -744,8 +826,9 @@ def run_export(
 
     # 1. targets + split ------------------------------------------------------------
     progress(0.02, "Assigning train / valid / test split")
-    y_raw, y_enc, classes, split, split_info, target_info = prepare_targets(parquet_path, targets, target_tasks or {},
-                                                                            config, seed)
+    y_raw, y_enc, classes, split, split_info, target_info = prepare_targets(
+        parquet_path, targets, target_tasks or {}, config, seed
+    )
     tasks = target_info["target_tasks"]
     groups = target_info.pop("_groups")
     if groups is not None:
@@ -760,8 +843,7 @@ def run_export(
     fit_idx = np.sort(rng.choice(train_idx, size=min(fit_rows, fit_cap, train_idx.size), replace=False))
     feature_cols = [f.name for f in specs]
     pre = build_preprocessor(specs, seed)
-    pre.fit(to_pandas_frame(read_rows(parquet_path, feature_cols, fit_idx), specs, coercion_exprs(specs),
-                            consume=True))
+    pre.fit(to_pandas_frame(read_rows(parquet_path, feature_cols, fit_idx), specs, coercion_exprs(specs), consume=True))
     coercers = coercion_exprs(specs)  # fresh, so inf counts cover the written rows only
     raw_names = readable_feature_names(pre)
     feat_names = safe_feature_names(raw_names, reserved=[ROW_ID, SPLIT_COL, *targets])
@@ -807,8 +889,10 @@ def run_export(
                 )
             cols: list[Any] = [pa.array(rows, pa.int64()), pa.array(split_names[split[rows]], pa.string())]
             cols += [pa.array(X[:, k]) for k in range(X.shape[1])]
-            cols += [pa.array(y_enc[t].to_numpy()[rows].astype(np.float64 if tasks[t] == "regression" else np.int32))
-                     for t in targets]
+            cols += [
+                pa.array(y_enc[t].to_numpy()[rows].astype(np.float64 if tasks[t] == "regression" else np.int32))
+                for t in targets
+            ]
             writer.write_table(pa.Table.from_arrays(cols, schema=arrow_schema))
             del X, cols
             written += int(keep.sum())
@@ -821,16 +905,19 @@ def run_export(
         "model_family": family,
         "contains_nan": bool(nan_counts.any()),
         "nan_features": {feat_names[k]: int(nan_counts[k]) for k in np.flatnonzero(nan_counts)},
-        "inf_values": {name: c.inf_count for name, c in coercers.items()
-                       if isinstance(c, NumericCoercer) and c.inf_count},
+        "inf_values": {
+            name: c.inf_count for name, c in coercers.items() if isinstance(c, NumericCoercer) and c.inf_count
+        },
         "rows_written": written,
         "n_features": len(feat_names),
         "feature_names": feat_names,
         "feature_source_field": feature_source,
         "targets": targets,
         "target_classes": {t: classes[t] for t in targets if tasks[t] != "regression"},
-        "target_kinds": {t: "regression" if tasks[t] == "regression"
-                         else ("binary" if len(classes[t]) == 2 else "multiclass") for t in targets},
+        "target_kinds": {
+            t: "regression" if tasks[t] == "regression" else ("binary" if len(classes[t]) == 2 else "multiclass")
+            for t in targets
+        },
         **target_info,
         "split_column": SPLIT_COL,
         "split_counts": split_counts,
@@ -840,8 +927,11 @@ def run_export(
         "config": config,
         "fields": [f.__dict__ for f in specs],
         "versions": {"sklearn": sklearn.__version__, "polars": pl.__version__, "numpy": np.__version__},
-        "files": {"data": "model_ready.parquet", "preprocessor": "preprocessor.joblib",
-                  **({"groups": "groups.npy"} if groups is not None else {})},
+        "files": {
+            "data": "model_ready.parquet",
+            "preprocessor": "preprocessor.joblib",
+            **({"groups": "groups.npy"} if groups is not None else {}),
+        },
     }
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, default=_json_default))
     progress(1.0, "Done")

@@ -1,7 +1,7 @@
 """Experiment adjustments: a team experiment's own copy of its baseline, changed through view=experiment:<id>,
 exported and logged as baseline + adjustments. Needs RAINFOREST_TEST_DATABASE_URL."""
-from .team_helpers import app_, people  # noqa: F401  (fixtures)
-from .team_helpers import adjust, experiment, export, fields, finalized_trees, save, upload
+
+from .team_helpers import adjust, app_, experiment, export, fields, finalized_trees, people, save, upload  # noqa: F401  (fixtures)
 
 
 def test_experiment_copies_exist_and_go_with_their_experiment(people):
@@ -11,12 +11,17 @@ def test_experiment_copies_exist_and_go_with_their_experiment(people):
     ds, rid = finalized_trees(lead)
     x = experiment(lead, ds, rid)
     with connection() as conn:
-        n = conn.execute("SELECT count(*) AS n FROM meta.experiment_decisions WHERE experiment_id = %s",
-                         (x["id"],)).fetchone()["n"]
+        n = conn.execute(
+            "SELECT count(*) AS n FROM meta.experiment_decisions WHERE experiment_id = %s", (x["id"],)
+        ).fetchone()["n"]
         assert n == len(fields(lead, ds))
         conn.execute("DELETE FROM meta.experiments WHERE id = %s", (x["id"],))
-        assert conn.execute("SELECT count(*) AS n FROM meta.experiment_settings WHERE experiment_id = %s",
-                            (x["id"],)).fetchone()["n"] == 0
+        assert (
+            conn.execute(
+                "SELECT count(*) AS n FROM meta.experiment_settings WHERE experiment_id = %s", (x["id"],)
+            ).fetchone()["n"]
+            == 0
+        )
 
 
 def test_owner_adjusts_through_the_experiment_view(people):
@@ -34,7 +39,9 @@ def test_owner_adjusts_through_the_experiment_view(people):
     assert fields(lead, ds)["w"]["action"] == "keep"  # nor did the working copy
     assert save(b, f["w"]["id"], view, action="keep").status_code == 403
     assert save(lead, f["w"]["id"], view, action="keep").status_code == 403  # owners only, leads included
-    r = a.post(f"/api/datasets/{ds['id']}/decisions/bulk?view={view}", json={"field_ids": [f["x"]["id"]], "action": "drop"})
+    r = a.post(
+        f"/api/datasets/{ds['id']}/decisions/bulk?view={view}", json={"field_ids": [f["x"]["id"]], "action": "drop"}
+    )
     assert r.status_code == 200 and r.json()["changed"] == 1
     assert fields(a, ds, view)["x"]["action"] == "drop"
     assert a.post(f"/api/datasets/{ds['id']}/decisions/bulk/{r.json()['batch_id']}/undo?view={view}").status_code == 200
@@ -64,6 +71,7 @@ def test_a_baseline_only_takes_its_own_model_type(people):
     lead = people["lead"]
     ds = upload(lead)
     from .team_helpers import start
+
     start(lead, ds, "tree", [lead])
     fid = fields(lead, ds)["x"]["id"]
     assert lead.get(f"/api/fields/{fid}?family=linear").status_code == 422
@@ -94,7 +102,13 @@ def test_adjustments_stay_in_their_experiment_and_exports_freeze_them(people):
     names = {f["name"] for f in man["fields"]}
     assert "w" not in names and "x" in names
     assert e["config"]["adjustments"]["count"] == 1 and e["config"]["adjustments"]["fields"] == ["w"]
-    assert e["config"]["baseline"] == {"recipe_id": rid, "family": "tree", "version": 1, "name": None, "label": "Trees baseline v1"}
+    assert e["config"]["baseline"] == {
+        "recipe_id": rid,
+        "family": "tree",
+        "version": 1,
+        "name": None,
+        "label": "Trees baseline v1",
+    }
     info = a.get(f"/api/experiments/{x1['id']}").json()
     assert info["adjustments"]["count"] == 2 and info["can_adjust"]
     assert {f["name"] for f in info["adjustments"]["fields"]} == {"w", "x"}
@@ -154,8 +168,10 @@ def test_bulk_accept_in_a_fresh_experiment_changes_nothing(people):
     a = people["a"]
     ds, rid = finalized_trees(people["lead"])
     x = experiment(a, ds, rid, "bulk")
-    r = a.post(f"/api/datasets/{ds['id']}/decisions/bulk?view=experiment:{x['id']}",
-               json={"filters": [], "accept_suggestion": True, "dry_run": True})
+    r = a.post(
+        f"/api/datasets/{ds['id']}/decisions/bulk?view=experiment:{x['id']}",
+        json={"filters": [], "accept_suggestion": True, "dry_run": True},
+    )
     assert r.status_code == 200 and r.json()["changed"] == 0, r.json()
 
 
@@ -171,10 +187,12 @@ def test_views_of_private_or_unfinished_sources_are_refused(people):
     lead, a, b = people["lead"], people["a"], people["b"]
     ds = upload(lead)
     from .team_helpers import start
+
     st = start(lead, ds, "tree", [a, b])
     rid = st["recipe"]["id"]
-    x = a.post(f"/api/datasets/{ds['id']}/experiments", json={
-        "name": "private", "source": f"assessment:{rid}:{a.user['id']}"}).json()
+    x = a.post(
+        f"/api/datasets/{ds['id']}/experiments", json={"name": "private", "source": f"assessment:{rid}:{a.user['id']}"}
+    ).json()
     assert a.get(f"/api/datasets/{ds['id']}/fields?view=experiment:{x['id']}").status_code == 409
     assert b.get(f"/api/datasets/{ds['id']}/fields?view=experiment:{x['id']}").status_code == 404
     assert lead.get(f"/api/datasets/{ds['id']}/fields?view=baseline:{rid}").status_code == 404
@@ -187,10 +205,13 @@ def test_bulk_in_an_experiment_reaches_every_field_whatever_its_version_reopened
     lead.post(f"/api/datasets/{ds['id']}/recipes", json={"family": "tree", "reopen": [xid]})
     lead.post(f"/api/datasets/{ds['id']}/assessors", json={"user_id": lead.user["id"]})
     from .team_helpers import submit_and_finalize
+
     v2 = submit_and_finalize(lead, ds)["recipe"]["id"]
     x = experiment(lead, ds, v2, "all fields")
-    r = lead.post(f"/api/datasets/{ds['id']}/decisions/bulk?view=experiment:{x['id']}",
-                  json={"filters": [], "action": "drop", "dry_run": True})
+    r = lead.post(
+        f"/api/datasets/{ds['id']}/decisions/bulk?view=experiment:{x['id']}",
+        json={"filters": [], "action": "drop", "dry_run": True},
+    )
     assert r.status_code == 200 and r.json()["matched"] == len(fields(lead, ds)), r.json()
 
 
@@ -200,9 +221,13 @@ def test_explore_studies_an_experiments_own_targets(people):
     x = experiment(a, ds, rid, "explore c")
     adjust(a, ds, x, "y", action="keep")
     adjust(a, ds, x, "c", action="target")
-    r = a.post(f"/api/datasets/{ds['id']}/analyses", json={
-        "kind": "importance", "view": f"experiment:{x['id']}", "params": {"target": "c", "sample": 1000}})
+    r = a.post(
+        f"/api/datasets/{ds['id']}/analyses",
+        json={"kind": "importance", "view": f"experiment:{x['id']}", "params": {"target": "c", "sample": 1000}},
+    )
     assert r.status_code == 200, r.text
-    r = a.post(f"/api/datasets/{ds['id']}/analyses", json={
-        "kind": "importance", "view": f"experiment:{x['id']}", "params": {"target": "y", "sample": 1000}})
+    r = a.post(
+        f"/api/datasets/{ds['id']}/analyses",
+        json={"kind": "importance", "view": f"experiment:{x['id']}", "params": {"target": "y", "sample": 1000}},
+    )
     assert r.status_code == 422

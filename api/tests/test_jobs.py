@@ -1,4 +1,5 @@
 """Job ownership (the restart sweep) and the global job slots. Needs RAINFOREST_TEST_DATABASE_URL."""
+
 import os
 import threading
 import time
@@ -56,9 +57,12 @@ def _export(ds: int, status: str, owner: int | None) -> int:
 
 
 def _status(table: str, row_id: int) -> dict:
-    return db.fetch_one(f"SELECT status, error, warnings FROM meta.{table} WHERE id = %s"
-                        if table == "datasets" else f"SELECT status, error FROM meta.{table} WHERE id = %s",
-                        (row_id,))
+    return db.fetch_one(
+        f"SELECT status, error, warnings FROM meta.{table} WHERE id = %s"
+        if table == "datasets"
+        else f"SELECT status, error FROM meta.{table} WHERE id = %s",
+        (row_id,),
+    )
 
 
 def test_sweep_fails_only_jobs_whose_owner_is_gone(database, sibling):

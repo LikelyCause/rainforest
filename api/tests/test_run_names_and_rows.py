@@ -1,5 +1,6 @@
 """What a run is called (ridge regression for the linear model on numbers), what its downloaded model file is called,
 and how many rows the export panel says its row rules leave to split."""
+
 import math
 from pathlib import Path
 
@@ -8,8 +9,7 @@ import pytest
 from app.modeling.mlflow_log import model_file_name
 from app.modeling.registry import MODELS, catalog, label_for
 
-from .team_helpers import (DB_URL, app_, experiment, fields, people, save, start,  # noqa: F401
-                           submit_and_finalize, upload, wait)
+from .team_helpers import DB_URL, app_, experiment, fields, people, save, start, submit_and_finalize, upload, wait  # noqa: F401
 
 PRICES = "x,z,price,c\n" + "".join(f"{i % 17},{(i * 7) % 11},{i * 1.5 + (i % 5)},{'pq'[i % 2]}\n" for i in range(400))
 MIGRATION = Path(__file__).parents[1] / "app" / "migrations" / "021_ridge_run_labels.sql"
@@ -69,7 +69,9 @@ def test_a_linear_run_on_a_number_is_ridge_regression_everywhere(people):
     listed = next(i for i in lead.get(f"/api/datasets/{ds['id']}/experiments").json() if i["id"] == x["id"])
     assert listed["chosen"]["model_label"] == "Ridge regression"
     home = next(d for d in lead.get("/api/datasets").json() if d["id"] == ds["id"])
-    assert home["best_run"]["model_label"] == "Ridge regression" and home["last_run"]["model_label"] == "Ridge regression"
+    assert (
+        home["best_run"]["model_label"] == "Ridge regression" and home["last_run"]["model_label"] == "Ridge regression"
+    )
 
     # The download says it is a target chain; the file on disk keeps its one name.
     r = lead.get(f"/api/runs/{run['id']}/files/model")
@@ -80,11 +82,15 @@ def test_a_linear_run_on_a_number_is_ridge_regression_everywhere(people):
 
     # A run stored before the fix carried the classifier's name; the migration renames it by its target kinds.
     with connection() as conn:
-        conn.execute("""UPDATE meta.model_runs SET report = jsonb_set(report, '{model_label}', '"Logistic regression"')
-                         WHERE id = %s""", (run["id"],))
+        conn.execute(
+            """UPDATE meta.model_runs SET report = jsonb_set(report, '{model_label}', '"Logistic regression"')
+                         WHERE id = %s""",
+            (run["id"],),
+        )
         conn.execute(MIGRATION.read_text())
-        label = conn.execute("SELECT report ->> 'model_label' AS l FROM meta.model_runs WHERE id = %s",
-                             (run["id"],)).fetchone()["l"]
+        label = conn.execute(
+            "SELECT report ->> 'model_label' AS l FROM meta.model_runs WHERE id = %s", (run["id"],)
+        ).fetchone()["l"]
     assert label == "Ridge regression"
 
 
@@ -105,6 +111,7 @@ def test_a_class_run_keeps_its_name_and_classifier_chain_file(people):
 
 # --- the split preview's row counts -------------------------------------------------------------------------------
 
+
 def _split_counts(n: int, valid: float, test: float) -> dict[str, int]:
     """The UI's splitCounts (ui/src/experiments.ts): the held-out share rounds up, then test's part of it."""
     rest = math.ceil((valid + test) * n)
@@ -112,9 +119,11 @@ def _split_counts(n: int, valid: float, test: float) -> dict[str, int]:
     return {"train": n - rest, "valid": rest - t, "test": t}
 
 
-VISITS = "patient,visit,x,y\n" + "".join(
-    f"{i % 90},{i // 90},{(i * 13) % 29},{'' if i % 50 == 7 else 'ab'[i % 2]}\n" for i in range(600)) + \
-    "".join(f"{i % 90},{i // 90},{(i * 13) % 29},{'ab'[i % 2]}\n" for i in range(0, 40, 2))  # 20 exact duplicates
+VISITS = (
+    "patient,visit,x,y\n"
+    + "".join(f"{i % 90},{i // 90},{(i * 13) % 29},{'' if i % 50 == 7 else 'ab'[i % 2]}\n" for i in range(600))
+    + "".join(f"{i % 90},{i // 90},{(i * 13) % 29},{'ab'[i % 2]}\n" for i in range(0, 40, 2))
+)  # 20 exact duplicates
 
 
 @pytest.mark.skipif(not DB_URL, reason="set RAINFOREST_TEST_DATABASE_URL to run the API tests")

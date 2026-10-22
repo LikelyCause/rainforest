@@ -1,4 +1,5 @@
 """Input validation and JSON safety: decision settings, fill values, run parameters, cv, non-finite metrics."""
+
 import math
 
 import numpy as np
@@ -25,8 +26,16 @@ def test_evaluate_on_a_single_class_split_has_no_auc_and_stays_finite():
 def test_numeric_fill_values_must_be_finite(fill):
     from app.semantics import validate_decision
 
-    d = {"action": "keep", "semantic_type": "numeric_continuous", "imputation": "constant", "impute_value": fill,
-         "transform": "none", "scaling": "standard", "encoding": "none", "params": {}}
+    d = {
+        "action": "keep",
+        "semantic_type": "numeric_continuous",
+        "imputation": "constant",
+        "impute_value": fill,
+        "transform": "none",
+        "scaling": "standard",
+        "encoding": "none",
+        "params": {},
+    }
     assert any("finite" in e for e in validate_decision(d, "linear"))
 
 
@@ -37,16 +46,19 @@ def _keep(t, encoding, params, family="tree"):
     return validate_decision({**s, "action": "keep", "encoding": encoding, "params": params}, family)
 
 
-@pytest.mark.parametrize("t,encoding,params", [
-    ("categorical", "onehot", {"max_categories": 0}),
-    ("categorical", "onehot", {"max_categories": 2.5}),
-    ("categorical", "onehot", {"min_frequency": 1.5}),
-    ("categorical", "onehot", {"min_frequency": "lots"}),
-    ("categorical", "ordinal", {"min_frequency": -0.1}),
-    ("text", "tfidf_svd", {"svd_components": 0}),
-    ("text", "tfidf_svd", {"max_features": True}),
-    ("text", "tfidf_svd", {"min_df": float("nan")}),
-])
+@pytest.mark.parametrize(
+    "t,encoding,params",
+    [
+        ("categorical", "onehot", {"max_categories": 0}),
+        ("categorical", "onehot", {"max_categories": 2.5}),
+        ("categorical", "onehot", {"min_frequency": 1.5}),
+        ("categorical", "onehot", {"min_frequency": "lots"}),
+        ("categorical", "ordinal", {"min_frequency": -0.1}),
+        ("text", "tfidf_svd", {"svd_components": 0}),
+        ("text", "tfidf_svd", {"max_features": True}),
+        ("text", "tfidf_svd", {"min_df": float("nan")}),
+    ],
+)
 def test_encoder_params_out_of_range_are_rejected(t, encoding, params):
     assert any(f"params.{next(iter(params))}" in e for e in _keep(t, encoding, params))
 

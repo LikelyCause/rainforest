@@ -4,6 +4,7 @@ Reads the dataset's Parquet copy one column at a time (memory stays ~1 column wi
 Counts (nulls, distinct values, min / max / mean) are exact over all rows; quantiles,
 histograms, text statistics and correlation inputs use a seeded random row sample.
 """
+
 from __future__ import annotations
 
 import math
@@ -165,8 +166,9 @@ def _numeric_datetime_format(s: pl.Series) -> str:
     if _yyyymmdd_rate(s) >= 0.99:
         return YYYYMMDD
     biggest = null_infinite(s.cast(pl.Float64).fill_nan(None)).abs().max() or 0
-    return next((u for u, top in (("epoch_s", 1e11), ("epoch_ms", 1e14), ("epoch_us", 1e17)) if biggest < top),
-                "epoch_ns")
+    return next(
+        (u for u, top in (("epoch_s", 1e11), ("epoch_ms", 1e14), ("epoch_us", 1e17)) if biggest < top), "epoch_ns"
+    )
 
 
 def _numeric_to_datetime(s: pl.Series, fmt: str | None) -> pl.Series:
@@ -250,9 +252,7 @@ def coerce_numeric(s: pl.Series, decimal_comma: bool | None = None, keep_inf: bo
 
 
 # --------------------------------------------------------------------------- inference
-def infer_type(
-    s: pl.Series, name: str, n_unique: int, n_nonnull: int
-) -> tuple[str, float, list[str], dict[str, Any]]:
+def infer_type(s: pl.Series, name: str, n_unique: int, n_nonnull: int) -> tuple[str, float, list[str], dict[str, Any]]:
     """Return (semantic_type, confidence, reasons, hints)."""
     hints: dict[str, Any] = {}
     dt = s.dtype
@@ -280,8 +280,12 @@ def infer_type(
 
 
 # Epoch values for 2000-01-01 .. 2100-01-01 per unit, the magnitudes _numeric_to_datetime reads them in.
-EPOCH_RANGES = {"seconds": (946_684_800, 4_102_444_800), "milliseconds": (946_684_800e3, 4_102_444_800e3),
-                "microseconds": (946_684_800e6, 4_102_444_800e6), "nanoseconds": (946_684_800e9, 4_102_444_800e9)}
+EPOCH_RANGES = {
+    "seconds": (946_684_800, 4_102_444_800),
+    "milliseconds": (946_684_800e3, 4_102_444_800e3),
+    "microseconds": (946_684_800e6, 4_102_444_800e6),
+    "nanoseconds": (946_684_800e9, 4_102_444_800e9),
+}
 
 
 def _epoch_unit(s: pl.Series, name: str) -> str | None:
@@ -308,24 +312,42 @@ def _infer_numeric(nn: pl.Series, name: str, dt: pl.DataType, n_unique: int, n_n
         integral = True
     if integral and n_nonnull >= 500:
         keyish = bool(ID_NAME_RE.search(name))
-        if unique_ratio >= 0.999 or (keyish and unique_ratio > 0.9) or (keyish and n_unique > 1000 and unique_ratio > 0.5):
-            why = ("every value is unique" if unique_ratio >= 0.999 else "name looks like a key"
-                   + ("; values repeat, so it may group rows (e.g. several visits per patient)" if unique_ratio <= 0.9 else ""))
+        if (
+            unique_ratio >= 0.999
+            or (keyish and unique_ratio > 0.9)
+            or (keyish and n_unique > 1000 and unique_ratio > 0.5)
+        ):
+            why = (
+                "every value is unique"
+                if unique_ratio >= 0.999
+                else "name looks like a key"
+                + (
+                    "; values repeat, so it may group rows (e.g. several visits per patient)"
+                    if unique_ratio <= 0.9
+                    else ""
+                )
+            )
             monotonic = nn.head(100_000).is_sorted()
-            return "identifier", 0.9 if monotonic else 0.75, [
-                f"integer values; {why}" + ("; monotonically increasing" if monotonic else "")
-            ]
+            return (
+                "identifier",
+                0.9 if monotonic else 0.75,
+                [f"integer values; {why}" + ("; monotonically increasing" if monotonic else "")],
+            )
     if integral and ID_NAME_RE.search(name) and n_unique <= 50:
         return "categorical", 0.7, [f"integer codes: the name looks like a key and there are only {n_unique} values"]
     if integral:
         if n_unique <= 20:
-            return "numeric_discrete", 0.7, [
-                f"integer values with {n_unique} levels — could also be ordinal / categorical"
-            ]
+            return (
+                "numeric_discrete",
+                0.7,
+                [f"integer values with {n_unique} levels — could also be ordinal / categorical"],
+            )
         if n_unique > 1000 and unique_ratio > 0.2:
-            return "numeric_continuous", 0.75, [
-                "integer-valued but high resolution — behaves like a continuous measure"
-            ]
+            return (
+                "numeric_continuous",
+                0.75,
+                ["integer-valued but high resolution — behaves like a continuous measure"],
+            )
         return "numeric_discrete", 0.85, [f"integer values ({n_unique:,} distinct)"]
     if n_unique <= 10:
         return "numeric_discrete", 0.6, [f"only {n_unique} distinct non-integer values"]
@@ -349,8 +371,15 @@ def _infer_string(s: pl.Series, name: str, n_unique: int, n_nonnull: int):
     codes = nn.filter(as_num.is_null())
     if num_rate >= 0.98 and codes.len() and codes.str.contains(CODE_RE).mean() >= 0.9:
         examples = ", ".join(codes.unique().head(3).to_list())
-        return "categorical", 0.8, [f"codes: mostly numbers, but {codes.len():,} values such as {examples} aren't",
-                                    f"{n_unique:,} distinct values"], hints
+        return (
+            "categorical",
+            0.8,
+            [
+                f"codes: mostly numbers, but {codes.len():,} values such as {examples} aren't",
+                f"{n_unique:,} distinct values",
+            ],
+            hints,
+        )
     if num_rate >= 0.98:
         t, c, r = _infer_numeric(null_infinite(as_num).drop_nulls(), name, pl.Float64, n_unique, n_nonnull)
         hints["stored_as_text"] = True
@@ -363,9 +392,12 @@ def _infer_string(s: pl.Series, name: str, n_unique: int, n_nonnull: int):
     dt_rate = 1 - parse_datetime(nn, fmt).null_count() / max(nn.len(), 1) if fmt and probe_rate >= 0.9 else 0.0
     if fmt and dt_rate >= 0.95:
         hints["datetime_format"] = fmt
-        return "datetime", round(0.8 + 0.2 * dt_rate, 2), [
-            f"{dt_rate:.1%} of values parse as dates with format {fmt}", *([note] if note else [])
-        ], hints
+        return (
+            "datetime",
+            round(0.8 + 0.2 * dt_rate, 2),
+            [f"{dt_rate:.1%} of values parse as dates with format {fmt}", *([note] if note else [])],
+            hints,
+        )
 
     lengths = probe.str.len_chars()
     words = probe.str.count_matches(r"\S+")
@@ -375,8 +407,10 @@ def _infer_string(s: pl.Series, name: str, n_unique: int, n_nonnull: int):
         conf = 0.95 if avg_words >= 8 else 0.8
         return "text", conf, [f"avg {avg_words:.1f} words / {avg_len:.0f} chars per value"], hints
 
-    if n_nonnull >= 500 and avg_words < 2 and (
-        unique_ratio >= 0.98 or (ID_NAME_RE.search(name) and unique_ratio > 0.5)
+    if (
+        n_nonnull >= 500
+        and avg_words < 2
+        and (unique_ratio >= 0.98 or (ID_NAME_RE.search(name) and unique_ratio > 0.5))
     ):
         why = f"{unique_ratio:.1%} of values are unique" if unique_ratio >= 0.98 else "name looks like a key"
         return "identifier", 0.85, [f"short tokens; {why}"], hints
@@ -450,8 +484,15 @@ def _numeric_stats(full: pl.Series, sample: pl.Series, discrete: bool) -> tuple[
         charts["distribution"] = {"kind": "histogram", **_histogram(xs)}
     if (summary["min_value"] or 0) >= 0 and abs(skew or 0) > 1.5:
         charts["log_distribution"] = {"kind": "histogram", **_histogram(np.log1p(xs))}
-    charts["box"] = {"p01": p01, "p25": p25, "p50": p50, "p75": p75, "p99": p99,
-                     "min": summary["min_value"], "max": summary["max_value"]}
+    charts["box"] = {
+        "p01": p01,
+        "p25": p25,
+        "p50": p50,
+        "p75": p75,
+        "p99": p99,
+        "min": summary["min_value"],
+        "max": summary["max_value"],
+    }
     return summary, stats, charts
 
 
@@ -554,8 +595,10 @@ def _datetime_stats(parsed: pl.Series, sample_parsed: pl.Series) -> tuple[dict, 
             "counts": [int(c) for c in weekday],
         },
     }
-    summary = {"min_value": _f(epoch.min()) if epoch.size else None,
-               "max_value": _f(epoch.max()) if epoch.size else None}
+    summary = {
+        "min_value": _f(epoch.min()) if epoch.size else None,
+        "max_value": _f(epoch.max()) if epoch.size else None,
+    }
     return summary, stats, charts
 
 
@@ -566,8 +609,11 @@ def _codes(s: pl.Series, max_levels: int) -> np.ndarray:
     mapping = {v: i for i, v in enumerate(top)}
     other, missing = len(top), len(top) + 1
     # replace_strict sends nulls to `default` too, so missing has to be set before it.
-    mapped = pl.select(pl.when(as_str.is_null()).then(missing)
-                       .otherwise(as_str.replace_strict(mapping, default=other, return_dtype=pl.Int32)))
+    mapped = pl.select(
+        pl.when(as_str.is_null())
+        .then(missing)
+        .otherwise(as_str.replace_strict(mapping, default=other, return_dtype=pl.Int32))
+    )
     return mapped.to_series().to_numpy().astype(np.int32)
 
 
@@ -585,8 +631,9 @@ def _failed_examples(raw: pl.Series, parsed: pl.Series, k: int = 5) -> list[str]
     return [str(v)[:100] for v in failed.unique(maintain_order=True).head(k).to_list()]
 
 
-def corr_vector(s: pl.Series, t: str, datetime_format: str | None, corr_idx: np.ndarray | None,
-                corr_max_levels: int) -> tuple[np.ndarray | None, np.ndarray | None]:
+def corr_vector(
+    s: pl.Series, t: str, datetime_format: str | None, corr_idx: np.ndarray | None, corr_max_levels: int
+) -> tuple[np.ndarray | None, np.ndarray | None]:
     """(numeric, codes) association-sample vectors for a column already typed `t`, as profile_column builds them."""
     if s.dtype.is_float():
         s = s.fill_nan(None)
@@ -624,8 +671,11 @@ def profile_column(
 
     t, conf, reasons, hints = infer_type(s, name, n_unique, n_nonnull)
     if is_target and t in ("identifier", "datetime") and s.dtype.is_numeric():
-        reasons = [f"target column; numbers that look {'like a key' if t == 'identifier' else 'like dates'}, "
-                   "treated as a number", *reasons]
+        reasons = [
+            f"target column; numbers that look {'like a key' if t == 'identifier' else 'like dates'}, "
+            "treated as a number",
+            *reasons,
+        ]
         t = "numeric_continuous"
     if is_target and t not in NUMERIC and target_problem("categorical", n_unique):
         reasons = [f"named as a target but can't be a target: {target_problem('categorical', n_unique)}", *reasons]
@@ -671,9 +721,7 @@ def profile_column(
         if unparseable:
             stats["unparseable_examples"] = _failed_examples(s, parsed)
         su, st, ch = _datetime_stats(parsed, _sample_series(parsed, sample_idx))
-        corr_numeric = (
-            _corr_sample(parsed).dt.epoch("s").cast(pl.Float64).to_numpy().astype(np.float64)
-        )
+        corr_numeric = _corr_sample(parsed).dt.epoch("s").cast(pl.Float64).to_numpy().astype(np.float64)
     elif t == "identifier":
         su, st, ch = {}, {}, {}
         lengths = s.drop_nulls().cast(pl.String).str.len_chars()
@@ -693,8 +741,10 @@ def profile_column(
     if unparseable:
         stats["unparseable_count"] = unparseable
         what = "dates" if t == "datetime" else "numbers"
-        reasons = [*reasons, f"{unparseable:,} value(s) ({unparseable / n:.2%}) don't parse as {what} and are "
-                   f"treated as missing"]
+        reasons = [
+            *reasons,
+            f"{unparseable:,} value(s) ({unparseable / n:.2%}) don't parse as {what} and are treated as missing",
+        ]
         conf = min(conf, 0.65)
     if inf_count:
         stats["inf_count"] = inf_count

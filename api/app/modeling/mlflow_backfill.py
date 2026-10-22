@@ -1,9 +1,10 @@
 """Log finished model runs that have no MLflow run yet (trained before MLflow was set up, or while it was down).
 
-    docker compose exec api python -m app.modeling.mlflow_backfill             # every such run
-    docker compose exec api python -m app.modeling.mlflow_backfill --dry-run   # list them
-    docker compose exec api python -m app.modeling.mlflow_backfill --run-id 12 --run-id 13
+docker compose exec api python -m app.modeling.mlflow_backfill             # every such run
+docker compose exec api python -m app.modeling.mlflow_backfill --dry-run   # list them
+docker compose exec api python -m app.modeling.mlflow_backfill --run-id 12 --run-id 13
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,8 +36,10 @@ def backfill(run_ids: list[int] | None = None, say=print) -> tuple[int, int]:
         out = mlflow_log.log_model_run(run["id"], report)
         if out["mlflow_error"]:
             failed += 1
-            execute("UPDATE meta.model_runs SET report = (report - 'mlflow_pending') || %s WHERE id = %s",
-                    (jsonb({"mlflow_error": out["mlflow_error"]}), run["id"]))
+            execute(
+                "UPDATE meta.model_runs SET report = (report - 'mlflow_pending') || %s WHERE id = %s",
+                (jsonb({"mlflow_error": out["mlflow_error"]}), run["id"]),
+            )
             say(f"run {run['id']}: {out['mlflow_error']}")
         else:
             logged += 1

@@ -14,6 +14,7 @@ and a near-copy of column_a (target leakage) for the UI to flag.
 
 CLI:  python -m app.sample_data --rows 50000 --out sample.csv
 """
+
 from __future__ import annotations
 
 import argparse
@@ -26,8 +27,12 @@ import polars as pl
 
 N_LATENT = 6
 
-POS_WORDS = "great excellent love fast reliable helpful friendly easy smooth recommend happy perfect quality amazing".split()
-NEG_WORDS = "slow broken terrible rude refund confusing expensive late disappointed awful buggy cancel poor waiting".split()
+POS_WORDS = (
+    "great excellent love fast reliable helpful friendly easy smooth recommend happy perfect quality amazing".split()
+)
+NEG_WORDS = (
+    "slow broken terrible rude refund confusing expensive late disappointed awful buggy cancel poor waiting".split()
+)
 NEUTRAL_WORDS = (
     "account order service product delivery support team app price plan update store call email "
     "package week month item website billing manager option feature"
@@ -35,9 +40,31 @@ NEUTRAL_WORDS = (
 REGIONS = ["north", "south", "east", "west", "central", "overseas"]
 STATES = [f"S{i:02d}" for i in range(50)]
 OCCUPATIONS = [
-    "engineer", "teacher", "nurse", "sales", "manager", "clerk", "driver", "artist", "chef", "analyst",
-    "student", "retired", "lawyer", "doctor", "technician", "consultant", "farmer", "pilot", "writer",
-    "designer", "mechanic", "scientist", "banker", "agent", "other",
+    "engineer",
+    "teacher",
+    "nurse",
+    "sales",
+    "manager",
+    "clerk",
+    "driver",
+    "artist",
+    "chef",
+    "analyst",
+    "student",
+    "retired",
+    "lawyer",
+    "doctor",
+    "technician",
+    "consultant",
+    "farmer",
+    "pilot",
+    "writer",
+    "designer",
+    "mechanic",
+    "scientist",
+    "banker",
+    "agent",
+    "other",
 ]
 TIERS = ["bronze", "silver", "gold", "platinum"]
 
@@ -92,8 +119,9 @@ def _texts(rng, sentiment: np.ndarray, min_words: int, max_words: int) -> list[s
     return out
 
 
-def generate(n_rows: int = 50_000, n_fields: int = 150, seed: int = 42, target_kind: str = "mixed",
-             numeric_target: bool = False) -> pl.DataFrame:
+def generate(
+    n_rows: int = 50_000, n_fields: int = 150, seed: int = 42, target_kind: str = "mixed", numeric_target: bool = False
+) -> pl.DataFrame:
     """Build the synthetic frame. `target_kind`: mixed | binary | multiclass. `numeric_target` adds `column_c`, a
     continuous target from the same latent factors, last."""
     rng = np.random.default_rng(seed)
@@ -117,8 +145,7 @@ def generate(n_rows: int = 50_000, n_fields: int = 150, seed: int = 42, target_k
     login_secs = rng.integers(0, 365 * 86400, size=n)
     cols["last_login_ts"] = [datetime(2025, 1, 1) + timedelta(seconds=int(s)) for s in login_secs]
     cols["birth_date_us"] = [
-        (datetime(1950, 1, 1) + timedelta(days=int(d))).strftime("%m/%d/%Y")
-        for d in rng.integers(0, 365 * 50, size=n)
+        (datetime(1950, 1, 1) + timedelta(days=int(d))).strftime("%m/%d/%Y") for d in rng.integers(0, 365 * 50, size=n)
     ]
     age = np.clip(np.round(45 + 14 * Z[:, 1] + 5 * rng.standard_normal(n)), 18, 90)
     cols["age"] = _numeric_missing(rng, age, 0.03)

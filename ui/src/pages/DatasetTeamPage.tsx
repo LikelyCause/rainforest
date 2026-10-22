@@ -16,7 +16,17 @@ import { bandsText } from "../decision";
 import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtInt } from "../format";
 import { comparedValues, nextOpen, shortNames, oddOnes, PHASE_LABEL, splitAgreement, spread, voteLine } from "../team";
 import { toast } from "../toast";
-import type { Dataset, FieldListItem, FieldResponse, FieldReview, OptionCatalog, QueueItem, SettingsRow, TeamState, TeamUser } from "../types";
+import type {
+  Dataset,
+  FieldListItem,
+  FieldResponse,
+  FieldReview,
+  OptionCatalog,
+  QueueItem,
+  SettingsRow,
+  TeamState,
+  TeamUser,
+} from "../types";
 
 export { useInvalidateTeam } from "../hooks";
 
@@ -26,7 +36,9 @@ export function PhaseBadge({ phase, label }: { phase: Dataset["phase"]; label?: 
   const tone = phase === "finalized" ? "good" : phase === "review" ? "team" : "private";
   const text = label ? `${PHASE_LABEL[phase]} · ${label}` : PHASE_LABEL[phase];
   return (
-    <span className={`badge ${tone}`} title={label ? text : `Baseline ${PHASE_LABEL[phase].toLowerCase()}`}><span className="clip">{text}</span></span>
+    <span className={`badge ${tone}`} title={label ? text : `Baseline ${PHASE_LABEL[phase].toLowerCase()}`}>
+      <span className="clip">{text}</span>
+    </span>
   );
 }
 
@@ -34,12 +46,27 @@ export function PhaseBadge({ phase, label }: { phase: Dataset["phase"]; label?: 
 export function DatasetTeamPage() {
   const ds = useDatasetContext();
   const team = useTeam(ds.id);
-  if (team.error) return <div className="page"><ErrorAlert error={team.error} /></div>;
-  if (!team.data) return <div className="page" aria-busy="true"><span className="skeleton skel-title" /></div>;
+  if (team.error)
+    return (
+      <div className="page">
+        <ErrorAlert error={team.error} />
+      </div>
+    );
+  if (!team.data)
+    return (
+      <div className="page" aria-busy="true">
+        <span className="skeleton skel-title" />
+      </div>
+    );
   if (team.data.recipe.phase === "assessing") {
     // Straight after a phase change the cached state can be the old one: wait for the fresh one before sending the
     // viewer away (a baseline that needs no assessing starts in review and belongs here).
-    if (team.isFetching) return <div className="page" aria-busy="true"><span className="skeleton skel-title" /></div>;
+    if (team.isFetching)
+      return (
+        <div className="page" aria-busy="true">
+          <span className="skeleton skel-title" />
+        </div>
+      );
     return <Navigate to={`/d/${ds.id}/baseline`} replace />;
   }
   return <Review ds={ds} team={team.data} />;
@@ -74,13 +101,16 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
   // A version nobody assesses: nothing reopened (the lead edits directly), or a reused recipe that carried everything.
   const direct = team.assessors.length === 0;
 
-  const show: Show = (params.get("show") as Show | null) ?? (open.length ? "open" : settled.length ? "settled" : "agreed");
+  const show: Show =
+    (params.get("show") as Show | null) ?? (open.length ? "open" : settled.length ? "settled" : "agreed");
   const list = show === "open" ? open : show === "settled" ? settled : [];
   const selected = Number(params.get("field")) || (list[0] ?? open[0] ?? items[0])?.field_id || null;
   const item = items.find((q) => q.field_id === selected) ?? null;
   const setParam = (patch: Record<string, string | null>) => {
     const next = new URLSearchParams(params);
-    for (const [k, v] of Object.entries(patch)) if (v === null) next.delete(k); else next.set(k, v);
+    for (const [k, v] of Object.entries(patch))
+      if (v === null) next.delete(k);
+      else next.set(k, v);
     setParams(next, { replace: true });
   };
   const select = (id: number | null) => id !== null && setParam({ field: String(id) });
@@ -94,9 +124,16 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
     select(list[i].field_id);
   };
 
-  const field = useQuery({ queryKey: ["field", item?.field_id, "current"], queryFn: () => api.field(item!.field_id), enabled: item !== null });
+  const field = useQuery({
+    queryKey: ["field", item?.field_id, "current"],
+    queryFn: () => api.field(item!.field_id),
+    enabled: item !== null,
+  });
   const review = useQuery({
-    queryKey: ["fieldReview", item?.field_id], queryFn: () => api.fieldReview(item!.field_id), enabled: item !== null, placeholderData: keepPreviousData,
+    queryKey: ["fieldReview", item?.field_id],
+    queryFn: () => api.fieldReview(item!.field_id),
+    enabled: item !== null,
+    placeholderData: keepPreviousData,
   });
 
   // J and K walk the list shown; Enter settles (leads), as in Focus.
@@ -104,11 +141,23 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const el = e.target as HTMLElement;
-      if (["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) || el.isContentEditable || document.querySelector(".overlay")) return;
+      if (
+        ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) ||
+        el.isContentEditable ||
+        document.querySelector(".overlay")
+      )
+        return;
       if (document.querySelector('[aria-modal="true"]')) return;
-      if (e.key === "j") { e.preventDefault(); step(1); }
-      else if (e.key === "k") { e.preventDefault(); step(-1); }
-      else if (e.key === "Enter" && access.canEdit && item && !el.closest("button, a, summary, [role=option]")) { e.preventDefault(); panel.current?.confirm(); }
+      if (e.key === "j") {
+        e.preventDefault();
+        step(1);
+      } else if (e.key === "k") {
+        e.preventDefault();
+        step(-1);
+      } else if (e.key === "Enter" && access.canEdit && item && !el.closest("button, a, summary, [role=option]")) {
+        e.preventDefault();
+        panel.current?.confirm();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -126,62 +175,140 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
       <aside className="sidebar tr-queue" aria-label="Review queue">
         <div className="sidebar-head">
           <FieldsViewSwitch ds={ds} current="queue" className="fields-view" />
-          <Segmented<Show> label="Show" pressed full size="small" value={show}
-            onChange={(v) => setParam({ show: v, field: phone() ? null
-              : v === "open" ? String(open[0]?.field_id ?? "") || null : v === "settled" ? String(settled[0]?.field_id ?? "") || null : params.get("field") })}
+          <Segmented<Show>
+            label="Show"
+            pressed
+            full
+            size="small"
+            value={show}
+            onChange={(v) =>
+              setParam({
+                show: v,
+                field: phone()
+                  ? null
+                  : v === "open"
+                    ? String(open[0]?.field_id ?? "") || null
+                    : v === "settled"
+                      ? String(settled[0]?.field_id ?? "") || null
+                      : params.get("field"),
+              })
+            }
             options={[
-              { value: "open", label: <>Open <span className="num">{fmtInt(open.length)}</span></> },
-              { value: "settled", label: <>Settled <span className="num">{fmtInt(settled.length)}</span></> },
-              { value: "agreed", label: <>Agreed <span className="num">{fmtInt(fields.data ? agreed.length : summary?.adopted ?? 0)}</span></> },
-            ]} />
+              {
+                value: "open",
+                label: (
+                  <>
+                    Open <span className="num">{fmtInt(open.length)}</span>
+                  </>
+                ),
+              },
+              {
+                value: "settled",
+                label: (
+                  <>
+                    Settled <span className="num">{fmtInt(settled.length)}</span>
+                  </>
+                ),
+              },
+              {
+                value: "agreed",
+                label: (
+                  <>
+                    Agreed <span className="num">{fmtInt(fields.data ? agreed.length : (summary?.adopted ?? 0))}</span>
+                  </>
+                ),
+              },
+            ]}
+          />
           {!finalized && direct && (
             <span className="small-text secondary">
-              {team.recipe.reuse ? "Every field was carried over from the reused baseline; finalize to confirm it."
+              {team.recipe.reuse
+                ? "Every field was carried over from the reused baseline; finalize to confirm it."
                 : "Nothing was reopened: change the team decision in Fields, then finalize."}
             </span>
           )}
           {finalized ? (
             <span className="small-text secondary">
-              Finalized {fmtAgo(team.recipe.finalized_at)}{team.recipe.finalized_by_name ? ` by ${team.recipe.finalized_by_name}` : ""}.{" "}
-              <Link to={`/d/${ds.id}/experiments`}>Experiments</Link> · <Link to={`/d/${ds.id}/baseline`}>{lead ? "Start a new version" : "Baseline"}</Link>
+              Finalized {fmtAgo(team.recipe.finalized_at)}
+              {team.recipe.finalized_by_name ? ` by ${team.recipe.finalized_by_name}` : ""}.{" "}
+              <Link to={`/d/${ds.id}/experiments`}>Experiments</Link> ·{" "}
+              <Link to={`/d/${ds.id}/baseline`}>{lead ? "Start a new version" : "Baseline"}</Link>
             </span>
-          ) : !lead && (
-            <span className="small-text secondary">A lead settles each disagreement and finalizes.{can(me, "comment") ? " You can comment." : ""}</span>
+          ) : (
+            !lead && (
+              <span className="small-text secondary">
+                A lead settles each disagreement and finalizes.{can(me, "comment") ? " You can comment." : ""}
+              </span>
+            )
           )}
         </div>
         {show === "agreed" ? (
           <nav className="field-list tr-list" aria-label="Agreed fields">
-            {agreed.map((f) => <AgreedRow key={f.id} ds={ds} f={f} typeLabel={typeLabel} carried={direct} />)}
+            {agreed.map((f) => (
+              <AgreedRow key={f.id} ds={ds} f={f} typeLabel={typeLabel} carried={direct} />
+            ))}
             {fields.data && agreed.length === 0 && (
-              <span className="muted small-text tr-pad">{direct && team.recipe.reuse ? "Every field was carried over and locked." : "No field was agreed on by everyone."}</span>
+              <span className="muted small-text tr-pad">
+                {direct && team.recipe.reuse
+                  ? "Every field was carried over and locked."
+                  : "No field was agreed on by everyone."}
+              </span>
             )}
           </nav>
         ) : (
-          <div className="field-list tr-list" role="listbox" aria-label={show === "open" ? "Open disagreements" : "Settled disagreements"}>
+          <div
+            className="field-list tr-list"
+            role="listbox"
+            aria-label={show === "open" ? "Open disagreements" : "Settled disagreements"}
+          >
             {list.map((q) => (
-              <div key={q.field_id} role="option" aria-selected={q.field_id === selected} tabIndex={0}
+              <div
+                key={q.field_id}
+                role="option"
+                aria-selected={q.field_id === selected}
+                tabIndex={0}
                 className={`queue-item${q.field_id === selected ? " active" : ""}`}
-                onClick={() => select(q.field_id)} onKeyDown={(e) => e.key === "Enter" && select(q.field_id)}>
-                <StatusGlyph kind={q.resolved ? (q.team.action === "drop" ? "dropped" : q.team.action === "target" ? "target" : "kept") : "todo"} reviewed={q.resolved} />
+                onClick={() => select(q.field_id)}
+                onKeyDown={(e) => e.key === "Enter" && select(q.field_id)}
+              >
+                <StatusGlyph
+                  kind={
+                    q.resolved
+                      ? q.team.action === "drop"
+                        ? "dropped"
+                        : q.team.action === "target"
+                          ? "target"
+                          : "kept"
+                      : "todo"
+                  }
+                  reviewed={q.resolved}
+                />
                 <span className="grow">
                   <span className="name">{q.name}</span>
                   <span className="muted small-text">{spread(q, typeLabel)}</span>
                 </span>
                 {q.comments > 0 && (
-                  <Chip icon="comment" title={`${q.comments} comment${q.comments === 1 ? "" : "s"}`}><span className="num">{q.comments}</span></Chip>
+                  <Chip icon="comment" title={`${q.comments} comment${q.comments === 1 ? "" : "s"}`}>
+                    <span className="num">{q.comments}</span>
+                  </Chip>
                 )}
               </div>
             ))}
             {queue.data && list.length === 0 && (
               <span className="muted small-text tr-pad">
-                {items.length === 0 ? "No disagreements: every field was adopted as the assessors agreed."
-                  : show === "open" ? "Nothing left open. Every disagreement is settled." : "Nothing settled yet."}
+                {items.length === 0
+                  ? "No disagreements: every field was adopted as the assessors agreed."
+                  : show === "open"
+                    ? "Nothing left open. Every disagreement is settled."
+                    : "Nothing settled yet."}
               </span>
             )}
           </div>
         )}
         <p className="tr-foot muted small-text">
-          {finalized ? "Agreed fields were adopted as chosen." : "Agreed fields are adopted as chosen. Open any of them from Agreed to change it before you finalize."}
+          {finalized
+            ? "Agreed fields were adopted as chosen."
+            : "Agreed fields are adopted as chosen. Open any of them from Agreed to change it before you finalize."}
         </p>
       </aside>
 
@@ -190,13 +317,19 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
         {item && catalog ? (
           <>
             <div className="tr-phone-back">
-              <button type="button" className="ghost" aria-label="Back to the queue" onClick={() => setParam({ field: null })}>
+              <button
+                type="button"
+                className="ghost"
+                aria-label="Back to the queue"
+                onClick={() => setParam({ field: null })}
+              >
                 <Icon name="chevron-left" />
               </button>
               <span className="tr-phone-title">
                 <b>{item.name}</b>
                 <span className="muted small-text num">
-                  {item.resolved ? "Settled" : "Open"}{ownAt >= 0 ? ` ${fmtInt(ownAt + 1)} of ${fmtInt(own.length)}` : ""} · {version}
+                  {item.resolved ? "Settled" : "Open"}
+                  {ownAt >= 0 ? ` ${fmtInt(ownAt + 1)} of ${fmtInt(own.length)}` : ""} · {version}
                 </span>
               </span>
             </div>
@@ -205,57 +338,121 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
                 <h1 className="tr-name">{item.name}</h1>
                 <p className="secondary num small-text">
                   Inferred as {typeLabel(item.inferred_type).toLowerCase()}
-                  {field.data && field.data.field.id === item.field_id && <> · {fmtInt(field.data.field.n_unique)} distinct · {fmtInt(field.data.field.row_count)} rows</>}
+                  {field.data && field.data.field.id === item.field_id && (
+                    <>
+                      {" "}
+                      · {fmtInt(field.data.field.n_unique)} distinct · {fmtInt(field.data.field.row_count)} rows
+                    </>
+                  )}
                   {position && <> · {position}</>}
                   {" · "}settings for {familyShort(ds.model_family).toLowerCase()} models
                 </p>
               </div>
               {list.length > 1 && show !== "agreed" && (
                 <div className="row tr-nav">
-                  <button type="button" className="small" onClick={() => step(-1)}>Previous <kbd>K</kbd></button>
-                  <button type="button" className="small" onClick={() => step(1)}>Next <kbd>J</kbd></button>
+                  <button type="button" className="small" onClick={() => step(-1)}>
+                    Previous <kbd>K</kbd>
+                  </button>
+                  <button type="button" className="small" onClick={() => step(1)}>
+                    Next <kbd>J</kbd>
+                  </button>
                 </div>
               )}
             </header>
-            <Comparison item={item} review={review.data} error={review.error} family={ds.model_family} catalog={catalog} users={users} meId={me?.id} />
+            <Comparison
+              item={item}
+              review={review.data}
+              error={review.error}
+              family={ds.model_family}
+              catalog={catalog}
+              users={users}
+              meId={me?.id}
+            />
             <Discussion item={item} review={review.data} users={users} canComment={!finalized && can(me, "comment")} />
             <FieldProfile ds={ds} id={item.field_id} data={field.data} />
           </>
         ) : queue.data && items.length > 0 ? null : team.recipe.reuse ? (
           <ReuseCard reuse={team.recipe.reuse} label={team.recipe.label ?? ""} />
         ) : (
-          queue.data && <Empty title={finalized ? "Finalized" : "Nothing to settle"} action={finalized ? (
-            <Link className="btn primary" to={`/d/${ds.id}/experiments`}>
-              {can(me, "createExperiment") ? "Start experimenting" : "See its experiments"}
-            </Link>
-          ) : undefined}>
-            {finalized ? "This baseline version is frozen: train models on it under Experiments. A change is a new version, started on the Baseline tab."
-              : direct ? "Nobody assessed this version. Change the team decision in Fields, then finalize."
-              : "Finalize when you're ready; every field took the assessors' shared choice."}
-          </Empty>
+          queue.data && (
+            <Empty
+              title={finalized ? "Finalized" : "Nothing to settle"}
+              action={
+                finalized ? (
+                  <Link className="btn primary" to={`/d/${ds.id}/experiments`}>
+                    {can(me, "createExperiment") ? "Start experimenting" : "See its experiments"}
+                  </Link>
+                ) : undefined
+              }
+            >
+              {finalized
+                ? "This baseline version is frozen: train models on it under Experiments. A change is a new version, started on the Baseline tab."
+                : direct
+                  ? "Nobody assessed this version. Change the team decision in Fields, then finalize."
+                  : "Finalize when you're ready; every field took the assessors' shared choice."}
+            </Empty>
+          )
         )}
       </section>
 
       {item && catalog ? (
-        <TeamDecision key={item.field_id} ref={panel} item={item} ds={ds} catalog={catalog} data={field.data} error={field.error}
-          review={review.data} readOnly={access.canEdit ? null : access.note}
-          footLine={[item.resolved ? "Settled" : "Open", item.comments ? `${fmtInt(item.comments)} comment${item.comments === 1 ? "" : "s"}` : "no comments",
-            ...(ownAt >= 0 ? [`field ${fmtInt(ownAt + 1)} of ${fmtInt(own.length)} ${item.resolved ? "settled" : "open"}`] : [])].join(" · ")}
-          footNote={item.resolved ? undefined : nextOpen(items, item.field_id) !== null ? "Settling moves you to the next open field" : "The last open field: settling it leaves nothing open"}
-          onSettled={() => select(nextOpen(items, item.field_id))} />
-      ) : <aside className="decision" aria-label="Team decision" />}
+        <TeamDecision
+          key={item.field_id}
+          ref={panel}
+          item={item}
+          ds={ds}
+          catalog={catalog}
+          data={field.data}
+          error={field.error}
+          review={review.data}
+          readOnly={access.canEdit ? null : access.note}
+          footLine={[
+            item.resolved ? "Settled" : "Open",
+            item.comments ? `${fmtInt(item.comments)} comment${item.comments === 1 ? "" : "s"}` : "no comments",
+            ...(ownAt >= 0
+              ? [`field ${fmtInt(ownAt + 1)} of ${fmtInt(own.length)} ${item.resolved ? "settled" : "open"}`]
+              : []),
+          ].join(" · ")}
+          footNote={
+            item.resolved
+              ? undefined
+              : nextOpen(items, item.field_id) !== null
+                ? "Settling moves you to the next open field"
+                : "The last open field: settling it leaves nothing open"
+          }
+          onSettled={() => select(nextOpen(items, item.field_id))}
+        />
+      ) : (
+        <aside className="decision" aria-label="Team decision" />
+      )}
     </div>
   );
 }
 
 /** `carried`: nobody assessed this version, so the decision came over from the one before rather than being chosen. */
-function AgreedRow({ ds, f, typeLabel, carried }: { ds: Dataset; f: FieldListItem; typeLabel: (t: string) => string; carried: boolean }) {
+function AgreedRow({
+  ds,
+  f,
+  typeLabel,
+  carried,
+}: {
+  ds: Dataset;
+  f: FieldListItem;
+  typeLabel: (t: string) => string;
+  carried: boolean;
+}) {
   return (
-    <Link className="queue-item" to={`/d/${ds.id}/review/${f.id}`} title={`Open ${f.name} in Fields · Focus to change it`}>
+    <Link
+      className="queue-item"
+      to={`/d/${ds.id}/review/${f.id}`}
+      title={`Open ${f.name} in Fields · Focus to change it`}
+    >
       <StatusGlyph kind={f.action === "drop" ? "dropped" : f.action === "target" ? "target" : "kept"} reviewed />
       <span className="grow">
         <span className="name">{f.name}</span>
-        <span className="muted small-text">{carried ? "Carried over:" : "All chose"} {f.action}, {typeLabel(f.semantic_type).toLowerCase()}</span>
+        <span className="muted small-text">
+          {carried ? "Carried over:" : "All chose"} {f.action}, {typeLabel(f.semantic_type).toLowerCase()}
+        </span>
       </span>
       <Icon name="chevron-right" />
     </Link>
@@ -263,10 +460,21 @@ function AgreedRow({ ds, f, typeLabel, carried }: { ds: Dataset; f: FieldListIte
 }
 
 const DIMS = ["imputation", "transform", "scaling", "encoding"] as const;
-const DIM_LABEL = { imputation: "Missing values", transform: "Transform", scaling: "Scaling", encoding: "Encoding" } as const;
+const DIM_LABEL = {
+  imputation: "Missing values",
+  transform: "Transform",
+  scaling: "Scaling",
+  encoding: "Encoding",
+} as const;
 
 /** `among`: the assessors the row is compared across (a setting only matters to those who kept the field). */
-interface Row { key: string; label: string; values: (string | null)[]; among?: number[]; agree?: (v: string) => string }
+interface Row {
+  key: string;
+  label: string;
+  values: (string | null)[];
+  among?: number[];
+  agree?: (v: string) => string;
+}
 
 /** Each part of the decision, one value per assessor, in the order the comparison shows them. */
 function compareRows(review: FieldReview, family: string, catalog: OptionCatalog): Row[] {
@@ -276,31 +484,75 @@ function compareRows(review: FieldReview, family: string, catalog: OptionCatalog
   // Settings the model type doesn't use (Transform and Scaling for trees) carry a note instead; never compared.
   const unused = catalog.family_notes[family] ?? {};
   const dim = (r: (typeof rows)[number], d: (typeof DIMS)[number]) =>
-    (r.action === "keep" && r.s ? (catalog.labels[d][r.s[d]] ?? r.s[d]).split(" (")[0] : null);
+    r.action === "keep" && r.s ? (catalog.labels[d][r.s[d]] ?? r.s[d]).split(" (")[0] : null;
   const out: Row[] = [
     { key: "action", label: "Decision", values: rows.map((r) => r.action), agree: (v) => v },
-    { key: "semantic_type", label: "Type", values: rows.map((r) => typeLabel(r.semantic_type)), agree: (v) => `type ${v.toLowerCase()}` },
+    {
+      key: "semantic_type",
+      label: "Type",
+      values: rows.map((r) => typeLabel(r.semantic_type)),
+      agree: (v) => `type ${v.toLowerCase()}`,
+    },
   ];
   if (rows.some((r) => r.action === "target")) {
-    out.push({ key: "target", label: "Predict as", values: rows.map((r) => bandsText(r.target_task, r.target_bins) ?? null), agree: (v) => `predicted as ${v.toLowerCase()}` });
+    out.push({
+      key: "target",
+      label: "Predict as",
+      values: rows.map((r) => bandsText(r.target_task, r.target_bins) ?? null),
+      agree: (v) => `predicted as ${v.toLowerCase()}`,
+    });
   }
   for (const d of DIMS) {
     if (unused[d]) continue;
-    out.push({ key: d, label: DIM_LABEL[d], values: rows.map((r) => dim(r, d)), among: kept, agree: (v) => `${DIM_LABEL[d].toLowerCase()} ${v.toLowerCase()}` });
+    out.push({
+      key: d,
+      label: DIM_LABEL[d],
+      values: rows.map((r) => dim(r, d)),
+      among: kept,
+      agree: (v) => `${DIM_LABEL[d].toLowerCase()} ${v.toLowerCase()}`,
+    });
   }
-  out.push({ key: "impute_value", label: "Fill value", values: rows.map((r) => (r.action === "keep" && r.s?.imputation === "constant" ? r.s.impute_value : null)),
-    among: kept, agree: (v) => `fill ${v}` });
-  out.push({ key: "add_missing_indicator", label: "Missing flag", values: rows.map((r) => (r.action === "keep" && r.s ? (r.s.add_missing_indicator ? "Yes" : "No") : null)),
-    among: kept, agree: (v) => (v === "Yes" ? "missing flag" : "no missing flag") });
+  out.push({
+    key: "impute_value",
+    label: "Fill value",
+    values: rows.map((r) => (r.action === "keep" && r.s?.imputation === "constant" ? r.s.impute_value : null)),
+    among: kept,
+    agree: (v) => `fill ${v}`,
+  });
+  out.push({
+    key: "add_missing_indicator",
+    label: "Missing flag",
+    values: rows.map((r) => (r.action === "keep" && r.s ? (r.s.add_missing_indicator ? "Yes" : "No") : null)),
+    among: kept,
+    agree: (v) => (v === "Yes" ? "missing flag" : "no missing flag"),
+  });
   out.push({ key: "notes", label: "Note", values: rows.map((r) => r.notes || null) });
   return out;
 }
 
-function Comparison({ item, review, error, family, catalog, users, meId }: {
-  item: QueueItem; review: FieldReview | undefined; error: unknown; family: string; catalog: OptionCatalog; users: Map<number, TeamUser>; meId?: number;
+function Comparison({
+  item,
+  review,
+  error,
+  family,
+  catalog,
+  users,
+  meId,
+}: {
+  item: QueueItem;
+  review: FieldReview | undefined;
+  error: unknown;
+  family: string;
+  catalog: OptionCatalog;
+  users: Map<number, TeamUser>;
+  meId?: number;
 }) {
   if (!review) return <ErrorAlert error={error} />;
-  const people = review.assessments.map((a) => ({ id: a.user_id, name: a.user_name, avatar_url: users.get(a.user_id)?.avatar_url }));
+  const people = review.assessments.map((a) => ({
+    id: a.user_id,
+    name: a.user_name,
+    avatar_url: users.get(a.user_id)?.avatar_url,
+  }));
   const { differ, agree } = splitAgreement(compareRows(review, family, catalog));
   // "All agree" only for what everyone chose: a setting only some kept the field for isn't everyone's.
   const shared = agree.flatMap((r) => {
@@ -308,7 +560,10 @@ function Comparison({ item, review, error, family, catalog, users, meId }: {
     return r.agree && v && (!r.among || r.among.length === r.values.length) ? [r.agree(v)] : [];
   });
   // Odd ones out among those the row is compared across, as indices into every assessor.
-  const oddIn = (r: Row) => { const at = r.among ?? r.values.map((_, i) => i); return new Set([...oddOnes(comparedValues(r))].map((j) => at[j])); };
+  const oddIn = (r: Row) => {
+    const at = r.among ?? r.values.map((_, i) => i);
+    return new Set([...oddOnes(comparedValues(r))].map((j) => at[j]));
+  };
   const short = shortNames(people.map((p) => p.name));
   const who = (i: number) => (people[i].id === meId ? "you" : short[i]);
   return (
@@ -328,7 +583,13 @@ function Comparison({ item, review, error, family, catalog, users, meId }: {
                 <tr>
                   <th scope="col">Setting</th>
                   {people.map((p) => (
-                    <th key={p.id} scope="col"><span className="tr-person"><Avatar user={p} size={20} />{p.name}{p.id === meId && <span className="muted"> (you)</span>}</span></th>
+                    <th key={p.id} scope="col">
+                      <span className="tr-person">
+                        <Avatar user={p} size={20} />
+                        {p.name}
+                        {p.id === meId && <span className="muted"> (you)</span>}
+                      </span>
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -339,7 +600,9 @@ function Comparison({ item, review, error, family, catalog, users, meId }: {
                     <tr key={r.key}>
                       <th scope="row">{r.label}</th>
                       {r.values.map((v, i) => (
-                        <td key={people[i].id} className={odd.has(i) ? "odd" : undefined}>{v ?? <span className="muted">—</span>}</td>
+                        <td key={people[i].id} className={odd.has(i) ? "odd" : undefined}>
+                          {v ?? <span className="muted">—</span>}
+                        </td>
                       ))}
                     </tr>
                   );
@@ -352,12 +615,16 @@ function Comparison({ item, review, error, family, catalog, users, meId }: {
             {differ.map((r) => {
               const odd = oddIn(r);
               const groups = new Map<string, number[]>();
-              r.values.forEach((v, i) => { if (!r.among || r.among.includes(i)) groups.set(v ?? "—", [...(groups.get(v ?? "—") ?? []), i]); });
+              r.values.forEach((v, i) => {
+                if (!r.among || r.among.includes(i)) groups.set(v ?? "—", [...(groups.get(v ?? "—") ?? []), i]);
+              });
               return (
                 <div key={r.key} className="tr-stack-row">
                   <span className="secondary small-text">{r.label}</span>
                   {[...groups].map(([v, at]) => (
-                    <span key={v} className={at.some((i) => odd.has(i)) ? "odd-text" : undefined}><b>{v}</b> · {at.map(who).join(", ")}</span>
+                    <span key={v} className={at.some((i) => odd.has(i)) ? "odd-text" : undefined}>
+                      <b>{v}</b> · {at.map(who).join(", ")}
+                    </span>
                   ))}
                 </div>
               );
@@ -365,12 +632,26 @@ function Comparison({ item, review, error, family, catalog, users, meId }: {
           </div>
         </>
       )}
-      {shared.length > 0 && <p className="tr-agree"><b>All agree:</b> {shared.join(" · ")}</p>}
+      {shared.length > 0 && (
+        <p className="tr-agree">
+          <b>All agree:</b> {shared.join(" · ")}
+        </p>
+      )}
     </section>
   );
 }
 
-function Discussion({ item, review, users, canComment }: { item: QueueItem; review: FieldReview | undefined; users: Map<number, TeamUser>; canComment: boolean }) {
+function Discussion({
+  item,
+  review,
+  users,
+  canComment,
+}: {
+  item: QueueItem;
+  review: FieldReview | undefined;
+  users: Map<number, TeamUser>;
+  canComment: boolean;
+}) {
   const qc = useQueryClient();
   const me = useMe().data;
   const [body, setBody] = useState("");
@@ -382,31 +663,64 @@ function Discussion({ item, review, users, canComment }: { item: QueueItem; revi
       qc.invalidateQueries({ queryKey: ["reviewQueue"] });
     },
   });
-  const send = () => { if (body.trim() && !comment.isPending) comment.mutate(); };
+  const send = () => {
+    if (body.trim() && !comment.isPending) comment.mutate();
+  };
   const comments = review?.comments ?? [];
   const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
   return (
     <section className="card tr-discussion" aria-labelledby="tr-talk">
-      <h2 id="tr-talk">Discussion <span className="num muted">{comments.length || ""}</span></h2>
+      <h2 id="tr-talk">
+        Discussion <span className="num muted">{comments.length || ""}</span>
+      </h2>
       {comments.length === 0 && <span className="muted small-text">No comments yet.</span>}
       {comments.map((c) => (
         <div key={c.id} className="tr-comment">
           <Avatar user={{ id: c.user_id, name: c.user_name, avatar_url: users.get(c.user_id)?.avatar_url }} size={28} />
           <div className="stack tr-comment-text">
-            <span className="small-text"><b>{c.user_name}</b> <span className="muted" title={fmtDate(c.created_at)}>· {fmtAgo(c.created_at)}</span></span>
+            <span className="small-text">
+              <b>{c.user_name}</b>{" "}
+              <span className="muted" title={fmtDate(c.created_at)}>
+                · {fmtAgo(c.created_at)}
+              </span>
+            </span>
             <p className="tr-body">{c.body}</p>
           </div>
         </div>
       ))}
       {canComment && me && (
-        <form className="tr-composer" onSubmit={(e) => { e.preventDefault(); send(); }}>
-          <span className="tr-composer-avatar"><Avatar user={me} size={28} /></span>
+        <form
+          className="tr-composer"
+          onSubmit={(e) => {
+            e.preventDefault();
+            send();
+          }}
+        >
+          <span className="tr-composer-avatar">
+            <Avatar user={me} size={28} />
+          </span>
           <div className="stack grow tr-composer-body">
-            <textarea rows={2} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Add to the discussion" aria-label="Comment"
-              maxLength={4000} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }} />
+            <textarea
+              rows={2}
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              placeholder="Add to the discussion"
+              aria-label="Comment"
+              maxLength={4000}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+            />
             <div className="row tr-composer-foot">
-              <span className="muted small-text tr-hint"><kbd>{mac ? "⌘" : "Ctrl"}</kbd> <kbd>↵</kbd> to send</span>
-              <button type="submit" className="small" disabled={!body.trim() || comment.isPending}>Comment</button>
+              <span className="muted small-text tr-hint">
+                <kbd>{mac ? "⌘" : "Ctrl"}</kbd> <kbd>↵</kbd> to send
+              </span>
+              <button type="submit" className="small" disabled={!body.trim() || comment.isPending}>
+                Comment
+              </button>
             </div>
             <ErrorAlert error={comment.error} />
           </div>
@@ -421,12 +735,19 @@ function FieldProfile({ ds, id, data }: { ds: Dataset; id: number; data: FieldRe
   const [open, setOpen] = useState(false);
   return (
     <details className="card tr-profile" onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
-      <summary><b>Field profile</b> <span className="muted">· distribution and associations, as in Focus</span></summary>
+      <summary>
+        <b>Field profile</b> <span className="muted">· distribution and associations, as in Focus</span>
+      </summary>
       {open && (
         <div className="stack tr-profile-body">
-          <Link to={`/d/${ds.id}/review/${id}`} className="small-text">Open in Fields · Focus</Link>
-          {data && data.field.id === id ? <FieldDetailView data={data} position={null} stale={false} onOpenField={() => undefined} />
-            : <span className="skeleton skel-title" />}
+          <Link to={`/d/${ds.id}/review/${id}`} className="small-text">
+            Open in Fields · Focus
+          </Link>
+          {data && data.field.id === id ? (
+            <FieldDetailView data={data} position={null} stale={false} onOpenField={() => undefined} />
+          ) : (
+            <span className="skeleton skel-title" />
+          )}
         </div>
       )}
     </details>
@@ -434,41 +755,129 @@ function FieldProfile({ ds, id, data }: { ds: Dataset; id: number; data: FieldRe
 }
 
 /** How the assessors voted on each part of the decision the panel shows, against the team decision now. */
-function votesFor(review: FieldReview | undefined, data: FieldResponse, catalog: OptionCatalog): Partial<Record<VoteKey, string>> {
+function votesFor(
+  review: FieldReview | undefined,
+  data: FieldResponse,
+  catalog: OptionCatalog,
+): Partial<Record<VoteKey, string>> {
   if (!review) return {};
   const as = review.assessments;
   const names = as.map((a) => a.user_name);
   const typeLabel = (t: string) => (catalog.types.find((x) => x.value === t)?.label ?? t).toLowerCase();
-  const settings = (a: (typeof as)[number]) => (a.action === "keep" ? (a.settings[data.family] as SettingsRow | undefined) : undefined);
+  const settings = (a: (typeof as)[number]) =>
+    a.action === "keep" ? (a.settings[data.family] as SettingsRow | undefined) : undefined;
   const d = data.decision;
   const out: Partial<Record<VoteKey, string>> = {};
-  const put = (k: VoteKey, line: string | null) => { if (line) out[k] = line; };
-  put("action", voteLine(as.map((a) => a.action), names, d.action));
-  put("semantic_type", voteLine(as.map((a) => typeLabel(a.semantic_type)), names, typeLabel(d.semantic_type)));
+  const put = (k: VoteKey, line: string | null) => {
+    if (line) out[k] = line;
+  };
+  put(
+    "action",
+    voteLine(
+      as.map((a) => a.action),
+      names,
+      d.action,
+    ),
+  );
+  put(
+    "semantic_type",
+    voteLine(
+      as.map((a) => typeLabel(a.semantic_type)),
+      names,
+      typeLabel(d.semantic_type),
+    ),
+  );
   if (as.some((a) => a.action === "target")) {
-    const task = (t: Parameters<typeof bandsText>[0], b: Parameters<typeof bandsText>[1]) => bandsText(t, b)?.toLowerCase() ?? null;
-    put("target", voteLine(as.map((a) => (a.action === "target" ? task(a.target_task, a.target_bins) : null)), names, task(d.target_task, d.target_bins)));
+    const task = (t: Parameters<typeof bandsText>[0], b: Parameters<typeof bandsText>[1]) =>
+      bandsText(t, b)?.toLowerCase() ?? null;
+    put(
+      "target",
+      voteLine(
+        as.map((a) => (a.action === "target" ? task(a.target_task, a.target_bins) : null)),
+        names,
+        task(d.target_task, d.target_bins),
+      ),
+    );
   }
   for (const k of DIMS) {
     const label = (v: string) => (catalog.labels[k][v] ?? v).split(" (")[0].toLowerCase();
-    put(k, voteLine(as.map((a) => { const s = settings(a); return s ? label(s[k]) : null; }), names, label(d[k])));
+    put(
+      k,
+      voteLine(
+        as.map((a) => {
+          const s = settings(a);
+          return s ? label(s[k]) : null;
+        }),
+        names,
+        label(d[k]),
+      ),
+    );
   }
-  put("impute_value", voteLine(as.map((a) => { const s = settings(a); return s?.imputation === "constant" ? s.impute_value : null; }), names, d.impute_value));
-  put("add_missing_indicator", voteLine(as.map((a) => { const s = settings(a); return s ? (s.add_missing_indicator ? "flag" : "no flag") : null; }),
-    names, d.add_missing_indicator ? "flag" : "no flag"));
+  put(
+    "impute_value",
+    voteLine(
+      as.map((a) => {
+        const s = settings(a);
+        return s?.imputation === "constant" ? s.impute_value : null;
+      }),
+      names,
+      d.impute_value,
+    ),
+  );
+  put(
+    "add_missing_indicator",
+    voteLine(
+      as.map((a) => {
+        const s = settings(a);
+        return s ? (s.add_missing_indicator ? "flag" : "no flag") : null;
+      }),
+      names,
+      d.add_missing_indicator ? "flag" : "no flag",
+    ),
+  );
   return out;
 }
 
-const TeamDecision = forwardRef<DecisionPanelHandle, {
-  item: QueueItem; ds: Dataset; catalog: OptionCatalog; data: FieldResponse | undefined; error: unknown; review: FieldReview | undefined;
-  readOnly: string | null; onSettled: () => void; footLine: string; footNote?: string;
-}>(function TeamDecision({ item, ds, catalog, data, error, review, readOnly, onSettled, footLine, footNote }, ref) {
-  if (!data || data.field.id !== item.field_id) return <aside className="decision" aria-label="Team decision"><ErrorAlert error={error} /></aside>;
+const TeamDecision = forwardRef<
+  DecisionPanelHandle,
+  {
+    item: QueueItem;
+    ds: Dataset;
+    catalog: OptionCatalog;
+    data: FieldResponse | undefined;
+    error: unknown;
+    review: FieldReview | undefined;
+    readOnly: string | null;
+    onSettled: () => void;
+    footLine: string;
+    footNote?: string;
+  }
+>(function TeamDecision({ item, ds, catalog, data, error, review, readOnly, onSettled, footLine, footNote }, ref) {
+  if (!data || data.field.id !== item.field_id)
+    return (
+      <aside className="decision" aria-label="Team decision">
+        <ErrorAlert error={error} />
+      </aside>
+    );
   return (
-    <DecisionPanel ref={ref} data={data} catalog={catalog} familyLabel={familyShort(ds.model_family)} typing={false}
-      owner="Team decision" readOnly={readOnly} onShowShortcuts={() => undefined}
-      lens="team" votes={votesFor(review, data, catalog)} settleLabel
-      footLine={footLine} footNote={readOnly ?? footNote}
-      onConfirmed={() => { toast({ message: `${item.name}: team decision set` }); onSettled(); }} />
+    <DecisionPanel
+      ref={ref}
+      data={data}
+      catalog={catalog}
+      familyLabel={familyShort(ds.model_family)}
+      typing={false}
+      owner="Team decision"
+      readOnly={readOnly}
+      onShowShortcuts={() => undefined}
+      lens="team"
+      votes={votesFor(review, data, catalog)}
+      settleLabel
+      footLine={footLine}
+      footNote={readOnly ?? footNote}
+      onConfirmed={() => {
+        toast({ message: `${item.name}: team decision set` });
+        onSettled();
+      }}
+    />
   );
 });

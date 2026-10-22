@@ -4,6 +4,7 @@ Detection runs once per process and never raises: no driver, no `nvidia-smi`, a 
 build or a failing probe all just mean "no usable GPU". XGBoost silently falls back to the CPU
 when it can't reach a GPU, so the probe fits a tiny model and reads back the device it really used.
 """
+
 from __future__ import annotations
 
 import json
@@ -29,7 +30,10 @@ def _nvidia_smi() -> dict[str, Any] | None:
     try:
         out = subprocess.run(
             [exe, "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5, check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
         ).stdout
     except (OSError, subprocess.SubprocessError) as exc:
         log.info("nvidia-smi present but failed: %s", exc)
@@ -81,8 +85,13 @@ def _probe_xgboost() -> str | None:
     if not xgboost_cuda_build():
         return "this image's XGBoost is the CPU build (rebuild with GPU=1, see docs/deployment.md › GPU)"
     try:
-        r = subprocess.run([sys.executable, "-c", _PROBE], capture_output=True, text=True, timeout=120,
-                           cwd=Path(__file__).resolve().parent.parent)
+        r = subprocess.run(
+            [sys.executable, "-c", _PROBE],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=Path(__file__).resolve().parent.parent,
+        )
     except (OSError, subprocess.SubprocessError) as exc:
         return f"XGBoost CUDA test fit failed: {exc}"
     if r.returncode != 0:

@@ -5,6 +5,7 @@ A dataset has up to one baseline line per family, each with its own versions, an
 the version in progress: starting any baseline or version first loads them from a snapshot (`load_working`), so they
 never carry another baseline's choices. Finalizing freezes a snapshot of the team decision for the baseline's family.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -44,12 +45,16 @@ def next_version(conn, dataset_id: int, family: str) -> int:
 
 def require_none_in_progress(cur: dict) -> None:
     if cur["phase"] != "finalized":
-        raise HTTPException(409, f"{label(cur)} is still {'in team review' if cur['phase'] == 'review' else 'being assessed'}"
-                                 "; finalize it before starting another baseline or version.")
+        raise HTTPException(
+            409,
+            f"{label(cur)} is still {'in team review' if cur['phase'] == 'review' else 'being assessed'}"
+            "; finalize it before starting another baseline or version.",
+        )
 
 
-def start_version(conn, dataset_id: int, user_id: int | None, family: str, phase: str = "assessing",
-                  scope: str = "all") -> dict:
+def start_version(
+    conn, dataset_id: int, user_id: int | None, family: str, phase: str = "assessing", scope: str = "all"
+) -> dict:
     """The next version of `family`'s baseline, from its latest finalized version, whose snapshot becomes the
     working copy (every field carried over as reviewed). Returns the new row with `_target_work`, the
     (uncorrelated, added) pair from setting its targets."""
@@ -87,8 +92,15 @@ def is_setup(conn, recipe: dict) -> bool:
     ).fetchone()["ok"]
 
 
-def load_working(conn, dataset_id: int, snap: dict | None, family: str, targets: list[str], user_id: int | None,
-                 reviewed: bool = False) -> tuple[list[dict], list[int]]:
+def load_working(
+    conn,
+    dataset_id: int,
+    snap: dict | None,
+    family: str,
+    targets: list[str],
+    user_id: int | None,
+    reviewed: bool = False,
+) -> tuple[list[dict], list[int]]:
     """Make the working tables a baseline's starting point: `snap`'s decisions and settings (its own family's, or
     when populating from another family, the source's where they are valid for `family`), else the suggestions.
     Settings that aren't valid for the decided type take its suggestion. Sets the targets and the dataset's family;
@@ -101,8 +113,11 @@ def load_working(conn, dataset_id: int, snap: dict | None, family: str, targets:
         stats = {k: f[k] for k in STAT_KEYS}
         entry = (snap or {}).get("fields", {}).get(f["name"])
         base = (f["suggestion"] or {}).get(family) or suggest(f["inferred_type"], stats, False, family)
-        dec = entry["decision"] if entry else {"action": base["action"], "semantic_type": base["semantic_type"],
-                                                "notes": None}
+        dec = (
+            entry["decision"]
+            if entry
+            else {"action": base["action"], "semantic_type": base["semantic_type"], "notes": None}
+        )
         t = dec["semantic_type"]
         sugg = base if base["semantic_type"] == t else suggest(t, stats, False, family)
         action = "keep" if dec["action"] == "target" else dec["action"]  # the target role comes from set_targets
@@ -113,19 +128,36 @@ def load_working(conn, dataset_id: int, snap: dict | None, family: str, targets:
             """UPDATE meta.field_decisions SET action = %s, semantic_type = %s, notes = %s, reviewed = %s, source = %s,
                       updated_at = now() WHERE field_id = %s""",
             # A field the snapshot doesn't have (derived since) is new to the team, so it is never carried as reviewed.
-            (action, t, dec.get("notes"), reviewed and not as_suggested, "suggested" if as_suggested else "user", f["id"]),
+            (
+                action,
+                t,
+                dec.get("notes"),
+                reviewed and not as_suggested,
+                "suggested" if as_suggested else "user",
+                f["id"],
+            ),
         )
         settings = (entry or {}).get("settings") or {}
         chosen = settings.get(family) or next(iter(settings.values()), None)
-        if chosen is not None and validate_decision({**chosen, "action": "keep", "semantic_type": t}, family,
-                                                    n_unique=f["n_unique"]):
+        if chosen is not None and validate_decision(
+            {**chosen, "action": "keep", "semantic_type": t}, family, n_unique=f["n_unique"]
+        ):
             chosen = None
         chosen = {k: (chosen or sugg).get(k) for k in SETTING_KEYS}
-        upsert_settings(conn, dataset_id, f["id"], family, chosen,
-                        "suggested" if settings_key(chosen) == settings_key(sugg) else "user")
+        upsert_settings(
+            conn,
+            dataset_id,
+            f["id"],
+            family,
+            chosen,
+            "suggested" if settings_key(chosen) == settings_key(sugg) else "user",
+        )
     conn.execute("UPDATE meta.datasets SET model_family = %s, updated_at = now() WHERE id = %s", (family, dataset_id))
-    tasks = None if snap is None else {t: {"target_task": v["task"], "target_bins": v["bins"]}
-                                       for t, v in snapshot_target_tasks(snap).items()}
+    tasks = (
+        None
+        if snap is None
+        else {t: {"target_task": v["task"], "target_bins": v["bins"]} for t, v in snapshot_target_tasks(snap).items()}
+    )
     return set_targets(conn, dataset_id, list(targets), user_id, tasks)
 
 
@@ -134,7 +166,7 @@ def current(conn, dataset_id: int, lock: str | None = None) -> dict:
     "update", decision writes "share", so a write never lands in a phase it wasn't checked against."""
     row = conn.execute(
         f"""SELECT {RECIPE_COLS} FROM meta.recipes WHERE dataset_id = %s
-             ORDER BY id DESC LIMIT 1{f' FOR {lock.upper()}' if lock else ''}""",
+             ORDER BY id DESC LIMIT 1{f" FOR {lock.upper()}" if lock else ""}""",
         (dataset_id,),
     ).fetchone()
     if row is None:
@@ -163,9 +195,12 @@ def open_field_ids(conn, recipe: dict) -> list[int] | None:
     and are locked)."""
     if recipe["scope"] == "all":
         return None
-    return [r["field_id"] for r in conn.execute(
-        "SELECT field_id FROM meta.recipe_reopened WHERE recipe_id = %s ORDER BY field_id", (recipe["id"],)
-    ).fetchall()]
+    return [
+        r["field_id"]
+        for r in conn.execute(
+            "SELECT field_id FROM meta.recipe_reopened WHERE recipe_id = %s ORDER BY field_id", (recipe["id"],)
+        ).fetchall()
+    ]
 
 
 def locked_problem(conn, recipe: dict, field_ids: list[int]) -> str | None:
@@ -180,8 +215,10 @@ def locked_problem(conn, recipe: dict, field_ids: list[int]) -> str | None:
         return None
     one = len(locked) == 1
     names = ", ".join(r["name"] for r in locked[:8]) + ("…" if len(locked) > 8 else "")
-    return (f"{names}: carried over into {label(recipe, lower=True)} and locked. To change "
-            f"{'it' if one else 'them'}, start a new version that reopens {'it' if one else 'them'}.")
+    return (
+        f"{names}: carried over into {label(recipe, lower=True)} and locked. To change "
+        f"{'it' if one else 'them'}, start a new version that reopens {'it' if one else 'them'}."
+    )
 
 
 def snapshot_of(conn, recipe: dict) -> dict:
@@ -213,16 +250,25 @@ def set_name(conn, dataset_id: int, family: str, name: str | None) -> None:
         conn.execute("DELETE FROM meta.baseline_names WHERE dataset_id = %s AND family = %s", (dataset_id, family))
         return
     # A model type can lose its versions' family (reuse switches a new dataset's placeholder); its name goes with it.
-    conn.execute("""DELETE FROM meta.baseline_names n WHERE n.dataset_id = %s AND NOT EXISTS (
+    conn.execute(
+        """DELETE FROM meta.baseline_names n WHERE n.dataset_id = %s AND NOT EXISTS (
                       SELECT 1 FROM meta.recipes r WHERE r.dataset_id = n.dataset_id AND r.family = n.family)""",
-                 (dataset_id,))
-    taken = conn.execute("SELECT family, name FROM meta.baseline_names WHERE dataset_id = %s AND family <> %s "
-                         "AND lower(name) = lower(%s)", (dataset_id, family, name)).fetchone()
+        (dataset_id,),
+    )
+    taken = conn.execute(
+        "SELECT family, name FROM meta.baseline_names WHERE dataset_id = %s AND family <> %s "
+        "AND lower(name) = lower(%s)",
+        (dataset_id, family, name),
+    ).fetchone()
     if taken:
-        raise HTTPException(422, f"This dataset's {FAMILY_LABEL[taken['family']]} baseline is already called "
-                                 f"{taken['name']!r}")
-    conn.execute("""INSERT INTO meta.baseline_names (dataset_id, family, name) VALUES (%s, %s, %s)
-                    ON CONFLICT (dataset_id, family) DO UPDATE SET name = excluded.name""", (dataset_id, family, name))
+        raise HTTPException(
+            422, f"This dataset's {FAMILY_LABEL[taken['family']]} baseline is already called {taken['name']!r}"
+        )
+    conn.execute(
+        """INSERT INTO meta.baseline_names (dataset_id, family, name) VALUES (%s, %s, %s)
+                    ON CONFLICT (dataset_id, family) DO UPDATE SET name = excluded.name""",
+        (dataset_id, family, name),
+    )
 
 
 def clean_name(raw: str | None) -> str | None:
@@ -260,7 +306,8 @@ def snapshot(conn, dataset_id: int, src=None, family: str | None = None, targets
     settings: dict[int, dict[str, dict]] = {}
     for s in conn.execute(
         sql.SQL("""SELECT * FROM {} s WHERE s.dataset_id = %s AND (%s::text IS NULL OR s.family = %s)
-                    ORDER BY field_id, family""").format(sets), (dataset_id, family, family)
+                    ORDER BY field_id, family""").format(sets),
+        (dataset_id, family, family),
     ).fetchall():
         settings.setdefault(s["field_id"], {})[s["family"]] = {k: s[k] for k in SETTING_KEYS}
     ds = conn.execute("SELECT target_columns FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()
@@ -286,9 +333,13 @@ def finalize(conn, recipe: dict, user_id: int, review_summary: dict | None = Non
         f"""UPDATE meta.recipes SET phase = 'finalized', finalized_by = %s, finalized_at = now(), snapshot = %s,
                    schema_fingerprint = %s, review_summary = %s
              WHERE id = %s RETURNING {RECIPE_COLS}""",
-        (user_id, jsonb(snapshot(conn, recipe["dataset_id"], family=recipe["family"])),
-         schema_fingerprint(conn, recipe["dataset_id"]), None if review_summary is None else jsonb(review_summary),
-         recipe["id"]),
+        (
+            user_id,
+            jsonb(snapshot(conn, recipe["dataset_id"], family=recipe["family"])),
+            schema_fingerprint(conn, recipe["dataset_id"]),
+            None if review_summary is None else jsonb(review_summary),
+            recipe["id"],
+        ),
     ).fetchone()
 
 
@@ -300,8 +351,11 @@ def backfill_snapshots(conn) -> int:
     for r in rows:
         conn.execute(
             "UPDATE meta.recipes SET snapshot = %s, schema_fingerprint = %s WHERE id = %s",
-            (jsonb(snapshot(conn, r["dataset_id"], family=r["family"])), schema_fingerprint(conn, r["dataset_id"]),
-             r["id"]),
+            (
+                jsonb(snapshot(conn, r["dataset_id"], family=r["family"])),
+                schema_fingerprint(conn, r["dataset_id"]),
+                r["id"],
+            ),
         )
     return len(rows)
 
@@ -315,8 +369,13 @@ def snapshot_targets(snap: dict) -> list[str]:
 
 def snapshot_target_tasks(snap: dict) -> dict[str, dict]:
     """How each of the snapshot's targets is predicted, in chain order."""
-    return {t: {"task": snap["fields"][t]["decision"].get("target_task") or "classes",
-                "bins": snap["fields"][t]["decision"].get("target_bins")} for t in snapshot_targets(snap)}
+    return {
+        t: {
+            "task": snap["fields"][t]["decision"].get("target_task") or "classes",
+            "bins": snap["fields"][t]["decision"].get("target_bins"),
+        }
+        for t in snapshot_targets(snap)
+    }
 
 
 def spec_rows(conn, dataset_id: int, snap: dict, family: str) -> list[dict]:
@@ -335,9 +394,16 @@ def spec_rows(conn, dataset_id: int, snap: dict, family: str) -> list[dict]:
         if s is None:
             continue
         settings = s["settings"].get(family) or (f["suggestion"] or {}).get(family) or {}
-        out.append({**f, "action": s["decision"]["action"], "semantic_type": s["decision"]["semantic_type"],
-                    "target_task": s["decision"].get("target_task"), "target_bins": s["decision"].get("target_bins"),
-                    **{k: settings.get(k) for k in SETTING_KEYS}})
+        out.append(
+            {
+                **f,
+                "action": s["decision"]["action"],
+                "semantic_type": s["decision"]["semantic_type"],
+                "target_task": s["decision"].get("target_task"),
+                "target_bins": s["decision"].get("target_bins"),
+                **{k: settings.get(k) for k in SETTING_KEYS},
+            }
+        )
     return out
 
 
@@ -361,13 +427,18 @@ def diff(before: dict, after: dict, family: str | None = None, decisions_only: b
         if b is None or a is None:
             out.append({"name": name, "change": "added" if b is None else "removed", "changes": []})
             continue
-        changes = [{"key": k, "family": None, "before": b["decision"].get(k), "after": a["decision"].get(k)}
-                   for k in ("action", "semantic_type", "target_task", "target_bins", "notes")
-                   if b["decision"].get(k) != a["decision"].get(k)]
+        changes = [
+            {"key": k, "family": None, "before": b["decision"].get(k), "after": a["decision"].get(k)}
+            for k in ("action", "semantic_type", "target_task", "target_bins", "notes")
+            if b["decision"].get(k) != a["decision"].get(k)
+        ]
         for fam in [] if decisions_only else [family] if family else sorted(set(b["settings"]) | set(a["settings"])):
             bs, as_ = b["settings"].get(fam) or {}, a["settings"].get(fam) or {}
-            changes += [{"key": k, "family": fam, "before": bs.get(k), "after": as_.get(k)}
-                        for k in SETTING_KEYS if _norm(k, bs.get(k)) != _norm(k, as_.get(k))]
+            changes += [
+                {"key": k, "family": fam, "before": bs.get(k), "after": as_.get(k)}
+                for k in SETTING_KEYS
+                if _norm(k, bs.get(k)) != _norm(k, as_.get(k))
+            ]
         if changes:
             out.append({"name": name, "change": "changed", "changes": changes})
     tb, ta = snapshot_targets(before), snapshot_targets(after)

@@ -45,10 +45,32 @@ export interface Dataset {
   target_count?: number;
   export_count?: number;
   run_count?: number;
-  last_export?: { id: number; model_family: string; status: ExportJob["status"]; created_at: string; n_features: number | null } | null;
-  last_run?: { id: number; model: string; model_label: string | null; status: ModelRun["status"]; metric: string | null; value: number | null } | null;
+  last_export?: {
+    id: number;
+    model_family: string;
+    status: ExportJob["status"];
+    created_at: string;
+    n_features: number | null;
+  } | null;
+  last_run?: {
+    id: number;
+    model: string;
+    model_label: string | null;
+    status: ModelRun["status"];
+    metric: string | null;
+    value: number | null;
+  } | null;
   /** Datasets list only: the chosen model, else the best finished run on validation. */
-  best_run?: { run_id: number; experiment_id: number; experiment_name: string; model: string; model_label: string; chosen: boolean; metric: string | null; value: number | null } | null;
+  best_run?: {
+    run_id: number;
+    experiment_id: number;
+    experiment_name: string;
+    model: string;
+    model_label: string;
+    chosen: boolean;
+    metric: string | null;
+    value: number | null;
+  } | null;
 }
 
 /** How the datasets list names a target's task: one of its values, a number, or bands of numbers. */
@@ -63,7 +85,13 @@ export type TargetBins = { k: number } | { edges: number[] } | { positive: strin
 export type SettingValue = string | number | boolean | null;
 
 /** A run's model, chain order and settings, to fill the Train menu again. */
-export interface TrainPrefill { exportId: number; model: string; order: string[]; values: Record<string, SettingValue>; cvFolds?: number }
+export interface TrainPrefill {
+  exportId: number;
+  model: string;
+  order: string[];
+  values: Record<string, SettingValue>;
+  cvFolds?: number;
+}
 
 /** One model setting, as GET /api/models publishes it. */
 export interface ModelSetting {
@@ -99,7 +127,12 @@ export interface RegistryOption {
 }
 
 /** How a numeric field would be cut into bands, on the whole column (GET /api/fields/{id}/bands). */
-export interface BandPreview { edges: number[]; labels: string[]; counts: number[]; missing: number }
+export interface BandPreview {
+  edges: number[];
+  labels: string[];
+  counts: number[];
+  missing: number;
+}
 
 export interface FieldListItem {
   id: number;
@@ -138,11 +171,19 @@ export interface BarsChart {
 export type ChartPayload = HistogramChart | BarsChart;
 
 export interface BoxSummary {
-  p01: number | null; p25: number | null; p50: number | null; p75: number | null; p99: number | null;
-  min: number | null; max: number | null;
+  p01: number | null;
+  p25: number | null;
+  p50: number | null;
+  p75: number | null;
+  p99: number | null;
+  min: number | null;
+  max: number | null;
 }
 
-export interface Suggestion extends Omit<Decision, "field_id" | "dataset_id" | "notes" | "reviewed" | "source" | "updated_at" | "family" | "settings_source"> {
+export interface Suggestion extends Omit<
+  Decision,
+  "field_id" | "dataset_id" | "notes" | "reviewed" | "source" | "updated_at" | "family" | "settings_source"
+> {
   reasons: string[];
 }
 
@@ -230,8 +271,12 @@ export interface FieldResponse {
   locked?: string | null;
   /** In an experiment: the baseline's own decision and settings for this field. */
   baseline?: {
-    action: Action; semantic_type: string; notes: string | null; target_task?: TargetTask | null;
-    target_bins?: TargetBins | null; settings: Omit<SettingsRow, "source"> | null;
+    action: Action;
+    semantic_type: string;
+    notes: string | null;
+    target_task?: TargetTask | null;
+    target_bins?: TargetBins | null;
+    settings: Omit<SettingsRow, "source"> | null;
   } | null;
 }
 
@@ -277,7 +322,11 @@ export interface OptionCatalog {
   target_rule: { types: string[]; numeric_types: string[]; max_levels: number; tasks: TargetTask[]; default_k: number };
 }
 
-export interface FieldFilter { column: string; op: string; value?: unknown }
+export interface FieldFilter {
+  column: string;
+  op: string;
+  value?: unknown;
+}
 
 export interface SqlResult {
   columns: string[];
@@ -457,7 +506,12 @@ export interface TargetEvaluation {
   thresholds?: { threshold: number; precision: number; recall: number; f1: number; flagged: number }[];
 }
 
-export interface RocCurve { label: string; auc: number; fpr: number[]; tpr: number[] }
+export interface RocCurve {
+  label: string;
+  auc: number;
+  fpr: number[];
+  tpr: number[];
+}
 
 /** A number target's evaluation: sampled (actual, predicted) pairs and a histogram of the errors. */
 export interface RegressionEvaluation {
@@ -467,7 +521,9 @@ export interface RegressionEvaluation {
   residuals: { edges: number[]; counts: number[] };
   /** Actual and predicted values put in ranges cut on the training rows, scored as classes (older runs lack it). */
   bands?: {
-    labels: string[]; edges: number[]; confusion_matrix: number[][];
+    labels: string[];
+    edges: number[];
+    confusion_matrix: number[][];
     per_class: { label: string; precision: number; recall: number; f1: number; support: number }[];
   };
 }
@@ -481,7 +537,14 @@ export interface ModelRun {
   status: "pending" | "running" | "done" | "failed";
   status_message: string | null;
   error: string | null;
-  config: { order?: string[] | null; cv?: number; cv_folds?: number; seed?: number; params?: Record<string, unknown>; device?: Device };
+  config: {
+    order?: string[] | null;
+    cv?: number;
+    cv_folds?: number;
+    seed?: number;
+    params?: Record<string, unknown>;
+    device?: Device;
+  };
   metrics: Metrics;
   report: {
     order?: string[];
@@ -530,7 +593,12 @@ export interface BulkResult {
   unchanged: number;
   reviewed_changed: number;
   transitions: Record<string, number>;
-  changes: { field_id: number; name: string; before: { action: Action; semantic_type: string; reviewed: boolean }; after: { action: Action; semantic_type: string; reviewed: boolean } }[];
+  changes: {
+    field_id: number;
+    name: string;
+    before: { action: Action; semantic_type: string; reviewed: boolean };
+    after: { action: Action; semantic_type: string; reviewed: boolean };
+  }[];
 }
 
 export type AnalysisKind = "map" | "tests" | "importance";
@@ -546,7 +614,10 @@ export interface AnalysisParams {
   n_neighbors?: number;
 }
 
-export interface Skipped { name: string; reason: string }
+export interface Skipped {
+  name: string;
+  reason: string;
+}
 
 export interface MapResult {
   method: string;
@@ -561,7 +632,10 @@ export interface MapResult {
 }
 
 export type TestDetail =
-  | { kind: "box"; groups: { class: string; n: number; min: number; q1: number; median: number; q3: number; max: number }[] }
+  | {
+      kind: "box";
+      groups: { class: string; n: number; min: number; q1: number; median: number; q3: number; max: number }[];
+    }
   | { kind: "levels"; levels: string[]; counts: number[][] }
   | { kind: "scatter"; points: [number, number][] };
 
@@ -746,7 +820,14 @@ export interface ReopenedField {
 
 /** How a finalized recipe was matched onto a new dataset. */
 export interface ReuseSummary {
-  source: { recipe_id: number; dataset_id: number; dataset_name: string | null; family?: FamilyKey; version: number; name?: string | null };
+  source: {
+    recipe_id: number;
+    dataset_id: number;
+    dataset_name: string | null;
+    family?: FamilyKey;
+    version: number;
+    name?: string | null;
+  };
   carried: string[];
   reopened: ReopenedField[];
   missing: string[];
@@ -865,7 +946,10 @@ export interface ReviewQueue {
   queue: QueueItem[];
 }
 
-export type SettingsRow = Pick<Decision, "imputation" | "impute_value" | "add_missing_indicator" | "transform" | "scaling" | "encoding" | "params"> & {
+export type SettingsRow = Pick<
+  Decision,
+  "imputation" | "impute_value" | "add_missing_indicator" | "transform" | "scaling" | "encoding" | "params"
+> & {
   source: "suggested" | "user";
 };
 
@@ -897,7 +981,20 @@ export interface LibraryEntry {
 
 export type DerivedInput =
   | { kind: "formula"; spec: { expr: string } }
-  | { kind: "groups"; spec: { source: string; other: string; groups: { label: string; values?: string[]; ranges?: [number, number][] }[] } }
+  | {
+      kind: "groups";
+      spec: {
+        source: string;
+        other: string;
+        groups: { label: string; values?: string[]; ranges?: [number, number][] }[];
+      };
+    }
   | { kind: "count"; spec: { fields: string[]; values: string[] } };
 export type DerivedField = { id: number; name: string } & DerivedInput;
-export interface DerivedPreview { type: "number" | "text"; missing: number; rows: number; sample: (string | number | null)[]; distinct: number }
+export interface DerivedPreview {
+  type: "number" | "text";
+  missing: number;
+  rows: number;
+  sample: (string | number | null)[];
+  distinct: number;
+}

@@ -1,4 +1,5 @@
 """File ingest: CSV / Parquet -> normalised Parquet (analytics copy) -> Postgres raw table."""
+
 from __future__ import annotations
 
 import csv
@@ -98,15 +99,17 @@ def _sink(src: Path, fmt: str, out: Path) -> list[str]:
     full, ragged = False, False
     while True:
         try:
-            lf, warnings = _normalize(pl.scan_csv(
-                src,
-                separator=sep,
-                infer_schema_length=None if full else 50_000,
-                null_values=NULL_TOKENS,
-                try_parse_dates=False,
-                encoding="utf8-lossy",
-                truncate_ragged_lines=ragged,
-            ))
+            lf, warnings = _normalize(
+                pl.scan_csv(
+                    src,
+                    separator=sep,
+                    infer_schema_length=None if full else 50_000,
+                    null_values=NULL_TOKENS,
+                    try_parse_dates=False,
+                    encoding="utf8-lossy",
+                    truncate_ragged_lines=ragged,
+                )
+            )
             lf.sink_parquet(out, row_group_size=100_000)
             break
         except pl.exceptions.ComputeError as exc:
@@ -181,8 +184,7 @@ def load_raw_table(
     text_cols = [c for c, dt in schema.items() if dt == pl.String]
     nul_counts: dict[str, int] = {}
     col_defs = [sql.SQL("{} BIGINT").format(sql.Identifier(ROW_ID))] + [
-        sql.SQL("{} {}").format(sql.Identifier(c), sql.SQL(pg_type(dt)))
-        for c, dt in zip(db_columns, schema.values())
+        sql.SQL("{} {}").format(sql.Identifier(c), sql.SQL(pg_type(dt))) for c, dt in zip(db_columns, schema.values())
     ]
     ident = sql.Identifier("raw", table)
     pf = pq.ParquetFile(parquet_path)
@@ -207,10 +209,11 @@ def load_raw_table(
                 offset += df.height
                 if progress:
                     progress(offset, total)
-        conn.execute(
-            sql.SQL("ALTER TABLE {} ADD PRIMARY KEY ({})").format(ident, sql.Identifier(ROW_ID))
-        )
+        conn.execute(sql.SQL("ALTER TABLE {} ADD PRIMARY KEY ({})").format(ident, sql.Identifier(ROW_ID)))
         conn.execute(sql.SQL("ANALYZE {}").format(ident))
-    warnings = [f"Removed NUL characters from {n:,} value(s) of {c!r} in raw.{table} (Postgres text can't hold "
-                f"them; profiling and exports read the file as uploaded)." for c, n in nul_counts.items()]
+    warnings = [
+        f"Removed NUL characters from {n:,} value(s) of {c!r} in raw.{table} (Postgres text can't hold "
+        f"them; profiling and exports read the file as uploaded)."
+        for c, n in nul_counts.items()
+    ]
     return f"raw.{table}", warnings

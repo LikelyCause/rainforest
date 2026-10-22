@@ -4,6 +4,7 @@ Fields match by name. A matched field whose inferred type is unchanged and whose
 from the recipe and locked; every other field of the new data is reopened for assessment, and recipe fields the new
 data lacks are listed. Targets carry over when they are still valid targets.
 """
+
 from __future__ import annotations
 
 from fastapi import HTTPException
@@ -41,8 +42,14 @@ def match(snap: dict, fields: list[dict]) -> dict:
         if old is None:
             reopened.append({"name": f["name"], "reason": "new"})
         elif old["inferred_type"] != f["inferred_type"]:
-            reopened.append({"name": f["name"], "reason": "type_changed", "before": old["inferred_type"],
-                             "after": f["inferred_type"]})
+            reopened.append(
+                {
+                    "name": f["name"],
+                    "reason": "type_changed",
+                    "before": old["inferred_type"],
+                    "after": f["inferred_type"],
+                }
+            )
         elif (d := drift(old, f)) is not None:
             reopened.append({"name": f["name"], "reason": "drift", "drift": d})
         else:
@@ -79,9 +86,11 @@ def apply(conn, recipe: dict, source: dict, user_id: int) -> tuple[dict, list[in
     carried = []
     for name in m["carried"]:
         entry = snap["fields"][name]
-        if entry["decision"]["action"] == "target" and (p := target_problem(entry["decision"]["semantic_type"],
-                                                                            by_name[name]["n_unique"],
-                                                                            entry["decision"].get("target_task"))):
+        if entry["decision"]["action"] == "target" and (
+            p := target_problem(
+                entry["decision"]["semantic_type"], by_name[name]["n_unique"], entry["decision"].get("target_task")
+            )
+        ):
             m["reopened"].append({"name": name, "reason": "target", "problem": p})
         elif errors := _settings_problem(entry, source["family"], by_name[name]["n_unique"]):
             m["reopened"].append({"name": name, "reason": "settings", "problem": "; ".join(errors[:3])})
@@ -115,19 +124,36 @@ def apply(conn, recipe: dict, source: dict, user_id: int) -> tuple[dict, list[in
                       SET imputation = %s, impute_value = %s, add_missing_indicator = %s, transform = %s, scaling = %s,
                           encoding = %s, params = %s, source = 'user', updated_at = now()
                     WHERE field_id = %s AND family = %s""",
-                (s["imputation"], s.get("impute_value"), bool(s.get("add_missing_indicator")), s["transform"],
-                 s["scaling"], s["encoding"], jsonb(s.get("params") or {}), fid, family),
+                (
+                    s["imputation"],
+                    s.get("impute_value"),
+                    bool(s.get("add_missing_indicator")),
+                    s["transform"],
+                    s["scaling"],
+                    s["encoding"],
+                    jsonb(s.get("params") or {}),
+                    fid,
+                    family,
+                ),
             )
-    changed = {fid: row for fid, row in _merged_many(conn, ids, fam).items()
-               if {k: v for k, v in row.items() if k != "updated_at"}
-               != {k: v for k, v in (before.get(fid) or {}).items() if k != "updated_at"}}
+    changed = {
+        fid: row
+        for fid, row in _merged_many(conn, ids, fam).items()
+        if {k: v for k, v in row.items() if k != "updated_at"}
+        != {k: v for k, v in (before.get(fid) or {}).items() if k != "updated_at"}
+    }
     _write_history(conn, dataset_id, fam, None, before, changed, user_id)
 
     tasks = recipes.snapshot_target_tasks(snap)
     targets, not_carried = [], []
-    current = {r["name"]: r for r in conn.execute(
-        """SELECT f.name, f.n_unique, d.semantic_type FROM meta.fields f JOIN meta.field_decisions d
-             ON d.field_id = f.id WHERE f.dataset_id = %s""", (dataset_id,)).fetchall()}
+    current = {
+        r["name"]: r
+        for r in conn.execute(
+            """SELECT f.name, f.n_unique, d.semantic_type FROM meta.fields f JOIN meta.field_decisions d
+             ON d.field_id = f.id WHERE f.dataset_id = %s""",
+            (dataset_id,),
+        ).fetchall()
+    }
     for name in recipes.snapshot_targets(snap):
         if name not in current:
             continue
@@ -135,9 +161,13 @@ def apply(conn, recipe: dict, source: dict, user_id: int) -> tuple[dict, list[in
             not_carried.append({"name": name, "problem": p})
         else:
             targets.append(name)
-    uncorrelated, added = set_targets(conn, dataset_id, targets, user_id,
-                                      {t: {"target_task": tasks[t]["task"], "target_bins": tasks[t]["bins"]}
-                                       for t in targets})
+    uncorrelated, added = set_targets(
+        conn,
+        dataset_id,
+        targets,
+        user_id,
+        {t: {"target_task": tasks[t]["task"], "target_bins": tasks[t]["bins"]} for t in targets},
+    )
 
     reopened_ids = [by_name[r["name"]]["id"] for r in m["reopened"]]
     conn.execute(
@@ -151,8 +181,14 @@ def apply(conn, recipe: dict, source: dict, user_id: int) -> tuple[dict, list[in
     ds = conn.execute("SELECT name FROM meta.datasets WHERE id = %s", (source["dataset_id"],)).fetchone()
     order = {f["name"]: i for i, f in enumerate(fields)}
     summary = {
-        "source": {"recipe_id": source["id"], "dataset_id": source["dataset_id"], "family": source["family"],
-                   "dataset_name": ds["name"] if ds else None, "version": source["version"], "name": source["name"]},
+        "source": {
+            "recipe_id": source["id"],
+            "dataset_id": source["dataset_id"],
+            "family": source["family"],
+            "dataset_name": ds["name"] if ds else None,
+            "version": source["version"],
+            "name": source["name"],
+        },
         "carried": carried,
         "reopened": sorted(m["reopened"], key=lambda r: order[r["name"]]),
         "missing": m["missing"],
@@ -172,8 +208,9 @@ def check_source(conn, recipe_id: int) -> dict:
     if source is None:
         raise HTTPException(404, "Recipe not found")
     if source["phase"] != "finalized":
-        raise HTTPException(409, f"{recipes.label(source)} of that dataset isn't finalized; only finalized recipes "
-                                 "can be reused.")
+        raise HTTPException(
+            409, f"{recipes.label(source)} of that dataset isn't finalized; only finalized recipes can be reused."
+        )
     return source
 
 
@@ -187,7 +224,10 @@ def check_target(conn, recipe: dict) -> None:
         {"r": recipe["id"]},
     ).fetchone()
     if recipe["version"] != 1 or recipe["phase"] != "assessing" or row["reused"]:
-        raise HTTPException(409, "Only a new dataset can start from a recipe: its first version, still assessing, "
-                                 "with no recipe applied yet.")
+        raise HTTPException(
+            409,
+            "Only a new dataset can start from a recipe: its first version, still assessing, "
+            "with no recipe applied yet.",
+        )
     if row["busy"]:
         raise HTTPException(409, "Assessment has started on this dataset; it can't start from a recipe any more.")

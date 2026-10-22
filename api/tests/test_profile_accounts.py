@@ -1,4 +1,5 @@
 """Accounts from .env, the Viewer role, and profile pictures."""
+
 import pytest
 
 from app.users import Account, parse_accounts
@@ -9,15 +10,26 @@ from .team_helpers import DB_URL, app_, people  # noqa: F401
 # ------------------------------------------------------------------------------------------- parsing
 def test_parse_accounts():
     got = parse_accounts("tanner#2:Tanner:lead; test-member:Test Member:member;test-viewer:Test Viewer:viewer")
-    assert got == [Account("tanner", 2, "Tanner", "lead"), Account("test-member", None, "Test Member", "member"),
-                   Account("test-viewer", None, "Test Viewer", "viewer")]
+    assert got == [
+        Account("tanner", 2, "Tanner", "lead"),
+        Account("test-member", None, "Test Member", "member"),
+        Account("test-viewer", None, "Test Viewer", "viewer"),
+    ]
 
 
-@pytest.mark.parametrize("text,needle", [
-    ("a:A:lead;a:B:member", "twice"), ("a:A:lead;x:X:boss", "role"), ("a:A:lead;bad", "key:Name:role"),
-    ("Tanner:Tanner:lead", "key"), ("m:M:member", "lead"), ("a#x:A:lead", "id"), ("a::lead", "name"),
-    ("a#2:A:lead;b#2:B:member", "claim"),
-])
+@pytest.mark.parametrize(
+    "text,needle",
+    [
+        ("a:A:lead;a:B:member", "twice"),
+        ("a:A:lead;x:X:boss", "role"),
+        ("a:A:lead;bad", "key:Name:role"),
+        ("Tanner:Tanner:lead", "key"),
+        ("m:M:member", "lead"),
+        ("a#x:A:lead", "id"),
+        ("a::lead", "name"),
+        ("a#2:A:lead;b#2:B:member", "claim"),
+    ],
+)
 def test_parse_refuses(text, needle):
     with pytest.raises(ValueError, match=needle):
         parse_accounts(text)
@@ -31,23 +43,28 @@ needs_db = pytest.mark.skipif(not DB_URL, reason="set RAINFOREST_TEST_DATABASE_U
 def conn(app_):
     """A transaction rolled back after the test, so the shared test users are untouched."""
     from app.db import connection
+
     with connection() as c:
         yield c
         c.rollback()
 
 
 def _row(conn, uid):
-    return conn.execute("SELECT id, key, name, role, active, session_version FROM meta.users WHERE id = %s",
-                        (uid,)).fetchone()
+    return conn.execute(
+        "SELECT id, key, name, role, active, session_version FROM meta.users WHERE id = %s", (uid,)
+    ).fetchone()
 
 
 def _new(conn, name, role="member"):
-    return conn.execute("INSERT INTO meta.users (name, role) VALUES (%s, %s) RETURNING id", (name, role)).fetchone()["id"]
+    return conn.execute("INSERT INTO meta.users (name, role) VALUES (%s, %s) RETURNING id", (name, role)).fetchone()[
+        "id"
+    ]
 
 
 @needs_db
 def test_sync_claims_creates_deactivates_and_is_idempotent(conn):
     from app.users import sync_accounts
+
     lee, dana = _new(conn, "Lee Lead", "lead"), _new(conn, "Dana Scientist")
     v_dana = _row(conn, dana)["session_version"]
     accounts = parse_accounts(f"tanner#{lee}:Tanner:lead;test-member:Test Member:member;test-viewer:Test Viewer:viewer")
@@ -60,12 +77,15 @@ def test_sync_claims_creates_deactivates_and_is_idempotent(conn):
     assert set(keys) == {"tanner", "test-member", "test-viewer"} and keys["test-viewer"]["role"] == "viewer"
     before = conn.execute("SELECT id, name, role, active, session_version FROM meta.users ORDER BY id").fetchall()
     assert sync_accounts(conn, accounts) == {"created": [], "updated": [], "deactivated": [], "reactivated": []}
-    assert conn.execute("SELECT id, name, role, active, session_version FROM meta.users ORDER BY id").fetchall() == before
+    assert (
+        conn.execute("SELECT id, name, role, active, session_version FROM meta.users ORDER BY id").fetchall() == before
+    )
 
 
 @needs_db
 def test_sync_removed_key_deactivates_and_returning_key_reactivates(conn):
     from app.users import sync_accounts
+
     sync_accounts(conn, parse_accounts("boss:Boss:lead;tm:Test Member:member"))
     tm = conn.execute("SELECT id FROM meta.users WHERE key = 'tm'").fetchone()["id"]
     sync_accounts(conn, parse_accounts("boss:Boss:lead"))
@@ -77,6 +97,7 @@ def test_sync_removed_key_deactivates_and_returning_key_reactivates(conn):
 @needs_db
 def test_sync_role_change_signs_out(conn):
     from app.users import sync_accounts
+
     sync_accounts(conn, parse_accounts("boss:Boss:lead;tm:Test Member:member"))
     tm = _row(conn, conn.execute("SELECT id FROM meta.users WHERE key = 'tm'").fetchone()["id"])
     sync_accounts(conn, parse_accounts("boss:Boss:lead;tm:Test Member:viewer"))
@@ -87,6 +108,7 @@ def test_sync_role_change_signs_out(conn):
 @needs_db
 def test_accounts_from_env_are_not_edited_in_the_app(people, monkeypatch):
     from app.config import get_settings
+
     lead = people["lead"]
     monkeypatch.setenv("RAINFOREST_USERS", "boss:Boss:lead")
     get_settings.cache_clear()
@@ -112,9 +134,14 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from .team_helpers import fields, finalized_trees, review_all, save, start, upload  # noqa: E402
 
-VIEWER_MAY = [("POST", r"/api/datasets/\{dataset_id\}/analyses"), ("POST", r"/api/datasets/\{dataset_id\}/fields/query"),
-              ("POST", r"/api/auth/pick"), ("POST", r"/api/auth/logout"),
-              ("PUT", r"/api/users/\{user_id\}/avatar"), ("DELETE", r"/api/users/\{user_id\}/avatar")]
+VIEWER_MAY = [
+    ("POST", r"/api/datasets/\{dataset_id\}/analyses"),
+    ("POST", r"/api/datasets/\{dataset_id\}/fields/query"),
+    ("POST", r"/api/auth/pick"),
+    ("POST", r"/api/auth/logout"),
+    ("PUT", r"/api/users/\{user_id\}/avatar"),
+    ("DELETE", r"/api/users/\{user_id\}/avatar"),
+]
 
 
 @pytest.fixture(scope="module")
@@ -157,6 +184,7 @@ def _x(client, ds):
 @needs_db
 def test_viewer_never_sees_an_assessing_team_decision(people, viewer):
     from app.db import connection
+
     lead = people["lead"]
     ds, rid = finalized_trees(lead)
     assert _x(viewer, ds)[0] == "keep"
@@ -164,8 +192,11 @@ def test_viewer_never_sees_an_assessing_team_decision(people, viewer):
     fid = fields(lead, ds)["x"]["id"]
     with connection() as conn:  # the team working copy moves on while v2 is assessed
         conn.execute("UPDATE meta.field_decisions SET action = 'drop' WHERE field_id = %s", (fid,))
-        conn.execute("""INSERT INTO meta.decision_history (field_id, dataset_id, family, previous, current, user_id)
-                        VALUES (%s, %s, 'tree', '{}', '{}', %s)""", (fid, ds["id"], lead.user["id"]))
+        conn.execute(
+            """INSERT INTO meta.decision_history (field_id, dataset_id, family, previous, current, user_id)
+                        VALUES (%s, %s, 'tree', '{}', '{}', %s)""",
+            (fid, ds["id"], lead.user["id"]),
+        )
         conn.commit()
     assert _x(people["c"], ds)[0] == "drop"  # a member who isn't assessing still sees the working copy
     assert _x(viewer, ds)[0] == "keep"  # the viewer sees v1
@@ -187,6 +218,7 @@ def test_viewer_sees_suggestions_on_a_dataset_with_no_finalized_baseline(people,
     start(lead, ds, "tree", [lead])
     fid = fields(lead, ds)["x"]["id"]
     from app.db import connection
+
     with connection() as conn:
         conn.execute("UPDATE meta.field_decisions SET action = 'drop', source = 'user' WHERE field_id = %s", (fid,))
         conn.commit()
@@ -199,8 +231,16 @@ def test_viewer_sees_suggestions_on_a_dataset_with_no_finalized_baseline(people,
 def test_viewers_cant_assess(people, viewer):
     lead = people["lead"]
     ds = upload(lead)
-    r = lead.post(f"/api/datasets/{ds['id']}/baselines", json={"family": "tree", "start": "scratch",
-                  "source_recipe_id": None, "targets": ["y"], "assessors": [viewer.user["id"]]})
+    r = lead.post(
+        f"/api/datasets/{ds['id']}/baselines",
+        json={
+            "family": "tree",
+            "start": "scratch",
+            "source_recipe_id": None,
+            "targets": ["y"],
+            "assessors": [viewer.user["id"]],
+        },
+    )
     assert r.status_code == 422 and "Viewer" in r.text
     start(lead, ds, "tree", [lead])
     r = lead.post(f"/api/datasets/{ds['id']}/assessors", json={"user_id": viewer.user["id"]})
@@ -231,6 +271,7 @@ def member(people):
 @needs_db
 def test_avatar_is_stored_square_and_served(member, app_):
     from app.config import get_settings
+
     r = _put(member, member.user["id"], _png())
     assert r.status_code == 200, r.text
     url = r.json()["avatar_url"]
@@ -265,7 +306,9 @@ def _mean(data: bytes) -> tuple[int, int, int]:
 
 def test_crop_box_clamps_and_refuses():
     from fastapi import HTTPException
+
     from app.avatars import crop_box
+
     assert crop_box(400, 200, None) is None
     assert crop_box(400, 200, (200, 0, 200)) == (200, 0, 400, 200)
     assert crop_box(400, 200, (201.4, -0.6, 200.3)) == (200, 0, 400, 200)  # a pixel over, from the browser's sums
@@ -279,8 +322,11 @@ def test_avatar_keeps_the_square_its_owner_framed(member, app_):
     uid = member.user["id"]
 
     def framed(data, **crop):
-        r = member.put(f"/api/users/{uid}/avatar", files={"file": ("me.png", data, "image/png")},
-                       data={f"crop_{k}": str(v) for k, v in crop.items()})
+        r = member.put(
+            f"/api/users/{uid}/avatar",
+            files={"file": ("me.png", data, "image/png")},
+            data={f"crop_{k}": str(v) for k, v in crop.items()},
+        )
         assert r.status_code == 200, r.text
         return _mean(TestClient(app_).get(r.json()["avatar_url"]).content)
 
@@ -292,22 +338,33 @@ def test_avatar_keeps_the_square_its_owner_framed(member, app_):
     sideways = _halves(fmt="JPEG", exif=exif)
     assert framed(sideways, x=0, y=0, size=200)[0] > 180
     assert framed(sideways, x=0, y=200, size=200)[1] > 160
-    r = member.put(f"/api/users/{uid}/avatar", files={"file": ("me.png", _halves(), "image/png")},
-                   data={"crop_x": "0", "crop_y": "0"})
+    r = member.put(
+        f"/api/users/{uid}/avatar",
+        files={"file": ("me.png", _halves(), "image/png")},
+        data={"crop_x": "0", "crop_y": "0"},
+    )
     assert r.status_code == 422 and "together" in r.text
-    r = member.put(f"/api/users/{uid}/avatar", files={"file": ("me.png", _halves(), "image/png")},
-                   data={"crop_x": "300", "crop_y": "0", "crop_size": "200"})
+    r = member.put(
+        f"/api/users/{uid}/avatar",
+        files={"file": ("me.png", _halves(), "image/png")},
+        data={"crop_x": "300", "crop_y": "0", "crop_size": "200"},
+    )
     assert r.status_code == 422
 
 
 @needs_db
-@pytest.mark.parametrize("data,name,code", [
-    (b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>', "x.svg", 400),
-    (b"<html><script>alert(1)</script></html>", "x.png", 400),
-    (b"\x89PNG" + b"0" * (6 * 1024 * 1024), "big.png", 413),
-], ids=["svg", "html-named-png", "too-big"])
+@pytest.mark.parametrize(
+    "data,name,code",
+    [
+        (b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>', "x.svg", 400),
+        (b"<html><script>alert(1)</script></html>", "x.png", 400),
+        (b"\x89PNG" + b"0" * (6 * 1024 * 1024), "big.png", 413),
+    ],
+    ids=["svg", "html-named-png", "too-big"],
+)
 def test_avatar_refuses_bad_files(member, data, name, code):
     from app.config import get_settings
+
     before = set(get_settings().avatars_dir.glob("*"))
     assert _put(member, member.user["id"], data, name).status_code == code
     assert set(get_settings().avatars_dir.glob("*")) == before
@@ -336,10 +393,10 @@ def test_avatar_paths_cant_escape(app_):
     assert c.get("/api/auth/avatars/x/0123456789abcdef.webp").status_code == 404
 
 
-
 @needs_db
 def test_a_claim_that_cant_be_honoured_stops_the_sync(conn):
     from app.users import sync_accounts
+
     with pytest.raises(ValueError, match="#999999"):
         sync_accounts(conn, parse_accounts("boss#999999:Boss:lead"))
 
@@ -347,6 +404,7 @@ def test_a_claim_that_cant_be_honoured_stops_the_sync(conn):
 @needs_db
 def test_a_claim_on_an_account_with_another_key_stops_the_sync(conn):
     from app.users import sync_accounts
+
     sync_accounts(conn, parse_accounts("boss:Boss:lead"))
     boss = conn.execute("SELECT id FROM meta.users WHERE key = 'boss'").fetchone()["id"]
     with pytest.raises(ValueError, match="already"):
@@ -359,11 +417,16 @@ def test_viewers_cant_use_the_sql_console(viewer, people):
 
 
 @needs_db
-@pytest.mark.parametrize("uri,code", [
-    ("/mlflow/ajax-api/2.0/mlflow/runs/search", 204), ("/mlflow/ajax-api/2.0/mlflow/logged-models/search?x=1", 204),
-    ("/mlflow/api/2.0/mlflow/experiments/search", 204), ("/mlflow/ajax-api/2.0/mlflow/runs/delete", 403),
-    ("/mlflow/ajax-api/2.0/mlflow/runs/search/../delete", 403),
-])
+@pytest.mark.parametrize(
+    "uri,code",
+    [
+        ("/mlflow/ajax-api/2.0/mlflow/runs/search", 204),
+        ("/mlflow/ajax-api/2.0/mlflow/logged-models/search?x=1", 204),
+        ("/mlflow/api/2.0/mlflow/experiments/search", 204),
+        ("/mlflow/ajax-api/2.0/mlflow/runs/delete", 403),
+        ("/mlflow/ajax-api/2.0/mlflow/runs/search/../delete", 403),
+    ],
+)
 def test_viewers_browse_mlflow_but_cant_change_it(viewer, uri, code):
     r = viewer.get("/api/auth/check", headers={"X-Original-Method": "POST", "X-Original-URI": uri})
     assert r.status_code == code
@@ -381,6 +444,7 @@ def test_phone_jpegs_with_a_second_image_are_accepted(member):
 @needs_db
 def test_viewer_can_explore_an_export_while_a_version_is_assessed(people, viewer):
     from .team_helpers import experiment, export
+
     lead = people["lead"]
     ds, rid = finalized_trees(lead)
     e = export(lead, ds, experiment(lead, ds, rid))

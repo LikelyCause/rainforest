@@ -4,6 +4,7 @@ A spec's key is what `transform` or `encoding` stores. The catalog, the checks, 
 panel read specs from here, so adding a transformer is adding a spec. Nothing from the app is imported but
 modeling.params: semantics.py imports this module.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -45,10 +46,18 @@ class TransformSpec:
         return {s.name: s.default for s in self.settings}
 
     def to_json(self) -> dict:
-        return {"key": self.key, "dimension": self.dimension, "types": list(self.types),
-                "families": list(self.families), "label": self.label, "help": self.help,
-                "settings": [s.to_json() for s in self.settings], "handles_nan": self.handles_nan,
-                "needs_target": self.needs_target, "source": self.source}
+        return {
+            "key": self.key,
+            "dimension": self.dimension,
+            "types": list(self.types),
+            "families": list(self.families),
+            "label": self.label,
+            "help": self.help,
+            "settings": [s.to_json() for s in self.settings],
+            "handles_nan": self.handles_nan,
+            "needs_target": self.needs_target,
+            "source": self.source,
+        }
 
 
 _SPECS: dict[str, TransformSpec] = {}

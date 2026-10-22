@@ -1,5 +1,6 @@
 """API behaviour against a real Postgres (RAINFOREST_TEST_DATABASE_URL): the leak screen on upload and on target
 changes, decision provenance, bulk accept, export preview warnings, upload cleanup and job error state."""
+
 import os
 import time
 
@@ -47,8 +48,9 @@ def wait_until(fn, timeout=120.0, every=0.3):
 def upload(client, csv: str, targets: str | None = None, name="t.csv") -> dict:
     data = {"targets": targets} if targets else {}
     ds = client.post("/api/datasets/upload", files={"file": (name, csv, "text/csv")}, data=data).json()
-    ds = wait_until(lambda: (d := client.get(f"/api/datasets/{ds['id']}").json())["status"] in ("ready", "failed")
-                    and d)
+    ds = wait_until(
+        lambda: (d := client.get(f"/api/datasets/{ds['id']}").json())["status"] in ("ready", "failed") and d
+    )
     assert ds["status"] == "ready", ds
     return ds
 
@@ -97,8 +99,11 @@ def test_startup_sweep_removes_only_orphaned_old_uploads(client):
         p.write_text("a\n1\n")
     for p in (old_orphan, waiting):
         os.utime(p, (time.time() - 3600, time.time() - 3600))
-    row = fetch_one("""INSERT INTO meta.datasets (name, file_format, status, upload_path)
-                       VALUES ('w', 'csv', 'pending', %s) RETURNING id""", (str(waiting),))
+    row = fetch_one(
+        """INSERT INTO meta.datasets (name, file_format, status, upload_path)
+                       VALUES ('w', 'csv', 'pending', %s) RETURNING id""",
+        (str(waiting),),
+    )
     try:
         assert sweep_uploads() == [old_orphan]
         assert new_orphan.exists() and waiting.exists()
@@ -108,15 +113,27 @@ def test_startup_sweep_removes_only_orphaned_old_uploads(client):
             p.unlink(missing_ok=True)
 
 
-SAVED_KEYS = ("action", "semantic_type", "imputation", "impute_value", "add_missing_indicator", "transform",
-              "scaling", "encoding", "params", "notes", "reviewed")
+SAVED_KEYS = (
+    "action",
+    "semantic_type",
+    "imputation",
+    "impute_value",
+    "add_missing_indicator",
+    "transform",
+    "scaling",
+    "encoding",
+    "params",
+    "notes",
+    "reviewed",
+)
 
 
 def _numbers_csv(n=600, seed=0) -> str:
     rng = np.random.default_rng(seed)
     return "x,z,y\n" + "".join(
         f"{'' if i % 10 == 0 else f'{v:.4f}'},{w:.4f},{'ab'[i % 2]}\n"
-        for i, (v, w) in enumerate(zip(rng.normal(0, 1, n), rng.normal(0, 1, n))))
+        for i, (v, w) in enumerate(zip(rng.normal(0, 1, n), rng.normal(0, 1, n)))
+    )
 
 
 def test_source_is_user_only_for_real_changes(client):
@@ -127,8 +144,9 @@ def test_source_is_user_only_for_real_changes(client):
 
         def save(**patch):
             cur = client.get(f"/api/fields/{fid}?family=tree").json()["decision"]
-            r = client.put(f"/api/fields/{fid}/decision",
-                           json={**{k: cur[k] for k in SAVED_KEYS}, "family": "tree", **patch})
+            r = client.put(
+                f"/api/fields/{fid}/decision", json={**{k: cur[k] for k in SAVED_KEYS}, "family": "tree", **patch}
+            )
             assert r.status_code == 200, r.text
             return r.json()
 
@@ -171,10 +189,23 @@ def test_retyping_to_datetime_stores_the_columns_format(client):
         assert f["seen"]["inferred_type"] != "datetime" and f["event_code"]["inferred_type"] == "identifier"
         for name, fmt in (("seen", "%d/%m/%Y"), ("event_code", "epoch_s")):
             fid = f[name]["id"]
-            r = client.put(f"/api/fields/{fid}/decision", json={
-                "family": "tree", "action": "keep", "semantic_type": "datetime", "imputation": "none",
-                "impute_value": None, "add_missing_indicator": False, "transform": "none", "scaling": "none",
-                "encoding": "datetime_parts", "params": {}, "notes": None, "reviewed": True})
+            r = client.put(
+                f"/api/fields/{fid}/decision",
+                json={
+                    "family": "tree",
+                    "action": "keep",
+                    "semantic_type": "datetime",
+                    "imputation": "none",
+                    "impute_value": None,
+                    "add_missing_indicator": False,
+                    "transform": "none",
+                    "scaling": "none",
+                    "encoding": "datetime_parts",
+                    "params": {},
+                    "notes": None,
+                    "reviewed": True,
+                },
+            )
             assert r.status_code == 200, r.text
             assert client.get(f"/api/fields/{fid}").json()["field"]["stats"]["datetime_format"] == fmt
     finally:
@@ -188,9 +219,12 @@ def test_a_job_that_runs_again_drops_its_old_error(client):
     ds = upload(client, _numbers_csv(), targets="y")
     try:
         recipe = set_phase(ds["id"], "finalized")
-        row = fetch_one("""INSERT INTO meta.exports (dataset_id, status, error, model_family, config, recipe_id)
+        row = fetch_one(
+            """INSERT INTO meta.exports (dataset_id, status, error, model_family, config, recipe_id)
                            VALUES (%s, 'failed', 'Interrupted by an API restart.', 'tree', '{"seed": 1}', %s)
-                           RETURNING id""", (ds["id"], recipe["id"]))
+                           RETURNING id""",
+            (ds["id"], recipe["id"]),
+        )
         fetch_one("SELECT meta.import_orphan_experiments()")
         exports._run(row["id"])
         done = client.get(f"/api/exports/{row['id']}").json()
@@ -235,8 +269,10 @@ def test_making_a_field_the_target_in_review_screens_it_too(client):
     try:
         y = fields_of(client, ds)["y"]
         cur = client.get(f"/api/fields/{y['id']}").json()["decision"]
-        r = client.put(f"/api/fields/{y['id']}/decision",
-                       json={**{k: cur[k] for k in SAVED_KEYS}, "action": "target", "family": "tree"})
+        r = client.put(
+            f"/api/fields/{y['id']}/decision",
+            json={**{k: cur[k] for k in SAVED_KEYS}, "action": "target", "family": "tree"},
+        )
         assert r.status_code == 200, r.text
         wait_until(lambda: fields_of(client, ds)["merchant"]["leakage"], timeout=60)
     finally:

@@ -1,4 +1,5 @@
 """Experiments: create, list, open, rename, annotate and archive. Visibility rules live in app/experiments.py."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
@@ -37,8 +38,14 @@ def get_experiment(experiment_id: int, user: CurrentUser) -> dict:
         x = experiments.get_visible(conn, experiment_id, user)
         best = experiments.best_by_experiment(conn, [x["id"]]).get(x["id"])
         adjustments = experiments.adjustments(conn, x)
-    return {**x, "best": best, "adjustments": adjustments, "can_adjust": experiments.can_adjust(x, user),
-            "exports": list_exports(x["dataset_id"], user, x["id"]), "runs": list_runs(x["dataset_id"], user, x["id"])}
+    return {
+        **x,
+        "best": best,
+        "adjustments": adjustments,
+        "can_adjust": experiments.can_adjust(x, user),
+        "exports": list_exports(x["dataset_id"], user, x["id"]),
+        "runs": list_runs(x["dataset_id"], user, x["id"]),
+    }
 
 
 @router.post("/experiments/{experiment_id}/adjustments/revert")
@@ -46,8 +53,9 @@ def revert_adjustments(experiment_id: int, body: RevertIn, user: CurrentUser) ->
     """Put fields of a team experiment (all of them when `field_ids` is null) back to its baseline: its owner."""
     with connection() as conn:
         x = experiments.get_visible(conn, experiment_id, user)
-        x = conn.execute(f"SELECT {experiments.COLS} FROM {experiments.FROM} WHERE x.id = %s FOR UPDATE OF x",
-                         (x["id"],)).fetchone()
+        x = conn.execute(
+            f"SELECT {experiments.COLS} FROM {experiments.FROM} WHERE x.id = %s FOR UPDATE OF x", (x["id"],)
+        ).fetchone()
         if (denied := experiments.adjust_denied(x, user)) is not None:
             raise HTTPException(*denied)
         experiments.revert(conn, x, body.field_ids)
@@ -69,5 +77,7 @@ def patch_experiment(experiment_id: int, body: ExperimentPatch, user: CurrentUse
         if sets.get("archived") is not None:
             conn.execute(
                 "UPDATE meta.experiments SET archived_at = CASE WHEN %s THEN coalesce(archived_at, now()) END "
-                "WHERE id = %s", (sets["archived"], x["id"]))
+                "WHERE id = %s",
+                (sets["archived"], x["id"]),
+            )
         return experiments.get(conn, x["id"])

@@ -27,17 +27,42 @@ describe("cellShade", () => {
 });
 
 describe("headlineTiles", () => {
-  const m = { accuracy: 0.8, precision: 0.7, recall: 0.6, f1: 0.65, specificity: 0.9, precision_macro: 0.5,
-    recall_macro: 0.4, f1_macro: 0.45 };
+  const m = {
+    accuracy: 0.8,
+    precision: 0.7,
+    recall: 0.6,
+    f1: 0.65,
+    specificity: 0.9,
+    precision_macro: 0.5,
+    recall_macro: 0.4,
+    f1_macro: 0.45,
+  };
   const value = (rows: ReturnType<typeof headlineTiles>, label: string) => rows.find((r) => r[0] === label)?.[1];
   it("shows the positive class for binary targets", () => {
     const rows = headlineTiles(m, true);
-    expect(rows.map((r) => r[0])).toEqual(["Accuracy", "Bal. acc.", "ROC AUC", "PR AUC", "Log loss", "Precision", "Recall", "F1", "Specificity"]);
-    expect([value(rows, "Precision"), value(rows, "Recall"), value(rows, "F1"), value(rows, "Specificity")]).toEqual([0.7, 0.6, 0.65, 0.9]);
+    expect(rows.map((r) => r[0])).toEqual([
+      "Accuracy",
+      "Bal. acc.",
+      "ROC AUC",
+      "PR AUC",
+      "Log loss",
+      "Precision",
+      "Recall",
+      "F1",
+      "Specificity",
+    ]);
+    expect([value(rows, "Precision"), value(rows, "Recall"), value(rows, "F1"), value(rows, "Specificity")]).toEqual([
+      0.7, 0.6, 0.65, 0.9,
+    ]);
   });
   it("shows macro averages for multiclass targets, and no specificity", () => {
     const rows = headlineTiles(m, false);
-    expect([value(rows, "Precision"), value(rows, "Recall"), value(rows, "F1"), value(rows, "Specificity")]).toEqual([0.5, 0.4, 0.45, undefined]);
+    expect([value(rows, "Precision"), value(rows, "Recall"), value(rows, "F1"), value(rows, "Specificity")]).toEqual([
+      0.5,
+      0.4,
+      0.45,
+      undefined,
+    ]);
   });
 });
 
@@ -52,10 +77,27 @@ describe("regressionTiles", () => {
 
 describe("regressionTabs", () => {
   it("offers ranges only when the run scored them", () => {
-    const ev: RegressionEvaluation = { kind: "regression", n: 1, scatter: { actual: [], predicted: [] }, residuals: { edges: [], counts: [] } };
+    const ev: RegressionEvaluation = {
+      kind: "regression",
+      n: 1,
+      scatter: { actual: [], predicted: [] },
+      residuals: { edges: [], counts: [] },
+    };
     expect(regressionTabs(ev).map((t) => t.key)).toEqual(["scatter", "errors"]);
-    expect(regressionTabs({ ...ev, bands: { labels: ["< 1", "≥ 1"], edges: [1], confusion_matrix: [[1, 0], [0, 1]], per_class: [] } })
-      .map((t) => t.key)).toEqual(["scatter", "errors", "bands"]);
+    expect(
+      regressionTabs({
+        ...ev,
+        bands: {
+          labels: ["< 1", "≥ 1"],
+          edges: [1],
+          confusion_matrix: [
+            [1, 0],
+            [0, 1],
+          ],
+          per_class: [],
+        },
+      }).map((t) => t.key),
+    ).toEqual(["scatter", "errors", "bands"]);
     expect(regressionTabs(ev, true).map((t) => t.key)).toEqual(["scatter", "errors", "features"]);
   });
 });

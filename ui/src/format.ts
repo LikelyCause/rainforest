@@ -43,15 +43,25 @@ const FAMILY_SHORT: Record<string, string> = { tree: "Trees", linear: "Linear", 
 export const familyShort = (f: string) => FAMILY_SHORT[f] ?? f;
 /** "Trees baseline v2", or with `short` "Trees v2"; named, "Dropout risk v2 (Trees)" and "Dropout risk v2". */
 export const baselineLabel = (family: string, version: number, short = false, name?: string | null) =>
-  name ? `${name} v${version}${short ? "" : ` (${familyShort(family)})`}` : `${familyShort(family)}${short ? "" : " baseline"} v${version}`;
+  name
+    ? `${name} v${version}${short ? "" : ` (${familyShort(family)})`}`
+    : `${familyShort(family)}${short ? "" : " baseline"} v${version}`;
 
-export const roleLabel = (r: string) => (r === "lead" ? "Team Lead" : r === "member" ? "Team Member" : r === "viewer" ? "Viewer" : r);
+export const roleLabel = (r: string) =>
+  r === "lead" ? "Team Lead" : r === "member" ? "Team Member" : r === "viewer" ? "Viewer" : r;
 
 const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 export function fmtAgo(s: string | null): string {
   if (!s) return "—";
   const sec = (new Date(s).getTime() - Date.now()) / 1000;
-  const steps: [Intl.RelativeTimeFormatUnit, number][] = [["second", 60], ["minute", 60], ["hour", 24], ["day", 30], ["month", 12], ["year", Infinity]];
+  const steps: [Intl.RelativeTimeFormatUnit, number][] = [
+    ["second", 60],
+    ["minute", 60],
+    ["hour", 24],
+    ["day", 30],
+    ["month", 12],
+    ["year", Infinity],
+  ];
   let v = sec;
   for (const [unit, size] of steps) {
     if (Math.abs(v) < size) return rtf.format(Math.round(v), unit);

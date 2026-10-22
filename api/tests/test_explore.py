@@ -2,6 +2,7 @@
 
 API tests need an empty Postgres: RAINFOREST_TEST_DATABASE_URL=postgresql://user:pw@host:port/db pytest
 """
+
 import json
 import os
 import sys
@@ -40,14 +41,29 @@ def _frame(n: int = 1500, seed: int = 1, rare: int = 0) -> pl.DataFrame:
     return pl.DataFrame(df)
 
 
-TYPES = {"y": "categorical", "y_num": "numeric_continuous", "sep": "numeric_continuous", "cat_sep": "categorical",
-         "when": "datetime", "note": "text", "row_key": "identifier", "noise_cat": "categorical"}
+TYPES = {
+    "y": "categorical",
+    "y_num": "numeric_continuous",
+    "sep": "numeric_continuous",
+    "cat_sep": "categorical",
+    "when": "datetime",
+    "note": "text",
+    "row_key": "identifier",
+    "noise_cat": "categorical",
+}
 
 
 def _fields(df: pl.DataFrame, targets=("y", "y_num")) -> list[dict]:
-    return [{"id": i + 1, "name": c, "action": "target" if c in targets else "keep",
-             "semantic_type": TYPES.get(c, "numeric_continuous"), "datetime_format": "%Y-%m-%d"}
-            for i, c in enumerate(df.columns)]
+    return [
+        {
+            "id": i + 1,
+            "name": c,
+            "action": "target" if c in targets else "keep",
+            "semantic_type": TYPES.get(c, "numeric_continuous"),
+            "datetime_format": "%Y-%m-%d",
+        }
+        for i, c in enumerate(df.columns)
+    ]
 
 
 @pytest.fixture(scope="module")
@@ -189,13 +205,16 @@ def test_export_mode_reads_train_split_only(tmp_path):
     rng = np.random.default_rng(0)
     n = 600
     y = rng.integers(0, 2, n)
-    pl.DataFrame({
-        "__row_id": np.arange(n), "__split": np.where(np.arange(n) < 400, "train", "test"),
-        "f_sep": (y * 4 + rng.normal(0, 1, n)).astype(np.float32),
-        "f_noise": rng.normal(0, 1, n).astype(np.float32),
-        "f_onehot": (rng.random(n) < 0.3).astype(np.float32),
-        "column_a": y.astype(np.int32),
-    }).write_parquet(tmp_path / "model_ready.parquet")
+    pl.DataFrame(
+        {
+            "__row_id": np.arange(n),
+            "__split": np.where(np.arange(n) < 400, "train", "test"),
+            "f_sep": (y * 4 + rng.normal(0, 1, n)).astype(np.float32),
+            "f_noise": rng.normal(0, 1, n).astype(np.float32),
+            "f_onehot": (rng.random(n) < 0.3).astype(np.float32),
+            "column_a": y.astype(np.int32),
+        }
+    ).write_parquet(tmp_path / "model_ready.parquet")
     manifest = {"targets": ["column_a"], "target_classes": {"column_a": ["no", "yes"]}}
     p = prepare_export(tmp_path, manifest, "column_a", 1000)
     assert p.n == 400 and p.classes == ["no", "yes"] and [c.name for c in p.columns] == ["f_sep", "f_noise", "f_onehot"]
@@ -290,8 +309,21 @@ def test_api_map_is_cached_then_stale_then_recomputed(client, dataset):
     ds = dataset["id"]
     first = _analysis(client, ds, "map", target="column_a", sample=1000, perplexity=20)
     assert first["status"] in ("pending", "running", "done") and first["stale"] is False
-    assert set(first) == {"id", "dataset_id", "kind", "params", "status", "progress", "status_message", "error",
-                          "result", "created_at", "finished_at", "stale", "created_by"}
+    assert set(first) == {
+        "id",
+        "dataset_id",
+        "kind",
+        "params",
+        "status",
+        "progress",
+        "status_message",
+        "error",
+        "result",
+        "created_at",
+        "finished_at",
+        "stale",
+        "created_by",
+    }
     done = _finished(client, first)
     assert done["status"] == "done", done["error"]
     assert len(done["result"]["points"]) == 1000 and done["result"]["target"] == "column_a"
@@ -300,8 +332,12 @@ def test_api_map_is_cached_then_stale_then_recomputed(client, dataset):
 
     fields = client.get(f"/api/datasets/{ds}/fields").json()
     kept = next(f for f in fields if f["action"] == "keep")
-    assert client.post(f"/api/datasets/{ds}/decisions/bulk",
-                       json={"field_ids": [kept["id"]], "action": "drop"}).status_code == 200
+    assert (
+        client.post(
+            f"/api/datasets/{ds}/decisions/bulk", json={"field_ids": [kept["id"]], "action": "drop"}
+        ).status_code
+        == 200
+    )
     stale = _analysis(client, ds, "map", target="column_a", sample=1000, perplexity=20)
     assert (stale["id"], stale["stale"]) == (done["id"], True)
     assert client.get(f"/api/analyses/{done['id']}").json()["stale"] is True
@@ -339,8 +375,9 @@ def test_api_tests_and_importance(client, dataset):
 
 def test_api_tiny_dataset_is_not_enough(client):
     csv = "a,b,c,t\n" + "".join(f"{i},{i * 2 % 5},{'xy'[i % 2]},{i % 2}\n" for i in range(12))
-    ds = client.post("/api/datasets/upload", files={"file": ("tiny.csv", csv, "text/csv")},
-                     data={"targets": "t"}).json()
+    ds = client.post(
+        "/api/datasets/upload", files={"file": ("tiny.csv", csv, "text/csv")}, data={"targets": "t"}
+    ).json()
     ds = _wait(client, f"/api/datasets/{ds['id']}", lambda d: d["status"] in ("ready", "failed"))
     assert ds["status"] == "ready"
     try:
@@ -354,10 +391,16 @@ def test_api_validation_and_missing(client, dataset):
     ds = dataset["id"]
     bad = client.post(f"/api/datasets/{ds}/analyses", json={"kind": "map", "params": {"sample": 10}})
     assert bad.status_code == 422
-    assert client.post(f"/api/datasets/{ds}/analyses", json={"kind": "map", "params": {"target": "nope"}}
-                       ).status_code == 422
-    assert client.post(f"/api/datasets/{ds}/analyses", json={"kind": "map", "params": {"data": "export:999999"}}
-                       ).status_code == 404
+    assert (
+        client.post(f"/api/datasets/{ds}/analyses", json={"kind": "map", "params": {"target": "nope"}}).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            f"/api/datasets/{ds}/analyses", json={"kind": "map", "params": {"data": "export:999999"}}
+        ).status_code
+        == 404
+    )
     assert client.post("/api/datasets/999999/analyses", json={"kind": "map"}).status_code == 404
     assert client.get("/api/analyses/999999").status_code == 404
 
@@ -373,8 +416,9 @@ def test_api_correlations(client, dataset):
     cell = body["cells"][0]
     assert set(cell) == {"a", "b", "method", "value", "strength", "n"} and cell["a"] in ids and cell["b"] in ids
     extra = next(f["id"] for f in client.get(f"/api/datasets/{ds}/fields").json() if f["id"] not in ids)
-    plus = client.get(f"/api/datasets/{ds}/explore/correlations",
-                      params={"target": "column_a", "limit": 8, "add": str(extra)}).json()
+    plus = client.get(
+        f"/api/datasets/{ds}/explore/correlations", params={"target": "column_a", "limit": 8, "add": str(extra)}
+    ).json()
     assert len(plus["fields"]) == 9 and extra in plus["order"]
     kept = client.get(f"/api/datasets/{ds}/explore/correlations", params={"kept": 1}).json()
     assert all(f["action"] == "keep" for f in kept["fields"]) and len(kept["fields"]) <= 60
@@ -400,8 +444,9 @@ def test_api_export_and_run_are_owned_and_thread_capped(client, dataset):
     assert fetch_one("SELECT owner FROM meta.exports WHERE id = %s", (exp["id"],))["owner"] == me
     assert fetch_one("SELECT owner FROM meta.model_runs WHERE id = %s", (run["id"],))["owner"] == me
     assert fetch_one("SELECT owner FROM meta.datasets WHERE id = %s", (dataset["id"],))["owner"] == me
-    analyses = fetch_one("SELECT bool_and(owner = %s) AS ok FROM meta.analyses WHERE dataset_id = %s",
-                         (me, dataset["id"]))
+    analyses = fetch_one(
+        "SELECT bool_and(owner = %s) AS ok FROM meta.analyses WHERE dataset_id = %s", (me, dataset["id"])
+    )
     assert analyses["ok"] is True  # the earlier tests in this module created some
 
 
@@ -409,13 +454,19 @@ def _reference_correlations(ds: int, target: str | None, kept: bool, limit: int,
     """The ranking done in Python over every stored pair, as the endpoint did before it moved into SQL."""
     from app.db import fetch_all
 
-    fields = fetch_all("""SELECT f.id, f.name, d.semantic_type AS type, d.action FROM meta.fields f
-                            JOIN meta.field_decisions d ON d.field_id = f.id WHERE f.dataset_id = %s""", (ds,))
+    fields = fetch_all(
+        """SELECT f.id, f.name, d.semantic_type AS type, d.action FROM meta.fields f
+                            JOIN meta.field_decisions d ON d.field_id = f.id WHERE f.dataset_id = %s""",
+        (ds,),
+    )
     by_id = {f["id"]: f for f in fields}
     tid = next((f["id"] for f in fields if f["name"] == target), None)
     eligible = {f["id"] for f in fields if f["action"] == "keep" or (not kept and f["action"] != "target")} | {tid}
-    pairs = fetch_all("""SELECT field_a AS a, field_b AS b, method, value, strength, n_obs AS n
-                           FROM meta.field_correlations WHERE dataset_id = %s ORDER BY field_a, field_b""", (ds,))
+    pairs = fetch_all(
+        """SELECT field_a AS a, field_b AS b, method, value, strength, n_obs AS n
+                           FROM meta.field_correlations WHERE dataset_id = %s ORDER BY field_a, field_b""",
+        (ds,),
+    )
     score: dict[int, float] = {}
     for p in pairs:
         if p["a"] in eligible and p["b"] in eligible:
@@ -430,15 +481,23 @@ def _reference_correlations(ds: int, target: str | None, kept: bool, limit: int,
     cells = [p for p in pairs if p["a"] in pos and p["b"] in pos]
     for p in cells:
         strength[pos[p["a"]], pos[p["b"]]] = strength[pos[p["b"]], pos[p["a"]]] = p["strength"]
-    return {"fields": [{k: by_id[i][k] for k in ("id", "name", "type", "action")} for i in chosen],
-            "order": [chosen[k] for k in cluster_order(strength)], "cells": cells}
+    return {
+        "fields": [{k: by_id[i][k] for k in ("id", "name", "type", "action")} for i in chosen],
+        "order": [chosen[k] for k in cluster_order(strength)],
+        "cells": cells,
+    }
 
 
 def test_api_correlations_match_the_python_ranking(client, dataset):
     ds = dataset["id"]
     some = [f["id"] for f in client.get(f"/api/datasets/{ds}/fields").json()][-2:]
-    for target, kept, limit, add in [("column_a", False, 8, []), ("column_b", True, 12, some), (None, False, 60, []),
-                                     (None, True, 5, some), ("column_a", False, 400, [])]:
+    for target, kept, limit, add in [
+        ("column_a", False, 8, []),
+        ("column_b", True, 12, some),
+        (None, False, 60, []),
+        (None, True, 5, some),
+        ("column_a", False, 400, []),
+    ]:
         params = {"kept": int(kept), "limit": limit, "add": ",".join(map(str, add))}
         if target:
             params["target"] = target
@@ -448,6 +507,7 @@ def test_api_correlations_match_the_python_ranking(client, dataset):
 
 def test_target_predicted_as_classes_is_categorical_whatever_its_type():
     from app.analysis.prep import target_values
+
     s = pl.Series("g", [i % 30 for i in range(600)])
     assert target_values(s, "numeric_discrete")[0] == "numeric"
     assert target_values(s, "numeric_discrete", "classes")[0] == "categorical"

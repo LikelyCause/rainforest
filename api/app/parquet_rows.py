@@ -1,4 +1,5 @@
 """Read selected rows of a Parquet file a few column chunks at a time, so a sample never costs a full column read."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -24,7 +25,7 @@ def read_rows(path: Path, columns: list[str], idx: np.ndarray) -> pl.DataFrame:
             continue
         local = pa.array(idx[lo:hi] - starts[g])
         for k in range(0, len(columns), COLUMNS_PER_READ):
-            batch = columns[k:k + COLUMNS_PER_READ]
+            batch = columns[k : k + COLUMNS_PER_READ]
             taken = pf.read_row_group(g, columns=batch).take(local)
             for c in batch:
                 parts[c].append(taken.column(c).combine_chunks())

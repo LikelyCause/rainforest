@@ -38,11 +38,15 @@ export function zoomAt(f: Frame, img: Size, view: number, zoom: number, px = vie
   const z = between(zoom, 1, MAX_ZOOM);
   const before = base * f.zoom;
   const after = base * z;
-  return clampFrame({ zoom: z, x: px - ((px - f.x) / before) * after, y: py - ((py - f.y) / before) * after }, img, view);
+  return clampFrame(
+    { zoom: z, x: px - ((px - f.x) / before) * after, y: py - ((py - f.y) / before) * after },
+    img,
+    view,
+  );
 }
 
 /** The square the view shows, in picture pixels: what the server crops. */
 export function cropSquare(f: Frame, img: Size, view: number): { x: number; y: number; size: number } {
   const s = coverScale(img, view) * f.zoom;
-  return { x: (0 - f.x) / s, y: (0 - f.y) / s, size: view / s };  // 0 - x, not -x: no -0 at the edges
+  return { x: (0 - f.x) / s, y: (0 - f.y) / s, size: view / s }; // 0 - x, not -x: no -0 at the edges
 }

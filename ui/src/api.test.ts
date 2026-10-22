@@ -3,11 +3,16 @@ import { ApiError, errorFromBody, isServerPath, safeNext } from "./api";
 
 describe("errorFromBody", () => {
   it("keeps the message and the details of every error shape", () => {
-    expect(errorFromBody(404, { detail: "Dataset not found" })).toMatchObject({ message: "Dataset not found", details: [] });
-    expect(errorFromBody(422, { detail: { message: "Not a valid target", errors: ["price: 5,000 distinct values"] } }))
-      .toMatchObject({ message: "Not a valid target", details: ["price: 5,000 distinct values"] });
-    expect(errorFromBody(400, { detail: { message: "Only one statement", detail: "syntax error at ;" } }).details)
-      .toEqual(["syntax error at ;"]);
+    expect(errorFromBody(404, { detail: "Dataset not found" })).toMatchObject({
+      message: "Dataset not found",
+      details: [],
+    });
+    expect(
+      errorFromBody(422, { detail: { message: "Not a valid target", errors: ["price: 5,000 distinct values"] } }),
+    ).toMatchObject({ message: "Not a valid target", details: ["price: 5,000 distinct values"] });
+    expect(
+      errorFromBody(400, { detail: { message: "Only one statement", detail: "syntax error at ;" } }).details,
+    ).toEqual(["syntax error at ;"]);
     const e = errorFromBody(422, { detail: [{ loc: ["body", "rows"], msg: "too big" }] });
     expect(e).toBeInstanceOf(ApiError);
     expect(e).toMatchObject({ message: "Invalid request", status: 422, details: ["body.rows: too big"] });

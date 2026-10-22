@@ -20,13 +20,29 @@ describe("baselineLabel", () => {
 
 describe("startBaselineDefaults", () => {
   it("offers the first type without a baseline and populates from the latest finalized one", () => {
-    const ds = { baseline: { setup: false }, baselines: [{ family: "tree", id: 12, version: 2, phase: "finalized", latest_finalized_id: 12 }] } as any;
-    expect(startBaselineDefaults(ds, me, [f("y", { action: "target" }), f("c")])).toEqual(
-      { family: "linear", start: "baseline", source_recipe_id: 12, targets: ["y"], assessors: [7], name: "" });
+    const ds = {
+      baseline: { setup: false },
+      baselines: [{ family: "tree", id: 12, version: 2, phase: "finalized", latest_finalized_id: 12 }],
+    } as any;
+    expect(startBaselineDefaults(ds, me, [f("y", { action: "target" }), f("c")])).toEqual({
+      family: "linear",
+      start: "baseline",
+      source_recipe_id: 12,
+      targets: ["y"],
+      assessors: [7],
+      name: "",
+    });
   });
   it("sets up a new dataset from scratch, as Trees", () => {
-    const ds = { baseline: { setup: true }, baselines: [{ family: "tree", id: 3, version: 1, phase: "assessing", latest_finalized_id: null }] } as any;
-    expect(startBaselineDefaults(ds, me, [])).toMatchObject({ family: "tree", start: "scratch", source_recipe_id: null });
+    const ds = {
+      baseline: { setup: true },
+      baselines: [{ family: "tree", id: 3, version: 1, phase: "assessing", latest_finalized_id: null }],
+    } as any;
+    expect(startBaselineDefaults(ds, me, [])).toMatchObject({
+      family: "tree",
+      start: "scratch",
+      source_recipe_id: null,
+    });
   });
 });
 

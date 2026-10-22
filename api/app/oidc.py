@@ -1,5 +1,6 @@
 """A small OpenID Connect relying party: authorization-code flow with PKCE, ID token verification against the
 provider's JWKS. Only what Rainforest needs, so every check is visible here."""
+
 from __future__ import annotations
 
 import base64
@@ -37,8 +38,15 @@ def _client() -> httpx.Client:
 
 def config_problem() -> str | None:
     s = get_settings()
-    missing = [n for n, v in (("RAINFOREST_OIDC_ISSUER", s.oidc_issuer), ("RAINFOREST_OIDC_CLIENT_ID", s.oidc_client_id),
-                              ("RAINFOREST_OIDC_CLIENT_SECRET", s.oidc_client_secret)) if not v]
+    missing = [
+        n
+        for n, v in (
+            ("RAINFOREST_OIDC_ISSUER", s.oidc_issuer),
+            ("RAINFOREST_OIDC_CLIENT_ID", s.oidc_client_id),
+            ("RAINFOREST_OIDC_CLIENT_SECRET", s.oidc_client_secret),
+        )
+        if not v
+    ]
     if missing:
         return f"Sign-in is set to OIDC but {', '.join(missing)} is not set. Set it for the api service and restart it."
     return None
@@ -110,9 +118,14 @@ def pkce_challenge(verifier: str) -> str:
 def authorization_url(state: str, nonce: str, verifier: str, redirect_uri: str) -> str:
     s = get_settings()
     params = {
-        "response_type": "code", "client_id": s.oidc_client_id, "redirect_uri": redirect_uri,
-        "scope": s.oidc_scopes, "state": state, "nonce": nonce,
-        "code_challenge": pkce_challenge(verifier), "code_challenge_method": "S256",
+        "response_type": "code",
+        "client_id": s.oidc_client_id,
+        "redirect_uri": redirect_uri,
+        "scope": s.oidc_scopes,
+        "state": state,
+        "nonce": nonce,
+        "code_challenge": pkce_challenge(verifier),
+        "code_challenge_method": "S256",
     }
     endpoint = metadata()["authorization_endpoint"]
     return f"{endpoint}{'&' if '?' in endpoint else '?'}{urlencode(params)}"
@@ -122,10 +135,16 @@ def exchange_code(code: str, verifier: str, redirect_uri: str) -> dict:
     s = get_settings()
     try:
         with _client() as c:
-            r = c.post(metadata()["token_endpoint"], data={
-                "grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri,
-                "code_verifier": verifier,
-            }, auth=(s.oidc_client_id, s.oidc_client_secret))
+            r = c.post(
+                metadata()["token_endpoint"],
+                data={
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": redirect_uri,
+                    "code_verifier": verifier,
+                },
+                auth=(s.oidc_client_id, s.oidc_client_secret),
+            )
     except httpx.HTTPError as exc:
         raise OIDCError(f"The token request failed: {exc}") from exc
     if r.status_code != 200:
@@ -151,8 +170,13 @@ def verify_id_token(token: str, nonce: str) -> dict:
     key = _signing_key(header.get("kid"))
     try:
         claims = jwt.decode(
-            token, key, algorithms=[header["alg"]], audience=s.oidc_client_id, issuer=metadata()["issuer"],
-            leeway=LEEWAY, options={"require": ["iss", "aud", "exp", "iat", "sub"]},
+            token,
+            key,
+            algorithms=[header["alg"]],
+            audience=s.oidc_client_id,
+            issuer=metadata()["issuer"],
+            leeway=LEEWAY,
+            options={"require": ["iss", "aud", "exp", "iat", "sub"]},
         )
     except jwt.PyJWTError as exc:
         raise OIDCError(f"ID token rejected: {exc}") from exc
@@ -167,8 +191,11 @@ def verify_id_token(token: str, nonce: str) -> dict:
 def role_from_claims(claims: dict) -> str | None:
     s = get_settings()
     raw = claims.get(s.oidc_groups_claim) or []
-    groups = {g.strip("/").rsplit("/", 1)[-1] if g.startswith("/") else g for g in
-              ([raw] if isinstance(raw, str) else raw) if isinstance(g, str)}
+    groups = {
+        g.strip("/").rsplit("/", 1)[-1] if g.startswith("/") else g
+        for g in ([raw] if isinstance(raw, str) else raw)
+        if isinstance(g, str)
+    }
     if s.lead_group in groups:
         return "lead"
     if s.member_group in groups:
@@ -178,8 +205,10 @@ def role_from_claims(claims: dict) -> str | None:
 
 def profile_from_claims(claims: dict) -> tuple[str, str | None]:
     email = claims.get("email") if isinstance(claims.get("email"), str) else None
-    name = next((claims[k] for k in ("name", "preferred_username") if isinstance(claims.get(k), str) and claims[k]),
-                email or claims["sub"])
+    name = next(
+        (claims[k] for k in ("name", "preferred_username") if isinstance(claims.get(k), str) and claims[k]),
+        email or claims["sub"],
+    )
     return name[:200], email
 
 

@@ -1,5 +1,6 @@
 """The team: everyone signed in can list it; leads add, rename, re-role and deactivate users. In OIDC mode the
 provider owns names, emails and roles, so leads can only deactivate or reactivate."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
@@ -31,9 +32,15 @@ def _may_change_picture(user: dict, user_id: int) -> None:
 
 
 @router.put("/{user_id}/avatar")
-def set_avatar(user_id: int, request: Request, user: CurrentUser, file: UploadFile = File(...),
-               crop_x: float | None = Form(None), crop_y: float | None = Form(None),
-               crop_size: float | None = Form(None)) -> dict:
+def set_avatar(
+    user_id: int,
+    request: Request,
+    user: CurrentUser,
+    file: UploadFile = File(...),
+    crop_x: float | None = Form(None),
+    crop_y: float | None = Form(None),
+    crop_size: float | None = Form(None),
+) -> dict:
     """Upload a JPEG, PNG or WebP (5 MB at most) as the account's picture: you for yourself, a lead for anyone.
     `crop_*` is the square to keep, in the upright picture's pixels; without it, the centred square."""
     _may_change_picture(user, user_id)
@@ -75,6 +82,9 @@ def update_user(user_id: int, body: UserPatch, _: LeadUser) -> dict:
     if users.managed_by_env():
         raise HTTPException(409, ENV_MANAGED)
     if get_settings().auth_mode == "oidc" and set(changes) - {"active"}:
-        raise HTTPException(409, "Names, emails and roles come from the identity provider; "
-                                 "here a user can only be deactivated or reactivated.")
+        raise HTTPException(
+            409,
+            "Names, emails and roles come from the identity provider; "
+            "here a user can only be deactivated or reactivated.",
+        )
     return users.update(user_id, changes)

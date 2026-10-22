@@ -1,4 +1,5 @@
 """Fixes from the 2026-10 code audit that need no database."""
+
 import numpy as np
 import pytest
 
@@ -41,10 +42,14 @@ def test_target_chain_predicts_each_link_once_with_the_same_chain_features():
     a = (X[:, 0] > 0).astype(float)
     m = (X[:, 1] > 0).astype(float) + (X[:, 2] > 0.5)
     g = 3 * a + X[:, 1] + rng.normal(scale=0.1, size=300)
-    chain = TargetChain(RandomForestClassifier(n_estimators=10, random_state=0),
-                        RandomForestRegressor(n_estimators=10, random_state=0),
-                        ["binary", "multiclass", "regression"], [0, 1, 2], cv=3, handles_nan=True).fit(
-        X, np.column_stack([a, m, g]))
+    chain = TargetChain(
+        RandomForestClassifier(n_estimators=10, random_state=0),
+        RandomForestRegressor(n_estimators=10, random_state=0),
+        ["binary", "multiclass", "regression"],
+        [0, 1, 2],
+        cv=3,
+        handles_nan=True,
+    ).fit(X, np.column_stack([a, m, g]))
     calls = {"n": 0}
     for est in chain.estimators_:
         for name in ("predict", "predict_proba"):
@@ -54,6 +59,7 @@ def test_target_chain_predicts_each_link_once_with_the_same_chain_features():
                 def counted(Z, orig=orig):
                     calls["n"] += 1
                     return orig(Z)
+
                 setattr(est, name, counted)
     outs = chain.predict_all(X[:50], [2, 3, 0])
     assert calls["n"] == 3

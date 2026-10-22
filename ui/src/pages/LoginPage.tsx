@@ -12,7 +12,8 @@ import type { AuthConfig } from "../types";
 const CALLBACK_ERRORS: Record<string, string> = {
   state: "That sign-in link had expired or came from another browser window. Please sign in again.",
   provider: "The identity provider didn't complete the sign-in.",
-  token: "The identity provider's answer couldn't be verified. Try again, and ask an admin to check the API log if it keeps happening.",
+  token:
+    "The identity provider's answer couldn't be verified. Try again, and ask an admin to check the API log if it keeps happening.",
 };
 
 function PickUser({ next }: { next: string }) {
@@ -39,7 +40,9 @@ function PickUser({ next }: { next: string }) {
             <button type="button" className="profile" disabled={pick.isPending} onClick={() => pick.mutate(u.id)}>
               <Avatar user={u} />
               <span className="profile-name">{u.name}</span>
-              <Chip tone={u.role === "lead" ? "accent" : "plain"} className={`role-${u.role}`}>{roleLabel(u.role)}</Chip>
+              <Chip tone={u.role === "lead" ? "accent" : "plain"} className={`role-${u.role}`}>
+                {roleLabel(u.role)}
+              </Chip>
             </button>
           </li>
         ))}
@@ -54,7 +57,9 @@ function SignInBody({ cfg, next }: { cfg: AuthConfig; next: string }) {
   if (cfg.problem) return <ErrorAlert error={{ message: cfg.problem }} title="Not set up yet." />;
   if (cfg.mode === "pick") return <PickUser next={next} />;
   return (
-    <a className="btn primary sign-in" href={oidcLoginUrl(next)}>Sign in with {cfg.provider_name}</a>
+    <a className="btn primary sign-in" href={oidcLoginUrl(next)}>
+      Sign in with {cfg.provider_name}
+    </a>
   );
 }
 
@@ -67,7 +72,9 @@ export function LoginPage() {
   return (
     <div className="login tools-login">
       <div className={`stack ${picker ? "picker" : "card login-card"}`}>
-        <div className="login-brand"><Logo /> Rainforest</div>
+        <div className="login-brand">
+          <Logo /> Rainforest
+        </div>
         <div className="tools-title">
           <h1>{cfg.data?.mode === "pick" ? "Who are you?" : "Sign in"}</h1>
           {picker && <span className="secondary">Pick your profile to sign in.</span>}

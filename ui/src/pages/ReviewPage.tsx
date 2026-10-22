@@ -28,10 +28,17 @@ function useSessionState<T>(key: string, initial: T): [T, (v: T) => void] {
       return initial;
     }
   });
-  const set = useCallback((next: T) => {
-    setV(next);
-    try { sessionStorage.setItem(key, JSON.stringify(next)); } catch { /* storage unavailable */ }
-  }, [key]);
+  const set = useCallback(
+    (next: T) => {
+      setV(next);
+      try {
+        sessionStorage.setItem(key, JSON.stringify(next));
+      } catch {
+        /* storage unavailable */
+      }
+    },
+    [key],
+  );
   return [v, set];
 }
 
@@ -51,15 +58,27 @@ const ACTIVATES_ON_ENTER = "button, a, summary, [role=button], [role=option], [r
 const UNDO_DEPTH = 20;
 
 const SHORTCUTS: [string[], string][] = [
-  [["J", "→"], "next field"], [["K", "←"], "previous field"], [["U"], "next unreviewed"], [["X"], "toggle keep / drop"],
-  [["↵"], "confirm and go next"], [["A"], "use the suggestion and confirm"], [["Z"], "undo the last confirm"],
-  [["N"], "add a note"], [["/"], "search fields"], [["Esc"], "leave a control, back to review"], [["?"], "show or hide this list"],
+  [["J", "→"], "next field"],
+  [["K", "←"], "previous field"],
+  [["U"], "next unreviewed"],
+  [["X"], "toggle keep / drop"],
+  [["↵"], "confirm and go next"],
+  [["A"], "use the suggestion and confirm"],
+  [["Z"], "undo the last confirm"],
+  [["N"], "add a note"],
+  [["/"], "search fields"],
+  [["Esc"], "leave a control, back to review"],
+  [["?"], "show or hide this list"],
 ];
 
 /** "11 Oct", with the year when it isn't this one. */
 const dayMonth = (s: string) => {
   const d = new Date(s);
-  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", ...(d.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }) });
+  return d.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    ...(d.getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }),
+  });
 };
 
 /** Whose decisions are on screen, the name the decision panel gives them, and its footer line where the lens has
@@ -69,8 +88,13 @@ function usePanelLens(ds: Dataset, view: View, access: Access): { lens: PanelLen
   const x = useExperiment(v?.kind === "experiment" ? v.id : null);
   const b = ds.baseline;
   // The frozen version on screen: the one in the view, else the current one once it is finalized.
-  const frozenId = v?.kind === "baseline" ? v.id : !v && ds.phase === "finalized" ? b?.id ?? null : null;
-  const lines = useQuery({ queryKey: ["baselines", ds.id], queryFn: () => api.baselines(ds.id), enabled: frozenId !== null, staleTime: 60_000 });
+  const frozenId = v?.kind === "baseline" ? v.id : !v && ds.phase === "finalized" ? (b?.id ?? null) : null;
+  const lines = useQuery({
+    queryKey: ["baselines", ds.id],
+    queryFn: () => api.baselines(ds.id),
+    enabled: frozenId !== null,
+    staleTime: 60_000,
+  });
   const frozen = frozenId === null ? undefined : lines.data?.flatMap((l) => l.versions).find((r) => r.id === frozenId);
   const frozenLine = frozen?.finalized_at
     ? `Finalized${frozen.finalized_by_name ? ` by ${frozen.finalized_by_name}` : ""} on ${dayMonth(frozen.finalized_at)}. You can view, not change.`
@@ -78,15 +102,30 @@ function usePanelLens(ds: Dataset, view: View, access: Access): { lens: PanelLen
   if (v?.kind === "experiment") {
     const n = x.data?.adjustments?.count;
     const from = x.data ? baselineLabel(x.data.recipe_family, x.data.recipe_version, true, x.data.recipe_name) : null;
-    return { lens: "experiment", owner: x.data?.name ?? "This experiment",
-      footLine: n !== undefined && from ? `${fmtInt(n)} field${n === 1 ? "" : "s"} differ${n === 1 ? "s" : ""} from ${from}` : undefined };
+    return {
+      lens: "experiment",
+      owner: x.data?.name ?? "This experiment",
+      footLine:
+        n !== undefined && from
+          ? `${fmtInt(n)} field${n === 1 ? "" : "s"} differ${n === 1 ? "s" : ""} from ${from}`
+          : undefined,
+    };
   }
   if (v?.kind === "baseline") {
     const line = ds.baselines.find((l) => l.latest_finalized_id === v.id || l.id === v.id);
-    return { lens: "frozen", owner: line ? baselineLabel(line.family, line.version, true, line.name) : "Finalized baseline", footLine: frozenLine };
+    return {
+      lens: "frozen",
+      owner: line ? baselineLabel(line.family, line.version, true, line.name) : "Finalized baseline",
+      footLine: frozenLine,
+    };
   }
   if (access.source === "mine") return { lens: "private", owner: "Your assessment" };
-  if (ds.phase === "finalized") return { lens: "frozen", owner: b ? baselineLabel(b.family, b.version, true, b.name) : "Finalized baseline", footLine: frozenLine };
+  if (ds.phase === "finalized")
+    return {
+      lens: "frozen",
+      owner: b ? baselineLabel(b.family, b.version, true, b.name) : "Finalized baseline",
+      footLine: frozenLine,
+    };
   if (ds.phase === "review" && !b?.setup) return { lens: "team", owner: "Team decision" };
   return { lens: "suggestions", owner: "Suggestions" };
 }
@@ -122,7 +161,10 @@ export function ReviewPage() {
   const [search, setSearch] = useSessionState(`search:${datasetId}`, "");
   const [typeList, setTypeList] = useSessionState<string[]>(`types:${datasetId}`, []);
   // In an experiment or a finalized baseline every field counts as reviewed, so the list starts with all of them.
-  const [status, setStatus] = useSessionState<StatusFilter>(`status:${datasetId}:${viewKey(view)}`, view || ds.phase === "finalized" ? "all" : "todo");
+  const [status, setStatus] = useSessionState<StatusFilter>(
+    `status:${datasetId}:${viewKey(view)}`,
+    view || ds.phase === "finalized" ? "all" : "todo",
+  );
   const [attention, setAttention] = useSessionState(`attention:${datasetId}`, false);
   const types = useMemo(() => new Set(typeList), [typeList]);
   // Confirmed while "To do" is showing: stays in place (faded) until the filter changes, so K still reaches it.
@@ -145,14 +187,16 @@ export function ReviewPage() {
   const shown: StatusFilter = status === "todo" && all.length > 0 && all.every((f) => f.reviewed) ? "all" : status;
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return scope.filter((f) => settled.has(f.id) || (
-      (!q || f.name.toLowerCase().includes(q)) &&
-      (workingSet !== null || (
-        (types.size === 0 || types.has(f.semantic_type)) &&
-        (!attention || (!f.reviewed && ((attentionOf(f) && attentionOf(f) !== "edited") || failed.has(f.id)))) &&
-        (shown === "all" || (shown === "todo" ? !f.reviewed : f.reviewed && f.action === (shown === "kept" ? "keep" : "drop")))
-      ))
-    ));
+    return scope.filter(
+      (f) =>
+        settled.has(f.id) ||
+        ((!q || f.name.toLowerCase().includes(q)) &&
+          (workingSet !== null ||
+            ((types.size === 0 || types.has(f.semantic_type)) &&
+              (!attention || (!f.reviewed && ((attentionOf(f) && attentionOf(f) !== "edited") || failed.has(f.id)))) &&
+              (shown === "all" ||
+                (shown === "todo" ? !f.reviewed : f.reviewed && f.action === (shown === "kept" ? "keep" : "drop")))))),
+    );
   }, [scope, search, types, shown, attention, settled, workingSet, failed]);
 
   // No field in the URL: open the first to-do field of the current scope.
@@ -163,12 +207,15 @@ export function ReviewPage() {
     }
   }, [fieldId, scope, datasetId, nav, query]);
 
-  const go = useCallback((id: number | undefined) => {
-    if (id === undefined) return;
-    setFinish(null);
-    setDrawer(false);
-    nav({ pathname: `/d/${datasetId}/review/${id}`, search: query.toString() });
-  }, [datasetId, nav, query]);
+  const go = useCallback(
+    (id: number | undefined) => {
+      if (id === undefined) return;
+      setFinish(null);
+      setDrawer(false);
+      nav({ pathname: `/d/${datasetId}/review/${id}`, search: query.toString() });
+    },
+    [datasetId, nav, query],
+  );
 
   // Navigation follows the rows on screen only; an empty filter goes nowhere (#54).
   const idx = visible.findIndex((f) => f.id === fieldId);
@@ -202,7 +249,11 @@ export function ReviewPage() {
   // Remembered so the Datasets list can continue where you left off.
   useEffect(() => {
     if (fieldId === null) return;
-    try { localStorage.setItem(`rf:last:${datasetId}`, String(fieldId)); } catch { /* storage unavailable */ }
+    try {
+      localStorage.setItem(`rf:last:${datasetId}`, String(fieldId));
+    } catch {
+      /* storage unavailable */
+    }
   }, [datasetId, fieldId]);
 
   // Prefetch neighbours so stepping through fields feels instant.
@@ -210,29 +261,36 @@ export function ReviewPage() {
     if (idx < 0) return;
     for (const f of [visible[idx + 1], visible[idx - 1], visible[idx + 2]]) {
       if (!f) continue;
-      qc.prefetchQuery({ queryKey: ["field", f.id, viewKey(view)], queryFn: () => api.field(f.id, view), staleTime: 60_000 });
+      qc.prefetchQuery({
+        queryKey: ["field", f.id, viewKey(view)],
+        queryFn: () => api.field(f.id, view),
+        staleTime: 60_000,
+      });
       qc.prefetchQuery({ queryKey: ["corr", f.id], queryFn: () => api.correlations(f.id, 40), staleTime: Infinity });
     }
   }, [idx, visible, qc, view]);
 
-  const onConfirmed = useCallback((c: Confirmed) => {
-    if (undoView.current !== view) undoStack.current = [];
-    undoView.current = view;
-    undoStack.current = [...undoStack.current.slice(-(UNDO_DEPTH - 1)), c];
-    const verb = c.after.action === "drop" ? "dropped" : c.after.action === "target" ? "target" : "kept";
-    toast({
-      message: `${c.name} → ${verb} · reviewed`,
-      action: { label: "Undo", kbd: "Z", run: () => undoRef.current() },
-    });
-    if (status === "todo" && !workingSet) setSettled((s) => new Set(s).add(c.fieldId));
-    const remaining = scope.filter((f) => !f.reviewed && f.id !== c.fieldId);
-    // In an experiment every field already counts as reviewed: Next there just moves on.
-    if (remaining.length === 0 && !view) {
-      setFinish(workingSet ? { kind: "setdone" } : { kind: "complete" });
-      return;
-    }
-    next();
-  }, [next, scope, status, workingSet, view]);
+  const onConfirmed = useCallback(
+    (c: Confirmed) => {
+      if (undoView.current !== view) undoStack.current = [];
+      undoView.current = view;
+      undoStack.current = [...undoStack.current.slice(-(UNDO_DEPTH - 1)), c];
+      const verb = c.after.action === "drop" ? "dropped" : c.after.action === "target" ? "target" : "kept";
+      toast({
+        message: `${c.name} → ${verb} · reviewed`,
+        action: { label: "Undo", kbd: "Z", run: () => undoRef.current() },
+      });
+      if (status === "todo" && !workingSet) setSettled((s) => new Set(s).add(c.fieldId));
+      const remaining = scope.filter((f) => !f.reviewed && f.id !== c.fieldId);
+      // In an experiment every field already counts as reviewed: Next there just moves on.
+      if (remaining.length === 0 && !view) {
+        setFinish(workingSet ? { kind: "setdone" } : { kind: "complete" });
+        return;
+      }
+      next();
+    },
+    [next, scope, status, workingSet, view],
+  );
 
   const undo = useCallback(() => {
     const last = undoView.current === view ? undoStack.current.pop() : undefined;
@@ -263,7 +321,10 @@ export function ReviewPage() {
       const k = e.key;
       // A dialog is open (this page's own shortcuts list included): its keys are its own; ? still closes the list.
       if (isModalOpen()) {
-        if (overlay && k === "?" && !isControl(e.target)) { e.preventDefault(); setOverlay(false); }
+        if (overlay && k === "?" && !isControl(e.target)) {
+          e.preventDefault();
+          setOverlay(false);
+        }
         return;
       }
       if (k === "Escape") {
@@ -274,27 +335,38 @@ export function ReviewPage() {
         return;
       }
       if (isControl(e.target)) return;
-      if (k === "?") { e.preventDefault(); return setOverlay((o) => !o); }
+      if (k === "?") {
+        e.preventDefault();
+        return setOverlay((o) => !o);
+      }
       if (overlay) return;
       if (k === "Enter") {
         // Enter on a focused button or link runs that element, never a confirm (#27).
         if (e.target instanceof Element && e.target.closest(ACTIVATES_ON_ENTER)) return;
         e.preventDefault();
         if (finish?.kind === "end") return goFirstUnreviewed();
-        if (finish?.kind === "complete") return document.querySelector<HTMLElement>(".finish [data-next-step]")?.click();
+        if (finish?.kind === "complete")
+          return document.querySelector<HTMLElement>(".finish [data-next-step]")?.click();
         if (!finish) panel.current?.confirm();
         return;
       }
       if (!access.canEdit && ["x", "a", "z", "n"].includes(k)) return;
       if (finish && !["j", "k", "u", "z", "ArrowRight", "ArrowLeft"].includes(k)) return;
-      if (k === "j" || k === "ArrowRight") { e.preventDefault(); next(); }
-      else if (k === "k" || k === "ArrowLeft") { e.preventDefault(); if (finish) setFinish(null); else prev(); }
-      else if (k === "u") nextUnreviewed();
+      if (k === "j" || k === "ArrowRight") {
+        e.preventDefault();
+        next();
+      } else if (k === "k" || k === "ArrowLeft") {
+        e.preventDefault();
+        if (finish) setFinish(null);
+        else prev();
+      } else if (k === "u") nextUnreviewed();
       else if (k === "x") panel.current?.toggleKeep();
       else if (k === "a") panel.current?.revertAndConfirm();
       else if (k === "z") undo();
-      else if (k === "n") { e.preventDefault(); panel.current?.focusNote(); }
-      else if (k === "/") {
+      else if (k === "n") {
+        e.preventDefault();
+        panel.current?.focusNote();
+      } else if (k === "/") {
         e.preventDefault();
         setDrawer(true);
         window.setTimeout(() => searchRef.current?.focus(), 0);
@@ -305,7 +377,12 @@ export function ReviewPage() {
   });
 
   const goFirstUnreviewed = () => go(scope.find((f) => !f.reviewed)?.id);
-  const clearFilters = () => { setSearch(""); setTypeList([]); setAttention(false); setStatus("all"); };
+  const clearFilters = () => {
+    setSearch("");
+    setTypeList([]);
+    setAttention(false);
+    setStatus("all");
+  };
   const clearSet = () => {
     const q = new URLSearchParams(query);
     q.delete("set");
@@ -323,15 +400,30 @@ export function ReviewPage() {
   const confirmable = panelReady && access.canEdit && !current?.locked;
 
   return (
-    <div className={`review${!typing && !overlay && !finish && current ? " mode" : ""}${drawer ? " drawer-open" : ""}`} data-lens={lens}>
-      <FieldList view={view} ds={ds}
-        fields={scope} visible={visible} settled={settled} activeId={fieldId}
-        search={search} onSearch={setSearch}
-        types={types} onTypes={setTypeList}
-        status={status} onStatus={setStatus}
-        attention={attention} onAttention={setAttention}
-        workingSet={workingSet} onClearSet={clearSet}
-        onClearFilters={clearFilters} onSelect={go} searchRef={searchRef}
+    <div
+      className={`review${!typing && !overlay && !finish && current ? " mode" : ""}${drawer ? " drawer-open" : ""}`}
+      data-lens={lens}
+    >
+      <FieldList
+        view={view}
+        ds={ds}
+        fields={scope}
+        visible={visible}
+        settled={settled}
+        activeId={fieldId}
+        search={search}
+        onSearch={setSearch}
+        types={types}
+        onTypes={setTypeList}
+        status={status}
+        onStatus={setStatus}
+        attention={attention}
+        onAttention={setAttention}
+        workingSet={workingSet}
+        onClearSet={clearSet}
+        onClearFilters={clearFilters}
+        onSelect={go}
+        searchRef={searchRef}
         onClose={() => setDrawer(false)}
       />
       <div className="drawer-scrim" onClick={() => setDrawer(false)} aria-hidden="true" />
@@ -339,19 +431,49 @@ export function ReviewPage() {
         {!view && <JoinAssessment ds={ds} />}
         {detail.isFetching && detail.isPlaceholderData && <div className="loading-bar" aria-hidden="true" />}
         {finish ? (
-          <FinishCard finish={finish} scope={scope} ds={ds} access={access} workingSet={workingSet} assessor={assessor}
-            onFirstUnreviewed={goFirstUnreviewed} onStay={() => setFinish(null)} onClearSet={clearSet}
-            onOpen={go} />
+          <FinishCard
+            finish={finish}
+            scope={scope}
+            ds={ds}
+            access={access}
+            workingSet={workingSet}
+            assessor={assessor}
+            onFirstUnreviewed={goFirstUnreviewed}
+            onStay={() => setFinish(null)}
+            onClearSet={clearSet}
+            onOpen={go}
+          />
         ) : missingField ? (
-          <Empty title={`Field #${fieldId} isn't in this dataset`}
-            action={<button type="button" className="primary" onClick={goFirstUnreviewed}>Go to first unreviewed</button>} />
+          <Empty
+            title={`Field #${fieldId} isn't in this dataset`}
+            action={
+              <button type="button" className="primary" onClick={goFirstUnreviewed}>
+                Go to first unreviewed
+              </button>
+            }
+          />
         ) : detail.error ? (
           <ErrorAlert error={detail.error} />
         ) : current ? (
-          <FieldDetailView data={current} position={position} stale={detail.isPlaceholderData} onOpenField={go}
-            onPrev={prev} onNext={next} onOpenList={() => setDrawer(true)} typeLabel={options.data ? typeLabel : undefined} />
+          <FieldDetailView
+            data={current}
+            position={position}
+            stale={detail.isPlaceholderData}
+            onOpenField={go}
+            onPrev={prev}
+            onNext={next}
+            onOpenList={() => setDrawer(true)}
+            typeLabel={options.data ? typeLabel : undefined}
+          />
         ) : visible.length === 0 && all.length > 0 ? (
-          <Empty title="No fields match these filters" action={<button type="button" onClick={clearFilters}>Clear filters</button>} />
+          <Empty
+            title="No fields match these filters"
+            action={
+              <button type="button" onClick={clearFilters}>
+                Clear filters
+              </button>
+            }
+          />
         ) : (
           <div className="stack" aria-hidden="true">
             <span className="skeleton skel-title" />
@@ -361,24 +483,42 @@ export function ReviewPage() {
         )}
       </section>
       {current && options.data && panelReady ? (
-        <DecisionPanel key={`${current.field.id}:${current.family}:${viewKey(view)}:${panelVersion}`} ref={panel} data={current}
-          catalog={options.data} familyLabel={familyShort(current.family)} typing={typing} view={view}
-          onConfirmed={onConfirmed} onShowShortcuts={() => setOverlay(true)}
+        <DecisionPanel
+          key={`${current.field.id}:${current.family}:${viewKey(view)}:${panelVersion}`}
+          ref={panel}
+          data={current}
+          catalog={options.data}
+          familyLabel={familyShort(current.family)}
+          typing={typing}
+          view={view}
+          onConfirmed={onConfirmed}
+          onShowShortcuts={() => setOverlay(true)}
           readOnly={access.canEdit ? (current.locked ?? null) : access.note}
-          owner={owner} lens={lens} onNext={next} onNextTodo={nextUnreviewed} onAction={setAction}
-          footLine={footLine && (!access.canEdit || lens === "experiment") && !current.locked ? footLine : undefined} />
+          owner={owner}
+          lens={lens}
+          onNext={next}
+          onNextTodo={nextUnreviewed}
+          onAction={setAction}
+          footLine={footLine && (!access.canEdit || lens === "experiment") && !current.locked ? footLine : undefined}
+        />
       ) : (
         <aside className="decision" data-lens={lens} aria-label="Decision" />
       )}
       <div className="phone-bar">
-        <button type="button" className="phone-prev" onClick={prev} aria-label="Previous field"><Icon name="chevron-left" /></button>
+        <button type="button" className="phone-prev" onClick={prev} aria-label="Previous field">
+          <Icon name="chevron-left" />
+        </button>
         <button type="button" className="phone-list" onClick={() => setDrawer(true)} aria-expanded={drawer}>
           Fields · {position ? `${fmtInt(position.index + 1)} of ${fmtInt(position.total)}` : fmtInt(scope.length)}
         </button>
         {confirmable ? (
-          <button type="button" className="primary phone-confirm" onClick={() => panel.current?.confirm()}>Confirm{action ? ` · ${action}` : ""}</button>
+          <button type="button" className="primary phone-confirm" onClick={() => panel.current?.confirm()}>
+            Confirm{action ? ` · ${action}` : ""}
+          </button>
         ) : (
-          <button type="button" className="phone-confirm" onClick={next} aria-label="Next field">Next <Icon name="chevron-right" /></button>
+          <button type="button" className="phone-confirm" onClick={next} aria-label="Next field">
+            Next <Icon name="chevron-right" />
+          </button>
         )}
       </div>
       {overlay && <ShortcutsOverlay onClose={() => setOverlay(false)} />}
@@ -386,9 +526,28 @@ export function ReviewPage() {
   );
 }
 
-function FinishCard({ finish, scope, ds, access, workingSet, assessor, onFirstUnreviewed, onStay, onClearSet, onOpen }: {
-  finish: NonNullable<Finish>; scope: FieldListItem[]; ds: Dataset; access: Access; workingSet: WorkingSet | null; assessor: boolean;
-  onFirstUnreviewed: () => void; onStay: () => void; onClearSet: () => void; onOpen: (id: number) => void;
+function FinishCard({
+  finish,
+  scope,
+  ds,
+  access,
+  workingSet,
+  assessor,
+  onFirstUnreviewed,
+  onStay,
+  onClearSet,
+  onOpen,
+}: {
+  finish: NonNullable<Finish>;
+  scope: FieldListItem[];
+  ds: Dataset;
+  access: Access;
+  workingSet: WorkingSet | null;
+  assessor: boolean;
+  onFirstUnreviewed: () => void;
+  onStay: () => void;
+  onClearSet: () => void;
+  onOpen: (id: number) => void;
 }) {
   const datasetId = ds.id;
   const firstTodo = scope.find((f) => !f.reviewed);
@@ -398,12 +557,16 @@ function FinishCard({ finish, scope, ds, access, workingSet, assessor, onFirstUn
   if (finish.kind === "end") {
     return (
       <div className="finish card">
-        <h2>End of the list: {finish.left} field{finish.left === 1 ? "" : "s"} still to review</h2>
+        <h2>
+          End of the list: {finish.left} field{finish.left === 1 ? "" : "s"} still to review
+        </h2>
         <div className="row">
           <button type="button" className="primary" onClick={onFirstUnreviewed} autoFocus>
             Jump to first unreviewed{firstTodo ? ` · ${firstTodo.name}` : ""} <kbd>↵</kbd>
           </button>
-          <button type="button" onClick={onStay}>Stay here <kbd>Esc</kbd></button>
+          <button type="button" onClick={onStay}>
+            Stay here <kbd>Esc</kbd>
+          </button>
         </div>
       </div>
     );
@@ -411,10 +574,16 @@ function FinishCard({ finish, scope, ds, access, workingSet, assessor, onFirstUn
   if (finish.kind === "setdone" && workingSet) {
     return (
       <div className="finish card">
-        <h2>{scope.length} of {scope.length} reviewed in {workingSet.label}.</h2>
+        <h2>
+          {scope.length} of {scope.length} reviewed in {workingSet.label}.
+        </h2>
         <div className="row">
-          <Link className="btn" to={withView(`/d/${datasetId}/bulk`, finishView)}>Back to the table</Link>
-          <button type="button" onClick={onClearSet}>Clear set</button>
+          <Link className="btn" to={withView(`/d/${datasetId}/bulk`, finishView)}>
+            Back to the table
+          </Link>
+          <button type="button" onClick={onClearSet}>
+            Clear set
+          </button>
         </div>
       </div>
     );
@@ -428,24 +597,42 @@ function FinishCard({ finish, scope, ds, access, workingSet, assessor, onFirstUn
     <div className="finish card">
       <h2>Review complete</h2>
       <div className="counts num">
-        <span>Kept <b>{kept}</b></span><span>Dropped <b>{dropped}</b></span><span>Targets <b>{targets}</b></span>
+        <span>
+          Kept <b>{kept}</b>
+        </span>
+        <span>
+          Dropped <b>{dropped}</b>
+        </span>
+        <span>
+          Targets <b>{targets}</b>
+        </span>
       </div>
-      {leaks.length > 0 && (keptLeaks.length ? (
-        <Banner tone="bad" title={`${keptLeaks.length} leaky field${keptLeaks.length === 1 ? "" : "s"} kept:`}>
-          {keptLeaks.map((f, i) => (
-            <span key={f.id}>{i > 0 && ", "}<button type="button" className="link" onClick={() => onOpen(f.id)}>{f.name}</button></span>
-          ))}
-        </Banner>
-      ) : (
-        <span className="secondary">Leakage flags: {leaks.length} dropped, 0 kept.</span>
-      ))}
+      {leaks.length > 0 &&
+        (keptLeaks.length ? (
+          <Banner tone="bad" title={`${keptLeaks.length} leaky field${keptLeaks.length === 1 ? "" : "s"} kept:`}>
+            {keptLeaks.map((f, i) => (
+              <span key={f.id}>
+                {i > 0 && ", "}
+                <button type="button" className="link" onClick={() => onOpen(f.id)}>
+                  {f.name}
+                </button>
+              </span>
+            ))}
+          </Banner>
+        ) : (
+          <span className="secondary">Leakage flags: {leaks.length} dropped, 0 kept.</span>
+        ))}
       <p className="secondary">
-        {assessor ? "Every field is reviewed. Until you submit your assessment you can still change any field." : "Every field is reviewed."}
+        {assessor
+          ? "Every field is reviewed. Until you submit your assessment you can still change any field."
+          : "Every field is reviewed."}
       </p>
       <div className="row">
         {/* The same next step as the bar above, focused so Enter takes it. */}
         {stage && <NextStep ds={ds} stage={stage} access={access} team={team.data} card />}
-        <button type="button" onClick={onStay}>Back to the field</button>
+        <button type="button" onClick={onStay}>
+          Back to the field
+        </button>
       </div>
     </div>
   );
@@ -453,11 +640,24 @@ function FinishCard({ finish, scope, ds, access, workingSet, assessor, onFirstUn
 
 function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
   return (
-    <Dialog title="Keyboard shortcuts" onClose={onClose} labelledBy="shortcuts-title"
-      actions={<button type="button" onClick={onClose} data-autofocus>Close</button>}>
+    <Dialog
+      title="Keyboard shortcuts"
+      onClose={onClose}
+      labelledBy="shortcuts-title"
+      actions={
+        <button type="button" onClick={onClose} data-autofocus>
+          Close
+        </button>
+      }
+    >
       <div className="shortcut-grid">
         {SHORTCUTS.map(([keys, label]) => (
-          <div key={label}>{keys.map((k) => <kbd key={k}>{k}</kbd>)}<span>{label}</span></div>
+          <div key={label}>
+            {keys.map((k) => (
+              <kbd key={k}>{k}</kbd>
+            ))}
+            <span>{label}</span>
+          </div>
         ))}
       </div>
     </Dialog>

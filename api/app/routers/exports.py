@@ -8,20 +8,19 @@ import traceback
 from functools import lru_cache
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-
-import numpy as np
 
 from .. import bands, experiments, jobs, recipes
 from ..auth import CurrentUser
 from ..config import get_settings
 from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..leakage import leak_names
-from ..schemas import ExportRequest, ExportRowsRequest, RowRules
-from ..semantics import FAMILIES, NON_FEATURE_TYPES, validate_decision, grouped_target
 from ..profiling import coerce_numeric
+from ..schemas import ExportRequest, ExportRowsRequest, RowRules
+from ..semantics import FAMILIES, NON_FEATURE_TYPES, grouped_target, validate_decision
 from ..transform import FieldSpec, check_target_classes, rows_after_rules, run_export
 from .fields import _same_settings
 
@@ -39,8 +38,10 @@ EXPORT_COLS = """e.id, e.dataset_id, e.status, e.progress, e.status_message, e.e
                  e.output_dir, e.n_rows, e.n_features, e.summary, e.created_at, e.updated_at, e.finished_at, e.owner,
                  e.created_by, e.recipe_id, e.experiment_id, r.family AS recipe_family, r.version AS recipe_version,
                  meta.baseline_name(r.dataset_id, r.family) AS recipe_name, x.name AS experiment_name"""
-EXPORT_SELECT = (f"SELECT {EXPORT_COLS} FROM meta.exports e LEFT JOIN meta.recipes r ON r.id = e.recipe_id "
-                 "LEFT JOIN meta.experiments x ON x.id = e.experiment_id")
+EXPORT_SELECT = (
+    f"SELECT {EXPORT_COLS} FROM meta.exports e LEFT JOIN meta.recipes r ON r.id = e.recipe_id "
+    "LEFT JOIN meta.experiments x ON x.id = e.experiment_id"
+)
 PHASE_WAIT = {"assessing": "is being assessed", "review": "is in team review"}
 
 
@@ -48,7 +49,7 @@ def source_problem(recipe: dict) -> str | None:
     """Why a team export can't be built from this recipe version yet."""
     if recipe["phase"] == "finalized":
         return None
-    return (f"{recipes.label(recipe)} {PHASE_WAIT[recipe['phase']]}. Team exports open once a lead finalizes it.")
+    return f"{recipes.label(recipe)} {PHASE_WAIT[recipe['phase']]}. Team exports open once a lead finalizes it."
 
 
 def export_source(conn, dataset_id: int, recipe_id: int | None = None) -> dict:
@@ -68,8 +69,11 @@ def _pick_recipe(conn, dataset_id: int, recipe_id: int | None) -> dict:
             raise HTTPException(404, "Recipe not found")
         return recipe
     family = conn.execute("SELECT model_family FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()
-    return (recipes.latest_finalized(conn, dataset_id, family and family["model_family"])
-            or recipes.latest_finalized(conn, dataset_id) or recipes.current(conn, dataset_id))
+    return (
+        recipes.latest_finalized(conn, dataset_id, family and family["model_family"])
+        or recipes.latest_finalized(conn, dataset_id)
+        or recipes.current(conn, dataset_id)
+    )
 
 
 def _experiment(conn, dataset_id: int, experiment_id: int, user: dict, recipe_id: int | None) -> dict:
@@ -81,8 +85,9 @@ def _experiment(conn, dataset_id: int, experiment_id: int, user: dict, recipe_id
     return x
 
 
-def _plan(conn, dataset_id: int, user: dict, recipe_id: int | None,
-          experiment_id: int | None) -> tuple[dict, dict, dict | None]:
+def _plan(
+    conn, dataset_id: int, user: dict, recipe_id: int | None, experiment_id: int | None
+) -> tuple[dict, dict, dict | None]:
     """(recipe, snapshot, experiment) an export would be built from: the experiment's source when given (a
     personal one reads its assessor's assessment as it stands now), else a recipe version."""
     if experiment_id is None:
@@ -102,13 +107,19 @@ def _unreviewed(conn, recipe: dict, x: dict | None) -> int:
         ).fetchone()["n"]
     if recipe["phase"] == "finalized":
         return 0
-    return conn.execute("SELECT count(*) AS n FROM meta.field_decisions WHERE dataset_id = %s AND NOT reviewed",
-                        (recipe["dataset_id"],)).fetchone()["n"]
+    return conn.execute(
+        "SELECT count(*) AS n FROM meta.field_decisions WHERE dataset_id = %s AND NOT reviewed", (recipe["dataset_id"],)
+    ).fetchone()["n"]
 
 
 @router.get("/datasets/{dataset_id}/export-preview")
-def preview(dataset_id: int, user: CurrentUser, family: str | None = None, recipe_id: int | None = None,
-            experiment_id: int | None = None) -> dict:
+def preview(
+    dataset_id: int,
+    user: CurrentUser,
+    family: str | None = None,
+    recipe_id: int | None = None,
+    experiment_id: int | None = None,
+) -> dict:
     """What an export would contain, plus anything worth fixing first: of an experiment's source when given (with a
     team experiment's adjustments), else of a baseline version (default: the latest finalized of the current
     baseline's model type, else of any; with none yet, the team decision as it stands, blocked). The model family is
@@ -120,21 +131,27 @@ def preview(dataset_id: int, user: CurrentUser, family: str | None = None, recip
         return _preview_of(conn, dataset_id, user, recipe, snap, x, family)
 
 
-def _preview_of(conn, dataset_id: int, user: dict, recipe: dict, snap: dict, x: dict | None,
-                family: str | None) -> dict:
+def _preview_of(
+    conn, dataset_id: int, user: dict, recipe: dict, snap: dict, x: dict | None, family: str | None
+) -> dict:
     fam = recipe["family"]
     if family is not None and family != fam:
-        raise HTTPException(422, f"{recipes.label(recipe)} prepares data for {FAMILIES[fam]['label'].lower()}, "
-                                 f"not {family!r}")
+        raise HTTPException(
+            422, f"{recipes.label(recipe)} prepares data for {FAMILIES[fam]['label'].lower()}, not {family!r}"
+        )
     ds = conn.execute("SELECT parquet_path FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()
     rows = recipes.spec_rows(conn, dataset_id, snap, fam)
     targets = recipes.snapshot_targets(snap)
     tasks = target_tasks(conn, dataset_id, snap)
     leaking = leak_names(conn, dataset_id, targets)
-    unchecked = [r["name"] for r in conn.execute(
-        """SELECT f.name FROM meta.fields f WHERE f.dataset_id = %s AND f.name = ANY(%s)
+    unchecked = [
+        r["name"]
+        for r in conn.execute(
+            """SELECT f.name FROM meta.fields f WHERE f.dataset_id = %s AND f.name = ANY(%s)
               AND NOT EXISTS (SELECT 1 FROM meta.field_correlations c WHERE f.id IN (c.field_a, c.field_b))""",
-        (dataset_id, targets)).fetchall()]
+            (dataset_id, targets),
+        ).fetchall()
+    ]
     base_targets = None
     if x is not None and x["assessor_id"] is None and recipe["phase"] == "finalized":
         base_targets = recipes.snapshot_targets(recipes.snapshot_of(conn, recipe))
@@ -143,7 +160,7 @@ def _preview_of(conn, dataset_id: int, user: dict, recipe: dict, snap: dict, x: 
     last = conn.execute(
         f"""SELECT e.id, e.created_at, e.status, e.recipe_id, e.snapshot FROM meta.exports e
              WHERE e.dataset_id = %s AND e.model_family = %s AND e.status = 'done'
-               AND e.experiment_id IN ({experiments.visible_ids(user['id'])})
+               AND e.experiment_id IN ({experiments.visible_ids(user["id"])})
                AND (%s::bigint IS NULL OR e.experiment_id = %s)
              ORDER BY e.created_at DESC, e.id DESC LIMIT 1""",
         (dataset_id, fam, experiment_id, experiment_id),
@@ -160,12 +177,15 @@ def _preview_of(conn, dataset_id: int, user: dict, recipe: dict, snap: dict, x: 
     if unreviewed:
         warnings.append(f"{unreviewed} field(s) not reviewed yet — their suggested settings will be used.")
     if base_targets is not None and base_targets != targets:
-        warnings.append(f"Targets differ from {recipes.label(recipe)}: {', '.join(base_targets) or 'none'} → "
-                        f"{', '.join(targets) or 'none'}. Results aren't comparable with experiments on the "
-                        "baseline's targets.")
+        warnings.append(
+            f"Targets differ from {recipes.label(recipe)}: {', '.join(base_targets) or 'none'} → "
+            f"{', '.join(targets) or 'none'}. Results aren't comparable with experiments on the "
+            "baseline's targets."
+        )
     if unchecked:
-        warnings.append(f"No leak check has run for target(s) {', '.join(unchecked)}: no associations were "
-                        "computed for them.")
+        warnings.append(
+            f"No leak check has run for target(s) {', '.join(unchecked)}: no associations were computed for them."
+        )
     leaks = [r["name"] for r in keep if r["name"] in leaking]
     if leaks:
         warnings.append(f"Kept field(s) flagged as possible target leakage: {', '.join(leaks)}")
@@ -182,11 +202,16 @@ def _preview_of(conn, dataset_id: int, user: dict, recipe: dict, snap: dict, x: 
         blocking.append(lone)
     blocking += _numeric_target_problems(ds["parquet_path"], tasks)
     if invalid:
-        blocking.append(f"{len(invalid)} field(s) have settings that aren't valid for {FAMILIES[fam]['label'].lower()}: "
-                        f"{', '.join(invalid[:8])}{'…' if len(invalid) > 8 else ''}")
+        blocking.append(
+            f"{len(invalid)} field(s) have settings that aren't valid for {FAMILIES[fam]['label'].lower()}: "
+            f"{', '.join(invalid[:8])}{'…' if len(invalid) > 8 else ''}"
+        )
     return {
         "family": fam,
-        "recipe": {**{k: recipe[k] for k in ("id", "family", "version", "phase", "name")}, "label": recipes.label(recipe)},
+        "recipe": {
+            **{k: recipe[k] for k in ("id", "family", "version", "phase", "name")},
+            "label": recipes.label(recipe),
+        },
         "source": "assessment" if personal else "recipe",
         "experiment_id": experiment_id,
         "kept": len(keep),
@@ -215,25 +240,34 @@ def _numeric_target_problems(parquet_path: str | None, tasks: dict[str, dict]) -
         num = coerce_numeric(raw[t], tasks[t].get("decimal_comma"))
         given = raw[t].fill_nan(None) if raw[t].dtype.is_float() else raw[t]
         if lost := int(given.is_not_null().sum() - num.is_not_null().sum()):
-            out.append(f"Target {t!r} has {lost:,} value(s) that don't read as numbers (or are infinite); fix them or "
-                       "predict it as classes.")
+            out.append(
+                f"Target {t!r} has {lost:,} value(s) that don't read as numbers (or are infinite); fix them or "
+                "predict it as classes."
+            )
             continue
         vals = num.to_numpy()
         if np.unique(vals[~np.isnan(vals)]).size < 2:
             out.append(f"Target {t!r} has a single value; there is nothing to predict.")
         elif tasks[t]["task"] == "bins" and "edges" in (tasks[t]["bins"] or {}):
             if thin := bands.thin_bands(vals, [float(e) for e in tasks[t]["bins"]["edges"]]):
-                out.append(f"Target {t!r}: band(s) {', '.join(thin)} have fewer than 2 rows; move or remove cut "
-                           "points, or use fewer bands.")
+                out.append(
+                    f"Target {t!r}: band(s) {', '.join(thin)} have fewer than 2 rows; move or remove cut "
+                    "points, or use fewer bands."
+                )
     return out
 
 
 def target_tasks(conn, dataset_id: int, snap: dict) -> dict[str, dict]:
     """How each target of a snapshot is predicted, with how its column writes decimals (for reading it as numbers)."""
     tasks = recipes.snapshot_target_tasks(snap)
-    comma = {r["name"]: r["decimal_comma"] for r in conn.execute(
-        """SELECT name, coalesce((stats ->> 'decimal_comma')::boolean, false) AS decimal_comma FROM meta.fields
-            WHERE dataset_id = %s AND name = ANY(%s)""", (dataset_id, list(tasks))).fetchall()}
+    comma = {
+        r["name"]: r["decimal_comma"]
+        for r in conn.execute(
+            """SELECT name, coalesce((stats ->> 'decimal_comma')::boolean, false) AS decimal_comma FROM meta.fields
+            WHERE dataset_id = %s AND name = ANY(%s)""",
+            (dataset_id, list(tasks)),
+        ).fetchall()
+    }
     return {t: {**v, "decimal_comma": comma.get(t, False)} for t, v in tasks.items()}
 
 
@@ -249,11 +283,15 @@ def _lone_class_problem(parquet_path: str | None, targets: list[str]) -> str | N
 
 
 def _check_rule_fields(conn, dataset_id: int, rules: RowRules) -> None:
-    names = {r["name"] for r in conn.execute("SELECT name FROM meta.fields WHERE dataset_id = %s",
-                                             (dataset_id,)).fetchall()}
-    named = [r.field for r in rules.exclude] + ([rules.first_per.key] if rules.first_per else []) \
-        + ([rules.first_per.order] if rules.first_per and rules.first_per.order else []) \
+    names = {
+        r["name"] for r in conn.execute("SELECT name FROM meta.fields WHERE dataset_id = %s", (dataset_id,)).fetchall()
+    }
+    named = (
+        [r.field for r in rules.exclude]
+        + ([rules.first_per.key] if rules.first_per else [])
+        + ([rules.first_per.order] if rules.first_per and rules.first_per.order else [])
         + ([rules.group_by] if rules.group_by else [])
+    )
     if unknown := [n for n in named if n not in names]:
         raise HTTPException(422, f"No field named {', '.join(map(repr, unknown))} in this dataset")
 
@@ -285,8 +323,11 @@ def export_rows(dataset_id: int, req: ExportRowsRequest, user: CurrentUser) -> d
         _, targets, tasks = export_spec(conn, dataset_id, snap, recipe["family"])
     config = json.dumps(req.model_dump(exclude={"recipe_id", "experiment_id"}), sort_keys=True)
     path = Path(ds["parquet_path"])
-    return copy.deepcopy(_rows_after_rules(str(path), path.stat().st_mtime_ns, config, tuple(targets),
-                                           json.dumps(tasks, sort_keys=True, default=str)))
+    return copy.deepcopy(
+        _rows_after_rules(
+            str(path), path.stat().st_mtime_ns, config, tuple(targets), json.dumps(tasks, sort_keys=True, default=str)
+        )
+    )
 
 
 @router.post("/datasets/{dataset_id}/exports", status_code=202)
@@ -304,8 +345,9 @@ def start_export(dataset_id: int, req: ExportRequest, user: CurrentUser) -> dict
     with connection() as conn:
         if req.experiment_id is None:
             if req.source == "assessment":
-                raise HTTPException(422, "An export of your own assessment belongs to a personal experiment: "
-                                         "give its experiment_id.")
+                raise HTTPException(
+                    422, "An export of your own assessment belongs to a personal experiment: give its experiment_id."
+                )
             recipe = export_source(conn, dataset_id, req.recipe_id)
             x = experiments.team_for(conn, recipe)
             snap = recipes.snapshot_of(conn, recipe)
@@ -313,13 +355,17 @@ def start_export(dataset_id: int, req: ExportRequest, user: CurrentUser) -> dict
             x = _experiment(conn, dataset_id, req.experiment_id, user, req.recipe_id)
             experiments.require_writable(x, user)
             # Holds off adjustments until the export is recorded, so it is exactly what was checked.
-            x = conn.execute(f"SELECT {experiments.COLS} FROM {experiments.FROM} WHERE x.id = %s FOR UPDATE OF x",
-                             (x["id"],)).fetchone()
+            x = conn.execute(
+                f"SELECT {experiments.COLS} FROM {experiments.FROM} WHERE x.id = %s FOR UPDATE OF x", (x["id"],)
+            ).fetchone()
             experiments.require_writable(x, user)
             personal = x["assessor_id"] is not None
             if req.source is not None and (req.source == "assessment") != personal:
-                raise HTTPException(422, f"Experiment {x['name']!r} is built from "
-                                         f"{'an assessment' if personal else 'a baseline'}, not {req.source!r}")
+                raise HTTPException(
+                    422,
+                    f"Experiment {x['name']!r} is built from "
+                    f"{'an assessment' if personal else 'a baseline'}, not {req.source!r}",
+                )
             recipe = recipes.get(conn, x["recipe_id"])
             if not personal and (problem := source_problem(recipe)) is not None:
                 raise HTTPException(409, problem)
@@ -330,14 +376,27 @@ def start_export(dataset_id: int, req: ExportRequest, user: CurrentUser) -> dict
             raise HTTPException(422, {"message": "Cannot export", "errors": pv["blocking"]})
         personal = x["assessor_id"] is not None
         adj = experiments.adjustments(conn, x)
-        config = {**req.model_dump(exclude={"model_family", "experiment_id"}),
-                  "source": "assessment" if personal else "recipe", "recipe_id": recipe["id"],
-                  "recipe_version": recipe["version"], "experiment_id": x["id"],
-                  "baseline": {"recipe_id": recipe["id"], "family": recipe["family"], "version": recipe["version"],
-                               "name": recipe["name"], "label": recipes.label(recipe)},
-                  "adjustments": {"count": adj["count"], "fields": [f["name"] for f in adj["fields"]],
-                                  "targets_changed": adj["targets_changed"], "targets": adj["targets"],
-                                  "detail": adj["fields"]}}
+        config = {
+            **req.model_dump(exclude={"model_family", "experiment_id"}),
+            "source": "assessment" if personal else "recipe",
+            "recipe_id": recipe["id"],
+            "recipe_version": recipe["version"],
+            "experiment_id": x["id"],
+            "baseline": {
+                "recipe_id": recipe["id"],
+                "family": recipe["family"],
+                "version": recipe["version"],
+                "name": recipe["name"],
+                "label": recipes.label(recipe),
+            },
+            "adjustments": {
+                "count": adj["count"],
+                "fields": [f["name"] for f in adj["fields"]],
+                "targets_changed": adj["targets_changed"],
+                "targets": adj["targets"],
+                "detail": adj["fields"],
+            },
+        }
         if personal:
             config["assessor_id"] = x["assessor_id"]
         exp = conn.execute(
@@ -354,7 +413,7 @@ def start_export(dataset_id: int, req: ExportRequest, user: CurrentUser) -> dict
 @router.get("/datasets/{dataset_id}/exports")
 def list_exports(dataset_id: int, user: CurrentUser, experiment_id: int | None = None) -> list[dict]:
     rows = fetch_all(
-        f"""{EXPORT_SELECT} WHERE e.dataset_id = %s AND e.experiment_id IN ({experiments.visible_ids(user['id'])})
+        f"""{EXPORT_SELECT} WHERE e.dataset_id = %s AND e.experiment_id IN ({experiments.visible_ids(user["id"])})
               AND (%s::bigint IS NULL OR e.experiment_id = %s) ORDER BY e.created_at DESC""",
         (dataset_id, experiment_id, experiment_id),
     )
@@ -363,8 +422,9 @@ def list_exports(dataset_id: int, user: CurrentUser, experiment_id: int | None =
 
 def visible_export(export_id: int, user: dict) -> dict:
     """The export, or 404 when it doesn't exist or belongs to an experiment `user` may not see."""
-    exp = fetch_one(f"{EXPORT_SELECT} WHERE e.id = %s AND e.experiment_id IN ({experiments.visible_ids(user['id'])})",
-                    (export_id,))
+    exp = fetch_one(
+        f"{EXPORT_SELECT} WHERE e.id = %s AND e.experiment_id IN ({experiments.visible_ids(user['id'])})", (export_id,)
+    )
     if exp is None:
         raise HTTPException(404, "Export not found")
     return exp
@@ -423,10 +483,17 @@ def export_spec(conn, dataset_id: int, snap: dict, family: str) -> tuple[list[Fi
     """The kept fields' specs, the targets (in chain order) and how each target is predicted, of a snapshot."""
     specs = [
         FieldSpec(
-            name=r["name"], semantic_type=r["semantic_type"], imputation=r["imputation"],
-            impute_value=r["impute_value"], add_missing_indicator=bool(r["add_missing_indicator"]),
-            transform=r["transform"], scaling=r["scaling"], encoding=r["encoding"],
-            params=r["params"] or {}, datetime_format=r["datetime_format"], decimal_comma=r["decimal_comma"],
+            name=r["name"],
+            semantic_type=r["semantic_type"],
+            imputation=r["imputation"],
+            impute_value=r["impute_value"],
+            add_missing_indicator=bool(r["add_missing_indicator"]),
+            transform=r["transform"],
+            scaling=r["scaling"],
+            encoding=r["encoding"],
+            params=r["params"] or {},
+            datetime_format=r["datetime_format"],
+            decimal_comma=r["decimal_comma"],
         )
         for r in recipes.spec_rows(conn, dataset_id, snap, family)
         if r["action"] == "keep"
@@ -457,8 +524,9 @@ def _run(export_id: int) -> None:
         with connection() as conn:
             snap = exp["snapshot"] or recipes.snapshot_of(conn, recipes.get(conn, exp["recipe_id"]))
             specs, targets, tasks = export_spec(conn, ds["id"], snap, fam)
-        manifest = run_export(Path(ds["parquet_path"]), specs, targets, out_dir, exp["config"], progress, family=fam,
-                              target_tasks=tasks)
+        manifest = run_export(
+            Path(ds["parquet_path"]), specs, targets, out_dir, exp["config"], progress, family=fam, target_tasks=tasks
+        )
         summary = {
             "split_counts": manifest["split_counts"],
             "split_info": manifest["split_info"],
@@ -471,7 +539,7 @@ def _run(export_id: int) -> None:
             "contains_nan": manifest["contains_nan"],
             "features_by_type": features_by_type(manifest),
             "train_command": f"docker compose exec api python -m app.modeling.train --export-id {export_id}"
-                             + ("" if fam == "tree" else f" --model {'logistic_regression' if fam == 'linear' else 'mlp'}"),
+            + ("" if fam == "tree" else f" --model {'logistic_regression' if fam == 'linear' else 'mlp'}"),
         }
         execute(
             """UPDATE meta.exports SET status='done', error=NULL, progress=1, status_message='Done',

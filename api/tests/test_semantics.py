@@ -1,7 +1,15 @@
 import pytest
 
-from app.semantics import (FAMILIES, NUMERIC, SEMANTIC_TYPES, allowed, defaults_for_type, option_catalog, suggest,
-                           validate_decision)
+from app.semantics import (
+    FAMILIES,
+    NUMERIC,
+    SEMANTIC_TYPES,
+    allowed,
+    defaults_for_type,
+    option_catalog,
+    suggest,
+    validate_decision,
+)
 
 STATS = {"null_pct": 0.2, "skewness": 3.1, "outlier_pct": 0.1, "min_value": 0.0, "n_unique": 40}
 

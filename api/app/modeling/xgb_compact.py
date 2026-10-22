@@ -1,5 +1,6 @@
 """XGBClassifier for labels with gaps. XGBoost wants classes 0..k-1, but a chain's cross-validation folds, or a band
 with no training rows, can leave a target with classes {0, 2}; scikit-learn's classifiers accept that."""
+
 import numpy as np
 from xgboost import XGBClassifier
 

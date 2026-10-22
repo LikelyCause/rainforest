@@ -24,9 +24,9 @@ describe("framing a picture", () => {
   });
 
   it("zooms around the point under the cursor", () => {
-    const f = zoomAt(centred(wide, V), wide, V, 2, 0, 0);  // the view's top-left corner stays on picture point (100, 0)
+    const f = zoomAt(centred(wide, V), wide, V, 2, 0, 0); // the view's top-left corner stays on picture point (100, 0)
     expect(cropSquare(f, wide, V)).toEqual({ x: 100, y: 0, size: 100 });
-    const mid = zoomAt(centred(wide, V), wide, V, 2);  // around the middle: the middle 100 px
+    const mid = zoomAt(centred(wide, V), wide, V, 2); // around the middle: the middle 100 px
     expect(cropSquare(mid, wide, V)).toEqual({ x: 150, y: 50, size: 100 });
   });
 

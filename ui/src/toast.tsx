@@ -67,12 +67,21 @@ export function ToastRegion() {
             {t.detail && <small>{t.detail}</small>}
           </div>
           {t.action && (
-            <button type="button" onClick={() => { t.action!.run(); dismissToast(t.id); }}>
-              {t.action.label}{t.action.kbd && <kbd>{t.action.kbd}</kbd>}
+            <button
+              type="button"
+              onClick={() => {
+                t.action!.run();
+                dismissToast(t.id);
+              }}
+            >
+              {t.action.label}
+              {t.action.kbd && <kbd>{t.action.kbd}</kbd>}
             </button>
           )}
           {(t.tone === "bad" || t.duration === 0) && (
-            <button type="button" aria-label="Dismiss" onClick={() => dismissToast(t.id)}>✕</button>
+            <button type="button" aria-label="Dismiss" onClick={() => dismissToast(t.id)}>
+              ✕
+            </button>
           )}
         </div>
       )}

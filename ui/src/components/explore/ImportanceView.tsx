@@ -39,9 +39,12 @@ function MiCard({ ds, r }: { ds: Dataset; r: ImportanceResult }) {
   if (!r.mi.length) {
     return (
       <section className="card">
-        <div className="card-head"><h2>Mutual information</h2></div>
+        <div className="card-head">
+          <h2>Mutual information</h2>
+        </div>
         <span className="secondary">
-          Mutual information needs a target. <Link to={`/?target=${ds.id}`}>Choose a target</Link> to rank fields by how much they tell you about it.
+          Mutual information needs a target. <Link to={`/?target=${ds.id}`}>Choose a target</Link> to rank fields by how
+          much they tell you about it.
         </span>
       </section>
     );
@@ -57,10 +60,18 @@ function MiCard({ ds, r }: { ds: Dataset; r: ImportanceResult }) {
         )}
       </div>
       <span className="muted small-text tools-chart-note">
-        How much knowing each field reduces uncertainty about the target; catches non-linear links that correlation misses. 0 = independent.
+        How much knowing each field reduces uncertainty about the target; catches non-linear links that correlation
+        misses. 0 = independent.
       </span>
-      <Chart option={option} height={rows.length * 22 + 16} ariaLabel="Mutual information by field"
-        onBarClick={(i) => { const id = rows[i]?.field_id; if (id) nav(`/d/${ds.id}/review/${id}`); }} />
+      <Chart
+        option={option}
+        height={rows.length * 22 + 16}
+        ariaLabel="Mutual information by field"
+        onBarClick={(i) => {
+          const id = rows[i]?.field_id;
+          if (id) nav(`/d/${ds.id}/review/${id}`);
+        }}
+      />
     </section>
   );
 }
@@ -73,27 +84,53 @@ function PcaCards({ pca }: { pca: NonNullable<ImportanceResult["pca"]> }) {
   const comps = pca.components.slice(0, PCS);
   const features = useMemo(() => {
     const best = new Map<string, number>();
-    for (const c of comps) for (const l of c.loadings) best.set(l.feature, Math.max(best.get(l.feature) ?? 0, Math.abs(l.value)));
-    return [...best.entries()].sort((a, b) => b[1] - a[1]).slice(0, TOP_FEATURES).map(([f]) => f);
+    for (const c of comps)
+      for (const l of c.loadings) best.set(l.feature, Math.max(best.get(l.feature) ?? 0, Math.abs(l.value)));
+    return [...best.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, TOP_FEATURES)
+      .map(([f]) => f);
   }, [pca]);
   const loadOpt = useMemo(() => {
     const lookup = comps.map((c) => new Map(c.loadings.map((l) => [l.feature, l.value])));
-    return loadingsOption(t, comps.map((_, i) => i), features, (i, f) => lookup[i].get(f));
+    return loadingsOption(
+      t,
+      comps.map((_, i) => i),
+      features,
+      (i, f) => lookup[i].get(f),
+    );
   }, [t, pca, features]);
   const to80 = pca.cumulative.findIndex((c) => c >= 0.8);
 
   return (
     <div className="grid-2">
       <section className="card chart-card">
-        <div className="card-head"><h2>PCA explained variance</h2><span className="muted small-text">{pca.n_features} features</span></div>
+        <div className="card-head">
+          <h2>PCA explained variance</h2>
+          <span className="muted small-text">{pca.n_features} features</span>
+        </div>
         <span className="muted small-text tools-chart-note">
-          {to80 >= 0 ? <>{to80 + 1} component{to80 ? "s" : ""} explain {fmtPct(pca.cumulative[to80], 0)} of the variance.</> : <>The first {pca.cumulative.length} components explain {fmtPct(pca.cumulative[pca.cumulative.length - 1], 0)}.</>}
+          {to80 >= 0 ? (
+            <>
+              {to80 + 1} component{to80 ? "s" : ""} explain {fmtPct(pca.cumulative[to80], 0)} of the variance.
+            </>
+          ) : (
+            <>
+              The first {pca.cumulative.length} components explain{" "}
+              {fmtPct(pca.cumulative[pca.cumulative.length - 1], 0)}.
+            </>
+          )}
         </span>
         <Chart option={pcaOpt} height={300} ariaLabel="Explained variance per principal component" />
       </section>
       {comps.length > 0 && features.length > 0 && (
         <section className="card chart-card">
-          <div className="card-head"><h2>Loadings</h2><span className="muted small-text">top {features.length} features × first {comps.length} components</span></div>
+          <div className="card-head">
+            <h2>Loadings</h2>
+            <span className="muted small-text">
+              top {features.length} features × first {comps.length} components
+            </span>
+          </div>
           <Chart option={loadOpt} height={features.length * 22 + 90} ariaLabel="PCA loadings heatmap" />
         </section>
       )}

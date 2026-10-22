@@ -1,4 +1,5 @@
 """Cutting a numeric target into bands: equal-count edges from training values, or the cut points someone chose."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -13,8 +14,10 @@ def quantile_edges(values: np.ndarray, k: int) -> list[float]:
         return []
     lo = v.min()
     above = v[v > lo]
-    edges = {_readable(float(e), lo, v) if e > lo else (float(above.min()) if above.size else None)
-             for e in np.quantile(v, np.arange(1, k) / k)}
+    edges = {
+        _readable(float(e), lo, v) if e > lo else (float(above.min()) if above.size else None)
+        for e in np.quantile(v, np.arange(1, k) / k)
+    }
     return sorted(e for e in edges if e is not None)
 
 
@@ -46,8 +49,11 @@ def _num(v: float) -> str:
 
 
 def band_labels(edges: list[float]) -> list[str]:
-    return ([f"< {_num(edges[0])}"] + [f"[{_num(a)}, {_num(b)})" for a, b in zip(edges, edges[1:])]
-            + [f"≥ {_num(edges[-1])}"])
+    return (
+        [f"< {_num(edges[0])}"]
+        + [f"[{_num(a)}, {_num(b)})" for a, b in zip(edges, edges[1:])]
+        + [f"≥ {_num(edges[-1])}"]
+    )
 
 
 def assign(values: np.ndarray, edges: list[float]) -> np.ndarray:

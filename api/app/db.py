@@ -1,4 +1,5 @@
 """Postgres access: a shared connection pool, schema bootstrap, small query helpers."""
+
 from __future__ import annotations
 
 import logging
@@ -169,24 +170,18 @@ def bootstrap() -> None:
                     log.info("accounts from RAINFOREST_USERS: %s", done)
             else:
                 # Someone has to be able to sign in (pick mode) and manage users on a fresh or emptied install.
-                conn.execute("INSERT INTO meta.users (name, role) SELECT 'Admin', 'lead' "
-                             "WHERE NOT EXISTS (SELECT 1 FROM meta.users)")
+                conn.execute(
+                    "INSERT INTO meta.users (name, role) SELECT 'Admin', 'lead' "
+                    "WHERE NOT EXISTS (SELECT 1 FROM meta.users)"
+                )
             role = sql.Identifier(s.readonly_role)
-            exists = conn.execute(
-                "SELECT 1 FROM pg_roles WHERE rolname = %s", (s.readonly_role,)
-            ).fetchone()
+            exists = conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (s.readonly_role,)).fetchone()
             if not exists:
                 conn.execute(sql.SQL("CREATE ROLE {} LOGIN").format(role))
-            conn.execute(
-                sql.SQL("ALTER ROLE {} WITH LOGIN PASSWORD {}").format(
-                    role, sql.Literal(s.readonly_password)
-                )
-            )
+            conn.execute(sql.SQL("ALTER ROLE {} WITH LOGIN PASSWORD {}").format(role, sql.Literal(s.readonly_password)))
             conn.execute(sql.SQL("ALTER ROLE {} SET default_transaction_read_only = on").format(role))
             conn.execute(
-                sql.SQL("ALTER ROLE {} SET statement_timeout = {}").format(
-                    role, sql.Literal(f"{s.sql_timeout_ms}ms")
-                )
+                sql.SQL("ALTER ROLE {} SET statement_timeout = {}").format(role, sql.Literal(f"{s.sql_timeout_ms}ms"))
             )
             conn.execute(sql.SQL("GRANT USAGE ON SCHEMA meta, raw TO {}").format(role))
             conn.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA meta, raw TO {}").format(role))
@@ -194,8 +189,11 @@ def bootstrap() -> None:
                 sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA meta, raw GRANT SELECT ON TABLES TO {}").format(role)
             )
             # The two grants above cover these too (raw tables appear at runtime, so the default stays).
-            conn.execute(sql.SQL("REVOKE ALL ON {} FROM {}").format(
-                sql.SQL(", ").join(sql.Identifier("meta", t) for t in PRIVATE_TABLES), role))
+            conn.execute(
+                sql.SQL("REVOKE ALL ON {} FROM {}").format(
+                    sql.SQL(", ").join(sql.Identifier("meta", t) for t in PRIVATE_TABLES), role
+                )
+            )
             conn.commit()
         except BaseException:
             conn.rollback()  # an aborted transaction can't run the unlock below
@@ -204,4 +202,3 @@ def bootstrap() -> None:
             conn.execute("SELECT pg_advisory_unlock(%s)", (_SCHEMA_LOCK_KEY,))
             conn.commit()
     log.info("schema ready (migrations applied this start: %s)", ", ".join(applied) or "none")
-

@@ -1,5 +1,6 @@
 """MLflow logging of model runs: against a local file store (always), Postgres-backed run handling (with
 RAINFOREST_TEST_DATABASE_URL) and a real tracking server (with MLFLOW_TEST_URI)."""
+
 import json
 import os
 import time
@@ -18,12 +19,22 @@ DB_URL = os.environ.get("RAINFOREST_TEST_DATABASE_URL")
 UNREACHABLE = "http://127.0.0.1:9"
 
 REPORT = {
-    "model": "lightgbm", "model_label": "LightGBM", "export_family": "tree", "order": ["column_b", "column_a"],
-    "chain_method": "predict", "cv": 5, "seed": 42, "device": "cpu", "n_train": 100, "n_features": 7,
-    "fit_seconds": 1.5, "params": {"n_estimators": 300, "learning_rate": 0.05, "class_weight": None},
-    "metrics": {"valid": {"column_a": {"roc_auc": 0.81, "f1": 0.5, "log_loss": float("nan")},
-                          "price (usd)": {"accuracy": 0.7}},
-                "test": {"column_a": {"roc_auc": 0.8}}},
+    "model": "lightgbm",
+    "model_label": "LightGBM",
+    "export_family": "tree",
+    "order": ["column_b", "column_a"],
+    "chain_method": "predict",
+    "cv": 5,
+    "seed": 42,
+    "device": "cpu",
+    "n_train": 100,
+    "n_features": 7,
+    "fit_seconds": 1.5,
+    "params": {"n_estimators": 300, "learning_rate": 0.05, "class_weight": None},
+    "metrics": {
+        "valid": {"column_a": {"roc_auc": 0.81, "f1": 0.5, "log_loss": float("nan")}, "price (usd)": {"accuracy": 0.7}},
+        "test": {"column_a": {"roc_auc": 0.8}},
+    },
 }
 
 
@@ -47,10 +58,16 @@ def _model_dir(tmp_path):
 
 
 def _run_row(run_id=7, dataset_id=3):
-    return {"id": run_id, "dataset_id": dataset_id, "export_id": 5, "recipe_id": 11, "recipe_version": 2,
-            "model": "lightgbm",
-            "created_at": datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc),
-            "finished_at": datetime(2026, 10, 1, 12, 5, tzinfo=timezone.utc)}
+    return {
+        "id": run_id,
+        "dataset_id": dataset_id,
+        "export_id": 5,
+        "recipe_id": 11,
+        "recipe_version": 2,
+        "model": "lightgbm",
+        "created_at": datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc),
+        "finished_at": datetime(2026, 10, 1, 12, 5, tzinfo=timezone.utc),
+    }
 
 
 def test_logs_params_metrics_tags_and_artifacts(file_store, tmp_path):
@@ -82,9 +99,17 @@ def test_logs_params_metrics_tags_and_artifacts(file_store, tmp_path):
 
 
 def test_logs_the_baseline_and_the_experiments_adjustments(file_store, tmp_path):
-    row = {**_run_row(), "baseline": {"recipe_id": 11, "family": "tree", "version": 2, "label": "Trees baseline v2"},
-           "adjustments": {"count": 2, "fields": ["w", "x"], "targets_changed": True,
-                           "targets": {"before": ["y"], "after": ["c"]}, "detail": []}}
+    row = {
+        **_run_row(),
+        "baseline": {"recipe_id": 11, "family": "tree", "version": 2, "label": "Trees baseline v2"},
+        "adjustments": {
+            "count": 2,
+            "fields": ["w", "x"],
+            "targets_changed": True,
+            "targets": {"before": ["y"], "after": ["c"]},
+            "detail": [],
+        },
+    }
     _, run_id = mlflow_log.log_run(row, "Churn", REPORT, _model_dir(tmp_path), user="ana")
     run = file_store.get_run(run_id)
     t = run.data.tags
@@ -98,8 +123,11 @@ def test_logs_the_preparation_behind_a_run(file_store, tmp_path):
     export_dir = tmp_path / "export"
     export_dir.mkdir()
     (export_dir / "manifest.json").write_text(json.dumps({"fields": [{"name": "x", "imputation": "median"}]}))
-    row = {**_run_row(), "export_dir": str(export_dir),
-           "export_config": {"valid_size": 0.2, "test_size": 0.1, "seed": 7}}
+    row = {
+        **_run_row(),
+        "export_dir": str(export_dir),
+        "export_config": {"valid_size": 0.2, "test_size": 0.1, "seed": 7},
+    }
     _, run_id = mlflow_log.log_run(row, "Churn", REPORT, _model_dir(tmp_path), user="ana")
     p = file_store.get_run(run_id).data.params
     assert (p["prep.valid_size"], p["prep.test_size"], p["prep.split_seed"]) == ("0.2", "0.1", "7")
@@ -163,19 +191,30 @@ def _train_run(export_dir, phase="review", personal=False) -> int:
     """Train a run in a team experiment, or with `personal` in the trainer's own assessment experiment."""
     from app.routers import runs
 
-    ds = db.fetch_one("INSERT INTO meta.datasets (name, file_format, status) VALUES ('Churn', 'generated', 'ready') "
-                      "RETURNING id")["id"]
-    recipe = db.fetch_one("INSERT INTO meta.recipes (dataset_id, version, phase) VALUES (%s, 3, %s) RETURNING id",
-                          (ds, phase))["id"]
+    ds = db.fetch_one(
+        "INSERT INTO meta.datasets (name, file_format, status) VALUES ('Churn', 'generated', 'ready') RETURNING id"
+    )["id"]
+    recipe = db.fetch_one(
+        "INSERT INTO meta.recipes (dataset_id, version, phase) VALUES (%s, 3, %s) RETURNING id", (ds, phase)
+    )["id"]
     user = db.fetch_one("INSERT INTO meta.users (name, email) VALUES ('Ana', 'ana@example.com') RETURNING id")["id"]
     assessor = user if personal else None
     source = f"assessment:{recipe}:{user}" if personal else f"recipe:{recipe}"
-    xid = db.fetch_one("INSERT INTO meta.experiments (dataset_id, name, owner, recipe_id, assessor_id, source) "
-                       "VALUES (%s, 'Trees', %s, %s, %s, %s) RETURNING id", (ds, user, recipe, assessor, source))["id"]
-    exp = db.fetch_one("INSERT INTO meta.exports (dataset_id, status, output_dir, recipe_id, experiment_id) "
-                       "VALUES (%s, 'done', %s, %s, %s) RETURNING id", (ds, str(export_dir), recipe, xid))["id"]
-    run_id = db.fetch_one("INSERT INTO meta.model_runs (export_id, dataset_id, model, family, created_by, experiment_id) "
-                          "VALUES (%s, %s, 'lightgbm', 'tree', %s, %s) RETURNING id", (exp, ds, user, xid))["id"]
+    xid = db.fetch_one(
+        "INSERT INTO meta.experiments (dataset_id, name, owner, recipe_id, assessor_id, source) "
+        "VALUES (%s, 'Trees', %s, %s, %s, %s) RETURNING id",
+        (ds, user, recipe, assessor, source),
+    )["id"]
+    exp = db.fetch_one(
+        "INSERT INTO meta.exports (dataset_id, status, output_dir, recipe_id, experiment_id) "
+        "VALUES (%s, 'done', %s, %s, %s) RETURNING id",
+        (ds, str(export_dir), recipe, xid),
+    )["id"]
+    run_id = db.fetch_one(
+        "INSERT INTO meta.model_runs (export_id, dataset_id, model, family, created_by, experiment_id) "
+        "VALUES (%s, %s, 'lightgbm', 'tree', %s, %s) RETURNING id",
+        (exp, ds, user, xid),
+    )["id"]
     req = {"model": "lightgbm", "order": None, "seed": 0, "cv": 2, "params": {"n_estimators": 20}, "device": "cpu"}
     runs._run(run_id, str(export_dir), req)
     return run_id
@@ -197,16 +236,22 @@ def test_training_run_is_logged_and_linked(database, file_store, tree_export):  
     assert logged.data.tags["rainforest.recipe_version"] == "3"
     assert logged.data.tags["rainforest.experiment_id"] == str(run["experiment_id"])
     assert logged.data.tags["rainforest.experiment_name"] == "Trees"
-    assert logged.data.tags["rainforest.recipe_id"] == str(db.fetch_one(
-        "SELECT recipe_id FROM meta.exports WHERE id = %s", (run["export_id"],))["recipe_id"])
+    assert logged.data.tags["rainforest.recipe_id"] == str(
+        db.fetch_one("SELECT recipe_id FROM meta.exports WHERE id = %s", (run["export_id"],))["recipe_id"]
+    )
     assert logged.data.params["estimator.n_estimators"] == "20" and logged.data.params["cv"] == "2"
     assert logged.data.metrics["test.column_a.roc_auc"] == run["metrics"]["test"]["column_a"]["roc_auc"]
     assert {a.path for a in file_store.list_artifacts(run["mlflow_run_id"], "model")} == {
-        "model/classifier_chain.joblib"}
+        "model/classifier_chain.joblib"
+    }
 
 
-def test_unreachable_mlflow_still_completes_the_run_then_backfill_logs_it(database, file_store, tree_export,  # noqa: F811
-                                                                         monkeypatch):
+def test_unreachable_mlflow_still_completes_the_run_then_backfill_logs_it(
+    database,
+    file_store,
+    tree_export,  # noqa: F811
+    monkeypatch,
+):
     from app.routers import runs
 
     monkeypatch.setenv("MLFLOW_TRACKING_URI", UNREACHABLE)
@@ -237,8 +282,9 @@ def test_a_private_experiments_run_waits_for_review_then_is_logged(database, fil
     assert run["mlflow_run_id"] is None and run["mlflow_url"] is None and "mlflow_error" not in run["report"]
     assert file_store.search_experiments(filter_string=f"tags.`rainforest.dataset_id` = '{run['dataset_id']}'") == []
     assert mlflow_backfill.pending([run_id]) == [], "the backfill never logs a private run"
-    recipe = db.fetch_one("SELECT x.recipe_id FROM meta.experiments x WHERE x.id = %s",
-                          (run["experiment_id"],))["recipe_id"]
+    recipe = db.fetch_one("SELECT x.recipe_id FROM meta.experiments x WHERE x.id = %s", (run["experiment_id"],))[
+        "recipe_id"
+    ]
     assert experiments.flush_deferred(recipe) == 0, "still assessing: nothing to flush"
 
     db.execute("UPDATE meta.recipes SET phase = 'review' WHERE id = %s", (recipe,))
@@ -272,8 +318,9 @@ def test_logging_off_without_a_tracking_uri(database, tree_export, monkeypatch):
 def test_real_tracking_server(tmp_path):
     uri = os.environ["MLFLOW_TEST_URI"]
     name = f"ci-{int(time.time() * 1000)}"
-    exp_id, run_id = mlflow_log.log_run(_run_row(dataset_id=int(time.time())), name, REPORT, _model_dir(tmp_path),
-                                        tracking_uri=uri)
+    exp_id, run_id = mlflow_log.log_run(
+        _run_row(dataset_id=int(time.time())), name, REPORT, _model_dir(tmp_path), tracking_uri=uri
+    )
     client = MlflowClient(tracking_uri=uri)
     run = client.get_run(run_id)
     assert run.info.experiment_id == exp_id and run.info.status == "FINISHED"
@@ -285,5 +332,6 @@ def test_real_tracking_server(tmp_path):
 
 def test_run_params_record_each_targets_task():
     from app.modeling.mlflow_log import run_params
+
     p = run_params({"model": "lightgbm", "order": ["g3"], "target_tasks": {"g3": "regression", "g1": "classes"}})
     assert p["target.g3.task"] == "regression" and p["target.g1.task"] == "classes"

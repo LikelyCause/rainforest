@@ -1,14 +1,15 @@
 """Phase 1 of the gap analysis: row rules, grouped splits, one-vs-rest targets and coded-column inference."""
+
 import numpy as np
 import polars as pl
 import pytest
-
-from .team_helpers import app_, people  # noqa: F401  (fixtures)
 
 from app.modeling.crossval import folds
 from app.profiling import infer_type
 from app.semantics import validate_decision
 from app.transform import assign_splits, prepare_targets, row_rules
+
+from .team_helpers import app_, people  # noqa: F401  (fixtures)
 
 
 @pytest.fixture
@@ -16,8 +17,15 @@ def visits(tmp_path):
     rng = np.random.default_rng(1)
     n = 600
     patient = rng.integers(0, 150, n)
-    df = pl.DataFrame({"patient": patient, "visit": rng.integers(0, 10, n), "disch": rng.choice([1, 11, 3], n),
-                       "x": rng.normal(size=n).round(1), "y": rng.choice(["<30", ">30", "NO"], n, p=[.2, .3, .5])})
+    df = pl.DataFrame(
+        {
+            "patient": patient,
+            "visit": rng.integers(0, 10, n),
+            "disch": rng.choice([1, 11, 3], n),
+            "x": rng.normal(size=n).round(1),
+            "y": rng.choice(["<30", ">30", "NO"], n, p=[0.2, 0.3, 0.5]),
+        }
+    )
     df = pl.concat([df, df.head(20)])  # 20 exact duplicates
     p = tmp_path / "d.parquet"
     df.write_parquet(p)
@@ -26,8 +34,14 @@ def visits(tmp_path):
 
 def test_row_rules_remove_duplicates_values_and_later_rows(visits):
     p, df = visits
-    keep, groups, removed = row_rules(p, {"dedupe": True, "exclude": [{"field": "disch", "values": ["11"]}],
-                                          "first_per": {"key": "patient", "order": "visit"}})
+    keep, groups, removed = row_rules(
+        p,
+        {
+            "dedupe": True,
+            "exclude": [{"field": "disch", "values": ["11"]}],
+            "first_per": {"key": "patient", "order": "visit"},
+        },
+    )
     assert removed["duplicates"] == 20 and removed["disch in 11"] > 0 and groups is None
     kept = df.with_row_index("i").filter(pl.Series(keep))
     assert kept["patient"].n_unique() == kept.height and (kept["disch"] != 11).all()
@@ -52,7 +66,12 @@ def test_cv_folds_keep_groups_whole():
 
 def test_a_class_target_can_be_predicted_one_vs_rest(visits):
     p, _ = visits
-    d = {"action": "target", "semantic_type": "categorical", "target_task": "bins", "target_bins": {"positive": ["<30"]}}
+    d = {
+        "action": "target",
+        "semantic_type": "categorical",
+        "target_task": "bins",
+        "target_bins": {"positive": ["<30"]},
+    }
     assert validate_decision(d, "tree", n_unique=3) == []
     assert validate_decision({**d, "target_bins": {"k": 4}}, "tree", n_unique=3)
     assert validate_decision({**d, "semantic_type": "numeric_continuous"}, "tree", n_unique=300)

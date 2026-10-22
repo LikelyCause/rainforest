@@ -19,8 +19,16 @@ from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..processing import SUMMARY_COLS, refresh_target_state, upsert_correlations, upsert_settings
 from ..profiling import coerce_numeric, column_datetime_format, needs_screen, sample_indices, screen_codes
 from ..schemas import BulkDecisionIn, DecisionIn
-from ..semantics import (FAMILIES, NON_FEATURE_TYPES, SETTING_KEYS, bins_problem, settings_of, suggest,
-                         target_problem, validate_decision)
+from ..semantics import (
+    FAMILIES,
+    NON_FEATURE_TYPES,
+    SETTING_KEYS,
+    bins_problem,
+    settings_of,
+    suggest,
+    target_problem,
+    validate_decision,
+)
 from .query import fields_where
 
 log = logging.getLogger(__name__)
@@ -45,16 +53,23 @@ def _field(field_id: int) -> dict:
 def _family(src: Source, family: str | None) -> str:
     """The model family a request reads or writes settings for: always its baseline's."""
     if family is not None and family != src.family:
-        raise HTTPException(422, f"{recipes.label(src.recipe)} prepares data for "
-                                 f"{FAMILIES[src.family]['label'].lower()}; it has no {family!r} settings")
+        raise HTTPException(
+            422,
+            f"{recipes.label(src.recipe)} prepares data for "
+            f"{FAMILIES[src.family]['label'].lower()}; it has no {family!r} settings",
+        )
     return src.family
 
 
 def view_targets(conn, src: Source) -> list[str]:
     """The targets a non-team source decides on, in chain order (an experiment's own order first)."""
-    names = [r["name"] for r in conn.execute(
-        sql.SQL("""SELECT f.name FROM meta.fields f JOIN {} d ON d.field_id = f.id
-                    WHERE d.action = 'target' ORDER BY f.ordinal""").format(src.decisions())).fetchall()]
+    names = [
+        r["name"]
+        for r in conn.execute(
+            sql.SQL("""SELECT f.name FROM meta.fields f JOIN {} d ON d.field_id = f.id
+                    WHERE d.action = 'target' ORDER BY f.ordinal""").format(src.decisions())
+        ).fetchall()
+    ]
     order = (src.experiment or {}).get("target_order") or []
     return [n for n in order if n in names] + [n for n in names if n not in order]
 
@@ -67,8 +82,10 @@ def _merged_sql(src: Source | None) -> sql.Composable:
                   s.scaling, s.encoding, s.params, s.source AS settings_source
              FROM {} d
              JOIN {} s ON s.field_id = d.field_id AND s.family = %s"""
-    ).format(src.decisions() if src else sql.SQL("meta.field_decisions"),
-             src.settings() if src else sql.SQL("meta.field_settings"))
+    ).format(
+        src.decisions() if src else sql.SQL("meta.field_decisions"),
+        src.settings() if src else sql.SQL("meta.field_settings"),
+    )
 
 
 def _merged(conn, field_id: int, family: str, src: Source | None = None) -> dict:
@@ -91,7 +108,11 @@ def get_field(field_id: int, user: CurrentUser, family: str | None = None, view:
         src = source_for(conn, f["dataset_id"], user, view=view)
         fam = _family(src, family)
         decision = _merged(conn, field_id, fam, src)
-        locked = None if src.kind in ("experiment", "baseline", "suggested") else recipes.locked_problem(conn, src.recipe, [field_id])
+        locked = (
+            None
+            if src.kind in ("experiment", "baseline", "suggested")
+            else recipes.locked_problem(conn, src.recipe, [field_id])
+        )
         if src.team:
             targets = conn.execute(
                 """SELECT other_field_id AS field_id, other_field_name AS name, method, value, strength
@@ -150,8 +171,12 @@ def band_preview(field_id: int, k: int | None = Query(None, ge=2, le=20), edges:
         raise HTTPException(422, problem)
     idx = bands.assign(vals, cut)
     present = idx[~np.isnan(idx)].astype(int)
-    return {"edges": cut, "labels": bands.band_labels(cut),
-            "counts": np.bincount(present, minlength=len(cut) + 1).tolist(), "missing": int(np.isnan(idx).sum())}
+    return {
+        "edges": cut,
+        "labels": bands.band_labels(cut),
+        "counts": np.bincount(present, minlength=len(cut) + 1).tolist(),
+        "missing": int(np.isnan(idx).sum()),
+    }
 
 
 @router.get("/fields/{field_id}/history")
@@ -201,19 +226,37 @@ def save_decision(field_id: int, body: DecisionIn, user: CurrentUser, view: str 
         if core_key(prev) != core_key(_merged(conn, field_id, fam, src)):
             mark_decided(conn, src, field_id)
         settings = settings_of(d)
-        write_settings(conn, src, f["dataset_id"], field_id, fam, settings,
-                       prev["settings_source"] if _same_settings(prev, settings) else "user")
+        write_settings(
+            conn,
+            src,
+            f["dataset_id"],
+            field_id,
+            fam,
+            settings,
+            prev["settings_source"] if _same_settings(prev, settings) else "user",
+        )
         if prev["semantic_type"] != d["semantic_type"] and src.kind != "experiment":
             # Other families' settings were chosen for the old type; re-derive them for the new one.
             stats = {k: f[k] for k in STAT_KEYS}
             for other in FAMILIES:
                 if other != fam:
-                    write_settings(conn, src, f["dataset_id"], field_id, other,
-                                   suggest(d["semantic_type"], stats, False, other), "suggested")
+                    write_settings(
+                        conn,
+                        src,
+                        f["dataset_id"],
+                        field_id,
+                        other,
+                        suggest(d["semantic_type"], stats, False, other),
+                        "suggested",
+                    )
         row = _merged(conn, field_id, fam, src)
         if src.kind == "experiment" and (prev["action"] == "target") != (d["action"] == "target"):
             screen_after = _experiment_target_changed(conn, src, f, d["action"] == "target")
-        if src.kind == "experiment" and d["semantic_type"] == "datetime" and not (f["stats"] or {}).get("datetime_format"):
+        if (
+            src.kind == "experiment"
+            and d["semantic_type"] == "datetime"
+            and not (f["stats"] or {}).get("datetime_format")
+        ):
             # The column's format is a fact about the data, not anyone's choice, so an experiment may store it.
             _remember_datetime_format(conn, f)
         if not src.team:
@@ -278,7 +321,8 @@ def bulk_decisions(dataset_id: int, body: BulkDecisionIn, user: CurrentUser, vie
         fam = src.family
         if body.filters is not None:
             target = sql.SQL("d.field_id IN (SELECT field_id FROM {} WHERE {})").format(
-                src.fields_view(), fields_where(dataset_id, body.filters))
+                src.fields_view(), fields_where(dataset_id, body.filters)
+            )
         else:
             target = sql.SQL("d.field_id = ANY({})").format(sql.Literal(body.field_ids))
         # Fields carried over into this version are locked; bulk edits pass over them.
@@ -291,20 +335,32 @@ def bulk_decisions(dataset_id: int, body: BulkDecisionIn, user: CurrentUser, vie
                          FROM {} d JOIN meta.fields f ON f.id = d.field_id
                         WHERE d.dataset_id = {} AND {} AND NOT d.field_id = ANY({})
                         ORDER BY f.ordinal {}""").format(
-                src.decisions(), sql.Literal(dataset_id), target, sql.Literal(body.excluded_ids),
-                sql.SQL("FOR UPDATE OF d" if src.team else "")),
+                src.decisions(),
+                sql.Literal(dataset_id),
+                target,
+                sql.Literal(body.excluded_ids),
+                sql.SQL("FOR UPDATE OF d" if src.team else ""),
+            ),
         ).fetchall()
         ids = [r["field_id"] for r in rows]
         if not src.team:
             lock_decisions(conn, src, ids)
         settings: dict[int, dict[str, dict]] = {}
-        for srow in conn.execute(sql.SQL("SELECT * FROM {} s WHERE field_id = ANY(%s)").format(src.settings()),
-                                 (ids,)).fetchall():
+        for srow in conn.execute(
+            sql.SQL("SELECT * FROM {} s WHERE field_id = ANY(%s)").format(src.settings()), (ids,)
+        ).fetchall():
             settings.setdefault(srow["field_id"], {})[srow["family"]] = srow
         if src.kind == "experiment":
             # An experiment's copy holds its baseline's model type only; other types' suggestions don't apply.
-            rows = [{**r, "suggestion": {src.family: (r["suggestion"] or {}).get(src.family)}
-                     if (r["suggestion"] or {}).get(src.family) else {}} for r in rows]
+            rows = [
+                {
+                    **r,
+                    "suggestion": {src.family: (r["suggestion"] or {}).get(src.family)}
+                    if (r["suggestion"] or {}).get(src.family)
+                    else {},
+                }
+                for r in rows
+            ]
         planned = plan_bulk(rows, settings, body)
         result = summarize_bulk(len(rows), planned)
         if body.dry_run or not planned:
@@ -321,8 +377,9 @@ def bulk_decisions(dataset_id: int, body: BulkDecisionIn, user: CurrentUser, vie
             write_decision(conn, src, c["field_id"], {**c["after"], "notes": notes[c["field_id"]]}, decided)
             for family, sugg in c["settings"].items():
                 write_settings(conn, src, dataset_id, c["field_id"], family, sugg, "suggested")
-        summary = jsonb({**{k: v for k, v in result.items() if k != "changes"},
-                         "request": body.model_dump(exclude={"dry_run"})})
+        summary = jsonb(
+            {**{k: v for k, v in result.items() if k != "changes"}, "request": body.model_dump(exclude={"dry_run"})}
+        )
         if src.personal:
             conn.execute(
                 """INSERT INTO meta.assessment_batches (id, recipe_id, user_id, summary, snapshot)
@@ -385,15 +442,19 @@ def undo_bulk(dataset_id: int, batch_id: str, user: CurrentUser, view: str | Non
             lock_decisions(conn, src, ids)
             for fid in ids:
                 restore_assessment(conn, src, fid, snapshot[str(fid)])
-            conn.execute(sql.SQL("UPDATE meta.{} SET undone_at = now() WHERE id = %s").format(sql.Identifier(batches)),
-                         (bid,))
+            conn.execute(
+                sql.SQL("UPDATE meta.{} SET undone_at = now() WHERE id = %s").format(sql.Identifier(batches)), (bid,)
+            )
             return {"restored": len(ids), "batch_id": None}
         # Fields deleted since (dataset reprocessed) can't be restored; skip them.
-        ids = [r["field_id"] for r in conn.execute(
-            """SELECT field_id FROM meta.field_decisions WHERE dataset_id = %s AND field_id = ANY(%s)
+        ids = [
+            r["field_id"]
+            for r in conn.execute(
+                """SELECT field_id FROM meta.field_decisions WHERE dataset_id = %s AND field_id = ANY(%s)
                 ORDER BY field_id FOR UPDATE""",
-            (dataset_id, [int(k) for k in snapshot]),
-        ).fetchall()]
+                (dataset_id, [int(k) for k in snapshot]),
+            ).fetchall()
+        ]
         if (locked := recipes.locked_problem(conn, src.recipe, ids)) is not None:
             raise HTTPException(409, locked)
         prev = _merged_many(conn, ids, fam)
@@ -409,8 +470,9 @@ def undo_bulk(dataset_id: int, batch_id: str, user: CurrentUser, view: str | Non
                 (jsonb(snap["decision"]),),
             )
             families = [s["family"] for s in snap["settings"]]
-            conn.execute("DELETE FROM meta.field_settings WHERE field_id = %s AND NOT family = ANY(%s)",
-                         (fid, families))
+            conn.execute(
+                "DELETE FROM meta.field_settings WHERE field_id = %s AND NOT family = ANY(%s)", (fid, families)
+            )
             conn.execute(
                 """INSERT INTO meta.field_settings
                    SELECT * FROM jsonb_populate_recordset(NULL::meta.field_settings, %s)
@@ -451,17 +513,30 @@ def plan_bulk(rows: list[dict], settings: dict[int, dict[str, dict]], body: Bulk
             current = settings.get(r["field_id"], {})
             retyped = after["semantic_type"] != before["semantic_type"]
             # Settings you customised stay, unless the type changes under them and they no longer apply.
-            new_settings = {f: sg for f, sg in by_family.items()
-                            if not _same_settings(current.get(f), sg)
-                            and (retyped or (current.get(f) or {}).get("source") != "user")}
-        if (body.action is not None and after["action"] != "target"
-                and not (body.action == "keep" and after["semantic_type"] in NON_FEATURE_TYPES)):
+            new_settings = {
+                f: sg
+                for f, sg in by_family.items()
+                if not _same_settings(current.get(f), sg)
+                and (retyped or (current.get(f) or {}).get("source") != "user")
+            }
+        if (
+            body.action is not None
+            and after["action"] != "target"
+            and not (body.action == "keep" and after["semantic_type"] in NON_FEATURE_TYPES)
+        ):
             after["action"] = body.action
         if body.reviewed is not None:
             after["reviewed"] = body.reviewed
         if after != before or new_settings:
-            out.append({"field_id": r["field_id"], "name": r["name"], "before": before, "after": after,
-                        "settings": new_settings})
+            out.append(
+                {
+                    "field_id": r["field_id"],
+                    "name": r["name"],
+                    "before": before,
+                    "after": after,
+                    "settings": new_settings,
+                }
+            )
     return out
 
 
@@ -510,31 +585,42 @@ def _snapshot(conn, src: Source, field_ids: list[int]) -> dict:
     return {str(r["field_id"]): {"decision": r["decision"], "settings": r["settings"]} for r in rows}
 
 
-def _write_history(conn, dataset_id: int, family: str, batch_id: uuid.UUID | None, prev: dict, cur: dict,
-                   user_id: int | None) -> None:
+def _write_history(
+    conn, dataset_id: int, family: str, batch_id: uuid.UUID | None, prev: dict, cur: dict, user_id: int | None
+) -> None:
     """`user_id` is None only for changes a background job makes on its own (knock-on target state)."""
     with conn.cursor() as c:
         c.executemany(
             """INSERT INTO meta.decision_history (field_id, dataset_id, family, previous, current, batch_id, user_id)
                VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-            [(fid, dataset_id, family, jsonb(_jsonable(prev.get(fid))), jsonb(_jsonable(row)), batch_id, user_id)
-             for fid, row in cur.items()],
+            [
+                (fid, dataset_id, family, jsonb(_jsonable(prev.get(fid))), jsonb(_jsonable(row)), batch_id, user_id)
+                for fid, row in cur.items()
+            ],
         )
 
 
-def _sync_targets(conn, dataset_id: int, before: dict[int, dict] | None = None,
-                  order: list[str] | None = None, user_id: int | None = None) -> None:
+def _sync_targets(
+    conn,
+    dataset_id: int,
+    before: dict[int, dict] | None = None,
+    order: list[str] | None = None,
+    user_id: int | None = None,
+) -> None:
     """Make is_target, target_columns and every target-derived value follow the decisions.
 
     Knock-on decision changes (leak drops appearing or clearing) get history rows; pass `before` (taken
     before the caller's own edits) to record those edits too. `order` fixes the target order, otherwise
     existing targets keep their place and new ones follow in column order.
     """
-    ds = conn.execute("SELECT model_family, target_columns FROM meta.datasets WHERE id = %s",
-                      (dataset_id,)).fetchone()
+    ds = conn.execute("SELECT model_family, target_columns FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()
     fam = ds["model_family"]
-    ids = [r["field_id"] for r in conn.execute(
-        "SELECT field_id FROM meta.field_decisions WHERE dataset_id = %s", (dataset_id,)).fetchall()]
+    ids = [
+        r["field_id"]
+        for r in conn.execute(
+            "SELECT field_id FROM meta.field_decisions WHERE dataset_id = %s", (dataset_id,)
+        ).fetchall()
+    ]
     if before is None:
         before = _merged_many(conn, ids, fam)
     conn.execute(
@@ -543,9 +629,12 @@ def _sync_targets(conn, dataset_id: int, before: dict[int, dict] | None = None,
             WHERE d.field_id = f.id AND f.dataset_id = %s AND f.is_target IS DISTINCT FROM (d.action = 'target')""",
         (dataset_id,),
     )
-    names = [r["name"] for r in conn.execute(
-        "SELECT name FROM meta.fields WHERE dataset_id = %s AND is_target ORDER BY ordinal", (dataset_id,)
-    ).fetchall()]
+    names = [
+        r["name"]
+        for r in conn.execute(
+            "SELECT name FROM meta.fields WHERE dataset_id = %s AND is_target ORDER BY ordinal", (dataset_id,)
+        ).fetchall()
+    ]
     conn.execute(
         "UPDATE meta.datasets SET target_columns = %s, updated_at = now() WHERE id = %s",
         (target_order(order if order is not None else list(ds["target_columns"] or []), names), dataset_id),
@@ -590,8 +679,11 @@ def screen_pairs(dataset_id: int, target_ids: list[int]) -> list[tuple[int, int,
         return f["id"], screen_codes(pl.read_parquet(path, columns=[f["name"]]).to_series(), corr_idx)
 
     targets = [codes(f) for f in fields if f["id"] in target_ids]
-    others = [codes(f) for f in fields if not f["is_target"]
-              and needs_screen(f["inferred_type"], f["n_unique"] or 0, False, s.corr_max_levels)]
+    others = [
+        codes(f)
+        for f in fields
+        if not f["is_target"] and needs_screen(f["inferred_type"], f["n_unique"] or 0, False, s.corr_max_levels)
+    ]
     return [(a.i, a.j, a) for a in screen_associations(targets, others)]
 
 
@@ -624,12 +716,15 @@ def screen_targets(dataset_id: int, target_ids: list[int]) -> None:
             _sync_targets(conn, dataset_id)
     except Exception as exc:  # noqa: BLE001
         log.exception("leak screen for dataset %s failed", dataset_id)
-        execute("UPDATE meta.datasets SET warnings = array_append(warnings, %s) WHERE id = %s",
-                (f"The leak screen for the new target(s) could not run: {exc}", dataset_id))
+        execute(
+            "UPDATE meta.datasets SET warnings = array_append(warnings, %s) WHERE id = %s",
+            (f"The leak screen for the new target(s) could not run: {exc}", dataset_id),
+        )
 
 
-def set_targets(conn, dataset_id: int, names: list[str], user_id: int,
-                tasks: dict[str, dict] | None = None) -> tuple[list[dict], list[int]]:
+def set_targets(
+    conn, dataset_id: int, names: list[str], user_id: int, tasks: dict[str, dict] | None = None
+) -> tuple[list[dict], list[int]]:
     """Make exactly `names` the targets (in that order), predicted as `tasks` says ({name: {"target_task",
     "target_bins"}}; a target left out gets its type's default, or keeps its task if it was one already). Returns the target fields whose associations were
     never computed because their profiled type has no association sample (text, identifier), and the ids of
@@ -655,9 +750,15 @@ def set_targets(conn, dataset_id: int, names: list[str], user_id: int,
     if unknown:
         raise HTTPException(422, {"message": "Unknown column(s)", "errors": unknown})
     tasks = {n: t for n, t in (tasks or {}).items() if n in names and t.get("target_task")}
-    ineligible = [f"{n}: {p}" for n in names
-                  if (p := target_problem(by_name[n]["semantic_type"], by_name[n]["n_unique"],
-                                          tasks.get(n, {}).get("target_task")))]
+    ineligible = [
+        f"{n}: {p}"
+        for n in names
+        if (
+            p := target_problem(
+                by_name[n]["semantic_type"], by_name[n]["n_unique"], tasks.get(n, {}).get("target_task")
+            )
+        )
+    ]
     if ineligible:
         raise HTTPException(422, {"message": "Not a valid target", "errors": ineligible})
     before = _merged_many(conn, [r["id"] for r in by_name.values()], fam)
@@ -668,8 +769,10 @@ def set_targets(conn, dataset_id: int, names: list[str], user_id: int,
         (added,),
     )
     for n, t in tasks.items():
-        conn.execute("UPDATE meta.field_decisions SET target_task = %s, target_bins = %s WHERE field_id = %s",
-                     (t["target_task"], jsonb(t["target_bins"]) if t.get("target_bins") else None, by_name[n]["id"]))
+        conn.execute(
+            "UPDATE meta.field_decisions SET target_task = %s, target_bins = %s WHERE field_id = %s",
+            (t["target_task"], jsonb(t["target_bins"]) if t.get("target_bins") else None, by_name[n]["id"]),
+        )
     for r in removed:
         # The action itself is re-derived from the field's (now non-target) suggestion by refresh_target_state;
         # it was reviewed as a target, so as a feature it is unreviewed.
@@ -680,18 +783,22 @@ def set_targets(conn, dataset_id: int, names: list[str], user_id: int,
         )
         stats = {c: r[c] for c in SUMMARY_COLS}
         for family in suggested_families.get(r["id"], []):
-            upsert_settings(conn, dataset_id, r["id"], family,
-                            suggest(r["semantic_type"], stats, False, family), "suggested")
+            upsert_settings(
+                conn, dataset_id, r["id"], family, suggest(r["semantic_type"], stats, False, family), "suggested"
+            )
     _sync_targets(conn, dataset_id, before=before, order=names, user_id=user_id)
     candidates = [by_name[n] for n in names if by_name[n]["inferred_type"] in UNCORRELATED_TYPES]
     if not candidates:
         return [], added
     ids = [r["id"] for r in candidates]
-    has_corr = {r["fid"] for r in conn.execute(
-        """SELECT field_a AS fid FROM meta.field_correlations WHERE field_a = ANY(%(ids)s)
+    has_corr = {
+        r["fid"]
+        for r in conn.execute(
+            """SELECT field_a AS fid FROM meta.field_correlations WHERE field_a = ANY(%(ids)s)
            UNION SELECT field_b FROM meta.field_correlations WHERE field_b = ANY(%(ids)s)""",
-        {"ids": ids},
-    ).fetchall()}
+            {"ids": ids},
+        ).fetchall()
+    }
     return [r for r in candidates if r["id"] not in has_corr], added
 
 
@@ -699,4 +806,3 @@ def _jsonable(row: dict | None) -> dict | None:
     if row is None:
         return None
     return {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in row.items()}
-

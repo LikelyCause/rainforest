@@ -6,6 +6,7 @@ meta.assessment_settings, and every read path takes its decisions from `source_f
 another person's choices. From review onwards everyone reads the team decision (meta.field_decisions /
 meta.field_settings).
 """
+
 from __future__ import annotations
 
 import json
@@ -27,8 +28,7 @@ TARGET_COLS = ("target_task", "target_bins")
 
 def core_key(d: dict) -> tuple:
     """What assessors must agree on for a field: its role, its type and, for a target, how it is predicted."""
-    return (d["action"], d["semantic_type"], d.get("target_task"),
-            json.dumps(d.get("target_bins"), sort_keys=True))
+    return (d["action"], d["semantic_type"], d.get("target_task"), json.dumps(d.get("target_bins"), sort_keys=True))
 
 
 @dataclass(frozen=True)
@@ -41,6 +41,7 @@ class Source:
     - suggested: each field's suggestion for the version's family, read-only (what a Viewer sees of a version being
       assessed on a dataset with no finalized baseline).
     `denied` is the (status, message) a write gets, or None when the viewer may write."""
+
     recipe: dict
     user_id: int | None = None
     denied: tuple[int, str] | None = None
@@ -73,10 +74,13 @@ class Source:
     @property
     def key(self) -> str:
         """Stable name of the source, as stored with Explore results."""
-        return {"assessment": f"assessment:{self.recipe['id']}:{self.user_id}",
-                "experiment": f"experiment:{(self.experiment or {}).get('id')}",
-                "baseline": f"baseline:{self.recipe['id']}", "suggested": f"suggested:{self.recipe['id']}",
-                "team": "team"}[self.kind]
+        return {
+            "assessment": f"assessment:{self.recipe['id']}:{self.user_id}",
+            "experiment": f"experiment:{(self.experiment or {}).get('id')}",
+            "baseline": f"baseline:{self.recipe['id']}",
+            "suggested": f"suggested:{self.recipe['id']}",
+            "team": "team",
+        }[self.kind]
 
     def require_write(self) -> None:
         if self.denied:
@@ -187,8 +191,9 @@ def assessor_row(conn, recipe_id: int, user_id: int) -> dict | None:
     ).fetchone()
 
 
-def source_for(conn, dataset_id: int, user: dict, recipe: dict | None = None, lock: str | None = None,
-               view: str | None = None) -> Source:
+def source_for(
+    conn, dataset_id: int, user: dict, recipe: dict | None = None, lock: str | None = None, view: str | None = None
+) -> Source:
     """What `user` reads and may write on this dataset now: by default the baseline in progress (their own
     assessment while they assess it), or with `view` an experiment's copy (`experiment:<id>`) or a finalized
     baseline (`baseline:<recipe_id>`, read-only). Writers pass lock="share" (see recipes.current)."""
@@ -207,8 +212,9 @@ def source_for(conn, dataset_id: int, user: dict, recipe: dict | None = None, lo
         return Source(recipe, user["id"])
     if recipe["phase"] == "review":
         return Source(recipe, None, None if user["role"] == "lead" else (403, "Only a lead sets the team decision."))
-    return Source(recipe, None, (409, f"{name} is finalized; its decisions can't change. Start a new version to "
-                                      "change them."))
+    return Source(
+        recipe, None, (409, f"{name} is finalized; its decisions can't change. Start a new version to change them.")
+    )
 
 
 def viewer_source(conn, recipe: dict) -> Source:
@@ -217,7 +223,9 @@ def viewer_source(conn, recipe: dict) -> Source:
     denied = (403, "Viewers can look but not change anything.")
     latest = conn.execute(
         f"SELECT {recipes.RECIPE_COLS} FROM meta.recipes WHERE dataset_id = %s AND phase = 'finalized' "
-        "ORDER BY finalized_at DESC, id DESC LIMIT 1", (recipe["dataset_id"],)).fetchone()
+        "ORDER BY finalized_at DESC, id DESC LIMIT 1",
+        (recipe["dataset_id"],),
+    ).fetchone()
     if latest is not None:
         return Source(latest, snapshot_of=True, denied=denied)
     return Source(recipe, suggested=True, denied=denied)
@@ -233,8 +241,9 @@ def _view_source(conn, dataset_id: int, user: dict, view: str, lock: str | None)
         recipe = recipes.get(conn, int(raw))
         if recipe is None or recipe["dataset_id"] != dataset_id or recipe["phase"] != "finalized":
             raise HTTPException(404, "No finalized baseline of this dataset with that id")
-        return Source(recipe, snapshot_of=True,
-                      denied=(409, f"{recipes.label(recipe)} is finalized; its decisions can't change."))
+        return Source(
+            recipe, snapshot_of=True, denied=(409, f"{recipes.label(recipe)} is finalized; its decisions can't change.")
+        )
     x = experiments.get_visible(conn, int(raw), user)
     if x["dataset_id"] != dataset_id:
         raise HTTPException(404, "Experiment not found")
@@ -242,8 +251,9 @@ def _view_source(conn, dataset_id: int, user: dict, view: str, lock: str | None)
         raise HTTPException(409, "A personal experiment follows your assessment; change your assessment instead.")
     if lock:
         # Writers serialise on the experiment: two saves that both move its target order mustn't deadlock.
-        x = conn.execute(f"SELECT {experiments.COLS} FROM {experiments.FROM} WHERE x.id = %s FOR NO KEY UPDATE OF x",
-                         (x["id"],)).fetchone()
+        x = conn.execute(
+            f"SELECT {experiments.COLS} FROM {experiments.FROM} WHERE x.id = %s FOR NO KEY UPDATE OF x", (x["id"],)
+        ).fetchone()
     return Source(recipes.get(conn, x["recipe_id"]), experiment=x, denied=experiments.adjust_denied(x, user))
 
 
@@ -270,6 +280,7 @@ def from_key(conn, dataset_id: int, key: str) -> Source:
         return Source(recipe, suggested=True)
     if kind == "experiment":
         from . import experiments
+
         x = experiments.get(conn, int(rest))
         if x is None or x["dataset_id"] != dataset_id:
             raise HTTPException(404, "Experiment not found")
@@ -312,8 +323,14 @@ def write_decision(conn, src: Source, field_id: int, d: dict, decided: bool) -> 
                           target_bins = CASE WHEN %(explicit)s THEN %(target_bins)s ELSE target_bins END,
                           updated_at = now()
                     WHERE field_id = %(field_id)s AND {}""").format(table, where),
-        {**{c: d[c] for c in SHARED_COLS}, "decided": decided, "field_id": field_id, "explicit": explicit,
-         "target_task": d.get("target_task"), "target_bins": jsonb(d["target_bins"]) if d.get("target_bins") else None},
+        {
+            **{c: d[c] for c in SHARED_COLS},
+            "decided": decided,
+            "field_id": field_id,
+            "explicit": explicit,
+            "target_task": d.get("target_task"),
+            "target_bins": jsonb(d["target_bins"]) if d.get("target_bins") else None,
+        },
     )
 
 
@@ -339,9 +356,19 @@ def write_settings(conn, src: Source, dataset_id: int, field_id: int, family: st
                   add_missing_indicator = EXCLUDED.add_missing_indicator, transform = EXCLUDED.transform,
                   scaling = EXCLUDED.scaling, encoding = EXCLUDED.encoding, params = EXCLUDED.params,
                   source = EXCLUDED.source, updated_at = now()""",
-            (src.experiment["id"], field_id, family, s["imputation"], s.get("impute_value"),
-             s.get("add_missing_indicator", False), s["transform"], s["scaling"], s["encoding"],
-             jsonb(s.get("params") or {}), source),
+            (
+                src.experiment["id"],
+                field_id,
+                family,
+                s["imputation"],
+                s.get("impute_value"),
+                s.get("add_missing_indicator", False),
+                s["transform"],
+                s["scaling"],
+                s["encoding"],
+                jsonb(s.get("params") or {}),
+                source,
+            ),
         )
         return
     conn.execute(
@@ -354,9 +381,20 @@ def write_settings(conn, src: Source, dataset_id: int, field_id: int, family: st
               add_missing_indicator = EXCLUDED.add_missing_indicator, transform = EXCLUDED.transform,
               scaling = EXCLUDED.scaling, encoding = EXCLUDED.encoding, params = EXCLUDED.params,
               source = EXCLUDED.source, updated_at = now()""",
-        (src.recipe["id"], src.user_id, field_id, family, s["imputation"], s.get("impute_value"),
-         s.get("add_missing_indicator", False), s["transform"], s["scaling"], s["encoding"],
-         jsonb(s.get("params") or {}), source),
+        (
+            src.recipe["id"],
+            src.user_id,
+            field_id,
+            family,
+            s["imputation"],
+            s.get("impute_value"),
+            s.get("add_missing_indicator", False),
+            s["transform"],
+            s["scaling"],
+            s["encoding"],
+            jsonb(s.get("params") or {}),
+            source,
+        ),
     )
 
 
@@ -368,8 +406,16 @@ def restore(conn, src: Source, field_id: int, snap: dict) -> None:
         sql.SQL("""UPDATE {} SET action = %s, semantic_type = %s, notes = %s, reviewed = %s, source = %s,
                           target_task = %s, target_bins = %s, updated_at = now()
                     WHERE field_id = %s AND {}""").format(table, where),
-        (dec["action"], dec["semantic_type"], dec["notes"], dec["reviewed"], dec["source"], dec.get("target_task"),
-         jsonb(dec["target_bins"]) if dec.get("target_bins") else None, field_id),
+        (
+            dec["action"],
+            dec["semantic_type"],
+            dec["notes"],
+            dec["reviewed"],
+            dec["source"],
+            dec.get("target_task"),
+            jsonb(dec["target_bins"]) if dec.get("target_bins") else None,
+            field_id,
+        ),
     )
     families = [s["family"] for s in snap["settings"]]
     stable, swhere = _settings_target(src)
@@ -383,8 +429,10 @@ def restore(conn, src: Source, field_id: int, snap: dict) -> None:
 
 def lock_decisions(conn, src: Source, field_ids: list[int]) -> None:
     table, where = _decision_target(src)
-    conn.execute(sql.SQL("SELECT 1 FROM {} WHERE field_id = ANY(%s) AND {} ORDER BY field_id FOR UPDATE").format(
-        table, where), (field_ids,))
+    conn.execute(
+        sql.SQL("SELECT 1 FROM {} WHERE field_id = ANY(%s) AND {} ORDER BY field_id FOR UPDATE").format(table, where),
+        (field_ids,),
+    )
 
 
 def _decision_target(src: Source) -> tuple[sql.Composable, sql.Composable]:
@@ -392,20 +440,24 @@ def _decision_target(src: Source) -> tuple[sql.Composable, sql.Composable]:
         return sql.SQL("meta.field_decisions"), sql.SQL("true")
     if src.kind == "experiment":
         return sql.SQL("meta.experiment_decisions"), sql.SQL("experiment_id = {}").format(
-            sql.Literal(src.experiment["id"]))
+            sql.Literal(src.experiment["id"])
+        )
     if src.kind == "assessment":
         return sql.SQL("meta.assessments"), sql.SQL("recipe_id = {} AND user_id = {}").format(
-            sql.Literal(src.recipe["id"]), sql.Literal(src.user_id))
+            sql.Literal(src.recipe["id"]), sql.Literal(src.user_id)
+        )
     raise HTTPException(409, "A finalized baseline can't change")
 
 
 def _settings_target(src: Source) -> tuple[sql.Composable, sql.Composable]:
     if src.kind == "experiment":
         return sql.SQL("meta.experiment_settings"), sql.SQL("experiment_id = {}").format(
-            sql.Literal(src.experiment["id"]))
+            sql.Literal(src.experiment["id"])
+        )
     if src.kind == "assessment":
         return sql.SQL("meta.assessment_settings"), sql.SQL("recipe_id = {} AND user_id = {}").format(
-            sql.Literal(src.recipe["id"]), sql.Literal(src.user_id))
+            sql.Literal(src.recipe["id"]), sql.Literal(src.user_id)
+        )
     raise HTTPException(409, "Only an assessment's or an experiment's settings are restored this way")
 
 
@@ -461,8 +513,13 @@ def progress(conn, recipe: dict) -> list[dict]:
                          a.assigned_at) AS last_active_at
              FROM meta.dataset_assessors a JOIN meta.users u ON u.id = a.user_id
             WHERE a.recipe_id = %(r)s ORDER BY u.name, a.user_id""",
-        {"ds": recipe["dataset_id"], "r": recipe["id"], "all": open_ is None, "open": open_ or [],
-         "n_open": len(open_ or [])},
+        {
+            "ds": recipe["dataset_id"],
+            "r": recipe["id"],
+            "all": open_ is None,
+            "open": open_ or [],
+            "n_open": len(open_ or []),
+        },
     ).fetchall()
 
 
@@ -471,9 +528,15 @@ def settings_key(s: dict | None) -> tuple:
     """Settings normalised for comparison (fill values as text, flags as bools, params as a sorted tuple)."""
     s = s or {}
     value = s.get("impute_value")
-    return (s.get("imputation"), None if value is None else str(value), bool(s.get("add_missing_indicator")),
-            s.get("transform"), s.get("scaling"), s.get("encoding"),
-            tuple(sorted((k, repr(v)) for k, v in (s.get("params") or {}).items())))
+    return (
+        s.get("imputation"),
+        None if value is None else str(value),
+        bool(s.get("add_missing_indicator")),
+        s.get("transform"),
+        s.get("scaling"),
+        s.get("encoding"),
+        tuple(sorted((k, repr(v)) for k, v in (s.get("params") or {}).items())),
+    )
 
 
 def adopt(assessments: list[dict], suggestion: Callable[[str, str], dict]) -> dict | None:
@@ -501,8 +564,13 @@ def adopt(assessments: list[dict], suggestion: Callable[[str, str], dict]) -> di
         else:
             settings[fam] = suggestion(first["semantic_type"], fam)
         settings[fam] = {k: settings[fam].get(k) for k in SETTING_KEYS}
-    return {"action": first["action"], "semantic_type": first["semantic_type"], "target_task": first.get("target_task"),
-            "target_bins": first.get("target_bins"), "settings": settings}
+    return {
+        "action": first["action"],
+        "semantic_type": first["semantic_type"],
+        "target_task": first.get("target_task"),
+        "target_bins": first.get("target_bins"),
+        "settings": settings,
+    }
 
 
 def disagreements(by_field: dict[int, list[dict]]) -> set[int]:

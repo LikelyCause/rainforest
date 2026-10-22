@@ -1,4 +1,5 @@
 """Target-derived state, dataset list summaries, export type counts and delete paths (no database)."""
+
 import numpy as np
 import polars as pl
 
@@ -60,9 +61,11 @@ def test_headline_metric_prefers_binary_auc_for_first_chain_target():
 
 def test_features_by_type_counts_fields_and_outputs():
     manifest = {
-        "fields": [{"name": "n", "semantic_type": "numeric_continuous"},
-                   {"name": "c", "semantic_type": "categorical"},
-                   {"name": "id", "semantic_type": "identifier"}],
+        "fields": [
+            {"name": "n", "semantic_type": "numeric_continuous"},
+            {"name": "c", "semantic_type": "categorical"},
+            {"name": "id", "semantic_type": "identifier"},
+        ],
         "feature_source_field": {"n": "n", "n__isna": "n", "c_A": "c", "c_B": "c", "c_other": "c"},
     }
     assert features_by_type(manifest) == {
@@ -98,8 +101,9 @@ def test_target_associations_pair_new_targets_with_everything():
     noise = rng.normal(0, 1, 500)
     cat = (y * 2 + rng.integers(0, 2, 500)).astype(np.int32)
     other_target = rng.integers(0, 3, 500).astype(np.int32)
-    assocs = list(target_associations([(0, y.astype(np.int32)), (4, other_target)],
-                                      [(1, x_leak), (2, noise)], [(3, cat)]))
+    assocs = list(
+        target_associations([(0, y.astype(np.int32)), (4, other_target)], [(1, x_leak), (2, noise)], [(3, cat)])
+    )
     pairs = {(min(a.i, a.j), max(a.i, a.j)): a for a in assocs}
     assert set(pairs) == {(0, 1), (0, 2), (0, 3), (0, 4), (1, 4), (2, 4), (3, 4)}
     assert pairs[(0, 1)].value > 0.95 and pairs[(0, 2)].value < 0.2
@@ -108,4 +112,5 @@ def test_target_associations_pair_new_targets_with_everything():
 
 def test_headline_metric_uses_r2_for_a_regression_first_target():
     from app.routers.datasets import headline_metric
+
     assert headline_metric("done", ["price"], {"price": {"rmse": 3.0, "r2": 0.7}}) == {"metric": "r2", "value": 0.7}

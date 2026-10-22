@@ -1,5 +1,6 @@
 """Associations that the leak screen relies on: pairwise Spearman under MAR, codes for missing values, and the
 uncapped screen of high-cardinality and text fields against targets."""
+
 import numpy as np
 import polars as pl
 from scipy.stats import spearmanr
@@ -12,7 +13,7 @@ from app.profiling import _codes, profile_column, screen_codes
 def test_spearman_ranks_within_the_pairs_rows_under_mar():
     rng = np.random.default_rng(0)
     x = rng.normal(0, 1, 5000)
-    y = x ** 3
+    y = x**3
     y[np.abs(x) < 1] = np.nan  # missing at random given x
     rho, n = spearman_matrix(np.column_stack([x, y]))
     m = ~np.isnan(y)
@@ -60,8 +61,10 @@ def test_text_that_repeats_the_label_is_screened():
     rng = np.random.default_rng(4)
     y = rng.integers(0, 2, 3000)
     case = rng.integers(0, 50, 3000)
-    notes = [f"application {'approved' if v else 'declined'} after a full manual review of the documents, case {k}"
-             for v, k in zip(y, case)]
+    notes = [
+        f"application {'approved' if v else 'declined'} after a full manual review of the documents, case {k}"
+        for v, k in zip(y, case)
+    ]
     p = profile_column(pl.Series("notes", notes), 0, False, None, None, 50)
     t = profile_column(pl.Series("y", y.tolist()), 1, True, None, None, 50)
     assert p.inferred_type == "text" and p.screen_codes is not None and t.screen_codes is not None

@@ -3,6 +3,7 @@ formats, target / feature name collisions, rare classes and target eligibility.
 
 The API tests at the end need an empty Postgres (RAINFOREST_TEST_DATABASE_URL), like test_explore.py.
 """
+
 import datetime as dt
 import json
 import os
@@ -34,8 +35,18 @@ def _infer(values, name="col"):
 
 def _spec(name, t, family="tree", **kw):
     s = suggest(t, {}, False, family)
-    return FieldSpec(name, t, s["imputation"], s.get("impute_value"), s["add_missing_indicator"], s["transform"],
-                     s["scaling"], s["encoding"], s["params"], **kw)
+    return FieldSpec(
+        name,
+        t,
+        s["imputation"],
+        s.get("impute_value"),
+        s["add_missing_indicator"],
+        s["transform"],
+        s["scaling"],
+        s["encoding"],
+        s["params"],
+        **kw,
+    )
 
 
 def _export(tmp_path, df: pl.DataFrame, specs, targets, family="tree"):
@@ -77,8 +88,11 @@ def test_well_formed_csv_gets_no_ragged_warning(tmp_path):
 @pytest.mark.parametrize("sep,name", [(";", "semicolons"), ("\t", "tabs"), ("|", "pipes")])
 def test_csv_separated_by_other_characters_reads_into_columns(tmp_path, sep, name):
     src = tmp_path / "data.csv"
-    src.write_text(sep.join(["school", "age", "note"]) + "\n"
-                   + "".join(sep.join(['"GP"', str(15 + i % 5), '"a, b"']) + "\n" for i in range(50)))
+    src.write_text(
+        sep.join(["school", "age", "note"])
+        + "\n"
+        + "".join(sep.join(['"GP"', str(15 + i % 5), '"a, b"']) + "\n" for i in range(50))
+    )
     dest = tmp_path / "ds" / "raw.parquet"
     warnings = ingest.to_parquet(src, "csv", dest)
     df = pl.read_parquet(dest)
@@ -88,7 +102,7 @@ def test_csv_separated_by_other_characters_reads_into_columns(tmp_path, sep, nam
 
 def test_quoted_commas_dont_fool_the_separator_guess(tmp_path):
     src = tmp_path / "data.csv"
-    src.write_text('name,city\n' + "".join(f'"Smith; J{i}","Paris; FR"\n' for i in range(20)))
+    src.write_text("name,city\n" + "".join(f'"Smith; J{i}","Paris; FR"\n' for i in range(20)))
     dest = tmp_path / "ds" / "raw.parquet"
     assert ingest.to_parquet(src, "csv", dest) == []
     assert pl.read_parquet(dest).columns == ["name", "city"]
@@ -191,9 +205,12 @@ def test_infinite_values_are_missing_in_exports(tmp_path, family):
 # ------------------------------------------------------------------------------------------- #18 commas
 def test_thousands_separators_need_valid_grouping():
     assert coerce_numeric(pl.Series(["1,234.5", "12,345", "-1,000,000", "7"])).to_list() == [
-        1234.5, 12345.0, -1_000_000.0, 7.0]
-    assert coerce_numeric(pl.Series(["1,5", "1,234", "12,34,5"]), decimal_comma=False).to_list() == [
-        None, 1234.0, None]
+        1234.5,
+        12345.0,
+        -1_000_000.0,
+        7.0,
+    ]
+    assert coerce_numeric(pl.Series(["1,5", "1,234", "12,34,5"]), decimal_comma=False).to_list() == [None, 1234.0, None]
 
 
 def test_decimal_comma_column_is_parsed_as_decimals():
@@ -271,7 +288,10 @@ def test_epoch_like_values_under_a_key_name_stay_identifiers():
 
 def test_safe_feature_names_reserve_targets_and_internal_columns():
     assert safe_feature_names(["column_a", "x", "column_a"], reserved=["column_a", "__row_id"]) == [
-        "column_a_2", "x", "column_a_3"]
+        "column_a_2",
+        "x",
+        "column_a_3",
+    ]
 
 
 def test_feature_named_like_a_target_never_replaces_the_target(tmp_path):
@@ -333,18 +353,31 @@ def _handmade_export(tmp_path, t2_train, t2_test, t1_train=None):
     n_tr, n_te = len(t2_train), len(t2_test)
     n = n_tr + n_te
     t2 = np.concatenate([t2_train, t2_test]).astype(np.int32)
-    t1 = rng.integers(0, 2, n).astype(np.int32) if t1_train is None else np.concatenate(
-        [t1_train, rng.integers(0, 2, n_te)]).astype(np.int32)
+    t1 = (
+        rng.integers(0, 2, n).astype(np.int32)
+        if t1_train is None
+        else np.concatenate([t1_train, rng.integers(0, 2, n_te)]).astype(np.int32)
+    )
     feats = {f"f{k}": (rng.normal(0, 1, n) + (t2 == k % 3)).astype(np.float32) for k in range(4)}
-    df = pl.DataFrame({"__row_id": np.arange(n), "__split": ["train"] * n_tr + ["test"] * n_te, **feats,
-                       "t1": t1, "t2": t2})
+    df = pl.DataFrame(
+        {"__row_id": np.arange(n), "__split": ["train"] * n_tr + ["test"] * n_te, **feats, "t1": t1, "t2": t2}
+    )
     df.write_parquet(tmp_path / "model_ready.parquet")
-    (tmp_path / "manifest.json").write_text(json.dumps({
-        "model_family": "tree", "contains_nan": False, "targets": ["t1", "t2"], "feature_names": list(feats),
-        "split_column": "__split", "target_kinds": {"t1": "binary", "t2": "multiclass"},
-        "target_classes": {"t1": ["n", "y"], "t2": ["a", "b", "c"]},
-        "feature_source_field": {f: f for f in feats}, "files": {"data": "model_ready.parquet"},
-    }))
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "model_family": "tree",
+                "contains_nan": False,
+                "targets": ["t1", "t2"],
+                "feature_names": list(feats),
+                "split_column": "__split",
+                "target_kinds": {"t1": "binary", "t2": "multiclass"},
+                "target_classes": {"t1": ["n", "y"], "t2": ["a", "b", "c"]},
+                "feature_source_field": {f: f for f in feats},
+                "files": {"data": "model_ready.parquet"},
+            }
+        )
+    )
     return tmp_path
 
 
@@ -367,34 +400,74 @@ def test_training_fails_early_when_a_target_has_one_class_in_train(tmp_path):
 
 
 # ------------------------------------------------------------------------------------------- #16 targets
-@pytest.mark.parametrize("t,levels,task,ok", [
-    ("binary", 2, None, True), ("categorical", 40, None, True), ("numeric_discrete", 7, None, True),
-    ("categorical", MAX_TARGET_LEVELS + 1, None, False), ("numeric_continuous", 30, None, True),
-    ("numeric_continuous", 5000, "regression", True), ("numeric_continuous", 30, "classes", False),
-    ("numeric_discrete", 500, "classes", False), ("numeric_discrete", 500, "bins", True),
-    ("categorical", 10, "regression", False), ("binary", 2, "bins", False),
-    ("text", 10, None, False), ("datetime", 10, None, False), ("identifier", 10, None, False),
-])
+@pytest.mark.parametrize(
+    "t,levels,task,ok",
+    [
+        ("binary", 2, None, True),
+        ("categorical", 40, None, True),
+        ("numeric_discrete", 7, None, True),
+        ("categorical", MAX_TARGET_LEVELS + 1, None, False),
+        ("numeric_continuous", 30, None, True),
+        ("numeric_continuous", 5000, "regression", True),
+        ("numeric_continuous", 30, "classes", False),
+        ("numeric_discrete", 500, "classes", False),
+        ("numeric_discrete", 500, "bins", True),
+        ("categorical", 10, "regression", False),
+        ("binary", 2, "bins", False),
+        ("text", 10, None, False),
+        ("datetime", 10, None, False),
+        ("identifier", 10, None, False),
+    ],
+)
 def test_target_eligibility_depends_on_type_and_task(t, levels, task, ok):
-    errors = validate_decision({"action": "target", "semantic_type": t, "target_task": task,
-                                "target_bins": {"k": 5} if task == "bins" else None}, n_unique=levels)
+    errors = validate_decision(
+        {
+            "action": "target",
+            "semantic_type": t,
+            "target_task": task,
+            "target_bins": {"k": 5} if task == "bins" else None,
+        },
+        n_unique=levels,
+    )
     assert (errors == []) is ok
 
 
-@pytest.mark.parametrize("t,levels,task", [
-    ("binary", 2, "classes"), ("categorical", 40, "classes"), ("numeric_discrete", 100, "classes"),
-    ("numeric_discrete", 101, "regression"), ("numeric_continuous", 3, "regression"), ("text", 5, None),
-])
+@pytest.mark.parametrize(
+    "t,levels,task",
+    [
+        ("binary", 2, "classes"),
+        ("categorical", 40, "classes"),
+        ("numeric_discrete", 100, "classes"),
+        ("numeric_discrete", 101, "regression"),
+        ("numeric_continuous", 3, "regression"),
+        ("text", 5, None),
+    ],
+)
 def test_default_task(t, levels, task):
     assert default_task(t, levels) == task
 
 
-@pytest.mark.parametrize("bins,ok", [
-    ({"k": 5}, True), ({"k": 2}, True), ({"k": 20}, True), ({"k": 1}, False), ({"k": 21}, False),
-    ({"k": 2.5}, False), ({"edges": [10]}, True), ({"edges": [10, 25.5, 80]}, True), ({"edges": []}, False),
-    ({"edges": [3, 3]}, False), ({"edges": [5, 1]}, False), ({"edges": [1, float("inf")]}, False),
-    ({"edges": list(range(20))}, False), ({"k": 5, "edges": [1]}, False), ({}, False), (None, False),
-])
+@pytest.mark.parametrize(
+    "bins,ok",
+    [
+        ({"k": 5}, True),
+        ({"k": 2}, True),
+        ({"k": 20}, True),
+        ({"k": 1}, False),
+        ({"k": 21}, False),
+        ({"k": 2.5}, False),
+        ({"edges": [10]}, True),
+        ({"edges": [10, 25.5, 80]}, True),
+        ({"edges": []}, False),
+        ({"edges": [3, 3]}, False),
+        ({"edges": [5, 1]}, False),
+        ({"edges": [1, float("inf")]}, False),
+        ({"edges": list(range(20))}, False),
+        ({"k": 5, "edges": [1]}, False),
+        ({}, False),
+        (None, False),
+    ],
+)
 def test_bins_problem(bins, ok):
     assert (bins_problem(bins) is None) is ok
 
@@ -443,8 +516,11 @@ def client(tmp_path_factory, login_as):
 def test_api_target_rules_follow_the_task(client):
     rng = np.random.default_rng(0)
     rows = "".join(f"{rng.normal():.6f},{'abc'[i % 3]},{i % 2},{rng.integers(0, 100)}\n" for i in range(800))
-    ds = client.post("/api/datasets/upload", files={"file": ("t.csv", "cont,cat,y,score\n" + rows, "text/csv")},
-                     data={"targets": "y"}).json()
+    ds = client.post(
+        "/api/datasets/upload",
+        files={"file": ("t.csv", "cont,cat,y,score\n" + rows, "text/csv")},
+        data={"targets": "y"},
+    ).json()
     deadline = time.monotonic() + 120
     while (ds := client.get(f"/api/datasets/{ds['id']}").json())["status"] not in ("ready", "failed"):
         assert time.monotonic() < deadline
@@ -454,10 +530,22 @@ def test_api_target_rules_follow_the_task(client):
         fields = {f["name"]: f for f in client.get(f"/api/datasets/{ds['id']}/fields").json()}
         assert client.patch(f"/api/datasets/{ds['id']}", json={"target_columns": ["y", "cont"]}).status_code == 200
         cont = fields["cont"]
-        r = client.put(f"/api/fields/{cont['id']}/decision", json={
-            **{k: cont[k] for k in ("semantic_type", "reviewed")}, "action": "target", "notes": None,
-            "imputation": "none", "impute_value": None, "add_missing_indicator": False, "transform": "none",
-            "scaling": "none", "encoding": "none", "params": {}, "target_task": "classes"})
+        r = client.put(
+            f"/api/fields/{cont['id']}/decision",
+            json={
+                **{k: cont[k] for k in ("semantic_type", "reviewed")},
+                "action": "target",
+                "notes": None,
+                "imputation": "none",
+                "impute_value": None,
+                "add_missing_indicator": False,
+                "transform": "none",
+                "scaling": "none",
+                "encoding": "none",
+                "params": {},
+                "target_task": "classes",
+            },
+        )
         assert r.status_code == 422 and "continuous" in json.dumps(r.json())
         assert client.patch(f"/api/datasets/{ds['id']}", json={"target_columns": ["y", "cat"]}).status_code == 200
         assert client.get(f"/api/datasets/{ds['id']}").json()["target_columns"] == ["y", "cat"]
