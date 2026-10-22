@@ -4,13 +4,14 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from app import transforms
 from app.modeling.params import Setting
 from app.semantics import DEFAULT_PARAMS, PARAM_RULES, allowed, option_catalog, suggest, validate_decision
 from app.transforms import registry
-from app.transforms.builtin import ENCODING_SETTINGS, YEO_JOHNSON
+from app.transforms.builtin import ENCODING_SETTINGS, TARGET, YEO_JOHNSON
 
 
 def _spec(key="t", **kw):
@@ -36,7 +37,7 @@ def test_yeo_johnson_is_registered_for_linear_and_neural_numbers():
     assert set(spec.types) == {"numeric_continuous", "numeric_discrete"}
     assert set(spec.families) == {"linear", "neural"}
     assert [s.key for s in transforms.specs("transform")] == ["yeo_johnson"]
-    assert transforms.specs("encoding") == []
+    assert [s.key for s in transforms.specs("encoding")] == ["target"]
 
 
 def test_yeo_johnson_keeps_missing_values_and_names_its_column():
@@ -143,9 +144,53 @@ def test_the_catalog_publishes_registry_options():
     cat = option_catalog()
     assert cat["labels"]["transform"]["yeo_johnson"] == "Yeo-Johnson (power transform)"
     assert cat["labels"]["transform"]["log1p"] == "Signed log1p"
-    assert [t["key"] for t in cat["transforms"]] == ["yeo_johnson"]
+    assert [t["key"] for t in cat["transforms"]] == ["yeo_johnson", "target"]
     assert cat["settings"]["yeo_johnson"] == []
     assert [s["name"] for s in cat["settings"]["tfidf_svd"]] == ["svd_components", "max_features", "min_df"]
     assert cat["param_rules"]["onehot"]["max_categories"] == {"integer": True, "min": 2, "max": 1000}
     assert "yeo_johnson" in cat["allowed"]["neural"]["numeric_discrete"]["transform"]
     json.dumps(cat)
+
+
+def test_target_encoding_is_registered_for_categoricals_in_every_family():
+    spec = transforms.get("target")
+    assert spec is TARGET and spec.dimension == "encoding" and spec.needs_target and spec.handles_nan
+    assert spec.types == ("categorical",) and set(spec.families) == {"tree", "linear", "neural"}
+    assert spec.defaults() == {"target": None, "smooth": None, "cv": 5}
+    assert [s.kind for s in spec.settings] == ["target", "float_or_none", "int"]
+    assert registry.param_problems(spec, {"cv": 11, "smooth": -1}) == [
+        "params.cv must be from 2 to 10",
+        "params.smooth must be from 0 to 1000 (or Auto)",
+    ]
+
+
+def test_the_encoder_is_built_from_the_context():
+    ctx = registry.BuildContext(seed=7, target=registry.TargetInfo("y", "multiclass", ("a", "b", "c")))
+    enc = TARGET.build({"target": None, "smooth": None, "cv": 3}, ctx)
+    assert (enc.target_type, enc.smooth, enc.cv, enc.shuffle, enc.random_state) == ("multiclass", "auto", 3, True, 7)
+    assert TARGET.build({"target": None, "smooth": 12.5, "cv": 5}, ctx).smooth == 12.5
+
+
+def test_pick_target_feeds_one_column():
+    rng = np.random.default_rng(0)
+    X = pd.DataFrame({"c": rng.choice([f"L{i}" for i in range(40)], 600).astype(object)})
+    y = pd.DataFrame({"first": rng.integers(0, 3, 600).astype(float), "second": rng.normal(0, 1, 600)})
+
+    def ctx(kind, classes=()):
+        return registry.BuildContext(target=registry.TargetInfo("x", kind, classes))
+
+    classes = ("lo", "mid", "hi")
+    multi = registry.PickTarget(
+        TARGET.build(TARGET.defaults(), ctx("multiclass", classes)), "first", "multiclass", classes
+    )
+    out = multi.fit_transform(X, y)
+    assert out.shape == (600, 3) and list(multi.get_feature_names_out(["c"])) == ["c_hi", "c_lo", "c_mid"]
+    assert multi.transform(X.head(5)).shape == (5, 3)
+    num = registry.PickTarget(TARGET.build(TARGET.defaults(), ctx("continuous")), "second", "continuous").fit(X, y)
+    assert list(num.get_feature_names_out(["c"])) == ["c"] and num.transformer_.target_type_ == "continuous"
+    binary = registry.PickTarget(
+        TARGET.build(TARGET.defaults(), ctx("binary", ("no", "yes"))), "first", "binary", ("no", "yes")
+    ).fit(X, y.assign(first=(y["first"] > 0).astype(float)))
+    assert list(binary.transformer_.classes_) == [0, 1]
+    with pytest.raises(ValueError, match="needs the targets"):
+        registry.PickTarget(TARGET.build(TARGET.defaults(), ctx("binary")), "first", "binary").fit(X)
