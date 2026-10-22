@@ -69,6 +69,31 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff (the version in requirements-dev.txt)
+        run: pip install "$(grep '^ruff==' api/requirements-dev.txt)"
+      - name: Ruff
+        working-directory: api
+        run: ruff check --output-format github .
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - working-directory: ui
+        run: npm ci
+      - name: ESLint
+        working-directory: ui
+        run: npm run lint
+
   images:
     name: Docker images build
     runs-on: ubuntu-24.04

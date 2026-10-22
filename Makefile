@@ -1,4 +1,4 @@
-.PHONY: up up-gpu up-keycloak gpu-check down logs ps train models mlflow-backfill test test-db psql sample-csv clean
+.PHONY: up up-gpu up-keycloak gpu-check down logs ps train models mlflow-backfill test test-db lint format psql sample-csv clean
 
 # Tagged on MLflow runs (baked into the API image).
 GIT_SHA ?= $(shell git rev-parse HEAD 2>/dev/null)
@@ -78,6 +78,22 @@ test-db:       ## run the full API suite against a throwaway Postgres container
 	trap 'docker rm -f rainforest-testpg >/dev/null' EXIT; \
 	  for i in $$(seq 60); do docker exec rainforest-testpg pg_isready -q && break; sleep 1; done; \
 	  cd api && RAINFOREST_TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:$(TEST_PG_PORT)/postgres pytest -q
+
+# Pinned once, in requirements-dev.txt; CI reads the same line.
+RUFF_VERSION := $(shell sed -n 's/^ruff==//p' api/requirements-dev.txt)
+ruff = docker run --rm --user $$(id -u):$$(id -g) -e RUFF_NO_CACHE=true -v "$(CURDIR)/api":/io ghcr.io/astral-sh/ruff:$(RUFF_VERSION)
+# node_modules is installed into ui/ as the calling user. After running this on a Mac, run `npm ci` again before
+# `npm run dev`, because the container installs Linux builds.
+ui_node = docker run --rm --user $$(id -u):$$(id -g) -e HOME=/tmp -v "$(CURDIR)/ui":/w -w /w node:20 sh -c
+
+lint:          ## ruff and ESLint, as CI runs them, in containers (no local Python or Node needed)
+	$(ruff) check .
+	$(ui_node) 'npm ci --no-audit --no-fund --loglevel=error && npm run -s lint'
+
+format:        ## sort imports and format api/ and ui/src in place, in containers
+	$(ruff) check --select I --fix .
+	$(ruff) format .
+	$(ui_node) 'npm ci --no-audit --no-fund --loglevel=error && npm run -s format'
 
 clean:         ## stop and DELETE all data volumes
 	docker compose --profile '*' down -v
