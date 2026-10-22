@@ -157,4 +157,4 @@ def test_the_split_preview_counts_rows_after_the_row_rules(people):
 
     assert lead.post(url, json={"group_by": "nope", "experiment_id": x["id"]}).status_code == 422
     assert lead.post(url, json={"valid_size": 0.45, "test_size": 0.45, "experiment_id": x["id"]}).status_code == 422
-    assert lead.post(f"/api/datasets/999999/export-rows", json={}).status_code == 404
+    assert lead.post("/api/datasets/999999/export-rows", json={}).status_code == 404

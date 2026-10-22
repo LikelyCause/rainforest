@@ -10,7 +10,7 @@ import polars as pl
 import pyarrow.parquet as pq
 from psycopg import sql
 
-from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from .. import experiments, jobs, recipes, reuse
 from ..assessment import source_for

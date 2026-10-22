@@ -18,7 +18,6 @@ from fastapi import HTTPException
 
 from . import recipes
 from .db import fetch_all, jsonb
-from .semantics import SETTING_KEYS
 
 log = logging.getLogger(__name__)
 

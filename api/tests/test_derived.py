@@ -92,7 +92,7 @@ def test_a_lead_marks_one_chosen_run_per_experiment_and_authors_note_runs(people
     for n in (10, 20):
         r = lead.post(f"/api/exports/{e['id']}/runs", json={"model": "lightgbm", "cv_folds": 0, "params": {"n_estimators": n}}).json()
         ids.append(wait(lambda: (x := lead.get(f"/api/runs/{r['id']}").json())["status"] in ("done", "failed") and x)["id"])
-    best = lambda: next(x for x in lead.get("/api/datasets").json() if x["id"] == ds["id"])["best_run"]
+    best = lambda: next(x for x in lead.get("/api/datasets").json() if x["id"] == ds["id"])["best_run"]  # noqa: E731
     unchosen = best()  # nothing chosen yet: the best run on validation stands for the dataset
     assert unchosen["run_id"] in ids and not unchosen["chosen"] and unchosen["experiment_id"] == e["experiment_id"]
     assert member.patch(f"/api/runs/{ids[0]}", json={"chosen": True}).status_code == 403
