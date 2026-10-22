@@ -1,6 +1,7 @@
 """Profile pictures: any JPEG, PNG or WebP, cropped to the square its owner framed and re-encoded as a 256 × 256 WebP,
 stored as `<user id>-<hash>.webp` under DATA_DIR/avatars. Re-encoding leaves nothing of the upload but its pixels
 (no EXIF, no location, no hidden payload)."""
+
 from __future__ import annotations
 
 import hashlib
@@ -33,8 +34,7 @@ def crop_box(width: int, height: int, crop: Crop | None) -> tuple[int, int, int,
         return None
     x, y, side = crop
     slack = 2
-    if (not side >= 1 or x < -slack or y < -slack
-            or x + side > width + slack or y + side > height + slack):
+    if not side >= 1 or x < -slack or y < -slack or x + side > width + slack or y + side > height + slack:
         raise HTTPException(422, "That framing doesn't fit the picture; choose it again.")
     side = min(round(side), width, height)
     left = min(max(round(x), 0), width - side)
@@ -51,11 +51,17 @@ def _encode(data: bytes, crop: Crop | None = None) -> bytes:
             if img.width * img.height > MAX_PIXELS:
                 raise HTTPException(400, "That picture is too large; use one under 40 megapixels.")
             img = ImageOps.exif_transpose(img)
-            img = img.convert("RGBA" if img.mode in ("RGBA", "LA", "P") and "transparency" in img.info or
-                              img.mode in ("RGBA", "LA") else "RGB")
+            img = img.convert(
+                "RGBA"
+                if img.mode in ("RGBA", "LA", "P") and "transparency" in img.info or img.mode in ("RGBA", "LA")
+                else "RGB"
+            )
             box = crop_box(img.width, img.height, crop)
-            square = (img.resize((SIZE, SIZE), Image.Resampling.LANCZOS, box=box) if box
-                      else ImageOps.fit(img, (SIZE, SIZE), Image.Resampling.LANCZOS))
+            square = (
+                img.resize((SIZE, SIZE), Image.Resampling.LANCZOS, box=box)
+                if box
+                else ImageOps.fit(img, (SIZE, SIZE), Image.Resampling.LANCZOS)
+            )
             out = io.BytesIO()
             square.save(out, "WEBP", quality=85)
             return out.getvalue()
@@ -95,7 +101,10 @@ def store(user_id: int, data: bytes, crop: Crop | None = None) -> str:
 
 def remove(user_id: int) -> None:
     with connection() as conn:
-        old = conn.execute("UPDATE meta.users u SET avatar = NULL FROM meta.users o WHERE u.id = o.id AND u.id = %s "
-                           "RETURNING o.avatar", (user_id,)).fetchone()
+        old = conn.execute(
+            "UPDATE meta.users u SET avatar = NULL FROM meta.users o WHERE u.id = o.id AND u.id = %s "
+            "RETURNING o.avatar",
+            (user_id,),
+        ).fetchone()
     if old and old["avatar"]:
         (get_settings().avatars_dir / f"{user_id}-{old['avatar']}.webp").unlink(missing_ok=True)

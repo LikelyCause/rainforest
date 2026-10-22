@@ -1,25 +1,49 @@
 """The team process on a dataset's current recipe version: assessors, submitting, team review and finalizing."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
 from .. import experiments, jobs, recipes
-from ..assessment import (Source, adopt, assessments_by_field, assessor_row, core_key, disagreements, progress, seed,
-                          settings_key, write_decision, write_settings)
+from ..assessment import (
+    Source,
+    adopt,
+    assessments_by_field,
+    assessor_row,
+    core_key,
+    disagreements,
+    progress,
+    seed,
+    settings_key,
+    write_decision,
+    write_settings,
+)
 from ..auth import CurrentUser, LeadUser
 from ..db import connection
 from ..schemas import AssessorIn, CommentIn, FinalizeIn
 from ..semantics import suggest
-from .fields import (STAT_KEYS, _active_family, _field, _merged_many, _remember_datetime_format, _sync_targets,
-                     _write_history, has_screen_fields, screen_targets)
+from .fields import (
+    STAT_KEYS,
+    _active_family,
+    _field,
+    _merged_many,
+    _remember_datetime_format,
+    _sync_targets,
+    _write_history,
+    has_screen_fields,
+    screen_targets,
+)
 
 router = APIRouter(prefix="/api", tags=["team"])
 
 
 def _assessor_ids(conn, recipe_id: int) -> list[int]:
-    return [r["user_id"] for r in conn.execute(
-        "SELECT user_id FROM meta.dataset_assessors WHERE recipe_id = %s ORDER BY user_id", (recipe_id,)
-    ).fetchall()]
+    return [
+        r["user_id"]
+        for r in conn.execute(
+            "SELECT user_id FROM meta.dataset_assessors WHERE recipe_id = %s ORDER BY user_id", (recipe_id,)
+        ).fetchall()
+    ]
 
 
 def _by_field(conn, recipe: dict) -> dict[int, list[dict]]:
@@ -41,8 +65,9 @@ def _open_count(conn, recipe: dict) -> int:
     open_ = recipes.open_field_ids(conn, recipe)
     if open_ is not None:
         return len(open_)
-    return conn.execute("SELECT count(*) AS n FROM meta.fields WHERE dataset_id = %s",
-                        (recipe["dataset_id"],)).fetchone()["n"]
+    return conn.execute(
+        "SELECT count(*) AS n FROM meta.fields WHERE dataset_id = %s", (recipe["dataset_id"],)
+    ).fetchone()["n"]
 
 
 def _review_summary(conn, recipe: dict) -> dict:
@@ -52,16 +77,18 @@ def _review_summary(conn, recipe: dict) -> dict:
     open_ = conn.execute(
         "SELECT count(*) AS n FROM meta.field_decisions WHERE field_id = ANY(%s) AND NOT reviewed", (dis,)
     ).fetchone()["n"]
-    return {"fields": total, "adopted": total - len(dis) if by_field else 0, "disagreements": len(dis),
-            "open": open_}
+    return {"fields": total, "adopted": total - len(dis) if by_field else 0, "disagreements": len(dis), "open": open_}
 
 
 def review_record(summary: dict, finalized: bool = True) -> dict:
     """A version's review as the Baselines page shows it: fields adopted, disagreements, how many of those the lead
     settled, and how many were still open when it was finalized (None before then)."""
-    return {"adopted": summary["adopted"], "disagreements": summary["disagreements"],
-            "settled": summary["disagreements"] - summary["open"],
-            "open_at_finalize": summary["open"] if finalized else None}
+    return {
+        "adopted": summary["adopted"],
+        "disagreements": summary["disagreements"],
+        "settled": summary["disagreements"] - summary["open"],
+        "open_at_finalize": summary["open"] if finalized else None,
+    }
 
 
 def review_of(conn, recipe: dict) -> dict | None:
@@ -82,27 +109,35 @@ def review_of(conn, recipe: dict) -> dict | None:
     if open_ is not None:
         by_field = {fid: rows for fid, rows in by_field.items() if fid in set(open_)}
     dis = len(disagreements(by_field))
-    return {"adopted": _open_count(conn, recipe) - dis, "disagreements": dis, "settled": None,
-            "open_at_finalize": None}
+    return {"adopted": _open_count(conn, recipe) - dis, "disagreements": dis, "settled": None, "open_at_finalize": None}
 
 
 def _team_state(conn, dataset_id: int, user: dict) -> dict:
     recipe = recipes.current(conn, dataset_id)
     assessors = progress(conn, recipe)
     mine = next((a for a in assessors if a["user_id"] == user["id"]), None)
-    names = {r["id"]: r["name"] for r in conn.execute(
-        "SELECT id, name FROM meta.users WHERE id = ANY(%s)", ([recipe["created_by"], recipe["finalized_by"]],)
-    ).fetchall()}
+    names = {
+        r["id"]: r["name"]
+        for r in conn.execute(
+            "SELECT id, name FROM meta.users WHERE id = ANY(%s)", ([recipe["created_by"], recipe["finalized_by"]],)
+        ).fetchall()
+    }
     open_ = recipes.open_field_ids(conn, recipe)
     reuse = conn.execute("SELECT reuse FROM meta.recipes WHERE id = %s", (recipe["id"],)).fetchone()["reuse"]
     return {
-        "recipe": {**recipe, "label": recipes.label(recipe), "setup": recipes.is_setup(conn, recipe),
-                   "created_by_name": names.get(recipe["created_by"]),
-                   "finalized_by_name": names.get(recipe["finalized_by"]),
-                   "reopened": None if open_ is None else len(open_), "reuse": reuse},
+        "recipe": {
+            **recipe,
+            "label": recipes.label(recipe),
+            "setup": recipes.is_setup(conn, recipe),
+            "created_by_name": names.get(recipe["created_by"]),
+            "finalized_by_name": names.get(recipe["finalized_by"]),
+            "reopened": None if open_ is None else len(open_),
+            "reuse": reuse,
+        },
         "assessors": assessors,
-        "me": None if mine is None else {"submitted": mine["submitted_at"] is not None,
-                                         "reviewed": mine["reviewed"], "total": mine["total"]},
+        "me": None
+        if mine is None
+        else {"submitted": mine["submitted_at"] is not None, "reviewed": mine["reviewed"], "total": mine["total"]},
         "review": None if recipe["phase"] == "assessing" else _review_summary(conn, recipe),
     }
 
@@ -147,8 +182,10 @@ def unassign(dataset_id: int, user_id: int, user: LeadUser) -> dict:
     with connection() as conn:
         recipe = recipes.current(conn, dataset_id, lock="update")
         _require_phase(recipe, "assessing", doing="changing assessors")
-        gone = conn.execute("DELETE FROM meta.dataset_assessors WHERE recipe_id = %s AND user_id = %s RETURNING 1",
-                            (recipe["id"], user_id)).fetchone()
+        gone = conn.execute(
+            "DELETE FROM meta.dataset_assessors WHERE recipe_id = %s AND user_id = %s RETURNING 1",
+            (recipe["id"], user_id),
+        ).fetchone()
         if gone is None:
             raise HTTPException(404, "That user isn't assigned")
         screen = maybe_open_review(conn, recipe, user["id"])
@@ -186,8 +223,10 @@ def submit(dataset_id: int, user: CurrentUser) -> dict:
             ).fetchone()["n"]
             if left:
                 raise HTTPException(409, f"Review every field before submitting ({left} left).")
-            conn.execute("UPDATE meta.dataset_assessors SET submitted_at = now() WHERE recipe_id = %s AND user_id = %s",
-                         (recipe["id"], user["id"]))
+            conn.execute(
+                "UPDATE meta.dataset_assessors SET submitted_at = now() WHERE recipe_id = %s AND user_id = %s",
+                (recipe["id"], user["id"]),
+            )
             screen = maybe_open_review(conn, recipe, user["id"])
         state = _team_state(conn, dataset_id, user)
     _after_phase_change(dataset_id, recipe, state, screen)
@@ -202,15 +241,18 @@ def unsubmit(dataset_id: int, user: CurrentUser) -> dict:
             raise HTTPException(409, "Review has opened; assessments can't change any more.")
         if assessor_row(conn, recipe["id"], user["id"]) is None:
             raise HTTPException(403, "You aren't assigned to assess this dataset")
-        conn.execute("UPDATE meta.dataset_assessors SET submitted_at = NULL WHERE recipe_id = %s AND user_id = %s",
-                     (recipe["id"], user["id"]))
+        conn.execute(
+            "UPDATE meta.dataset_assessors SET submitted_at = NULL WHERE recipe_id = %s AND user_id = %s",
+            (recipe["id"], user["id"]),
+        )
         return _team_state(conn, dataset_id, user)
 
 
 def maybe_open_review(conn, recipe: dict, actor_id: int) -> list[int]:
     """Open review if there are assessors and all of them have submitted. Returns new targets to leak-screen."""
-    rows = conn.execute("SELECT submitted_at FROM meta.dataset_assessors WHERE recipe_id = %s",
-                        (recipe["id"],)).fetchall()
+    rows = conn.execute(
+        "SELECT submitted_at FROM meta.dataset_assessors WHERE recipe_id = %s", (recipe["id"],)
+    ).fetchall()
     if not rows or any(r["submitted_at"] is None for r in rows):
         return []
     return open_review(conn, recipe, actor_id)
@@ -226,9 +268,13 @@ def open_review(conn, recipe: dict, actor_id: int) -> list[int]:
     by_field = _by_field(conn, recipe)
     open_ = recipes.open_field_ids(conn, recipe)
     keep = None if open_ is None else set(open_)
-    fields = [f for f in conn.execute("SELECT * FROM meta.fields WHERE dataset_id = %s ORDER BY ordinal",
-                                      (dataset_id,)).fetchall()
-              if keep is None or f["id"] in keep]
+    fields = [
+        f
+        for f in conn.execute(
+            "SELECT * FROM meta.fields WHERE dataset_id = %s ORDER BY ordinal", (dataset_id,)
+        ).fetchall()
+        if keep is None or f["id"] in keep
+    ]
     before = _merged_many(conn, [f["id"] for f in fields], fam)
     for f in fields:
         stats = {k: f[k] for k in STAT_KEYS}
@@ -240,24 +286,39 @@ def open_review(conn, recipe: dict, actor_id: int) -> list[int]:
         rows = by_field.get(f["id"], [])
         plan = adopt(rows, suggestion)
         if plan is None:
-            conn.execute("UPDATE meta.field_decisions SET reviewed = false, updated_at = now() WHERE field_id = %s",
-                         (f["id"],))
+            conn.execute(
+                "UPDATE meta.field_decisions SET reviewed = false, updated_at = now() WHERE field_id = %s", (f["id"],)
+            )
             continue
         prev = before[f["id"]]
         notes = "\n".join(f"{r['user_name']}: {r['notes']}" for r in rows if r["notes"]) or None
         decided = core_key(prev) != core_key(plan)
-        write_decision(conn, team, f["id"], {"action": plan["action"], "semantic_type": plan["semantic_type"],
-                                             "target_task": plan["target_task"], "target_bins": plan["target_bins"],
-                                             "notes": notes, "reviewed": True}, decided)
+        write_decision(
+            conn,
+            team,
+            f["id"],
+            {
+                "action": plan["action"],
+                "semantic_type": plan["semantic_type"],
+                "target_task": plan["target_task"],
+                "target_bins": plan["target_bins"],
+                "notes": notes,
+                "reviewed": True,
+            },
+            decided,
+        )
         for family, s in plan["settings"].items():
             same = settings_key(s) == settings_key(suggestion(plan["semantic_type"], family))
             write_settings(conn, team, dataset_id, f["id"], family, s, "suggested" if same else "user")
         if plan["semantic_type"] == "datetime" and not (f["stats"] or {}).get("datetime_format"):
             _remember_datetime_format(conn, f)
     after = _merged_many(conn, [f["id"] for f in fields], fam)
-    changed = {fid: row for fid, row in after.items()
-               if {k: v for k, v in row.items() if k != "updated_at"}
-               != {k: v for k, v in before[fid].items() if k != "updated_at"}}
+    changed = {
+        fid: row
+        for fid, row in after.items()
+        if {k: v for k, v in row.items() if k != "updated_at"}
+        != {k: v for k, v in before[fid].items() if k != "updated_at"}
+    }
     _write_history(conn, dataset_id, fam, None, before, changed, actor_id)
     targets_before = {fid for fid, r in before.items() if r["action"] == "target"}
     targets_after = {fid for fid, r in after.items() if r["action"] == "target"}
@@ -285,14 +346,32 @@ def review_queue(dataset_id: int, user: CurrentUser) -> dict:
                 WHERE f.id = ANY(%s) ORDER BY f.ordinal""",
             (recipe["id"], dis),
         ).fetchall()
-        queue = [{
-            "field_id": r["id"], "name": r["name"], "inferred_type": r["inferred_type"],
-            "team": {k: r[k] for k in ("action", "semantic_type", "target_task", "target_bins")},
-            "resolved": r["reviewed"], "comments": r["comments"],
-            "assessments": [{k: a[k] for k in ("user_id", "user_name", "action", "semantic_type", "target_task",
-                                               "target_bins", "notes")}
-                            for a in by_field[r["id"]]],
-        } for r in rows]
+        queue = [
+            {
+                "field_id": r["id"],
+                "name": r["name"],
+                "inferred_type": r["inferred_type"],
+                "team": {k: r[k] for k in ("action", "semantic_type", "target_task", "target_bins")},
+                "resolved": r["reviewed"],
+                "comments": r["comments"],
+                "assessments": [
+                    {
+                        k: a[k]
+                        for k in (
+                            "user_id",
+                            "user_name",
+                            "action",
+                            "semantic_type",
+                            "target_task",
+                            "target_bins",
+                            "notes",
+                        )
+                    }
+                    for a in by_field[r["id"]]
+                ],
+            }
+            for r in rows
+        ]
         return {"recipe": recipe, "summary": _review_summary(conn, recipe), "queue": queue}
 
 
@@ -306,9 +385,22 @@ def field_review(field_id: int, user: CurrentUser) -> dict:
         rows = _by_field(conn, recipe).get(field_id, [])
         return {
             "disagreement": field_id in disagreements({field_id: rows}),
-            "assessments": [{k: a[k] for k in ("user_id", "user_name", "action", "semantic_type", "target_task",
-                                               "target_bins", "notes", "settings")}
-                            for a in rows],
+            "assessments": [
+                {
+                    k: a[k]
+                    for k in (
+                        "user_id",
+                        "user_name",
+                        "action",
+                        "semantic_type",
+                        "target_task",
+                        "target_bins",
+                        "notes",
+                        "settings",
+                    )
+                }
+                for a in rows
+            ],
             "comments": _comments(conn, recipe["id"], field_id),
         }
 
@@ -328,8 +420,10 @@ def add_comment(field_id: int, body: CommentIn, user: CurrentUser) -> list[dict]
     with connection() as conn:
         recipe = recipes.current(conn, f["dataset_id"], lock="share")
         _require_phase(recipe, "review", doing="commenting")
-        conn.execute("INSERT INTO meta.review_comments (recipe_id, field_id, user_id, body) VALUES (%s, %s, %s, %s)",
-                     (recipe["id"], field_id, user["id"], body.body.strip()))
+        conn.execute(
+            "INSERT INTO meta.review_comments (recipe_id, field_id, user_id, body) VALUES (%s, %s, %s, %s)",
+            (recipe["id"], field_id, user["id"], body.body.strip()),
+        )
         return _comments(conn, recipe["id"], field_id)
 
 
@@ -346,7 +440,13 @@ def finalize(dataset_id: int, body: FinalizeIn, user: LeadUser) -> dict:
         summary = _review_summary(conn, recipe)
         open_ = summary["open"]
         if open_ and not body.accept_open:
-            raise HTTPException(409, {"message": f"{open_} disagreement(s) are still open. Settle them, or confirm "
-                                                 "to keep their current team decision.", "open": open_})
+            raise HTTPException(
+                409,
+                {
+                    "message": f"{open_} disagreement(s) are still open. Settle them, or confirm "
+                    "to keep their current team decision.",
+                    "open": open_,
+                },
+            )
         recipes.finalize(conn, recipe, user["id"], review_record(summary))
         return _team_state(conn, dataset_id, user)

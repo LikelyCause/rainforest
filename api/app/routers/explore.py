@@ -4,12 +4,11 @@ from typing import Annotated
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query
+from psycopg import sql
 from scipy.cluster.hierarchy import leaves_list, linkage, optimal_leaf_ordering
 from scipy.spatial.distance import squareform
 
 from .. import experiments, jobs, recipes
-from psycopg import sql
-
 from ..analysis.runner import ROW_COLS, data_version, find_or_create, public, run_analysis
 from ..assessment import Source, from_key, key_owner, source_for
 from ..auth import CurrentUser
@@ -32,8 +31,13 @@ def _ready_dataset(conn, dataset_id: int, lock: bool = False) -> dict:
 
 def _export_visible(conn, data: str, user: dict) -> bool:
     """An "export:<id>" data source is usable only by someone who may see that export's experiment."""
-    return conn.execute(f"SELECT 1 FROM meta.exports WHERE id = %s AND experiment_id IN "
-                        f"({experiments.visible_ids(user['id'])})", (int(data.split(":", 1)[1]),)).fetchone() is not None
+    return (
+        conn.execute(
+            f"SELECT 1 FROM meta.exports WHERE id = %s AND experiment_id IN ({experiments.visible_ids(user['id'])})",
+            (int(data.split(":", 1)[1]),),
+        ).fetchone()
+        is not None
+    )
 
 
 def _validate_source(conn, dataset_id: int, params: dict, user: dict) -> None:
@@ -41,11 +45,15 @@ def _validate_source(conn, dataset_id: int, params: dict, user: dict) -> None:
     if params["data"] == "raw":
         # The target must be one in the decisions the analysis reads (an experiment may have its own).
         dec = from_key(conn, dataset_id, params.get("decisions") or "team").decisions()
-        if target is not None and conn.execute(
-            sql.SQL("""SELECT 1 FROM meta.fields f JOIN {} d ON d.field_id = f.id
+        if (
+            target is not None
+            and conn.execute(
+                sql.SQL("""SELECT 1 FROM meta.fields f JOIN {} d ON d.field_id = f.id
                         WHERE f.dataset_id = %s AND f.name = %s AND d.action = 'target'""").format(dec),
-            (dataset_id, target),
-        ).fetchone() is None:
+                (dataset_id, target),
+            ).fetchone()
+            is None
+        ):
             raise HTTPException(422, f"{target!r} is not a target in these decisions")
         return
     exp = conn.execute(
@@ -99,12 +107,22 @@ def get_analysis(analysis_id: int, user: CurrentUser) -> dict:
                 experiments.get_visible(conn, int(key.split(":")[1]), user)
             except HTTPException:
                 owner = -1  # not visible to this viewer: answer as for a missing analysis
-        if row is not None and user["role"] == "viewer" and key == "team" and row["params"].get("data", "raw") == "raw" and \
-                recipes.current(conn, row["dataset_id"])["phase"] == "assessing":
+        if (
+            row is not None
+            and user["role"] == "viewer"
+            and key == "team"
+            and row["params"].get("data", "raw") == "raw"
+            and recipes.current(conn, row["dataset_id"])["phase"] == "assessing"
+        ):
             owner = -1  # results from a version's work in progress, which viewers don't see before review
-        if row is None or (owner is not None and owner != user["id"]) or (
+        if (
+            row is None
+            or (owner is not None and owner != user["id"])
+            or (
                 row["params"].get("data", "raw").startswith("export:")
-                and not _export_visible(conn, row["params"]["data"], user)):
+                and not _export_visible(conn, row["params"]["data"], user)
+            )
+        ):
             raise HTTPException(404, "Analysis not found")
         current = data_version(conn, row["dataset_id"], row["params"]) if row["status"] == "done" else None
     return public(row, current)
@@ -132,8 +150,10 @@ def correlations(dataset_id: int, q: Annotated[CorrelationQuery, Query()], user:
         raise HTTPException(422, {"message": "Unknown field id(s)", "errors": unknown})
     target_id = target["id"] if target is not None else None
     # A field's score is its strongest association with the target, or with any eligible field.
-    ranked = [r["id"] for r in fetch_all(
-        sql.SQL("""WITH eligible AS (
+    ranked = [
+        r["id"]
+        for r in fetch_all(
+            sql.SQL("""WITH eligible AS (
                SELECT f.id FROM meta.fields f JOIN {} d ON d.field_id = f.id
                 WHERE f.dataset_id = %(ds)s
                   AND (d.action = 'keep' OR (NOT %(kept)s AND d.action <> 'target') OR f.id = %(target)s)),
@@ -145,8 +165,9 @@ def correlations(dataset_id: int, q: Annotated[CorrelationQuery, Query()], user:
             WHERE me IN (SELECT id FROM eligible) AND other IN (SELECT id FROM eligible) AND strength <> 'NaN'
               AND (%(target)s::bigint IS NULL OR other = %(target)s)
             GROUP BY me ORDER BY score DESC, me LIMIT %(n)s""").format(dec),
-        {"ds": dataset_id, "kept": q.kept, "target": target_id, "n": q.limit},
-    )]
+            {"ds": dataset_id, "kept": q.kept, "target": target_id, "n": q.limit},
+        )
+    ]
     chosen = [target_id] if target_id is not None else []
     chosen += ranked[: q.limit - len(chosen)]
     chosen += [i for i in q.add_ids if i not in chosen]

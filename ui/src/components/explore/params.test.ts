@@ -9,8 +9,13 @@ describe("parseExploreParams", () => {
   });
 
   it("reads an export, a known target and a listed sample size", () => {
-    expect(parse("data=export:12&target=column_b&sample=20000"))
-      .toEqual({ data: "export:12", isRaw: false, kept: false, target: "column_b", sample: 20000 });
+    expect(parse("data=export:12&target=column_b&sample=20000")).toEqual({
+      data: "export:12",
+      isRaw: false,
+      kept: false,
+      target: "column_b",
+      sample: 20000,
+    });
   });
 
   it("applies Kept only to raw data", () => {

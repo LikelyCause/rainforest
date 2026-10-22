@@ -27,14 +27,20 @@ export function eligibleTarget(f: Pick<FieldListItem, "semantic_type" | "n_uniqu
 /** The start dialog's first answer: the first model type without a baseline (Trees on a new dataset), populated
  * from the most recently finalized baseline when there is one, the current targets, and the viewer assessing. */
 export function startBaselineDefaults(
-  ds: Pick<Dataset, "baseline" | "baselines">, me: { id: number }, fields: Pick<FieldListItem, "name" | "action">[],
+  ds: Pick<Dataset, "baseline" | "baselines">,
+  me: { id: number },
+  fields: Pick<FieldListItem, "name" | "action">[],
 ): StartBaselineForm {
   const taken = new Set(ds.baseline?.setup ? [] : ds.baselines.map((b) => b.family));
   const family: FamilyKey = FAMILIES.find((f) => !taken.has(f)) ?? "tree";
   const finalized = ds.baselines.filter((b) => b.latest_finalized_id !== null);
   const source = finalized.length ? Math.max(...finalized.map((b) => b.latest_finalized_id as number)) : null;
   return {
-    family, start: source === null ? "scratch" : "baseline", source_recipe_id: source,
-    targets: fields.filter((f) => f.action === "target").map((f) => f.name), assessors: [me.id], name: "",
+    family,
+    start: source === null ? "scratch" : "baseline",
+    source_recipe_id: source,
+    targets: fields.filter((f) => f.action === "target").map((f) => f.name),
+    assessors: [me.id],
+    name: "",
   };
 }

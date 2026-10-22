@@ -9,6 +9,7 @@ for the tree family at all, and missing values are left for the model to route n
 
 `transforms/` holds the options a registry adds; none of its built-ins is offered to trees either.
 """
+
 from __future__ import annotations
 
 import math
@@ -130,8 +131,18 @@ _BASE_ALLOWED: dict[str, dict[str, list[str]]] = {
         "scaling": ["none"],
         "encoding": ["ordinal", "onehot", "frequency"],
     },
-    "binary": {"imputation": ["constant", "most_frequent"], "transform": ["none"], "scaling": ["none"], "encoding": ["binary"]},
-    "text": {"imputation": ["constant"], "transform": ["none"], "scaling": ["none"], "encoding": ["tfidf_svd", "text_stats"]},
+    "binary": {
+        "imputation": ["constant", "most_frequent"],
+        "transform": ["none"],
+        "scaling": ["none"],
+        "encoding": ["binary"],
+    },
+    "text": {
+        "imputation": ["constant"],
+        "transform": ["none"],
+        "scaling": ["none"],
+        "encoding": ["tfidf_svd", "text_stats"],
+    },
     "datetime": {
         "imputation": ["none", "median"],
         "transform": ["none"],
@@ -170,8 +181,10 @@ def target_problem(t: str, n_unique: int | None, task: str | None = None) -> str
     """Why a field typed `t` with `n_unique` distinct values can't be a target predicted as `task` (its default when
     None), or None if it can."""
     if t not in TARGET_TYPES:
-        return (f"a {TYPE_LABELS.get(t, t).lower()} field can't be a target; targets must be binary, categorical or "
-                f"numeric (change the field's type first if its values are class labels)")
+        return (
+            f"a {TYPE_LABELS.get(t, t).lower()} field can't be a target; targets must be binary, categorical or "
+            f"numeric (change the field's type first if its values are class labels)"
+        )
     task = task or default_task(t, n_unique)
     if task not in TARGET_TASKS:
         return f"unknown target task {task!r} (expected one of {', '.join(TARGET_TASKS)})"
@@ -179,8 +192,9 @@ def target_problem(t: str, n_unique: int | None, task: str | None = None) -> str
         if t not in CLASS_TYPES:
             return "a continuous field is predicted as a number or as bands, not as classes"
         if n_unique is not None and n_unique > MAX_TARGET_LEVELS:
-            return (f"{n_unique:,} distinct values; predicting classes allows at most {MAX_TARGET_LEVELS}"
-                    + ("" if t in ("binary", "categorical") else " (predict it as a number or as bands instead)"))
+            return f"{n_unique:,} distinct values; predicting classes allows at most {MAX_TARGET_LEVELS}" + (
+                "" if t in ("binary", "categorical") else " (predict it as a number or as bands instead)"
+            )
         return None
     if task == "bins" and t in ("binary", "categorical"):
         return None  # one level (or several) against the rest: bins = {"positive": [...]}
@@ -204,7 +218,12 @@ def bins_problem(bins: dict | None) -> str | None:
     points)."""
     if isinstance(bins, dict) and set(bins) == {"positive"}:
         pos = bins["positive"]
-        if not isinstance(pos, list) or not pos or len(pos) > MAX_TARGET_LEVELS or not all(isinstance(v, str) and v for v in pos):
+        if (
+            not isinstance(pos, list)
+            or not pos
+            or len(pos) > MAX_TARGET_LEVELS
+            or not all(isinstance(v, str) and v for v in pos)
+        ):
             return "choose at least one class to predict against the rest"
         return None
     if not isinstance(bins, dict) or len(bins) != 1 or not ({"k", "edges"} & set(bins)):
@@ -215,8 +234,11 @@ def bins_problem(bins: dict | None) -> str | None:
             return f"the band count must be a whole number from 2 to {MAX_BIN_COUNT}"
         return None
     edges = bins["edges"]
-    if (not isinstance(edges, list) or not 1 <= len(edges) <= MAX_BIN_COUNT - 1
-            or not all(isinstance(e, (int, float)) and not isinstance(e, bool) and math.isfinite(e) for e in edges)):
+    if (
+        not isinstance(edges, list)
+        or not 1 <= len(edges) <= MAX_BIN_COUNT - 1
+        or not all(isinstance(e, (int, float)) and not isinstance(e, bool) and math.isfinite(e) for e in edges)
+    ):
         return f"cut points must be 1 to {MAX_BIN_COUNT - 1} finite numbers"
     if any(b <= a for a, b in zip(edges, edges[1:])):
         return "cut points must be in ascending order, each different"
@@ -261,8 +283,12 @@ def allowed(t: str, family: str = DEFAULT_FAMILY) -> dict[str, list[str]]:
 
 
 def option_catalog() -> dict[str, Any]:
-    labels = {"imputation": IMPUTATIONS, "transform": dict(TRANSFORMS), "scaling": SCALINGS,
-              "encoding": dict(ENCODINGS)}
+    labels = {
+        "imputation": IMPUTATIONS,
+        "transform": dict(TRANSFORMS),
+        "scaling": SCALINGS,
+        "encoding": dict(ENCODINGS),
+    }
     for spec in transforms.specs():
         labels[spec.dimension][spec.key] = spec.label
     return {
@@ -273,14 +299,23 @@ def option_catalog() -> dict[str, Any]:
         "labels": labels,
         "allowed": {f: {t: allowed(t, f) for t in SEMANTIC_TYPES} for f in FAMILIES},
         "default_params": {**DEFAULT_PARAMS, **{s.key: s.defaults() for s in transforms.specs() if s.settings}},
-        "param_rules": {enc: {k: {"integer": kind is int, "min": lo, "max": hi} for k, (kind, lo, hi) in rules.items()}
-                        for enc, rules in PARAM_RULES.items()},
-        "settings": {**{k: [s.to_json() for s in v] for k, v in ENCODING_SETTINGS.items()},
-                     **{s.key: [x.to_json() for x in s.settings] for s in transforms.specs()}},
+        "param_rules": {
+            enc: {k: {"integer": kind is int, "min": lo, "max": hi} for k, (kind, lo, hi) in rules.items()}
+            for enc, rules in PARAM_RULES.items()
+        },
+        "settings": {
+            **{k: [s.to_json() for s in v] for k, v in ENCODING_SETTINGS.items()},
+            **{s.key: [x.to_json() for x in s.settings] for s in transforms.specs()},
+        },
         "transforms": [s.to_json() for s in transforms.specs()],
         "non_feature_types": sorted(NON_FEATURE_TYPES),
-        "target_rule": {"types": list(TARGET_TYPES), "numeric_types": sorted(NUMERIC), "max_levels": MAX_TARGET_LEVELS,
-                        "tasks": list(TARGET_TASKS), "default_k": DEFAULT_BIN_COUNT},
+        "target_rule": {
+            "types": list(TARGET_TYPES),
+            "numeric_types": sorted(NUMERIC),
+            "max_levels": MAX_TARGET_LEVELS,
+            "tasks": list(TARGET_TASKS),
+            "default_k": DEFAULT_BIN_COUNT,
+        },
     }
 
 
@@ -305,8 +340,12 @@ def validate_decision(d: dict[str, Any], family: str = DEFAULT_FAMILY, n_unique:
             if problem := bins_problem(d.get("target_bins")):
                 errors.append(problem)
             elif grouped != (t in ("binary", "categorical")):
-                errors.append("a class field is predicted against the rest by choosing its positive classes; a number "
-                              "is cut into bands" if grouped else "choose the class(es) to predict against the rest")
+                errors.append(
+                    "a class field is predicted against the rest by choosing its positive classes; a number "
+                    "is cut into bands"
+                    if grouped
+                    else "choose the class(es) to predict against the rest"
+                )
     if d.get("action") in ("drop", "target"):
         return errors
     a = allowed(t, family)
@@ -393,8 +432,11 @@ def suggest(t: str, stats: dict[str, Any], is_target: bool, family: str = DEFAUL
 
     if t in NON_FEATURE_TYPES:
         out["action"] = "drop"
-        reasons.append("Drop: an identifier (a key or ID) carries no signal that carries over to new rows" if t == "identifier"
-                       else "Drop: every row has the same value, so it can't help predict anything")
+        reasons.append(
+            "Drop: an identifier (a key or ID) carries no signal that carries over to new rows"
+            if t == "identifier"
+            else "Drop: every row has the same value, so it can't help predict anything"
+        )
     elif null_pct >= 0.95:
         out["action"] = "drop"
         reasons.append(f"Drop: {null_pct:.0%} of values are missing")
@@ -402,17 +444,22 @@ def suggest(t: str, stats: dict[str, Any], is_target: bool, family: str = DEFAUL
     if t in NUMERIC:
         if fam["handles_nan"]:
             if null_pct > 0:
-                reasons.append(f"Imputation: none; {null_pct:.1%} of values are missing and tree models learn where missing "
-                               "values belong")
+                reasons.append(
+                    f"Imputation: none; {null_pct:.1%} of values are missing and tree models learn where missing "
+                    "values belong"
+                )
             if abs(skew) > 2 or outliers > 0.03:
-                reasons.append("Transform: none; skew and outliers don't affect tree models, which only use the order of values")
+                reasons.append(
+                    "Transform: none; skew and outliers don't affect tree models, which only use the order of values"
+                )
         else:
             if null_pct > 0:
                 out["imputation"] = "median"
                 if null_pct >= 0.01:
                     out["add_missing_indicator"] = True
-                    reasons.append(f"Imputation: median, plus a column flagging missing rows; {null_pct:.1%} of values are "
-                                   "missing")
+                    reasons.append(
+                        f"Imputation: median, plus a column flagging missing rows; {null_pct:.1%} of values are missing"
+                    )
                 else:
                     reasons.append(f"Imputation: median; only {null_pct:.2%} of values are missing")
             if abs(skew) > 1:
@@ -420,18 +467,24 @@ def suggest(t: str, stats: dict[str, Any], is_target: bool, family: str = DEFAUL
                 reasons.append(f"Transform: signed log1p, to even out a skewed distribution (skewness {skew:.1f})")
             elif outliers > 0.03:
                 out["transform"] = "clip"
-                reasons.append(f"Transform: winsorize (clip extremes); {outliers:.1%} of values are outliers by the IQR rule")
+                reasons.append(
+                    f"Transform: winsorize (clip extremes); {outliers:.1%} of values are outliers by the IQR rule"
+                )
             out["scaling"] = "quantile_normal" if family == "neural" and abs(skew) > 1 else "standard"
-            reasons.append(f"Scaling: {SCALINGS[out['scaling']].lower()}; {fam['label'].lower()} fit better when features "
-                           "share a scale")
+            reasons.append(
+                f"Scaling: {SCALINGS[out['scaling']].lower()}; {fam['label'].lower()} fit better when features "
+                "share a scale"
+            )
         if t == "numeric_discrete" and n_levels <= 12:
             reasons.append(f"Type: only {n_levels} distinct values; consider treating it as categorical")
     elif t == "categorical":
         if fam["needs_onehot"]:
             out["encoding"] = "onehot" if n_levels <= 200 else "frequency"
             if out["encoding"] == "onehot":
-                reasons.append(f"Encoding: one-hot; {n_levels} levels, the 30 most common get their own column and "
-                                   "the rest share one")
+                reasons.append(
+                    f"Encoding: one-hot; {n_levels} levels, the 30 most common get their own column and "
+                    "the rest share one"
+                )
             else:
                 reasons.append(f"Encoding: frequency; {n_levels:,} levels are too many for one-hot")
         elif n_levels <= 8:

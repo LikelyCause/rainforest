@@ -6,6 +6,7 @@
 
 All inputs come from the same seeded row sample built during profiling.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -138,8 +139,7 @@ def cramers_v_sparse(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.sqrt(phi2c / denom)) if denom > 0 else float("nan")
 
 
-def screen_associations(targets: list[tuple[int, np.ndarray]],
-                        fields: list[tuple[int, np.ndarray]]) -> Iterator[Assoc]:
+def screen_associations(targets: list[tuple[int, np.ndarray]], fields: list[tuple[int, np.ndarray]]) -> Iterator[Assoc]:
     """Uncapped Cramér's V between targets and fields whose capped codes would hide a leak (more levels than
     CORR_MAX_LEVELS, or free text compared by exact value). Pairs as (field, target)."""
     for it, t in targets:
@@ -233,7 +233,7 @@ def target_associations(
             v, nobs = correlation_ratio(x, codes)
             if np.isfinite(v):
                 yield Assoc(ib, it, "correlation_ratio", v, nobs)
-        for ib, c in [*categorical, *targets[k + 1:]]:
+        for ib, c in [*categorical, *targets[k + 1 :]]:
             v = cramers_v(codes, c)
             if np.isfinite(v):
                 yield Assoc(it, ib, "cramers_v", v, int(codes.size))

@@ -25,5 +25,7 @@ describe("parseGroups", () => {
 
 it("describes each kind", () => {
   expect(describeDerived({ kind: "formula", spec: { expr: "a / b" } })).toBe("a / b");
-  expect(describeDerived({ kind: "count", spec: { fields: ["x", "y"], values: ["Up", "Down"] } })).toBe("count of Up / Down across 2 fields");
+  expect(describeDerived({ kind: "count", spec: { fields: ["x", "y"], values: ["Up", "Down"] } })).toBe(
+    "count of Up / Down across 2 fields",
+  );
 });

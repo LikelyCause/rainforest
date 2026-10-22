@@ -1,4 +1,5 @@
 """docker-compose.yml passes every API setting through from .env, with the same defaults as config.py."""
+
 import re
 from pathlib import Path
 
@@ -25,8 +26,11 @@ def _env_name(name: str, field) -> str:
 
 
 def test_every_setting_reaches_the_api_container(api_env):
-    missing = [_env_name(n, f) for n, f in Settings.model_fields.items()
-               if n not in NOT_PASSED and _env_name(n, f) not in api_env]
+    missing = [
+        _env_name(n, f)
+        for n, f in Settings.model_fields.items()
+        if n not in NOT_PASSED and _env_name(n, f) not in api_env
+    ]
     assert missing == []
 
 

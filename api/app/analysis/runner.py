@@ -1,4 +1,5 @@
 """Background job for one meta.analyses row, plus the cache bookkeeping around it."""
+
 from __future__ import annotations
 
 import hashlib
@@ -37,11 +38,15 @@ def data_version(conn, dataset_id: int, params: dict) -> str:
     rows = conn.execute(
         sql.SQL("""SELECT field_id, action, semantic_type, target_task, target_bins FROM {} d
                     WHERE dataset_id = %s ORDER BY field_id""").format(
-            from_key(conn, dataset_id, params.get("decisions", "team")).decisions()),
+            from_key(conn, dataset_id, params.get("decisions", "team")).decisions()
+        ),
         (dataset_id,),
     ).fetchall()
-    text = "\n".join(f"{r['field_id']}|{r['action']}|{r['semantic_type']}|{r['target_task']}|"
-                     f"{json.dumps(r['target_bins'], sort_keys=True)}" for r in rows)
+    text = "\n".join(
+        f"{r['field_id']}|{r['action']}|{r['semantic_type']}|{r['target_task']}|"
+        f"{json.dumps(r['target_bins'], sort_keys=True)}"
+        for r in rows
+    )
     return "raw:" + hashlib.md5(text.encode()).hexdigest()
 
 
@@ -51,18 +56,22 @@ def public(row: dict, current_version: str | None) -> dict:
     return out
 
 
-def find_or_create(conn, dataset_id: int, kind: str, params: dict, recompute: bool,
-                   user_id: int | None = None) -> tuple[dict, bool]:
+def find_or_create(
+    conn, dataset_id: int, kind: str, params: dict, recompute: bool, user_id: int | None = None
+) -> tuple[dict, bool]:
     """(row, created). Call inside a transaction holding the dataset row lock."""
     key = params_key(params)
     version = data_version(conn, dataset_id, params)
     if not recompute:
-        for status_clause, same_version in (("status = 'done'", True), ("status IN ('pending', 'running')", True),
-                                            ("status = 'done'", False)):
+        for status_clause, same_version in (
+            ("status = 'done'", True),
+            ("status IN ('pending', 'running')", True),
+            ("status = 'done'", False),
+        ):
             row = conn.execute(
                 f"""SELECT {ROW_COLS} FROM meta.analyses
                      WHERE dataset_id = %s AND kind = %s AND params_key = %s
-                       AND data_version {'=' if same_version else '<>'} %s AND {status_clause}
+                       AND data_version {"=" if same_version else "<>"} %s AND {status_clause}
                      ORDER BY created_at DESC, id DESC LIMIT 1""",
                 (dataset_id, kind, key, version),
             ).fetchone()
@@ -118,8 +127,10 @@ def _progress(analysis_id: int):
 def _prepare(row: dict, ds: dict):
     p = row["params"]
     if p["data"].startswith("export:"):
-        exp = fetch_one("SELECT output_dir, status FROM meta.exports WHERE id = %s AND dataset_id = %s",
-                        (int(p["data"].split(":", 1)[1]), row["dataset_id"]))
+        exp = fetch_one(
+            "SELECT output_dir, status FROM meta.exports WHERE id = %s AND dataset_id = %s",
+            (int(p["data"].split(":", 1)[1]), row["dataset_id"]),
+        )
         if exp is None or exp["status"] != "done" or not exp["output_dir"]:
             raise AnalysisError("The export is missing or not finished.")
         out_dir = Path(exp["output_dir"])

@@ -33,10 +33,18 @@ export function useAccess(ds: Dataset, view: View = null): Access {
   if (v?.kind === "experiment") {
     if (!x.data) return { source: "experiment", canEdit: false, note: "Loading…" };
     return x.data.can_adjust
-      ? { source: "experiment", canEdit: true, note: `Adjusting ${x.data.name}: changes apply to this experiment only.` }
-      : { source: "experiment", canEdit: false, note: x.data.is_default
-        ? "This is the baseline's default Team experiment; start your own experiment to adjust fields."
-        : `Only ${x.data.owner_name ?? "its owner"} adjusts ${x.data.name}.` };
+      ? {
+          source: "experiment",
+          canEdit: true,
+          note: `Adjusting ${x.data.name}: changes apply to this experiment only.`,
+        }
+      : {
+          source: "experiment",
+          canEdit: false,
+          note: x.data.is_default
+            ? "This is the baseline's default Team experiment; start your own experiment to adjust fields."
+            : `Only ${x.data.owner_name ?? "its owner"} adjusts ${x.data.name}.`,
+        };
   }
   if (v?.kind === "baseline") return { source: "baseline", canEdit: false, note: "A finalized baseline: read-only." };
   if (!me || (ds.phase === "assessing" && !team.data)) return { source: "team", canEdit: false, note: "Loading…" };
@@ -62,8 +70,22 @@ export function useDebounced<T>(value: T, ms: number): T {
 export function useInvalidateTeam(datasetId: number) {
   const qc = useQueryClient();
   return () => {
-    for (const k of ["team", "reviewQueue", "dataset", "fields", "fieldQuery", "exportPreview", "corrMatrix", "analysis",
-      "versions", "baselines", "recipeDiff", "experiments", "exports", "runs"]) {
+    for (const k of [
+      "team",
+      "reviewQueue",
+      "dataset",
+      "fields",
+      "fieldQuery",
+      "exportPreview",
+      "corrMatrix",
+      "analysis",
+      "versions",
+      "baselines",
+      "recipeDiff",
+      "experiments",
+      "exports",
+      "runs",
+    ]) {
       qc.invalidateQueries({ queryKey: [k, datasetId] });
     }
     qc.invalidateQueries({ queryKey: ["datasets"] });
@@ -73,4 +95,3 @@ export function useInvalidateTeam(datasetId: number) {
     qc.invalidateQueries({ queryKey: ["experiment"] });
   };
 }
-

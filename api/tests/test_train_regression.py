@@ -31,13 +31,19 @@ def test_scatter_is_capped():
 
 def test_target_chain_mixes_and_chains_out_of_fold():
     from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+
     rng = np.random.default_rng(0)
     X = rng.normal(size=(300, 3))
     a = (X[:, 0] > 0).astype(float)
     b = 3 * a + X[:, 1] + rng.normal(scale=0.1, size=300)
-    chain = TargetChain(RandomForestClassifier(n_estimators=20, random_state=0),
-                        RandomForestRegressor(n_estimators=20, random_state=0),
-                        ["binary", "regression"], [0, 1], cv=3, handles_nan=True).fit(X, np.column_stack([a, b]))
+    chain = TargetChain(
+        RandomForestClassifier(n_estimators=20, random_state=0),
+        RandomForestRegressor(n_estimators=20, random_state=0),
+        ["binary", "regression"],
+        [0, 1],
+        cv=3,
+        handles_nan=True,
+    ).fit(X, np.column_stack([a, b]))
     assert chain.estimators_[1].n_features_in_ == 4
     proba, values = chain.predict_all(X, [2, 0])
     assert proba.shape == (300, 2) and values.shape == (300,)
@@ -48,20 +54,28 @@ def _export(tmp_path, tasks):
     n = 600
     rng = np.random.default_rng(1)
     x = rng.normal(size=n)
-    df = pl.DataFrame({"x": x, "z": rng.normal(size=n), "g1": (x > 0).astype(int),
-                       "g3": 10 + 4 * x + rng.normal(scale=0.5, size=n)})
+    df = pl.DataFrame(
+        {"x": x, "z": rng.normal(size=n), "g1": (x > 0).astype(int), "g3": 10 + 4 * x + rng.normal(scale=0.5, size=n)}
+    )
     src = tmp_path / "d.parquet"
     df.write_parquet(src)
     out = tmp_path / "export"
-    run_export(src, [_spec("x", "numeric_continuous"), _spec("z", "numeric_continuous")], list(tasks), out,
-               {"seed": 3}, lambda *_: None,
-               target_tasks={t: {"task": k, "bins": {"k": 4} if k == "bins" else None} for t, k in tasks.items()})
+    run_export(
+        src,
+        [_spec("x", "numeric_continuous"), _spec("z", "numeric_continuous")],
+        list(tasks),
+        out,
+        {"seed": 3},
+        lambda *_: None,
+        target_tasks={t: {"task": k, "bins": {"k": 4} if k == "bins" else None} for t, k in tasks.items()},
+    )
     return out
 
 
 def test_lightgbm_regression_run(tmp_path):
-    report = train(_export(tmp_path, {"g3": "regression"}), "lightgbm", params={"n_estimators": 60}, cv=3,
-                   out_dir=tmp_path / "m")
+    report = train(
+        _export(tmp_path, {"g3": "regression"}), "lightgbm", params={"n_estimators": 60}, cv=3, out_dir=tmp_path / "m"
+    )
     m = report["metrics"]["valid"]["g3"]
     assert m["r2"] > 0.8 and {"rmse", "mae", "r2", "mape"} <= set(m)
     assert report["chain_kind"] == "target_chain" and report["target_tasks"] == {"g3": "regression"}
@@ -70,32 +84,51 @@ def test_lightgbm_regression_run(tmp_path):
 
 
 def test_mixed_chain_classes_then_number(tmp_path):
-    report = train(_export(tmp_path, {"g1": "classes", "g3": "regression"}), "lightgbm",
-                   ["g1", "g3"], params={"n_estimators": 40}, cv=3, out_dir=tmp_path / "m")
+    report = train(
+        _export(tmp_path, {"g1": "classes", "g3": "regression"}),
+        "lightgbm",
+        ["g1", "g3"],
+        params={"n_estimators": 40},
+        cv=3,
+        out_dir=tmp_path / "m",
+    )
     assert "roc_auc" in report["metrics"]["valid"]["g1"] and "r2" in report["metrics"]["valid"]["g3"]
     assert report["target_tasks"] == {"g1": "classes", "g3": "regression"}
 
 
 def test_a_subset_run_reports_only_its_targets(tmp_path):
-    report = train(_export(tmp_path, {"g1": "classes", "g3": "regression"}), "lightgbm",
-                   ["g3"], params={"n_estimators": 20}, cv=None, out_dir=tmp_path / "m")
+    report = train(
+        _export(tmp_path, {"g1": "classes", "g3": "regression"}),
+        "lightgbm",
+        ["g3"],
+        params={"n_estimators": 20},
+        cv=None,
+        out_dir=tmp_path / "m",
+    )
     assert report["target_tasks"] == {"g3": "regression"}
 
 
 def test_all_class_runs_keep_classifier_chain(tmp_path):
-    report = train(_export(tmp_path, {"g1": "classes", "g3": "bins"}), "lightgbm", params={"n_estimators": 20},
-                   cv=None, out_dir=tmp_path / "m")
+    report = train(
+        _export(tmp_path, {"g1": "classes", "g3": "bins"}),
+        "lightgbm",
+        params={"n_estimators": 20},
+        cv=None,
+        out_dir=tmp_path / "m",
+    )
     assert report["chain_kind"] == "classifier_chain" and len(report["target_classes"]["g3"]) == 4
 
 
 @pytest.mark.parametrize("model", ["random_forest", "hist_gradient_boosting", "xgboost"])
 def test_other_models_predict_numbers(tmp_path, model):
     from app.modeling.registry import MODELS
+
     if not MODELS[model].available:
         pytest.skip(f"{model} not installed")
     params = {"n_estimators": 20} if model != "hist_gradient_boosting" else {"max_iter": 20}
-    report = train(_export(tmp_path, {"g1": "classes", "g3": "regression"}), model, params=params, cv=3,
-                   out_dir=tmp_path / "m")
+    report = train(
+        _export(tmp_path, {"g1": "classes", "g3": "regression"}), model, params=params, cv=3, out_dir=tmp_path / "m"
+    )
     assert report["metrics"]["test"]["g3"]["r2"] > 0.5
 
 
@@ -103,19 +136,35 @@ def test_single_value_regression_target_is_refused(tmp_path):
     n = 100
     pl.DataFrame({"x": np.arange(n, dtype=float), "y": np.ones(n)}).write_parquet(tmp_path / "d.parquet")
     with pytest.raises(ValueError, match="single value"):
-        run_export(tmp_path / "d.parquet", [_spec("x", "numeric_continuous")], ["y"], tmp_path / "e", {"seed": 1},
-                   lambda *_: None, target_tasks={"y": {"task": "regression", "bins": None}})
+        run_export(
+            tmp_path / "d.parquet",
+            [_spec("x", "numeric_continuous")],
+            ["y"],
+            tmp_path / "e",
+            {"seed": 1},
+            lambda *_: None,
+            target_tasks={"y": {"task": "regression", "bins": None}},
+        )
 
 
 def test_mlp_predicts_a_large_scale_number(tmp_path):
     n = 800
     rng = np.random.default_rng(2)
     x = rng.normal(size=n)
-    df = pl.DataFrame({"x": x, "z": rng.normal(size=n), "price": 200_000 + 50_000 * x + rng.normal(scale=5_000, size=n)})
+    df = pl.DataFrame(
+        {"x": x, "z": rng.normal(size=n), "price": 200_000 + 50_000 * x + rng.normal(scale=5_000, size=n)}
+    )
     df.write_parquet(tmp_path / "d.parquet")
-    run_export(tmp_path / "d.parquet", [_spec("x", "numeric_continuous", "neural"), _spec("z", "numeric_continuous", "neural")],
-               ["price"], tmp_path / "e", {"seed": 1}, lambda *_: None, family="neural",
-               target_tasks={"price": {"task": "regression", "bins": None}})
+    run_export(
+        tmp_path / "d.parquet",
+        [_spec("x", "numeric_continuous", "neural"), _spec("z", "numeric_continuous", "neural")],
+        ["price"],
+        tmp_path / "e",
+        {"seed": 1},
+        lambda *_: None,
+        family="neural",
+        target_tasks={"price": {"task": "regression", "bins": None}},
+    )
     report = train(tmp_path / "e", "mlp", cv=None, out_dir=tmp_path / "m")
     assert report["metrics"]["test"]["price"]["r2"] > 0.9
 
@@ -123,7 +172,10 @@ def test_mlp_predicts_a_large_scale_number(tmp_path):
 def test_number_links_chain_out_of_fold_on_shuffled_folds():
     from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
     from sklearn.model_selection import KFold
-    chain = TargetChain(RandomForestClassifier(), RandomForestRegressor(), ["regression", "binary"], [0, 1], cv=5, seed=3)
+
+    chain = TargetChain(
+        RandomForestClassifier(), RandomForestRegressor(), ["regression", "binary"], [0, 1], cv=5, seed=3
+    )
     folds = chain._folds("regression")
     assert isinstance(folds, KFold) and folds.shuffle and folds.n_splits == 5
     assert chain._folds("binary") == 5  # class links fold as ClassifierChain does
@@ -144,8 +196,13 @@ def test_a_number_target_is_also_scored_on_bands():
 
 
 def test_bands_come_from_the_training_rows_in_a_run(tmp_path):
-    report = train(_export(tmp_path, {"g3": "regression"}), "lightgbm", params={"n_estimators": 30}, cv=None,
-                   out_dir=tmp_path / "m")
+    report = train(
+        _export(tmp_path, {"g3": "regression"}),
+        "lightgbm",
+        params={"n_estimators": 30},
+        cv=None,
+        out_dir=tmp_path / "m",
+    )
     b = report["evaluation"]["test"]["g3"]["bands"]
     assert len(b["labels"]) == 5 and "band_accuracy" in report["metrics"]["test"]["g3"]
 
@@ -159,11 +216,18 @@ def test_a_prediction_that_isnt_a_number_fails_the_run_clearly():
 
 def test_xgboost_trains_a_quantile_with_its_default_alpha(tmp_path):
     from app.modeling.registry import MODELS
+
     if not MODELS["xgboost"].available:
         pytest.skip("xgboost not installed")
-    report = train(_export(tmp_path, {"g3": "regression"}), "xgboost",
-                   params={"n_estimators": 20, "objective": "reg:quantileerror"}, cv=None, out_dir=tmp_path / "m")
+    report = train(
+        _export(tmp_path, {"g3": "regression"}),
+        "xgboost",
+        params={"n_estimators": 20, "objective": "reg:quantileerror"},
+        cv=None,
+        out_dir=tmp_path / "m",
+    )
     assert np.isfinite(report["metrics"]["test"]["g3"]["mae"])
     import joblib
+
     trained = joblib.load(tmp_path / "m" / "classifier_chain.joblib").estimators_[0].get_xgb_params()
     assert trained["objective"] == "reg:quantileerror" and trained["quantile_alpha"] == 0.5

@@ -1,4 +1,5 @@
 """Bulk-edit planning, the shared field filter and request validation (no database)."""
+
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -18,18 +19,24 @@ def test_where_scopes_to_dataset():
 
 def test_in_is_typed_per_column_kind():
     assert _where({"column": "n_unique", "op": "in", "value": "2, 3"}).endswith(
-        "\"n_unique\" = ANY('{2.0,3.0}'::float8[])")
+        "\"n_unique\" = ANY('{2.0,3.0}'::float8[])"
+    )
     assert _where({"column": "reviewed", "op": "in", "value": [True, "no"]}).endswith(
-        "\"reviewed\" = ANY('{t,f}'::bool[])")
+        "\"reviewed\" = ANY('{t,f}'::bool[])"
+    )
     assert _where({"column": "action", "op": "in", "value": ["keep", "drop"]}).endswith(
-        "\"action\" = ANY('{keep,drop}'::text[])")
+        "\"action\" = ANY('{keep,drop}'::text[])"
+    )
 
 
-@pytest.mark.parametrize("f", [
-    {"column": "reviewed", "op": "=", "value": "maybe"},
-    {"column": "null_pct", "op": "in", "value": "0.1,abc"},
-    {"column": "no_such_column", "op": "=", "value": 1},
-])
+@pytest.mark.parametrize(
+    "f",
+    [
+        {"column": "reviewed", "op": "=", "value": "maybe"},
+        {"column": "null_pct", "op": "in", "value": "0.1,abc"},
+        {"column": "no_such_column", "op": "=", "value": 1},
+    ],
+)
 def test_bad_filters_are_422(f):
     with pytest.raises(HTTPException) as e:
         _where(f)
@@ -38,17 +45,20 @@ def test_bad_filters_are_422(f):
 
 def test_comparison_and_null_ops():
     sql = _where({"column": "null_pct", "op": ">", "value": "0.2"}, {"column": "notes", "op": "is_null"})
-    assert sql == "dataset_id = 7 AND \"null_pct\" > 0.2 AND \"notes\" IS NULL"
+    assert sql == 'dataset_id = 7 AND "null_pct" > 0.2 AND "notes" IS NULL'
 
 
-@pytest.mark.parametrize("body", [
-    {"action": "drop"},
-    {"action": "drop", "field_ids": [1], "filters": []},
-    {"field_ids": [1]},
-    {"field_ids": [], "action": "drop"},
-    {"field_ids": list(range(5001)), "action": "drop"},
-    {"filters": [], "action": "target"},
-])
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"action": "drop"},
+        {"action": "drop", "field_ids": [1], "filters": []},
+        {"field_ids": [1]},
+        {"field_ids": [], "action": "drop"},
+        {"field_ids": list(range(5001)), "action": "drop"},
+        {"filters": [], "action": "target"},
+    ],
+)
 def test_invalid_bodies(body):
     with pytest.raises(ValidationError):
         BulkDecisionIn(**body)
@@ -59,12 +69,25 @@ def test_empty_filters_mean_whole_dataset():
 
 
 def _row(fid, action="keep", stype="numeric_continuous", reviewed=False, suggestion=None):
-    return {"field_id": fid, "name": f"f{fid}", "action": action, "semantic_type": stype, "reviewed": reviewed,
-            "suggestion": suggestion or {}}
+    return {
+        "field_id": fid,
+        "name": f"f{fid}",
+        "action": action,
+        "semantic_type": stype,
+        "reviewed": reviewed,
+        "suggestion": suggestion or {},
+    }
 
 
-SETTINGS = {"imputation": "none", "impute_value": None, "add_missing_indicator": False, "transform": "none",
-            "scaling": "none", "encoding": "none", "params": {}}
+SETTINGS = {
+    "imputation": "none",
+    "impute_value": None,
+    "add_missing_indicator": False,
+    "transform": "none",
+    "scaling": "none",
+    "encoding": "none",
+    "params": {},
+}
 
 
 def test_drop_skips_targets_and_unchanged():
@@ -84,8 +107,10 @@ def test_keep_never_applies_to_identifiers_but_reviewed_still_does():
 
 
 def test_accept_suggestion_counts_settings_only_changes():
-    sugg = {"tree": {**SETTINGS, "action": "keep", "semantic_type": "numeric_continuous"},
-            "linear": {**SETTINGS, "action": "keep", "semantic_type": "numeric_continuous", "scaling": "standard"}}
+    sugg = {
+        "tree": {**SETTINGS, "action": "keep", "semantic_type": "numeric_continuous"},
+        "linear": {**SETTINGS, "action": "keep", "semantic_type": "numeric_continuous", "scaling": "standard"},
+    }
     rows = [_row(1, reviewed=True, suggestion=sugg), _row(2, reviewed=True, suggestion=sugg)]
     settings = {
         1: {"tree": {**SETTINGS, "field_id": 1}, "linear": {**SETTINGS, "scaling": "standard"}},
@@ -98,10 +123,13 @@ def test_accept_suggestion_counts_settings_only_changes():
 
 
 def test_accept_suggestion_keeps_settings_you_customised():
-    sugg = {"tree": {**SETTINGS, "action": "keep", "semantic_type": "numeric_continuous"},
-            "linear": {**SETTINGS, "action": "keep", "semantic_type": "numeric_continuous", "scaling": "standard"}}
-    settings = {1: {"tree": {**SETTINGS, "source": "suggested"},
-                    "linear": {**SETTINGS, "scaling": "robust", "source": "user"}}}
+    sugg = {
+        "tree": {**SETTINGS, "action": "keep", "semantic_type": "numeric_continuous"},
+        "linear": {**SETTINGS, "action": "keep", "semantic_type": "numeric_continuous", "scaling": "standard"},
+    }
+    settings = {
+        1: {"tree": {**SETTINGS, "source": "suggested"}, "linear": {**SETTINGS, "scaling": "robust", "source": "user"}}
+    }
     planned = plan_bulk([_row(1, suggestion=sugg)], settings, BulkDecisionIn(field_ids=[1], accept_suggestion=True))
     assert planned[0]["after"]["reviewed"] and planned[0]["settings"] == {}
 
@@ -109,13 +137,17 @@ def test_accept_suggestion_keeps_settings_you_customised():
 def test_accept_suggestion_rederives_customised_settings_when_the_type_changes():
     sugg = {"linear": {**SETTINGS, "action": "keep", "semantic_type": "numeric_continuous", "scaling": "standard"}}
     settings = {1: {"linear": {**SETTINGS, "encoding": "onehot", "source": "user"}}}
-    planned = plan_bulk([_row(1, stype="categorical", suggestion=sugg)], settings,
-                        BulkDecisionIn(field_ids=[1], accept_suggestion=True))
+    planned = plan_bulk(
+        [_row(1, stype="categorical", suggestion=sugg)], settings, BulkDecisionIn(field_ids=[1], accept_suggestion=True)
+    )
     assert planned[0]["after"]["semantic_type"] == "numeric_continuous" and list(planned[0]["settings"]) == ["linear"]
 
 
 def test_accept_suggestion_never_touches_target_role():
     sugg = {"tree": {**SETTINGS, "action": "target", "semantic_type": "binary"}}
-    planned = plan_bulk([_row(1, stype="binary", suggestion=sugg)], {1: {"tree": SETTINGS}},
-                        BulkDecisionIn(field_ids=[1], accept_suggestion=True))
+    planned = plan_bulk(
+        [_row(1, stype="binary", suggestion=sugg)],
+        {1: {"tree": SETTINGS}},
+        BulkDecisionIn(field_ids=[1], accept_suggestion=True),
+    )
     assert planned[0]["after"] == {"action": "keep", "semantic_type": "binary", "reviewed": True}

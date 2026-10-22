@@ -1,13 +1,46 @@
 import { describe, expect, it } from "vitest";
-import { lastRowRules, rowsSentence, splitCounts, splitPreview, addBlocked, baselineDiff, metricLabel, canEdit, experimentTab, filterExperiments, finalizedPrompt, mlflowExperimentUrl, privacyNote, revertedInput, sourceChip, sourceLabel, sourceOptions } from "./experiments";
+import {
+  lastRowRules,
+  rowsSentence,
+  splitCounts,
+  splitPreview,
+  addBlocked,
+  baselineDiff,
+  metricLabel,
+  canEdit,
+  experimentTab,
+  filterExperiments,
+  finalizedPrompt,
+  mlflowExperimentUrl,
+  privacyNote,
+  revertedInput,
+  sourceChip,
+  sourceLabel,
+  sourceOptions,
+} from "./experiments";
 import type { Experiment } from "./types";
 
 const me = { id: 2, role: "member" as const };
 const lead = { id: 1, role: "lead" as const };
 const x = (id: number, over: Partial<Experiment> = {}): Experiment => ({
-  id, dataset_id: 1, name: `X${id}`, owner: null, owner_name: null, recipe_id: 10, recipe_version: 1, recipe_family: "tree" as const, recipe_name: null,
-  is_default: false, recipe_phase: "finalized", assessor_id: null, source: "recipe:10", notes: null, created_at: "", archived_at: null,
-  private: false, ...over,
+  id,
+  dataset_id: 1,
+  name: `X${id}`,
+  owner: null,
+  owner_name: null,
+  recipe_id: 10,
+  recipe_version: 1,
+  recipe_family: "tree" as const,
+  recipe_name: null,
+  is_default: false,
+  recipe_phase: "finalized",
+  assessor_id: null,
+  source: "recipe:10",
+  notes: null,
+  created_at: "",
+  archived_at: null,
+  private: false,
+  ...over,
 });
 
 describe("filterExperiments", () => {
@@ -40,7 +73,9 @@ describe("labels", () => {
 
   it("explains privacy only for personal experiments", () => {
     expect(privacyNote(x(1))).toBeNull();
-    expect(privacyNote(x(2, { assessor_id: 2, private: true, recipe_version: 2 }))).toMatch(/until Trees baseline v2 reaches team review/);
+    expect(privacyNote(x(2, { assessor_id: 2, private: true, recipe_version: 2 }))).toMatch(
+      /until Trees baseline v2 reaches team review/,
+    );
     expect(privacyNote(x(2, { assessor_id: 2 }))).toMatch(/Visible to the team/);
   });
 });
@@ -68,8 +103,10 @@ describe("sourceOptions", () => {
     { id: 11, family: "tree", version: 2, phase: "finalized" as const },
     { id: 13, family: "linear", version: 1, phase: "finalized" as const },
   ];
-  const team = (phase: "assessing" | "review" | "finalized", assessor: boolean) =>
-    ({ recipe: { id: 12, family: "tree", version: 3, phase }, me: assessor ? { submitted: false } : null });
+  const team = (phase: "assessing" | "review" | "finalized", assessor: boolean) => ({
+    recipe: { id: 12, family: "tree", version: 3, phase },
+    me: assessor ? { submitted: false } : null,
+  });
 
   it("offers my assessment first while I assess, then finalized versions newest first", () => {
     expect(sourceOptions(versions, team("assessing", true), me)).toEqual([
@@ -81,7 +118,11 @@ describe("sourceOptions", () => {
   });
 
   it("offers only finalized versions to someone who doesn't assess", () => {
-    expect(sourceOptions(versions, team("assessing", false), me).map((o) => o.value)).toEqual(["recipe:11", "recipe:10", "recipe:13"]);
+    expect(sourceOptions(versions, team("assessing", false), me).map((o) => o.value)).toEqual([
+      "recipe:11",
+      "recipe:10",
+      "recipe:13",
+    ]);
     expect(sourceOptions([], undefined, me)).toEqual([]);
   });
 
@@ -101,10 +142,34 @@ describe("mlflowExperimentUrl", () => {
 });
 
 describe("baseline comparison", () => {
-  const base = { action: "keep" as const, semantic_type: "numeric_continuous", notes: null,
-    settings: { imputation: "none", impute_value: null, add_missing_indicator: false, transform: "none", scaling: "none", encoding: "none", params: {} } };
-  const draft = { family: "tree", action: "drop" as const, semantic_type: "numeric_continuous", imputation: "median", impute_value: null,
-    add_missing_indicator: false, transform: "none", scaling: "none", encoding: "none", params: {}, notes: "mine", reviewed: true };
+  const base = {
+    action: "keep" as const,
+    semantic_type: "numeric_continuous",
+    notes: null,
+    settings: {
+      imputation: "none",
+      impute_value: null,
+      add_missing_indicator: false,
+      transform: "none",
+      scaling: "none",
+      encoding: "none",
+      params: {},
+    },
+  };
+  const draft = {
+    family: "tree",
+    action: "drop" as const,
+    semantic_type: "numeric_continuous",
+    imputation: "median",
+    impute_value: null,
+    add_missing_indicator: false,
+    transform: "none",
+    scaling: "none",
+    encoding: "none",
+    params: {},
+    notes: "mine",
+    reviewed: true,
+  };
   it("lists what an experiment changed, by label", () => {
     expect(baselineDiff(draft, base)).toEqual(["Decision", "Missing values"]);
     expect(baselineDiff(draft, null)).toEqual([]);
@@ -132,17 +197,29 @@ describe("metricLabel", () => {
 describe("lastRowRules", () => {
   const ex = (id: number, config: Record<string, unknown>) => ({ id, config });
   it("takes the newest export that set row rules, whatever experiment it was in", () => {
-    const rules = { dedupe: true, exclude: [{ field: "d", values: ["11"] }], first_per: { key: "p", order: "e" }, group_by: "p" };
+    const rules = {
+      dedupe: true,
+      exclude: [{ field: "d", values: ["11"] }],
+      first_per: { key: "p", order: "e" },
+      group_by: "p",
+    };
     expect(lastRowRules([ex(3, { seed: 42 }), ex(2, rules), ex(1, { dedupe: true })])).toEqual({ from: 2, rules });
   });
   it("fills what an older export didn't record, and is null when none set rules", () => {
-    expect(lastRowRules([ex(1, { group_by: "p" })])).toEqual({ from: 1, rules: { dedupe: false, exclude: [], first_per: null, group_by: "p" } });
+    expect(lastRowRules([ex(1, { group_by: "p" })])).toEqual({
+      from: 1,
+      rules: { dedupe: false, exclude: [], first_per: null, group_by: "p" },
+    });
     expect(lastRowRules([ex(1, { dedupe: false, exclude: [] })])).toBeNull();
     expect(lastRowRules([])).toBeNull();
   });
   it("skips failed exports, whose rules may be why they failed", () => {
-    expect(lastRowRules([{ id: 3, status: "failed", config: { group_by: "x" } }, { id: 2, status: "done", config: { dedupe: true } }]))
-      .toEqual({ from: 2, rules: { dedupe: true, exclude: [], first_per: null, group_by: null } });
+    expect(
+      lastRowRules([
+        { id: 3, status: "failed", config: { group_by: "x" } },
+        { id: 2, status: "done", config: { dedupe: true } },
+      ]),
+    ).toEqual({ from: 2, rules: { dedupe: true, exclude: [], first_per: null, group_by: null } });
   });
 });
 
@@ -157,8 +234,13 @@ describe("experimentTab", () => {
 describe("sourceChip", () => {
   it("says a team experiment uses the finalized snapshot and a personal one the assessment as it stands", () => {
     expect(sourceChip(x(1), me)).toMatchObject({ lens: "frozen", text: "From Trees baseline v1 · as finalized" });
-    expect(sourceChip(x(2, { assessor_id: 2, owner_name: "Me" }), me).text).toBe("From my assessment of Trees v1 · as it stands");
-    expect(sourceChip(x(3, { assessor_id: 3, owner_name: "Dana" }), me)).toMatchObject({ lens: "private", text: "From Dana's assessment of Trees v1 · as it stands" });
+    expect(sourceChip(x(2, { assessor_id: 2, owner_name: "Me" }), me).text).toBe(
+      "From my assessment of Trees v1 · as it stands",
+    );
+    expect(sourceChip(x(3, { assessor_id: 3, owner_name: "Dana" }), me)).toMatchObject({
+      lens: "private",
+      text: "From Dana's assessment of Trees v1 · as it stands",
+    });
   });
 });
 
@@ -184,23 +266,53 @@ describe("split preview", () => {
     expect(splitCounts(100, 0, 0)).toEqual({ train: 100, valid: 0, test: 0 });
   });
   it("says how many rows the row rules leave, and the kept rows without a target", () => {
-    const base = { rows: 71_236, kept: 71_236, removed: {}, missing_target: 0, split_rows: 71_236, groups: null, split: null, split_error: null };
+    const base = {
+      rows: 71_236,
+      kept: 71_236,
+      removed: {},
+      missing_target: 0,
+      split_rows: 71_236,
+      groups: null,
+      split: null,
+      split_error: null,
+    };
     expect(rowsSentence(base)).toBe("71,236 rows");
-    expect(rowsSentence({ ...base, kept: 69_990, split_rows: 69_990 })).toBe("69,990 rows after the row rules (1,246 left out)");
-    expect(rowsSentence({ ...base, missing_target: 1 })).toBe("71,236 rows; 1 of them has no target value and stays out of the split");
+    expect(rowsSentence({ ...base, kept: 69_990, split_rows: 69_990 })).toBe(
+      "69,990 rows after the row rules (1,246 left out)",
+    );
+    expect(rowsSentence({ ...base, missing_target: 1 })).toBe(
+      "71,236 rows; 1 of them has no target value and stays out of the split",
+    );
   });
 });
 
 describe("splitPreview", () => {
-  const r = { rows: 1030, kept: 991, removed: {}, missing_target: 0, split_rows: 991, groups: 13, split: null, split_error: null };
+  const r = {
+    rows: 1030,
+    kept: 991,
+    removed: {},
+    missing_target: 0,
+    split_rows: 991,
+    groups: 13,
+    split: null,
+    split_error: null,
+  };
   it("shows the server's exact split, groups included", () => {
-    expect(splitPreview({ ...r, split: { train: 843, valid: 88, test: 60 } }, 1030, 0.15, 0.15, true))
-      .toEqual({ counts: { train: 843, valid: 88, test: 60 }, about: false });
+    expect(splitPreview({ ...r, split: { train: 843, valid: 88, test: 60 } }, 1030, 0.15, 0.15, true)).toEqual({
+      counts: { train: 843, valid: 88, test: 60 },
+      about: false,
+    });
   });
   it("estimates from the rows to split without it, as about for a grouped split", () => {
-    expect(splitPreview(r, 1030, 0.15, 0.15, true)).toEqual({ counts: { train: 693, valid: 149, test: 149 }, about: true });
+    expect(splitPreview(r, 1030, 0.15, 0.15, true)).toEqual({
+      counts: { train: 693, valid: 149, test: 149 },
+      about: true,
+    });
     expect(splitPreview(r, 1030, 0.15, 0.15, false).about).toBe(false);
-    expect(splitPreview(undefined, 100, 0.2, 0, false)).toEqual({ counts: { train: 80, valid: 20, test: 0 }, about: false });
+    expect(splitPreview(undefined, 100, 0.2, 0, false)).toEqual({
+      counts: { train: 80, valid: 20, test: 0 },
+      about: false,
+    });
     expect(splitPreview(undefined, null, 0.2, 0, false)).toEqual({ counts: null, about: false });
   });
 });

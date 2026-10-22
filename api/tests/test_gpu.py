@@ -1,4 +1,5 @@
 """GPU detection, device validation and CUDA params. No GPU needed: nvidia-smi and the probe are faked."""
+
 import subprocess
 
 import pytest
@@ -76,8 +77,14 @@ def test_gpu_present_but_cpu_build(monkeypatch):
 def test_gpu_usable(monkeypatch):
     fake_smi(monkeypatch)
     monkeypatch.setattr(gpu, "_probe_xgboost", lambda: None)
-    assert gpu.detect() == {"name": "NVIDIA GeForce RTX 5060 Ti", "memory_mb": 16311, "driver": "580.95.05",
-                            "count": 1, "available": True, "reason": None}
+    assert gpu.detect() == {
+        "name": "NVIDIA GeForce RTX 5060 Ti",
+        "memory_mb": 16311,
+        "driver": "580.95.05",
+        "count": 1,
+        "available": True,
+        "reason": None,
+    }
     assert gpu.gpu_available()
 
 
@@ -92,14 +99,19 @@ def test_detection_is_cached(monkeypatch):
 
 def test_probe_reports_silent_cpu_fallback(monkeypatch):
     monkeypatch.setattr(gpu, "xgboost_cuda_build", lambda: True)
-    monkeypatch.setattr(gpu.subprocess, "run",
-                        lambda *a, **k: subprocess.CompletedProcess(a[0], 0, stdout="cpu\n", stderr=""))
+    monkeypatch.setattr(
+        gpu.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a[0], 0, stdout="cpu\n", stderr="")
+    )
     assert "fell back to cpu" in gpu._probe_xgboost()
-    monkeypatch.setattr(gpu.subprocess, "run",
-                        lambda *a, **k: subprocess.CompletedProcess(a[0], 0, stdout="cuda:0\n", stderr=""))
+    monkeypatch.setattr(
+        gpu.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a[0], 0, stdout="cuda:0\n", stderr="")
+    )
     assert gpu._probe_xgboost() is None
-    monkeypatch.setattr(gpu.subprocess, "run",
-                        lambda *a, **k: subprocess.CompletedProcess(a[0], 1, stdout="", stderr="x\nCUDA error 35"))
+    monkeypatch.setattr(
+        gpu.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess(a[0], 1, stdout="", stderr="x\nCUDA error 35"),
+    )
     assert gpu._probe_xgboost().endswith("CUDA error 35")
 
 

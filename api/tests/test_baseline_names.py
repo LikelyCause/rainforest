@@ -1,17 +1,18 @@
 """Baseline names: one optional name per baseline (model type) of a dataset, shared by its versions, shown in every
 label. Needs RAINFOREST_TEST_DATABASE_URL."""
+
 import pytest
 
-from .team_helpers import app_, people  # noqa: F401  (fixtures)
-from .team_helpers import finalized_trees, start, upload
+from .team_helpers import app_, finalized_trees, people, start, upload  # noqa: F401  (fixtures)
 
 
 def _name(ds_id: int, family: str, name: str) -> None:
     from app.db import connection
 
     with connection() as conn:
-        conn.execute("INSERT INTO meta.baseline_names (dataset_id, family, name) VALUES (%s, %s, %s)",
-                     (ds_id, family, name))
+        conn.execute(
+            "INSERT INTO meta.baseline_names (dataset_id, family, name) VALUES (%s, %s, %s)", (ds_id, family, name)
+        )
 
 
 def test_labels_use_the_name(people):
@@ -73,7 +74,10 @@ def test_every_baseline_payload_shows_the_name(people):
     r = lead.post(f"/api/datasets/{i}/exports", json={})
     assert r.status_code == 202, r.text
     assert r.json()["experiment_name"] == "Team · Dropout risk v1"
-    assert next(e for e in lead.get(f"/api/datasets/{i}/exports").json() if e["id"] == r.json()["id"])["recipe_name"] == "Dropout risk"
+    assert (
+        next(e for e in lead.get(f"/api/datasets/{i}/exports").json() if e["id"] == r.json()["id"])["recipe_name"]
+        == "Dropout risk"
+    )
     team_x = next(x for x in lead.get(f"/api/datasets/{i}/experiments").json() if x["is_default"])
     assert team_x["recipe_name"] == "Dropout risk"
     other = upload(lead)
@@ -169,7 +173,9 @@ def test_deleting_a_dataset_deletes_its_names(people):
 def test_a_names_case_survives_in_lowercased_messages(people):
     from app import recipes
 
-    assert recipes.label({"family": "tree", "version": 2, "name": "Dropout risk"}, lower=True) == "Dropout risk v2 (Trees)"
+    assert (
+        recipes.label({"family": "tree", "version": 2, "name": "Dropout risk"}, lower=True) == "Dropout risk v2 (Trees)"
+    )
     assert recipes.label({"family": "tree", "version": 2, "name": None}, lower=True) == "trees baseline v2"
 
 
@@ -180,8 +186,16 @@ def test_a_taken_name_is_reported_as_stored_and_patch_needs_a_name(people):
     ds = upload(lead)
     _start(lead, ds, "linear", "Dropout risk")
     submit_and_finalize(lead, ds)
-    r = lead.post(f"/api/datasets/{ds['id']}/baselines", json={
-        "family": "tree", "start": "scratch", "targets": ["y"], "assessors": [lead.user["id"]], "name": "dropout RISK"})
+    r = lead.post(
+        f"/api/datasets/{ds['id']}/baselines",
+        json={
+            "family": "tree",
+            "start": "scratch",
+            "targets": ["y"],
+            "assessors": [lead.user["id"]],
+            "name": "dropout RISK",
+        },
+    )
     assert r.status_code == 422 and "'Dropout risk'" in r.json()["detail"]
     assert lead.patch(f"/api/datasets/{ds['id']}/baselines/linear", json={}).status_code == 422
     assert _names(lead, ds) == {"linear": "Dropout risk"}

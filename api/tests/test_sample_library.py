@@ -1,10 +1,10 @@
 """The sample library: real datasets that ship with the app. Needs RAINFOREST_TEST_DATABASE_URL for the API part."""
+
 import polars as pl
 
 from app.sample_library import LIBRARY, path_of
 
-from .team_helpers import app_, people  # noqa: F401  (fixtures)
-from .team_helpers import fields, wait
+from .team_helpers import app_, fields, people, wait  # noqa: F401  (fixtures)
 
 
 def test_every_entry_has_its_file_and_targets():
@@ -31,8 +31,9 @@ def test_library_lists_its_datasets_and_adds_one(people):
 def test_tab_separated_uploads_are_read(people):
     lead = people["lead"]
     tsv = "a\tb\ty\n" + "".join(f"{i}\t{i % 3}\t{'xy'[i % 2]}\n" for i in range(200))
-    r = lead.post("/api/datasets/upload", files={"file": ("t.tsv", tsv, "text/tab-separated-values")},
-                  data={"targets": "y"})
+    r = lead.post(
+        "/api/datasets/upload", files={"file": ("t.tsv", tsv, "text/tab-separated-values")}, data={"targets": "y"}
+    )
     assert r.status_code == 202, r.text
     ds = wait(lambda: (d := lead.get(f"/api/datasets/{r.json()['id']}").json())["status"] in ("ready", "failed") and d)
     assert ds["status"] == "ready" and set(fields(lead, ds)) == {"a", "b", "y"}

@@ -20,7 +20,9 @@ describe("reuseGroups", () => {
   it("groups reopened fields by reason in a fixed order, keeping field order within each", () => {
     const g = reuseGroups(summary);
     expect(g.reopened.map((x) => [x.reason, x.fields.map((f) => f.name)])).toEqual([
-      ["new", ["w2", "n"]], ["type_changed", ["x"]], ["drift", ["z"]],
+      ["new", ["w2", "n"]],
+      ["type_changed", ["x"]],
+      ["drift", ["z"]],
     ]);
     expect(g.carried).toEqual(["c", "y"]);
     expect(g.missing).toEqual(["w"]);
@@ -34,8 +36,12 @@ describe("reuseGroups", () => {
 
 describe("reasonDetail", () => {
   it("shows the numbers behind drift", () => {
-    expect(reasonDetail(summary.reopened[1])).toBe("missing 0.0% → 33.5% (+33.5 pts) · distinct values 100 → 250 (×2.50)");
-    expect(reasonDetail({ name: "q", reason: "drift", drift: { null_pct: [0.4, 0.2] } })).toBe("missing 40.0% → 20.0% (−20.0 pts)");
+    expect(reasonDetail(summary.reopened[1])).toBe(
+      "missing 0.0% → 33.5% (+33.5 pts) · distinct values 100 → 250 (×2.50)",
+    );
+    expect(reasonDetail({ name: "q", reason: "drift", drift: { null_pct: [0.4, 0.2] } })).toBe(
+      "missing 40.0% → 20.0% (−20.0 pts)",
+    );
   });
 
   it("names the type change and passes problems through", () => {
@@ -47,10 +53,12 @@ describe("reasonDetail", () => {
 describe("fmtChange", () => {
   it("formats decision and per-family setting changes", () => {
     expect(fmtChange({ key: "action", family: null, before: "keep", after: "drop" })).toBe("Decision: keep → drop");
-    expect(fmtChange({ key: "imputation", family: "tree", before: "none", after: "mean" }, () => "Trees"))
-      .toBe("Trees · Missing values: none → mean");
-    expect(fmtChange({ key: "semantic_type", family: null, before: "numeric_continuous", after: "numeric_discrete" }))
-      .toBe("Type: numeric continuous → numeric discrete");
+    expect(fmtChange({ key: "imputation", family: "tree", before: "none", after: "mean" }, () => "Trees")).toBe(
+      "Trees · Missing values: none → mean",
+    );
+    expect(
+      fmtChange({ key: "semantic_type", family: null, before: "numeric_continuous", after: "numeric_discrete" }),
+    ).toBe("Type: numeric continuous → numeric discrete");
   });
 
   it("formats empty, boolean and object values", () => {
@@ -62,9 +70,21 @@ describe("fmtChange", () => {
 });
 
 const field = (name: string, extra: Partial<FieldListItem> = {}): FieldListItem => ({
-  id: name.length, ordinal: 0, name, inferred_type: "numeric_continuous", inference_confidence: 0.9, is_target: false,
-  null_pct: 0, n_unique: 10, max_target_assoc: 0.1, leakage: false, action: "keep", semantic_type: "numeric_continuous",
-  reviewed: true, source: "suggested", ...extra,
+  id: name.length,
+  ordinal: 0,
+  name,
+  inferred_type: "numeric_continuous",
+  inference_confidence: 0.9,
+  is_target: false,
+  null_pct: 0,
+  n_unique: 10,
+  max_target_assoc: 0.1,
+  leakage: false,
+  action: "keep",
+  semantic_type: "numeric_continuous",
+  reviewed: true,
+  source: "suggested",
+  ...extra,
 });
 
 describe("pickable", () => {
@@ -88,8 +108,12 @@ describe("startLabel", () => {
 
 describe("target task changes", () => {
   it("reads as Predict as", () => {
-    expect(fmtChange({ key: "target_task", family: null, before: "classes", after: "regression" })).toBe("Predict as: Classes → Number");
-    expect(fmtChange({ key: "target_bins", family: null, before: null, after: { k: 4 } })).toBe("Bands: — → 4 equal-sized");
+    expect(fmtChange({ key: "target_task", family: null, before: "classes", after: "regression" })).toBe(
+      "Predict as: Classes → Number",
+    );
+    expect(fmtChange({ key: "target_bins", family: null, before: null, after: { k: 4 } })).toBe(
+      "Bands: — → 4 equal-sized",
+    );
   });
 });
 
@@ -98,8 +122,14 @@ describe("builtFrom", () => {
   it("names the version, the reused baseline or the suggestions", () => {
     expect(builtFrom(v)).toBe("the suggestions");
     expect(builtFrom({ ...v, parent_id: 3, parent_version: 1, parent_family: "tree" })).toBe("Trees baseline v1");
-    expect(builtFrom({ ...v, parent_id: 3, parent_version: 2, parent_family: "tree", parent_name: "Dropout risk" })).toBe("Dropout risk v2 (Trees)");
-    expect(builtFrom({ ...v, reuse: { ...summary, source: { ...summary.source, family: "linear" } } })).toBe("Reused Linear baseline v3 of Churn (since deleted)");
-    expect(builtFrom({ ...v, reuse: { ...summary, source: { ...summary.source, family: "linear" } } }, true)).toBe("reused Linear baseline v3 of Churn (since deleted)");
+    expect(
+      builtFrom({ ...v, parent_id: 3, parent_version: 2, parent_family: "tree", parent_name: "Dropout risk" }),
+    ).toBe("Dropout risk v2 (Trees)");
+    expect(builtFrom({ ...v, reuse: { ...summary, source: { ...summary.source, family: "linear" } } })).toBe(
+      "Reused Linear baseline v3 of Churn (since deleted)",
+    );
+    expect(builtFrom({ ...v, reuse: { ...summary, source: { ...summary.source, family: "linear" } } }, true)).toBe(
+      "reused Linear baseline v3 of Churn (since deleted)",
+    );
   });
 });

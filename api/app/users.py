@@ -1,5 +1,6 @@
 """Users: lookups for the session check, accounts defined in .env, OIDC provisioning, and the edits leads make on the
 Team page."""
+
 from __future__ import annotations
 
 import re
@@ -68,7 +69,10 @@ def sync_accounts(conn, accounts: list[Account]) -> dict[str, list[str]]:
     conn.execute("LOCK TABLE meta.users IN SHARE ROW EXCLUSIVE MODE")
     done: dict[str, list[str]] = {"created": [], "updated": [], "deactivated": [], "reactivated": []}
     for a in accounts:
-        if a.claim_id is not None and conn.execute("SELECT 1 FROM meta.users WHERE key = %s", (a.key,)).fetchone() is None:
+        if (
+            a.claim_id is not None
+            and conn.execute("SELECT 1 FROM meta.users WHERE key = %s", (a.key,)).fetchone() is None
+        ):
             # A claim that can't be honoured would quietly make a fresh account and deactivate the one meant, so it
             # stops the start-up instead (the caller's transaction rolls everything back).
             target = conn.execute("SELECT key FROM meta.users WHERE id = %s", (a.claim_id,)).fetchone()
@@ -83,9 +87,11 @@ def sync_accounts(conn, accounts: list[Account]) -> dict[str, list[str]]:
             done["created"].append(a.key)
             continue
         if (row["name"], row["role"]) != (a.name, a.role):
-            conn.execute("""UPDATE meta.users SET name = %s, role = %s,
+            conn.execute(
+                """UPDATE meta.users SET name = %s, role = %s,
                                    session_version = session_version + (role <> %s)::int WHERE id = %s""",
-                         (a.name, a.role, a.role, row["id"]))
+                (a.name, a.role, a.role, row["id"]),
+            )
             done["updated"].append(a.key)
         if not row["active"]:
             conn.execute("UPDATE meta.users SET active = true WHERE id = %s", (row["id"],))
@@ -93,7 +99,8 @@ def sync_accounts(conn, accounts: list[Account]) -> dict[str, list[str]]:
     gone = conn.execute(
         """UPDATE meta.users SET active = false, session_version = session_version + 1
             WHERE active AND (key IS NULL OR NOT key = ANY(%s)) RETURNING coalesce(key, name) AS k""",
-        ([a.key for a in accounts],)).fetchall()
+        ([a.key for a in accounts],),
+    ).fetchall()
     done["deactivated"] = [r["k"] for r in gone]
     return done
 
@@ -139,9 +146,13 @@ def get(user_id: int) -> dict | None:
 
 def pickable() -> list[dict]:
     """The picker's accounts: leads first, then members, then viewers, each by name."""
-    return [public(r) for r in fetch_all(
-        """SELECT id, name, role, key, avatar FROM meta.users WHERE active
-            ORDER BY array_position(ARRAY['lead', 'member', 'viewer'], role), lower(name), id""")]
+    return [
+        public(r)
+        for r in fetch_all(
+            """SELECT id, name, role, key, avatar FROM meta.users WHERE active
+            ORDER BY array_position(ARRAY['lead', 'member', 'viewer'], role), lower(name), id"""
+        )
+    ]
 
 
 def list_all() -> list[dict]:
@@ -149,8 +160,11 @@ def list_all() -> list[dict]:
 
 
 def create(name: str, email: str | None, role: str) -> dict:
-    return public(fetch_one(f"INSERT INTO meta.users (name, email, role) VALUES (%s, %s, %s) RETURNING {LIST_COLS}",
-                            (name, email, role)))
+    return public(
+        fetch_one(
+            f"INSERT INTO meta.users (name, email, role) VALUES (%s, %s, %s) RETURNING {LIST_COLS}", (name, email, role)
+        )
+    )
 
 
 def update(user_id: int, changes: dict) -> dict:
@@ -163,25 +177,29 @@ def update(user_id: int, changes: dict) -> dict:
             raise HTTPException(404, "User not found")
         new = {**row, **changes}
         if row["role"] == "lead" and row["active"] and (new["role"] != "lead" or not new["active"]):
-            others = conn.execute("SELECT count(*) AS n FROM meta.users WHERE role = 'lead' AND active AND id <> %s",
-                                  (user_id,)).fetchone()["n"]
+            others = conn.execute(
+                "SELECT count(*) AS n FROM meta.users WHERE role = 'lead' AND active AND id <> %s", (user_id,)
+            ).fetchone()["n"]
             if others == 0:
                 raise HTTPException(409, "This is the only active lead. Make someone else a lead first.")
         bump = new["role"] != row["role"] or (row["active"] and not new["active"])
-        return public(conn.execute(
-            f"""UPDATE meta.users SET name = %s, email = %s, role = %s, active = %s,
+        return public(
+            conn.execute(
+                f"""UPDATE meta.users SET name = %s, email = %s, role = %s, active = %s,
                        session_version = session_version + %s
                  WHERE id = %s RETURNING {LIST_COLS}""",
-            (new["name"], new["email"], new["role"], new["active"], int(bump), user_id),
-        ).fetchone())
+                (new["name"], new["email"], new["role"], new["active"], int(bump), user_id),
+            ).fetchone()
+        )
 
 
 def sign_in_oidc(subject: str, name: str, email: str | None, role: str | None) -> dict:
     """Find or create the user for an ID token's subject and refresh their name, email and role from it.
     `role` None (in neither group) refuses the sign-in and ends any sessions the user still has."""
     with connection() as conn:
-        row = conn.execute("SELECT id, active, role FROM meta.users WHERE oidc_subject = %s FOR UPDATE",
-                           (subject,)).fetchone()
+        row = conn.execute(
+            "SELECT id, active, role FROM meta.users WHERE oidc_subject = %s FOR UPDATE", (subject,)
+        ).fetchone()
         if row is None:
             if role is None:
                 raise SignInRefused("no_group")

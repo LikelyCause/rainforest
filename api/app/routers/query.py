@@ -21,45 +21,89 @@ router = APIRouter(prefix="/api", tags=["query"])
 
 # Columns of meta.v_fields that the structured filter may touch, with their kind.
 QUERYABLE: dict[str, str] = {
-    "name": "text", "ordinal": "num", "physical_dtype": "text", "inferred_type": "text",
-    "inference_confidence": "num", "is_target": "bool", "row_count": "num", "null_count": "num",
-    "null_pct": "num", "n_unique": "num", "unique_pct": "num", "mean": "num", "std": "num",
-    "min_value": "num", "max_value": "num", "median": "num", "skewness": "num", "kurtosis": "num",
-    "zeros_pct": "num", "outlier_pct": "num", "top_value": "text", "top_value_pct": "num",
-    "avg_length": "num", "max_target_assoc": "num", "action": "text", "semantic_type": "text",
-    "imputation": "text", "transform": "text", "scaling": "text", "encoding": "text",
-    "add_missing_indicator": "bool", "reviewed": "bool", "leakage_flag": "bool", "model_family": "text",
-    "settings_source": "text", "decision_source": "text", "notes": "text", "suggested_action": "text",
+    "name": "text",
+    "ordinal": "num",
+    "physical_dtype": "text",
+    "inferred_type": "text",
+    "inference_confidence": "num",
+    "is_target": "bool",
+    "row_count": "num",
+    "null_count": "num",
+    "null_pct": "num",
+    "n_unique": "num",
+    "unique_pct": "num",
+    "mean": "num",
+    "std": "num",
+    "min_value": "num",
+    "max_value": "num",
+    "median": "num",
+    "skewness": "num",
+    "kurtosis": "num",
+    "zeros_pct": "num",
+    "outlier_pct": "num",
+    "top_value": "text",
+    "top_value_pct": "num",
+    "avg_length": "num",
+    "max_target_assoc": "num",
+    "action": "text",
+    "semantic_type": "text",
+    "imputation": "text",
+    "transform": "text",
+    "scaling": "text",
+    "encoding": "text",
+    "add_missing_indicator": "bool",
+    "reviewed": "bool",
+    "leakage_flag": "bool",
+    "model_family": "text",
+    "settings_source": "text",
+    "decision_source": "text",
+    "notes": "text",
+    "suggested_action": "text",
 }
 
 SQL_EXAMPLES = [
-    {"title": "All text fields",
-     "sql": "SELECT name, null_pct, avg_length FROM meta.v_fields\nWHERE dataset_id = :dataset AND inferred_type = 'text'"},
-    {"title": "Fields with > 20% missing",
-     "sql": "SELECT name, inferred_type, round(null_pct::numeric, 3) AS null_pct\nFROM meta.v_fields\n"
-            "WHERE dataset_id = :dataset AND null_pct > 0.2\nORDER BY null_pct DESC"},
-    {"title": "Most target-associated fields",
-     "sql": "SELECT field_name, other_field_name AS target, method, round(value::numeric, 3) AS value\n"
-            "FROM meta.v_correlations\nWHERE dataset_id = :dataset AND other_is_target\nORDER BY strength DESC LIMIT 25"},
-    {"title": "Highly skewed numerics",
-     "sql": "SELECT name, skewness, transform, scaling FROM meta.v_fields\n"
-            "WHERE dataset_id = :dataset AND abs(skewness) > 2 ORDER BY abs(skewness) DESC"},
-    {"title": "Redundant pairs (|assoc| > 0.8)",
-     "sql": "SELECT field_name, other_field_name, method, round(value::numeric, 3) AS value\n"
-            "FROM meta.v_correlations\nWHERE dataset_id = :dataset AND strength > 0.8 AND field_id < other_field_id\n"
-            "ORDER BY strength DESC"},
-    {"title": "Decisions I changed from the suggestion",
-     "sql": "SELECT name, action, semantic_type, imputation, scaling, encoding, decided_at\n"
-            "FROM meta.v_fields\nWHERE dataset_id = :dataset AND decision_source = 'user'\nORDER BY decided_at DESC"},
-    {"title": "Compare model runs (test split)",
-     "sql": "SELECT model, run_id, target, metric, round(value::numeric, 4) AS value\nFROM meta.v_model_metrics\n"
-            "WHERE dataset_id = :dataset AND split = 'test' AND metric IN ('roc_auc', 'roc_auc_ovr_macro', 'accuracy', 'r2', 'rmse')\n"
-            "ORDER BY target, metric, value DESC"},
-    {"title": "Settings across model families",
-     "sql": "SELECT name, family, imputation, transform, scaling, encoding, source\nFROM meta.v_field_settings\n"
-            "WHERE dataset_id = :dataset AND action = 'keep'\nORDER BY name, family LIMIT 300"},
-    {"title": "Raw data peek",
-     "sql": "SELECT * FROM raw.ds_:dataset LIMIT 100"},
+    {
+        "title": "All text fields",
+        "sql": "SELECT name, null_pct, avg_length FROM meta.v_fields\nWHERE dataset_id = :dataset AND inferred_type = 'text'",
+    },
+    {
+        "title": "Fields with > 20% missing",
+        "sql": "SELECT name, inferred_type, round(null_pct::numeric, 3) AS null_pct\nFROM meta.v_fields\n"
+        "WHERE dataset_id = :dataset AND null_pct > 0.2\nORDER BY null_pct DESC",
+    },
+    {
+        "title": "Most target-associated fields",
+        "sql": "SELECT field_name, other_field_name AS target, method, round(value::numeric, 3) AS value\n"
+        "FROM meta.v_correlations\nWHERE dataset_id = :dataset AND other_is_target\nORDER BY strength DESC LIMIT 25",
+    },
+    {
+        "title": "Highly skewed numerics",
+        "sql": "SELECT name, skewness, transform, scaling FROM meta.v_fields\n"
+        "WHERE dataset_id = :dataset AND abs(skewness) > 2 ORDER BY abs(skewness) DESC",
+    },
+    {
+        "title": "Redundant pairs (|assoc| > 0.8)",
+        "sql": "SELECT field_name, other_field_name, method, round(value::numeric, 3) AS value\n"
+        "FROM meta.v_correlations\nWHERE dataset_id = :dataset AND strength > 0.8 AND field_id < other_field_id\n"
+        "ORDER BY strength DESC",
+    },
+    {
+        "title": "Decisions I changed from the suggestion",
+        "sql": "SELECT name, action, semantic_type, imputation, scaling, encoding, decided_at\n"
+        "FROM meta.v_fields\nWHERE dataset_id = :dataset AND decision_source = 'user'\nORDER BY decided_at DESC",
+    },
+    {
+        "title": "Compare model runs (test split)",
+        "sql": "SELECT model, run_id, target, metric, round(value::numeric, 4) AS value\nFROM meta.v_model_metrics\n"
+        "WHERE dataset_id = :dataset AND split = 'test' AND metric IN ('roc_auc', 'roc_auc_ovr_macro', 'accuracy', 'r2', 'rmse')\n"
+        "ORDER BY target, metric, value DESC",
+    },
+    {
+        "title": "Settings across model families",
+        "sql": "SELECT name, family, imputation, transform, scaling, encoding, source\nFROM meta.v_field_settings\n"
+        "WHERE dataset_id = :dataset AND action = 'keep'\nORDER BY name, family LIMIT 300",
+    },
+    {"title": "Raw data peek", "sql": "SELECT * FROM raw.ds_:dataset LIMIT 100"},
 ]
 
 
@@ -142,8 +186,9 @@ def run_sql(req: SqlRequest) -> dict:
             try:
                 with conn.transaction(force_rollback=True):
                     conn.execute("SET TRANSACTION READ ONLY")
-                    conn.execute(sql.SQL("SET LOCAL statement_timeout = {}").format(
-                        sql.Literal(f"{s.sql_timeout_ms}ms")))
+                    conn.execute(
+                        sql.SQL("SET LOCAL statement_timeout = {}").format(sql.Literal(f"{s.sql_timeout_ms}ms"))
+                    )
                     # DECLARE goes over the extended protocol, so the server rejects a second statement
                     # however it is hidden, and DECLARE only takes a query (SELECT, WITH, VALUES, TABLE).
                     # FETCH then pulls just the rows shown instead of the whole result.

@@ -1,5 +1,6 @@
 """Every catalogued model: its settings are real parameters of its estimators, its defaults are what trains, and the
 settings dry-fit cleanly for each kind of target."""
+
 import pytest
 
 from app.modeling.params import CATALOG, effective, setting_problems
@@ -30,10 +31,12 @@ def test_defaults_pass_their_rules_and_match_the_registry(key):
 def test_defaults_and_a_changed_setting_dry_fit(key):
     spec = MODELS[key]
     assert dry_fit_problem(spec, {}, ["binary", "multiclass", "regression"]) is None
-    changed = {"random_forest": {"max_features": 0.5, "class_weight": "balanced_subsample"},
-               "hist_gradient_boosting": {"loss": "quantile", "class_weight": "balanced"},
-               "mlp": {"hidden_layer_sizes": "64,32", "solver": "lbfgs", "max_iter": 50},
-               "logistic_regression": {"C": 0.1, "penalty": "elasticnet", "solver": "saga", "alpha": 3.0}}[key]
+    changed = {
+        "random_forest": {"max_features": 0.5, "class_weight": "balanced_subsample"},
+        "hist_gradient_boosting": {"loss": "quantile", "class_weight": "balanced"},
+        "mlp": {"hidden_layer_sizes": "64,32", "solver": "lbfgs", "max_iter": 50},
+        "logistic_regression": {"C": 0.1, "penalty": "elasticnet", "solver": "saga", "alpha": 3.0},
+    }[key]
     assert setting_problems(key, changed) == []
     assert dry_fit_problem(spec, changed, ["binary", "multiclass", "regression"]) is None
 

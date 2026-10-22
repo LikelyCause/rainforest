@@ -1,5 +1,6 @@
 """An in-process OpenID provider for tests, served through httpx.MockTransport: discovery, JWKS, and a token
 endpoint that checks the client secret, redirect URI and PKCE verifier before issuing a signed ID token."""
+
 from __future__ import annotations
 
 import base64
@@ -54,14 +55,17 @@ class FakeProvider:
     def handle(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if path.endswith("/.well-known/openid-configuration"):
-            return httpx.Response(200, json={
-                "issuer": self.issuer_in_discovery,
-                "authorization_endpoint": f"{ISSUER}/protocol/openid-connect/auth",
-                "token_endpoint": f"{ISSUER}/protocol/openid-connect/token",
-                "jwks_uri": f"{ISSUER}/protocol/openid-connect/certs",
-                "end_session_endpoint": f"{ISSUER}/protocol/openid-connect/logout",
-                "id_token_signing_alg_values_supported": ["RS256"],
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "issuer": self.issuer_in_discovery,
+                    "authorization_endpoint": f"{ISSUER}/protocol/openid-connect/auth",
+                    "token_endpoint": f"{ISSUER}/protocol/openid-connect/token",
+                    "jwks_uri": f"{ISSUER}/protocol/openid-connect/certs",
+                    "end_session_endpoint": f"{ISSUER}/protocol/openid-connect/logout",
+                    "id_token_signing_alg_values_supported": ["RS256"],
+                },
+            )
         if path.endswith("/certs"):
             return httpx.Response(200, json=self.jwks())
         if path.endswith("/token") and request.method == "POST":
@@ -78,12 +82,16 @@ class FakeProvider:
         if grant is None or form.get("grant_type") != "authorization_code":
             return httpx.Response(400, json={"error": "invalid_grant"})
         q = grant["query"]
-        challenge = base64.urlsafe_b64encode(
-            hashlib.sha256(form.get("code_verifier", "").encode()).digest()).decode().rstrip("=")
+        challenge = (
+            base64.urlsafe_b64encode(hashlib.sha256(form.get("code_verifier", "").encode()).digest())
+            .decode()
+            .rstrip("=")
+        )
         if q.get("code_challenge_method") != "S256" or challenge != q.get("code_challenge"):
             return httpx.Response(400, json={"error": "invalid_grant", "error_description": "PKCE verification failed"})
         if form.get("redirect_uri") != q.get("redirect_uri"):
             return httpx.Response(400, json={"error": "invalid_grant", "error_description": "redirect_uri mismatch"})
         claims = {"nonce": q.get("nonce"), **grant["claims"]}
-        return httpx.Response(200, json={"access_token": "at", "token_type": "Bearer",
-                                         "id_token": self.id_token(claims)})
+        return httpx.Response(
+            200, json={"access_token": "at", "token_type": "Bearer", "id_token": self.id_token(claims)}
+        )

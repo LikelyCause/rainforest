@@ -2,6 +2,7 @@
 
 `check(fraction, message)` reports progress and raises when the job has been superseded.
 """
+
 from __future__ import annotations
 
 import math
@@ -16,7 +17,15 @@ from sklearn.feature_selection import mutual_info_classif, mutual_info_regressio
 
 from ..jobs import cpu_threads
 from .prep import (
-    OTHER, SEED, AnalysisError, Column, NotEnough, Prepared, code_matrix, design_matrix, display_values,
+    OTHER,
+    SEED,
+    AnalysisError,
+    Column,
+    NotEnough,
+    Prepared,
+    code_matrix,
+    design_matrix,
+    display_values,
 )
 
 Check = Callable[[float, str], None]
@@ -55,8 +64,7 @@ def _need_rows(p: Prepared, minimum: int = MIN_ROWS) -> None:
 
 def _need_fields(p: Prepared, minimum: int) -> None:
     if len(p.columns) < minimum:
-        raise NotEnough("too_few_fields",
-                        f"Not enough usable fields: {len(p.columns)}, at least {minimum} needed.")
+        raise NotEnough("too_few_fields", f"Not enough usable fields: {len(p.columns)}, at least {minimum} needed.")
 
 
 def _target_classes_present(p: Prepared) -> None:
@@ -65,16 +73,23 @@ def _target_classes_present(p: Prepared) -> None:
 
 
 # ------------------------------------------------------------------------------------- map
-def run_map(p: Prepared, method: str = "tsne", perplexity: int = 30, n_neighbors: int = 15,
-            check: Check = _noop) -> dict:
+def run_map(
+    p: Prepared, method: str = "tsne", perplexity: int = 30, n_neighbors: int = 15, check: Check = _noop
+) -> dict:
     _need_fields(p, 2)
     _need_rows(p)
     if method == "tsne" and perplexity >= p.n:
-        raise NotEnough("too_few_rows", f"Not enough rows: t-SNE with perplexity {perplexity} needs more than "
-                                        f"{perplexity} rows; the sample has {p.n}.")
+        raise NotEnough(
+            "too_few_rows",
+            f"Not enough rows: t-SNE with perplexity {perplexity} needs more than "
+            f"{perplexity} rows; the sample has {p.n}.",
+        )
     if method == "umap" and n_neighbors >= p.n:
-        raise NotEnough("too_few_rows", f"Not enough rows: UMAP with {n_neighbors} neighbours needs more than "
-                                        f"{n_neighbors} rows; the sample has {p.n}.")
+        raise NotEnough(
+            "too_few_rows",
+            f"Not enough rows: UMAP with {n_neighbors} neighbours needs more than "
+            f"{n_neighbors} rows; the sample has {p.n}.",
+        )
     check(0.1, "Encoding features")
     X, _, owners = design_matrix(p.columns)
     pca = PCA(n_components=min(50, *X.shape), random_state=SEED).fit(X)
@@ -94,8 +109,9 @@ def run_map(p: Prepared, method: str = "tsne", perplexity: int = 30, n_neighbors
         Z = pca.transform(X) if X.shape[1] > 50 else X
         check(0.2, f"Running t-SNE on {p.n:,} rows")
         n_jobs = cpu_threads()
-        emb = TSNE(n_components=2, perplexity=perplexity, init="pca", learning_rate="auto",
-                   random_state=SEED, n_jobs=n_jobs).fit_transform(Z)
+        emb = TSNE(
+            n_components=2, perplexity=perplexity, init="pca", learning_rate="auto", random_state=SEED, n_jobs=n_jobs
+        ).fit_transform(Z)
     check(0.95, "Preparing points")
     if p.target_kind == "categorical":
         colour = [int(v) for v in p.y]
@@ -135,8 +151,10 @@ def run_tests(p: Prepared, check: Check = _noop) -> dict:
         ok = counts >= MIN_CLASS_ROWS
         excluded = [{"name": c, "n": int(n)} for c, n, good in zip(p.classes, counts, ok) if not good]
         if ok.sum() < 2:
-            raise NotEnough("single_class", f"Not enough classes: {p.target} needs at least two classes with "
-                                            f"{MIN_CLASS_ROWS}+ rows in the sample.")
+            raise NotEnough(
+                "single_class",
+                f"Not enough classes: {p.target} needs at least two classes with {MIN_CLASS_ROWS}+ rows in the sample.",
+            )
         rows = np.flatnonzero(ok[p.y])
         remap = np.cumsum(ok) - 1
         y = remap[p.y[rows]]
@@ -154,11 +172,13 @@ def run_tests(p: Prepared, check: Check = _noop) -> dict:
         with warnings.catch_warnings(), np.errstate(all="ignore"):
             warnings.simplefilter("ignore")
             if p.target_kind == "categorical":
-                row = (_numeric_vs_classes(x, y, classes) if col.kind == "numeric"
-                       else _levels_vs_classes(x, col.levels, y, classes))
+                row = (
+                    _numeric_vs_classes(x, y, classes)
+                    if col.kind == "numeric"
+                    else _levels_vs_classes(x, col.levels, y, classes)
+                )
             else:
-                row = (_numeric_vs_numeric(x, y) if col.kind == "numeric"
-                       else _levels_vs_numeric(x, col.levels, y))
+                row = _numeric_vs_numeric(x, y) if col.kind == "numeric" else _levels_vs_numeric(x, col.levels, y)
         if isinstance(row, str):
             skipped.append({"name": col.name, "reason": row})
             continue
@@ -182,8 +202,17 @@ def run_tests(p: Prepared, check: Check = _noop) -> dict:
 
 
 def _row(test: str, statistic, p, effect, effect_name: str, n: int, secondary: dict | None, detail: dict) -> dict:
-    return {"test": test, "statistic": _num(statistic), "p": _sig(p), "p_adj": None, "effect": _num(effect),
-            "effect_name": effect_name, "n": int(n), "secondary": secondary, "detail": detail}
+    return {
+        "test": test,
+        "statistic": _num(statistic),
+        "p": _sig(p),
+        "p_adj": None,
+        "effect": _num(effect),
+        "effect_name": effect_name,
+        "n": int(n),
+        "secondary": secondary,
+        "detail": detail,
+    }
 
 
 def _eta_squared(values: np.ndarray, groups: list[np.ndarray]) -> float | None:
@@ -218,8 +247,15 @@ def _box(label: str, g: np.ndarray) -> dict:
     q1, med, q3 = np.percentile(g, [25, 50, 75])
     iqr = q3 - q1
     inside = g[(g >= q1 - 1.5 * iqr) & (g <= q3 + 1.5 * iqr)]
-    return {"class": label, "n": int(g.size), "min": _num(inside.min()), "q1": _num(q1), "median": _num(med),
-            "q3": _num(q3), "max": _num(inside.max())}
+    return {
+        "class": label,
+        "n": int(g.size),
+        "min": _num(inside.min()),
+        "q1": _num(q1),
+        "median": _num(med),
+        "q3": _num(q3),
+        "max": _num(inside.max()),
+    }
 
 
 def _numeric_vs_classes(x: np.ndarray, y: np.ndarray, classes: list[str]) -> dict | str:
@@ -272,8 +308,16 @@ def _numeric_vs_numeric(x: np.ndarray, y: np.ndarray) -> dict | str:
     r, rp = stats.pearsonr(a, b)
     pick = np.random.default_rng(SEED).choice(a.size, size=min(SCATTER_POINTS, a.size), replace=False)
     detail = {"kind": "scatter", "points": [[_num(a[i]), _num(b[i])] for i in np.sort(pick)]}
-    return _row("spearman", rho, p, abs(float(rho)), "|ρ|", int(a.size),
-                {"test": "pearson", "statistic": _num(r), "p": _sig(rp)}, detail)
+    return _row(
+        "spearman",
+        rho,
+        p,
+        abs(float(rho)),
+        "|ρ|",
+        int(a.size),
+        {"test": "pearson", "statistic": _num(r), "p": _sig(rp)},
+        detail,
+    )
 
 
 def _levels_vs_numeric(x: np.ndarray, levels: list[str], y: np.ndarray) -> dict | str:
@@ -305,8 +349,9 @@ def run_importance(p: Prepared, check: Check = _noop) -> dict:
                 scores = mutual_info_classif(X, p.y, discrete_features=discrete, random_state=SEED, n_jobs=n_jobs)
             else:
                 m = ~np.isnan(p.y)
-                scores = mutual_info_regression(X[m], p.y[m], discrete_features=discrete, random_state=SEED,
-                                                n_jobs=n_jobs)
+                scores = mutual_info_regression(
+                    X[m], p.y[m], discrete_features=discrete, random_state=SEED, n_jobs=n_jobs
+                )
         mi = sorted(
             ({"field_id": c.field_id, "name": c.name, "value": _num(s)} for c, s in zip(p.columns, scores)),
             key=lambda r: -(r["value"] or 0.0),

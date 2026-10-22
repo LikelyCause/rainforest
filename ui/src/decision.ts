@@ -17,8 +17,8 @@ export function toInput(d: Decision | Suggestion, family: string): DecisionInput
     scaling: d.scaling,
     encoding: d.encoding,
     params: d.params ?? {},
-    target_task: "target_task" in d ? d.target_task ?? null : null,
-    target_bins: "target_bins" in d ? d.target_bins ?? null : null,
+    target_task: "target_task" in d ? (d.target_task ?? null) : null,
+    target_bins: "target_bins" in d ? (d.target_bins ?? null) : null,
     notes: "notes" in d ? d.notes : null,
     reviewed: "reviewed" in d ? d.reviewed : false,
   };
@@ -46,13 +46,24 @@ export function retype(d: DecisionInput, type: string, catalog: OptionCatalog, s
   const encoding = pick("encoding");
   const imputation = pick("imputation");
   const nonFeature = catalog.non_feature_types.includes(type);
-  const fill = suggested ? sugg.impute_value ?? null
-    : LABELLED.has(type) ? (sameKind && d.impute_value ? d.impute_value : "__missing__")
-    : type === "text" ? (sameKind ? d.impute_value ?? "" : "")
-    : imputation === "constant" ? (fillCarries && isNumber(d.impute_value) ? d.impute_value : "0")
-    : null;
+  const fill = suggested
+    ? (sugg.impute_value ?? null)
+    : LABELLED.has(type)
+      ? sameKind && d.impute_value
+        ? d.impute_value
+        : "__missing__"
+      : type === "text"
+        ? sameKind
+          ? (d.impute_value ?? "")
+          : ""
+        : imputation === "constant"
+          ? fillCarries && isNumber(d.impute_value)
+            ? d.impute_value
+            : "0"
+          : null;
   // A task the new type can't take goes, so the API settles the type's default.
-  const keepTask = d.target_task !== null && (d.target_task === "classes" ? type !== "numeric_continuous" : NUMERIC.has(type));
+  const keepTask =
+    d.target_task !== null && (d.target_task === "classes" ? type !== "numeric_continuous" : NUMERIC.has(type));
   return {
     ...d,
     semantic_type: type,
@@ -64,13 +75,20 @@ export function retype(d: DecisionInput, type: string, catalog: OptionCatalog, s
     scaling: pick("scaling"),
     encoding,
     impute_value: fill,
-    params: suggested ? sugg.params : { ...(catalog.default_params[transform] ?? {}), ...(catalog.default_params[encoding] ?? {}) },
+    params: suggested
+      ? sugg.params
+      : { ...(catalog.default_params[transform] ?? {}), ...(catalog.default_params[encoding] ?? {}) },
     add_missing_indicator: NUMERIC.has(type) ? d.add_missing_indicator : false,
   };
 }
 
 /** Choosing another transform or encoding starts it from its default parameters; the other one's stay. */
-export function withOption(d: DecisionInput, dim: "transform" | "encoding", value: string, catalog: OptionCatalog): DecisionInput {
+export function withOption(
+  d: DecisionInput,
+  dim: "transform" | "encoding",
+  value: string,
+  catalog: OptionCatalog,
+): DecisionInput {
   const other = dim === "transform" ? d.encoding : d.transform;
   const names = new Set((catalog.settings[other] ?? []).map((s) => s.name));
   const kept = Object.fromEntries(Object.entries(d.params ?? {}).filter(([k]) => names.has(k)));
@@ -101,7 +119,10 @@ export function bandsText(task: TargetTask | null | undefined, bins: TargetBins 
 
 /** Cut points typed as "10, 25, 80": the numbers, or what's wrong with them (the API's rule). */
 export function parseEdges(text: string): number[] | string {
-  const parts = text.split(",").map((s) => s.trim()).filter(Boolean);
+  const parts = text
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   const nums = parts.map(Number);
   if (!parts.length || nums.some((n) => !Number.isFinite(n))) return "Enter numbers separated by commas";
   if (nums.length > 19) return "At most 19 cut points";

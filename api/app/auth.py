@@ -1,5 +1,6 @@
 """Sign-in (OIDC or pick-a-user), the session cookie, the `current_user` / `require_lead` dependencies, and the checks
 every request passes before reaching a route."""
+
 from __future__ import annotations
 
 import base64
@@ -33,8 +34,15 @@ STATE_COOKIE = "rf_oidc"
 SESSION_TTL = 7 * 24 * 3600
 STATE_TTL = 10 * 60
 OIDC_PATH = "/api/auth/oidc"
-OPEN_PATHS = {"/health", "/api/auth/config", "/api/auth/logout", "/api/auth/users", "/api/auth/pick",
-              f"{OIDC_PATH}/login", f"{OIDC_PATH}/callback"}
+OPEN_PATHS = {
+    "/health",
+    "/api/auth/config",
+    "/api/auth/logout",
+    "/api/auth/users",
+    "/api/auth/pick",
+    f"{OIDC_PATH}/login",
+    f"{OIDC_PATH}/callback",
+}
 CHECK_PATH = "/api/auth/check"
 UPLOAD_PATH = "/api/datasets/upload"
 AVATAR_UPLOAD = re.compile(r"/api/users/\d+/avatar")
@@ -45,26 +53,36 @@ LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 # A viewer reads only. These writes are reads in disguise (Explore, the field finder) or their own profile; every
 # other write is refused, the SQL console included (it reads every table) and any route added later.
-VIEWER_ALLOWED = [(m, re.compile(p)) for m, p in (
-    ("POST", r"/api/datasets/\d+/analyses"), ("POST", r"/api/datasets/\d+/fields/query"),
-    ("PUT", r"/api/users/\d+/avatar"), ("DELETE", r"/api/users/\d+/avatar"), ("PATCH", r"/api/auth/me"),
-)]
+VIEWER_ALLOWED = [
+    (m, re.compile(p))
+    for m, p in (
+        ("POST", r"/api/datasets/\d+/analyses"),
+        ("POST", r"/api/datasets/\d+/fields/query"),
+        ("PUT", r"/api/users/\d+/avatar"),
+        ("DELETE", r"/api/users/\d+/avatar"),
+        ("PATCH", r"/api/auth/me"),
+    )
+]
 # MLflow's UI loads runs, models and traces with POSTs that only search; a viewer may make those and no other.
-MLFLOW_SEARCH = re.compile(r"/mlflow/(ajax-)?api/2\.0/mlflow/"
-                           r"(runs/search|experiments/search|logged-models/search|traces/search|"
-                           r"metrics/get-history-bulk-interval)")
+MLFLOW_SEARCH = re.compile(
+    r"/mlflow/(ajax-)?api/2\.0/mlflow/"
+    r"(runs/search|experiments/search|logged-models/search|traces/search|"
+    r"metrics/get-history-bulk-interval)"
+)
 VIEWER_REFUSED = "Viewers can look but not change anything."
 
 
-def viewer_refused(user: dict, method: str, path: str, original_method: str | None = None,
-                   original_uri: str | None = None) -> bool:
+def viewer_refused(
+    user: dict, method: str, path: str, original_method: str | None = None, original_uri: str | None = None
+) -> bool:
     if user.get("role") != "viewer":
         return False
     if path == CHECK_PATH:  # nginx's auth_request for MLflow: judge the request it stands for
         unsafe = (original_method or method).upper() in UNSAFE_METHODS
         uri = (original_uri or "").split("?")[0]
-        return unsafe and not ((original_method or "").upper() == "POST" and ".." not in uri
-                               and MLFLOW_SEARCH.fullmatch(uri))
+        return unsafe and not (
+            (original_method or "").upper() == "POST" and ".." not in uri and MLFLOW_SEARCH.fullmatch(uri)
+        )
     return method in UNSAFE_METHODS and not any(m == method and p.fullmatch(path) for m, p in VIEWER_ALLOWED)
 
 
@@ -223,8 +241,9 @@ async def check_request(request: Request) -> JSONResponse | None:
     user = await run_in_threadpool(users.session_user, *ids) if ids else None
     if user is None:
         return JSONResponse({"detail": "Sign in required."}, 401)
-    if viewer_refused(user, request.method, path, request.headers.get("x-original-method"),
-                      request.headers.get("x-original-uri")):
+    if viewer_refused(
+        user, request.method, path, request.headers.get("x-original-method"), request.headers.get("x-original-uri")
+    ):
         return JSONResponse({"detail": VIEWER_REFUSED}, 403)
     request.state.user = user
     return None
@@ -268,10 +287,19 @@ LeadUser = Annotated[dict, Depends(require_lead)]
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-def _set_cookie(response: Response, request: Request, name: str, value: str, max_age: int, *,
-                samesite: str = "strict", path: str = "/") -> None:
-    response.set_cookie(name, value, max_age=max_age, path=path, httponly=True, samesite=samesite,
-                        secure=is_https(request))
+def _set_cookie(
+    response: Response,
+    request: Request,
+    name: str,
+    value: str,
+    max_age: int,
+    *,
+    samesite: str = "strict",
+    path: str = "/",
+) -> None:
+    response.set_cookie(
+        name, value, max_age=max_age, path=path, httponly=True, samesite=samesite, secure=is_https(request)
+    )
 
 
 def _sign_in(response: Response, request: Request, user: dict) -> None:
@@ -294,9 +322,14 @@ def _require_mode(mode: str) -> None:
 def auth_config() -> dict:
     """What the sign-in page needs before anyone is signed in."""
     s = get_settings()
-    return {"mode": s.auth_mode, "provider_name": s.oidc_provider_name if s.auth_mode == "oidc" else None,
-            "lead_group": s.lead_group, "member_group": s.member_group, "problem": config_problem(),
-            "accounts_from_env": users.managed_by_env()}
+    return {
+        "mode": s.auth_mode,
+        "provider_name": s.oidc_provider_name if s.auth_mode == "oidc" else None,
+        "lead_group": s.lead_group,
+        "member_group": s.member_group,
+        "problem": config_problem(),
+        "accounts_from_env": users.managed_by_env(),
+    }
 
 
 def _rename_refused() -> str | None:
@@ -358,9 +391,15 @@ def avatar(user_id: str, name: str) -> FileResponse:
     if path is None:
         raise HTTPException(404, "No such picture")
     # The name is the picture's hash, so a changed picture has a new URL and this one can be cached for good.
-    return FileResponse(path, media_type="image/webp", headers={
-        "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff",
-        "Content-Security-Policy": "default-src 'none'; sandbox"})
+    return FileResponse(
+        path,
+        media_type="image/webp",
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+        },
+    )
 
 
 # Pick mode ---------------------------------------------------------------------------------------
@@ -417,15 +456,22 @@ def oidc_login(request: Request, next: str | None = None) -> RedirectResponse:
         raise HTTPException(502, str(exc)) from exc
     response = RedirectResponse(url, status_code=303)
     # Lax, not Strict: the browser has to send it on the provider's cross-site redirect back to the callback.
-    _set_cookie(response, request, STATE_COOKIE,
-                _seal("oidc-state", {"s": state, "n": safe_next(next), "exp": int(time.time() + STATE_TTL)}),
-                STATE_TTL, samesite="lax", path=OIDC_PATH)
+    _set_cookie(
+        response,
+        request,
+        STATE_COOKIE,
+        _seal("oidc-state", {"s": state, "n": safe_next(next), "exp": int(time.time() + STATE_TTL)}),
+        STATE_TTL,
+        samesite="lax",
+        path=OIDC_PATH,
+    )
     return response
 
 
 @router.get("/oidc/callback")
-def oidc_callback(request: Request, state: str | None = None, code: str | None = None,
-                  error: str | None = None) -> RedirectResponse:
+def oidc_callback(
+    request: Request, state: str | None = None, code: str | None = None, error: str | None = None
+) -> RedirectResponse:
     _require_mode("oidc")
     pending = _open("oidc-state", request.cookies.get(STATE_COOKIE))
     if pending is None or not state or not hmac.compare_digest(str(pending.get("s")).encode(), state.encode()):

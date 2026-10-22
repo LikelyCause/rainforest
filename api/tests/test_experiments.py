@@ -1,6 +1,7 @@
 """Experiments against a real Postgres (RAINFOREST_TEST_DATABASE_URL): who sees a personal experiment in each phase
 (API and SQL console), what a personal export contains and that it rebuilds the same way, the default Team
 experiment, role checks, the Imported migration, and MLflow logging deferred until review opens."""
+
 import json
 from pathlib import Path
 
@@ -21,15 +22,17 @@ def _xp(client, ds, name, source=None):
 def _export(client, ds, xid=None, **body):
     r = client.post(f"/api/datasets/{ds['id']}/exports", json={**body, "experiment_id": xid})
     assert r.status_code == 202, r.text
-    exp = _wait(lambda: (x := client.get(f"/api/exports/{r.json()['id']}").json())["status"] in ("done", "failed")
-                and x)
+    exp = _wait(
+        lambda: (x := client.get(f"/api/exports/{r.json()['id']}").json())["status"] in ("done", "failed") and x
+    )
     assert exp["status"] == "done", exp["error"]
     return exp, json.loads((Path(exp["output_dir"]) / "manifest.json").read_text())
 
 
 def _train(client, exp):
-    r = client.post(f"/api/exports/{exp['id']}/runs", json={"model": "lightgbm", "cv": 0,
-                                                           "params": {"n_estimators": 10}})
+    r = client.post(
+        f"/api/exports/{exp['id']}/runs", json={"model": "lightgbm", "cv": 0, "params": {"n_estimators": 10}}
+    )
     assert r.status_code == 202, r.text
     run = _wait(lambda: (x := client.get(f"/api/runs/{r.json()['id']}").json())["status"] in ("done", "failed") and x)
     assert run["status"] == "done", run["error"]
@@ -46,8 +49,9 @@ def _sees(client, ds, xid, exp_id, run_id) -> dict[str, bool]:
     listed = next(x for x in client.get("/api/datasets").json() if x["id"] == d)
     sql = client.post("/api/sql", json={"sql": f"SELECT id FROM meta.experiments WHERE id = {xid}"}).json()
     sql_exp = client.post("/api/sql", json={"sql": f"SELECT id FROM meta.exports WHERE id = {exp_id}"}).json()
-    sql_run = client.post("/api/sql", json={"sql": f"SELECT run_id FROM meta.v_model_metrics WHERE run_id = {run_id}"}
-                          ).json()
+    sql_run = client.post(
+        "/api/sql", json={"sql": f"SELECT run_id FROM meta.v_model_metrics WHERE run_id = {run_id}"}
+    ).json()
     return {
         "list": xid in [x["id"] for x in client.get(f"/api/datasets/{d}/experiments").json()],
         "detail": client.get(f"/api/experiments/{xid}").status_code == 200,
@@ -78,8 +82,10 @@ def test_a_personal_experiment_is_private_while_assessing_then_shared(people):
         assert run["experiment_id"] == x["id"]
 
         def matrix():
-            return {who: _sees(cl, ds, x["id"], exp["id"], run["id"])
-                    for who, cl in (("owner", a), ("member", c), ("lead", lead))}
+            return {
+                who: _sees(cl, ds, x["id"], exp["id"], run["id"])
+                for who, cl in (("owner", a), ("member", c), ("lead", lead))
+            }
 
         seen = matrix()
         # The console has no notion of who asks, so it shows a private experiment to nobody, its owner included.
@@ -158,8 +164,10 @@ def test_carried_fields_of_a_reopened_version_take_the_team_values(people):
         _assign(lead, ds, a)
         assert _save(a, f["z"]["id"], action="drop").status_code == 200
         # Even if an assessment row of a locked field differed, the carried team value is what exports.
-        execute("UPDATE meta.assessments SET action = 'keep' WHERE recipe_id = %s AND user_id = %s AND field_id = %s",
-                (v2["id"], a.user["id"], f["x"]["id"]))
+        execute(
+            "UPDATE meta.assessments SET action = 'keep' WHERE recipe_id = %s AND user_id = %s AND field_id = %s",
+            (v2["id"], a.user["id"], f["x"]["id"]),
+        )
         x = _xp(a, ds, "A on v2")
         assert x["recipe_version"] == 2
         _, m = _export(a, ds, x["id"])
@@ -214,8 +222,10 @@ def test_role_checks(people):
         assert post(a, {"name": " ", "source": f"assessment:{rid}:{a.user['id']}"}).status_code == 422
         assert lead.post(f"/api/datasets/{ds['id']}/exports", json={"source": "assessment"}).status_code == 422
         x = _xp(a, ds, "A")
-        assert a.post(f"/api/datasets/{ds['id']}/exports",
-                      json={"experiment_id": x["id"], "source": "recipe"}).status_code == 422
+        assert (
+            a.post(f"/api/datasets/{ds['id']}/exports", json={"experiment_id": x["id"], "source": "recipe"}).status_code
+            == 422
+        )
         exp, _ = _export(a, ds, x["id"])
 
         for who in (a, b):
@@ -232,8 +242,7 @@ def test_role_checks(people):
         assert r.status_code == 200 and r.json()["archived_at"]
         assert a.post(f"/api/datasets/{ds['id']}/exports", json={"experiment_id": x["id"]}).status_code == 409
         assert a.post(f"/api/exports/{exp['id']}/runs", json={"cv": 0}).status_code == 409
-        assert a.post(f"/api/exports/{exp['id']}/runs",
-                      json={"cv": 0, "experiment_id": x["id"] + 1}).status_code == 422
+        assert a.post(f"/api/exports/{exp['id']}/runs", json={"cv": 0, "experiment_id": x["id"] + 1}).status_code == 422
         listed = a.get(f"/api/datasets/{ds['id']}/experiments").json()
         assert listed[-1]["id"] == x["id"], "archived experiments sort last"
         assert a.patch(f"/api/experiments/{x['id']}", json={"archived": False}).json()["archived_at"] is None
@@ -252,22 +261,36 @@ def test_existing_exports_and_runs_move_into_one_imported_experiment(people):
         with connection() as conn:
             rec = recipes.finalize(conn, recipes.current(conn, ds["id"]), lead.user["id"])
             # As before experiments: two exports and a run with no experiment.
-            ids = [conn.execute("""INSERT INTO meta.exports (dataset_id, status, model_family, config, recipe_id)
+            ids = [
+                conn.execute(
+                    """INSERT INTO meta.exports (dataset_id, status, model_family, config, recipe_id)
                                    VALUES (%s, 'done', 'tree', '{}', %s) RETURNING id""",
-                                (ds["id"], rec["id"])).fetchone()["id"] for _ in range(2)]
-            run = conn.execute("""INSERT INTO meta.model_runs (export_id, dataset_id, model, family, status)
+                    (ds["id"], rec["id"]),
+                ).fetchone()["id"]
+                for _ in range(2)
+            ]
+            run = conn.execute(
+                """INSERT INTO meta.model_runs (export_id, dataset_id, model, family, status)
                                   VALUES (%s, %s, 'lightgbm', 'tree', 'done') RETURNING id""",
-                               (ids[0], ds["id"])).fetchone()["id"]
+                (ids[0], ds["id"]),
+            ).fetchone()["id"]
             for _ in range(2):  # idempotent
                 conn.execute((MIGRATIONS_DIR / "010_experiments.sql").read_text())
         made = fetch_all("SELECT * FROM meta.experiments WHERE dataset_id = %s", (ds["id"],))
         assert len(made) == 1
         imp = made[0]
         assert (imp["name"], imp["source"], imp["owner"], imp["assessor_id"]) == (
-            "Imported", f"recipe:{rec['id']}", None, None)
-        assert {r["experiment_id"] for r in fetch_all("SELECT experiment_id FROM meta.exports WHERE id = ANY(%s)",
-                                                      (ids,))} == {imp["id"]}
-        assert fetch_one("SELECT experiment_id FROM meta.model_runs WHERE id = %s", (run,))["experiment_id"] == imp["id"]
+            "Imported",
+            f"recipe:{rec['id']}",
+            None,
+            None,
+        )
+        assert {
+            r["experiment_id"] for r in fetch_all("SELECT experiment_id FROM meta.exports WHERE id = ANY(%s)", (ids,))
+        } == {imp["id"]}
+        assert (
+            fetch_one("SELECT experiment_id FROM meta.model_runs WHERE id = %s", (run,))["experiment_id"] == imp["id"]
+        )
         assert fetch_all("SELECT * FROM meta.experiments WHERE dataset_id = %s", (other["id"],)) == []
         xs = a.get(f"/api/datasets/{ds['id']}/experiments").json()
         assert [(x["name"], x["export_count"], x["run_count"]) for x in xs] == [("Imported", 2, 1)]
@@ -300,8 +323,9 @@ def test_personal_runs_reach_mlflow_only_when_review_opens(people, mlflow_store)
         exp, _ = _export(a, ds, x["id"])
         run = _train(a, exp)
         assert run["report"]["mlflow_pending"] is True and run["mlflow_url"] is None
-        assert mlflow_store.search_experiments(
-            filter_string=f"tags.`rainforest.dataset_id` = '{ds['id']}'") == [], "nothing in MLflow while private"
+        assert mlflow_store.search_experiments(filter_string=f"tags.`rainforest.dataset_id` = '{ds['id']}'") == [], (
+            "nothing in MLflow while private"
+        )
         for who in (a, b):
             _review_all(who, ds)
             who.post(f"/api/datasets/{ds['id']}/assessment/submit")

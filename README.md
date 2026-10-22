@@ -165,6 +165,7 @@ Useful commands:
 | `make train EXPORT=<id>` | Train on an export from the command line (`MODEL=`, `DEVICE=` optional) |
 | `make psql` | Open psql as the database owner |
 | `make test-db` | Run the API tests against a throwaway Postgres |
+| `make lint` / `make format` | Lint, or format, the API and the UI |
 | `make clean` | Stop everything and **delete all data volumes** |
 
 The [Makefile](Makefile) has the rest.

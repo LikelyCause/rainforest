@@ -1,19 +1,33 @@
 """Export preprocessing: step names, binary encoding, text with a tiny vocabulary, imputation order, feature names."""
+
 import numpy as np
 import polars as pl
 import pyarrow.parquet as pq
 import pytest
 
 from app.semantics import suggest
-from app.transform import (FieldSpec, TextFeatures, build_preprocessor, coercion_exprs, readable_feature_names,
-                           run_export, to_pandas_frame)
+from app.transform import (
+    FieldSpec,
+    TextFeatures,
+    build_preprocessor,
+    coercion_exprs,
+    readable_feature_names,
+    run_export,
+    to_pandas_frame,
+)
 
 
 def _spec(name, t, family="tree", **kw):
     s = suggest(t, {}, False, family)
-    base = dict(imputation=s["imputation"], impute_value=s.get("impute_value"),
-                add_missing_indicator=s["add_missing_indicator"], transform=s["transform"], scaling=s["scaling"],
-                encoding=s["encoding"], params=s["params"])
+    base = dict(
+        imputation=s["imputation"],
+        impute_value=s.get("impute_value"),
+        add_missing_indicator=s["add_missing_indicator"],
+        transform=s["transform"],
+        scaling=s["scaling"],
+        encoding=s["encoding"],
+        params=s["params"],
+    )
     return FieldSpec(name, t, **{**base, **kw})
 
 
@@ -92,8 +106,15 @@ def test_text_with_a_one_term_vocabulary_exports(docs):
 def test_constant_fill_is_in_the_fields_own_units():
     vals = [1.0, 10.0, 100.0, None, 1000.0, None]
     df = pl.DataFrame({"x": vals})
-    spec = _spec("x", "numeric_continuous", family="linear", imputation="constant", impute_value="100",
-                 transform="log1p", scaling="none")
+    spec = _spec(
+        "x",
+        "numeric_continuous",
+        family="linear",
+        imputation="constant",
+        impute_value="100",
+        transform="log1p",
+        scaling="none",
+    )
     _, X, _ = _fit(df, [spec])
     assert X[3, 0] == pytest.approx(np.log1p(100.0)) == pytest.approx(X[2, 0])
 
@@ -130,8 +151,15 @@ def test_export_writes_regression_and_band_targets(tmp_path):
     src = tmp_path / "d.parquet"
     df.write_parquet(src)
     specs = [_spec("x", "numeric_continuous")]
-    m = run_export(src, specs, ["price", "kind"], tmp_path / "out", {"seed": 1}, lambda *_: None,
-                   target_tasks={"price": {"task": "bins", "bins": {"k": 4}}, "kind": {"task": "classes", "bins": None}})
+    m = run_export(
+        src,
+        specs,
+        ["price", "kind"],
+        tmp_path / "out",
+        {"seed": 1},
+        lambda *_: None,
+        target_tasks={"price": {"task": "bins", "bins": {"k": 4}}, "kind": {"task": "classes", "bins": None}},
+    )
     assert m["target_tasks"] == {"price": "bins", "kind": "classes"}
     assert len(m["target_bins"]["price"]["edges"]) == 3 and m["target_classes"]["price"][0].startswith("< ")
     out = pl.read_parquet(tmp_path / "out" / "model_ready.parquet")
@@ -141,8 +169,15 @@ def test_export_writes_regression_and_band_targets(tmp_path):
     counts = np.bincount(train)
     assert counts.max() - counts.min() <= 0.05 * len(train) + 2
 
-    m2 = run_export(src, specs, ["price"], tmp_path / "out2", {"seed": 1}, lambda *_: None,
-                    target_tasks={"price": {"task": "regression", "bins": None}})
+    m2 = run_export(
+        src,
+        specs,
+        ["price"],
+        tmp_path / "out2",
+        {"seed": 1},
+        lambda *_: None,
+        target_tasks={"price": {"task": "regression", "bins": None}},
+    )
     assert m2["target_kinds"]["price"] == "regression" and "price" not in m2["target_classes"]
     assert m2["target_stats"]["price"]["std"] > 0
     out2 = pl.read_parquet(tmp_path / "out2" / "model_ready.parquet")
@@ -155,23 +190,44 @@ def test_export_refuses_a_single_band(tmp_path):
     src = tmp_path / "d.parquet"
     df.write_parquet(src)
     with pytest.raises(ValueError, match="one band"):
-        run_export(src, [_spec("x", "numeric_continuous")], ["y"], tmp_path / "o",
-                   {"seed": 1}, lambda *_: None, target_tasks={"y": {"task": "bins", "bins": {"k": 3}}})
+        run_export(
+            src,
+            [_spec("x", "numeric_continuous")],
+            ["y"],
+            tmp_path / "o",
+            {"seed": 1},
+            lambda *_: None,
+            target_tasks={"y": {"task": "bins", "bins": {"k": 3}}},
+        )
 
 
 def test_export_refuses_an_empty_band(tmp_path):
     df = pl.DataFrame({"x": np.arange(300.0), "y": np.r_[np.zeros(150), np.full(150, 100.0)]})
     df.write_parquet(tmp_path / "d.parquet")
     with pytest.raises(ValueError, match=r"\[10, 20\)"):
-        run_export(tmp_path / "d.parquet", [_spec("x", "numeric_continuous")], ["y"], tmp_path / "o",
-                   {"seed": 1}, lambda *_: None, target_tasks={"y": {"task": "bins", "bins": {"edges": [10, 20]}}})
+        run_export(
+            tmp_path / "d.parquet",
+            [_spec("x", "numeric_continuous")],
+            ["y"],
+            tmp_path / "o",
+            {"seed": 1},
+            lambda *_: None,
+            target_tasks={"y": {"task": "bins", "bins": {"edges": [10, 20]}}},
+        )
 
 
 def test_numeric_target_stored_as_text_is_read_like_profiling(tmp_path):
     df = pl.DataFrame({"x": np.arange(300.0), "price": [f"{1000 + i:,}.5" for i in range(300)]})
     df.write_parquet(tmp_path / "d.parquet")
-    m = run_export(tmp_path / "d.parquet", [_spec("x", "numeric_continuous")], ["price"], tmp_path / "o",
-                   {"seed": 1}, lambda *_: None, target_tasks={"price": {"task": "regression", "bins": None}})
+    m = run_export(
+        tmp_path / "d.parquet",
+        [_spec("x", "numeric_continuous")],
+        ["price"],
+        tmp_path / "o",
+        {"seed": 1},
+        lambda *_: None,
+        target_tasks={"price": {"task": "regression", "bins": None}},
+    )
     assert m["rows_written"] == 300 and m["target_stats"]["price"]["min"] >= 1000.5
 
 
@@ -179,18 +235,33 @@ def test_numeric_target_with_unreadable_values_is_refused(tmp_path):
     df = pl.DataFrame({"x": np.arange(300.0), "price": [str(i) for i in range(299)] + ["n/a?"]})
     df.write_parquet(tmp_path / "d.parquet")
     with pytest.raises(ValueError, match="don't read as numbers"):
-        run_export(tmp_path / "d.parquet", [_spec("x", "numeric_continuous")], ["price"], tmp_path / "o",
-                   {"seed": 1}, lambda *_: None, target_tasks={"price": {"task": "regression", "bins": None}})
+        run_export(
+            tmp_path / "d.parquet",
+            [_spec("x", "numeric_continuous")],
+            ["price"],
+            tmp_path / "o",
+            {"seed": 1},
+            lambda *_: None,
+            target_tasks={"price": {"task": "regression", "bins": None}},
+        )
 
 
 def test_prepare_export_keeps_regression_target_numeric(tmp_path):
     from app.analysis.prep import prepare_export
+
     n = 400
     df = pl.DataFrame({"x": np.arange(n, dtype=float), "price": np.arange(n) * 2.5 + 0.3})
     src = tmp_path / "d.parquet"
     df.write_parquet(src)
-    m = run_export(src, [_spec("x", "numeric_continuous")], ["price"], tmp_path / "o",
-                   {"seed": 1}, lambda *_: None, target_tasks={"price": {"task": "regression", "bins": None}})
+    m = run_export(
+        src,
+        [_spec("x", "numeric_continuous")],
+        ["price"],
+        tmp_path / "o",
+        {"seed": 1},
+        lambda *_: None,
+        target_tasks={"price": {"task": "regression", "bins": None}},
+    )
     p = prepare_export(tmp_path / "o", m, "price", 200)
     assert p.target_kind == "numeric" and np.any(p.y % 1 != 0)
 
@@ -207,7 +278,9 @@ def test_yeo_johnson_runs_after_imputation_and_before_scaling():
     assert list(steps) == ["impute", "transform", "scale"]
     assert isinstance(steps["transform"], PowerTransformer) and steps["transform"].standardize is False
     filled = np.where(np.isnan(x), np.nanmedian(x), x).reshape(-1, 1)
-    ref = StandardScaler().fit_transform(PowerTransformer(method="yeo-johnson", standardize=False).fit_transform(filled))
+    ref = StandardScaler().fit_transform(
+        PowerTransformer(method="yeo-johnson", standardize=False).fit_transform(filled)
+    )
     assert names == ["x"] and np.allclose(out, ref)
 
 

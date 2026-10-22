@@ -26,7 +26,9 @@ export function useExploreState(ds: Dataset) {
   const view = decisionsView(params);
   // The targets of the decisions in use: an experiment or another baseline may have its own.
   const viewFields = useFields(ds.id, view !== null, view);
-  const targets = view ? (viewFields.data ?? []).filter((f) => f.action === "target").map((f) => f.name) : ds.target_columns;
+  const targets = view
+    ? (viewFields.data ?? []).filter((f) => f.action === "target").map((f) => f.name)
+    : ds.target_columns;
   const { data, isRaw, kept, target, sample } = parseExploreParams(params, targets);
   const base: AnalysisParams = useMemo(() => ({ data, kept, target, sample }), [data, kept, target, sample]);
   const set = (patch: Record<string, string | null>) => {
@@ -51,7 +53,8 @@ export function useAnalysis<R>(datasetId: number, kind: AnalysisKind, params: An
       if (prev && isActive(prev.status)) {
         const row = await api.analysis(prev.id);
         // Another view's job replaced this one while we were away; ask again.
-        if (!(row.status === "failed" && row.error?.startsWith("Superseded"))) return { ...row, stale: row.stale ?? false };
+        if (!(row.status === "failed" && row.error?.startsWith("Superseded")))
+          return { ...row, stale: row.stale ?? false };
       }
       return api.createAnalysis(datasetId, { kind, params, view });
     },
@@ -73,15 +76,33 @@ export function useAnalysis<R>(datasetId: number, kind: AnalysisKind, params: An
 export type AnalysisHandle<R> = ReturnType<typeof useAnalysis<R>>;
 
 const NOT_ENOUGH: Record<NotEnoughReason, { title: string; body: string }> = {
-  no_target: { title: "This view needs a target", body: "Choose the column you want to predict; the analysis compares every field against it." },
-  too_few_fields: { title: "Not enough usable fields", body: "Fewer than two fields are left after skipping text, ids and constants. Keep more fields, or turn off Kept only." },
-  too_few_rows: { title: "Not enough rows", body: "The sample has too few complete rows. Try a larger sample, or check the target's missing values." },
-  single_class: { title: "The target has a single class", body: "Every sampled row has the same target value, so there is nothing to compare." },
+  no_target: {
+    title: "This view needs a target",
+    body: "Choose the column you want to predict; the analysis compares every field against it.",
+  },
+  too_few_fields: {
+    title: "Not enough usable fields",
+    body: "Fewer than two fields are left after skipping text, ids and constants. Keep more fields, or turn off Kept only.",
+  },
+  too_few_rows: {
+    title: "Not enough rows",
+    body: "The sample has too few complete rows. Try a larger sample, or check the target's missing values.",
+  },
+  single_class: {
+    title: "The target has a single class",
+    body: "Every sampled row has the same target value, so there is nothing to compare.",
+  },
 };
 
 /** The one frame for job-backed views: computing, ready, out of date, failed, or not enough data. */
-export function AnalysisState<R>({ a, datasetId, children }: {
-  a: AnalysisHandle<R>; datasetId: number; children: (result: R, row: Analysis<R>) => ReactNode;
+export function AnalysisState<R>({
+  a,
+  datasetId,
+  children,
+}: {
+  a: AnalysisHandle<R>;
+  datasetId: number;
+  children: (result: R, row: Analysis<R>) => ReactNode;
 }) {
   const { row, query } = a;
   const mayRecompute = can(useMe().data, "recompute");
@@ -89,21 +110,34 @@ export function AnalysisState<R>({ a, datasetId, children }: {
     if (query.error) {
       return (
         <ErrorAlert error={query.error} title="Couldn't start the analysis.">
-          <div className="tools-retry"><button type="button" className="small" onClick={() => query.refetch()}>Retry</button></div>
+          <div className="tools-retry">
+            <button type="button" className="small" onClick={() => query.refetch()}>
+              Retry
+            </button>
+          </div>
         </ErrorAlert>
       );
     }
     return <Computing status="pending" progress={0} message="Starting…" />;
   }
-  if (isActive(row.status)) return <Computing status={row.status} progress={row.progress} message={row.status_message} />;
+  if (isActive(row.status))
+    return <Computing status={row.status} progress={row.progress} message={row.status_message} />;
   if (row.status === "failed") {
     const reason = (row.result as { reason?: NotEnoughReason } | null)?.reason;
     if (row.error?.startsWith("Not enough") && reason && NOT_ENOUGH[reason]) {
       const info = NOT_ENOUGH[reason];
       return (
         <div className="card">
-          <Empty title={info.title}
-            action={reason === "no_target" && mayRecompute ? <Link className="btn" to={`/?target=${datasetId}`}>Choose a target</Link> : undefined}>
+          <Empty
+            title={info.title}
+            action={
+              reason === "no_target" && mayRecompute ? (
+                <Link className="btn" to={`/?target=${datasetId}`}>
+                  Choose a target
+                </Link>
+              ) : undefined
+            }
+          >
             {info.body}
           </Empty>
         </div>
@@ -112,7 +146,9 @@ export function AnalysisState<R>({ a, datasetId, children }: {
     return (
       <ErrorAlert error={{ message: row.error?.split("\n")[0] ?? "The analysis failed." }} title="Analysis failed.">
         <div className="row tools-retry">
-          <button type="button" className="small" disabled={a.recomputing} onClick={a.recompute}>Retry</button>
+          <button type="button" className="small" disabled={a.recomputing} onClick={a.recompute}>
+            Retry
+          </button>
           {a.recomputeError != null && <span>{(a.recomputeError as Error).message}</span>}
         </div>
       </ErrorAlert>
@@ -122,13 +158,28 @@ export function AnalysisState<R>({ a, datasetId, children }: {
   return (
     <>
       {row.stale ? (
-        <Banner tone="warn" title="Out of date."
-          action={mayRecompute && <button type="button" className="small" disabled={a.recomputing} onClick={a.recompute}>Recompute</button>}>
+        <Banner
+          tone="warn"
+          title="Out of date."
+          action={
+            mayRecompute && (
+              <button type="button" className="small" disabled={a.recomputing} onClick={a.recompute}>
+                Recompute
+              </button>
+            )
+          }
+        >
           Decisions changed since this ran ({fmtAgo(row.finished_at)}).
         </Banner>
       ) : (
         <div className="analysis-bar">
-          <span className="row tools-gap-6"><StatusBadge status="done" /><span className="num">As of {fmtAgo(row.finished_at)}{n != null && <> · {fmtInt(n)} rows</>}</span></span>
+          <span className="row tools-gap-6">
+            <StatusBadge status="done" />
+            <span className="num">
+              As of {fmtAgo(row.finished_at)}
+              {n != null && <> · {fmtInt(n)} rows</>}
+            </span>
+          </span>
           {mayRecompute && (
             <button type="button" className="small ghost" disabled={a.recomputing} onClick={a.recompute}>
               {a.recomputing ? "Starting…" : "Recompute"}
@@ -145,7 +196,10 @@ export function AnalysisState<R>({ a, datasetId, children }: {
 function Computing({ status, progress, message }: { status: string; progress: number; message: string | null }) {
   return (
     <div className="card computing" aria-busy="true">
-      <div className="row tools-between"><b>Computing…</b><StatusBadge status={status} /></div>
+      <div className="row tools-between">
+        <b>Computing…</b>
+        <StatusBadge status={status} />
+      </div>
       <ProgressBar value={Math.max(progress, 0.03)} max={1} label="Analysis progress" />
       <span className="secondary small-text">{message ?? "Waiting for a worker"}</span>
     </div>
@@ -156,9 +210,15 @@ export function SkippedList({ skipped }: { skipped: Skipped[] }) {
   if (!skipped.length) return null;
   return (
     <details className="more">
-      <summary><b>{skipped.length}</b> field{skipped.length === 1 ? "" : "s"} skipped</summary>
+      <summary>
+        <b>{skipped.length}</b> field{skipped.length === 1 ? "" : "s"} skipped
+      </summary>
       <ul className="skipped-list">
-        {skipped.map((s) => <li key={s.name}>{s.name} <span className="muted">— {s.reason}</span></li>)}
+        {skipped.map((s) => (
+          <li key={s.name}>
+            {s.name} <span className="muted">— {s.reason}</span>
+          </li>
+        ))}
       </ul>
     </details>
   );

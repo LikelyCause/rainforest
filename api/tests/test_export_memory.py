@@ -1,4 +1,5 @@
 """Export memory bounds: per-transformer float32 output, byte-budgeted chunks and fit sample."""
+
 import json
 
 import numpy as np
@@ -9,7 +10,13 @@ from app import profiling
 from app.config import get_settings
 from app.semantics import suggest
 from app.transform import (
-    FieldSpec, build_preprocessor, coercion_exprs, estimated_width, rows_for_budget, run_export, to_pandas_frame,
+    FieldSpec,
+    build_preprocessor,
+    coercion_exprs,
+    estimated_width,
+    rows_for_budget,
+    run_export,
+    to_pandas_frame,
     transform_into,
 )
 
@@ -26,9 +33,20 @@ def _specs(profiles, family):
         if s["action"] == "target":
             targets.append(p.name)
         elif s["action"] == "keep":
-            specs.append(FieldSpec(p.name, s["semantic_type"], s["imputation"], s.get("impute_value"),
-                                   s["add_missing_indicator"], s["transform"], s["scaling"], s["encoding"],
-                                   s["params"], p.stats.get("datetime_format")))
+            specs.append(
+                FieldSpec(
+                    p.name,
+                    s["semantic_type"],
+                    s["imputation"],
+                    s.get("impute_value"),
+                    s["add_missing_indicator"],
+                    s["transform"],
+                    s["scaling"],
+                    s["encoding"],
+                    s["params"],
+                    p.stats.get("datetime_format"),
+                )
+            )
     return specs, targets
 
 

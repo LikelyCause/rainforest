@@ -41,8 +41,10 @@ export function initSaveQueue(client: QueryClient) {
     for (const lane of lanes.values()) {
       if (!lane.queued) continue;
       void fetch(`/api/fields/${lane.fieldId}/decision${viewQuery(lane.view)}`, {
-        method: "PUT", keepalive: true,
-        headers: { "content-type": "application/json" }, body: JSON.stringify(lane.queued),
+        method: "PUT",
+        keepalive: true,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(lane.queued),
       });
     }
   });
@@ -59,8 +61,14 @@ function lane(fieldId: number, view: View, datasetId: number, name: string): Lan
 }
 
 /** Queue a save; `delay` debounces typing, 0 sends at once. */
-export function queueSave(fieldId: number, datasetId: number, name: string, input: DecisionInput, delay = 0,
-  view: View = null): Promise<void> {
+export function queueSave(
+  fieldId: number,
+  datasetId: number,
+  name: string,
+  input: DecisionInput,
+  delay = 0,
+  view: View = null,
+): Promise<void> {
   const l = lane(fieldId, view, datasetId, name);
   const key = laneKey(fieldId, view);
   l.queued = input;
@@ -77,7 +85,7 @@ export const flushSave = (fieldId: number, view: View = null) => drain(laneKey(f
 /** The newest draft not yet confirmed by the server, so a remounted panel starts from it. */
 export function pendingDraft(fieldId: number, view: View = null): DecisionInput | null {
   const l = lanes.get(laneKey(fieldId, view));
-  return l ? l.queued ?? l.inflight : null;
+  return l ? (l.queued ?? l.inflight) : null;
 }
 
 async function drain(key: string): Promise<void> {
@@ -118,9 +126,17 @@ function applySaved(fieldId: number, datasetId: number, saved: Decision, view: V
   const prev = qc.getQueryData<FieldResponse>(["field", fieldId, vk]);
   qc.setQueryData<FieldResponse>(["field", fieldId, vk], (old) => (old ? { ...old, decision: saved } : old));
   qc.setQueryData<FieldListItem[]>(["fields", datasetId, vk], (list) =>
-    list?.map((f) => (f.id === fieldId
-      ? { ...f, action: saved.action, semantic_type: saved.semantic_type, reviewed: saved.reviewed, source: saved.source }
-      : f)),
+    list?.map((f) =>
+      f.id === fieldId
+        ? {
+            ...f,
+            action: saved.action,
+            semantic_type: saved.semantic_type,
+            reviewed: saved.reviewed,
+            source: saved.source,
+          }
+        : f,
+    ),
   );
   for (const k of ["exportPreview", "fieldQuery", "corrMatrix", "analysis", "team", "reviewQueue"]) {
     qc.invalidateQueries({ queryKey: [k, datasetId] });

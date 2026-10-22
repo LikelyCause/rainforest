@@ -62,7 +62,12 @@ function Framer({ src, img, frame, onFrame }: { src: string; img: Size; frame: F
   const key = (e: ReactKeyboardEvent) => {
     const step = e.shiftKey ? 40 : 10;
     const f = latest.current;
-    const moves: Record<string, [number, number]> = { ArrowLeft: [step, 0], ArrowRight: [-step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] };
+    const moves: Record<string, [number, number]> = {
+      ArrowLeft: [step, 0],
+      ArrowRight: [-step, 0],
+      ArrowUp: [0, step],
+      ArrowDown: [0, -step],
+    };
     if (moves[e.key]) set({ ...f, x: f.x + moves[e.key][0], y: f.y + moves[e.key][1] });
     else if (e.key === "+" || e.key === "=") zoom(f.zoom * 1.1);
     else if (e.key === "-" || e.key === "_") zoom(f.zoom / 1.1);
@@ -73,17 +78,38 @@ function Framer({ src, img, frame, onFrame }: { src: string; img: Size; frame: F
   const s = coverScale(img, VIEW) * frame.zoom;
   return (
     <div className="stack tools-framer">
-      <div ref={box} className="framer" style={{ width: VIEW, height: VIEW }} tabIndex={0} role="group"
+      <div
+        ref={box}
+        className="framer"
+        style={{ width: VIEW, height: VIEW }}
+        tabIndex={0}
+        role="group"
         aria-label="Picture framing: drag or use the arrow keys to move it, scroll, pinch or + and − to zoom"
-        onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onKeyDown={key}>
-        <img src={src} alt="" draggable={false}
-          style={{ width: img.w * s, height: img.h * s, transform: `translate(${frame.x}px, ${frame.y}px)` }} />
+        onPointerDown={down}
+        onPointerMove={move}
+        onPointerUp={up}
+        onPointerCancel={up}
+        onKeyDown={key}
+      >
+        <img
+          src={src}
+          alt=""
+          draggable={false}
+          style={{ width: img.w * s, height: img.h * s, transform: `translate(${frame.x}px, ${frame.y}px)` }}
+        />
         <div className="framer-ring" aria-hidden="true" />
       </div>
       <label className="row small-text muted framer-zoom">
         <span aria-hidden="true">−</span>
-        <input type="range" min={1} max={MAX_ZOOM} step={0.01} value={frame.zoom} aria-label="Zoom"
-          onChange={(e) => zoom(Number(e.target.value))} />
+        <input
+          type="range"
+          min={1}
+          max={MAX_ZOOM}
+          step={0.01}
+          value={frame.zoom}
+          aria-label="Zoom"
+          onChange={(e) => zoom(Number(e.target.value))}
+        />
         <span aria-hidden="true">+</span>
       </label>
     </div>
@@ -91,8 +117,12 @@ function Framer({ src, img, frame, onFrame }: { src: string; img: Size; frame: F
 }
 
 /** Choose a picture, frame it, and save it; or remove the current one. */
-export function PictureDialog({ user, onClose }: {
-  user: { id: number; name: string; avatar_url?: string | null }; onClose: () => void;
+export function PictureDialog({
+  user,
+  onClose,
+}: {
+  user: { id: number; name: string; avatar_url?: string | null };
+  onClose: () => void;
 }) {
   const qc = useQueryClient();
   const input = useRef<HTMLInputElement>(null);
@@ -101,7 +131,12 @@ export function PictureDialog({ user, onClose }: {
   const [img, setImg] = useState<Size | null>(null);
   const [frame, setFrame] = useState<Frame | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
-  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
+  useEffect(
+    () => () => {
+      if (preview) URL.revokeObjectURL(preview);
+    },
+    [preview],
+  );
   // The browser turns phone pictures upright, as the server does, so the frame is in the same pixels.
   useEffect(() => {
     if (!preview) return;
@@ -135,36 +170,73 @@ export function PictureDialog({ user, onClose }: {
   };
   const framing = preview && img && frame;
   return (
-    <Dialog title={`${user.name}'s picture`} onClose={onClose} labelledBy="picture-title"
-      actions={<>
-        {user.avatar_url && (
-          <button type="button" className="ghost tools-danger-text" disabled={remove.isPending} onClick={() => remove.mutate()}>Remove picture</button>
-        )}
-        <span className="spacer" />
-        <button type="button" className="ghost" onClick={onClose}>Cancel</button>
-        <button type="button" className="primary" disabled={!framing || save.isPending} onClick={() => save.mutate()}>
-          {save.isPending ? "Saving…" : "Save"}
-        </button>
-      </>}>
-      <div className="stack picture-dialog" onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => { e.preventDefault(); choose(e.dataTransfer.files[0]); }}>
+    <Dialog
+      title={`${user.name}'s picture`}
+      onClose={onClose}
+      labelledBy="picture-title"
+      actions={
+        <>
+          {user.avatar_url && (
+            <button
+              type="button"
+              className="ghost tools-danger-text"
+              disabled={remove.isPending}
+              onClick={() => remove.mutate()}
+            >
+              Remove picture
+            </button>
+          )}
+          <span className="spacer" />
+          <button type="button" className="ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="primary" disabled={!framing || save.isPending} onClick={() => save.mutate()}>
+            {save.isPending ? "Saving…" : "Save"}
+          </button>
+        </>
+      }
+    >
+      <div
+        className="stack picture-dialog"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          choose(e.dataTransfer.files[0]);
+        }}
+      >
         {framing ? (
           <>
             <Framer src={preview} img={img} frame={frame} onFrame={setFrame} />
             <div className="row tools-center">
               <span className="muted small-text">Drag to move · scroll or pinch to zoom</span>
-              <button type="button" className="ghost small" onClick={() => setFrame(centred(img, VIEW))}><Icon name="reset" size={14} />Reset</button>
-              <button type="button" className="ghost small" onClick={() => input.current?.click()}><Icon name="upload" size={14} />Choose another…</button>
+              <button type="button" className="ghost small" onClick={() => setFrame(centred(img, VIEW))}>
+                <Icon name="reset" size={14} />
+                Reset
+              </button>
+              <button type="button" className="ghost small" onClick={() => input.current?.click()}>
+                <Icon name="upload" size={14} />
+                Choose another…
+              </button>
             </div>
           </>
         ) : (
           <button type="button" className="dropzone picture-drop" data-autofocus onClick={() => input.current?.click()}>
             <Avatar user={user} size={112} />
-            <span className="muted small-text">Drop a picture here or click to choose one · JPEG, PNG or WebP, up to 5 MB.
-              You can move and zoom it next.</span>
+            <span className="muted small-text">
+              Drop a picture here or click to choose one · JPEG, PNG or WebP, up to 5 MB. You can move and zoom it next.
+            </span>
           </button>
         )}
-        <input ref={input} type="file" accept={TYPES.join(",")} hidden onChange={(e) => { choose(e.target.files?.[0]); e.target.value = ""; }} />
+        <input
+          ref={input}
+          type="file"
+          accept={TYPES.join(",")}
+          hidden
+          onChange={(e) => {
+            choose(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
         {problem && <Banner tone="bad">{problem}</Banner>}
         <ErrorAlert error={save.error ?? remove.error} />
       </div>

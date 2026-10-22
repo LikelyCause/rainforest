@@ -10,16 +10,29 @@ vi.mock("./toast", () => ({ showError: (...a: unknown[]) => showError(...a) }));
 const { flushSave, pendingDraft, queueSave } = await import("./saveQueue");
 
 const draft = (notes: string): DecisionInput => ({
-  family: "tree", action: "keep", semantic_type: "numeric_continuous", imputation: "none", impute_value: null,
-  add_missing_indicator: false, transform: "none", scaling: "none", encoding: "none", params: {}, notes, reviewed: false,
+  family: "tree",
+  action: "keep",
+  semantic_type: "numeric_continuous",
+  imputation: "none",
+  impute_value: null,
+  add_missing_indicator: false,
+  transform: "none",
+  scaling: "none",
+  encoding: "none",
+  params: {},
+  notes,
+  reviewed: false,
 });
 
 /** A promise per call that the test settles by hand. */
 function deferredSaves() {
   const calls: { input: DecisionInput; resolve: () => void; reject: (e: Error) => void }[] = [];
-  saveDecision.mockImplementation((_id: number, input: DecisionInput) => new Promise((resolve, reject) => {
-    calls.push({ input, resolve: () => resolve({ ...input, field_id: 1 }), reject });
-  }));
+  saveDecision.mockImplementation(
+    (_id: number, input: DecisionInput) =>
+      new Promise((resolve, reject) => {
+        calls.push({ input, resolve: () => resolve({ ...input, field_id: 1 }), reject });
+      }),
+  );
   return calls;
 }
 
@@ -37,7 +50,7 @@ describe("saveQueue", () => {
     await tick();
     const second = queueSave(101, 1, "a", draft("two"));
     await tick();
-    expect(calls.map((c) => c.input.notes)).toEqual(["one"]);  // "two" waits for "one"
+    expect(calls.map((c) => c.input.notes)).toEqual(["one"]); // "two" waits for "one"
     calls[0].resolve();
     await tick();
     expect(calls.map((c) => c.input.notes)).toEqual(["one", "two"]);

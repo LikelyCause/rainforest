@@ -9,6 +9,7 @@ treat them like any other field. Three kinds:
   make a number (age brackets to their midpoints).
 - count: how many of the given fields hold one of the given values (medication columns marked Up or Down).
 """
+
 from __future__ import annotations
 
 import ast
@@ -21,8 +22,13 @@ from fastapi import HTTPException
 
 KINDS = ("formula", "groups", "count")
 NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_ .-]{0,62}$")
-FUNCS = {"log": lambda e: e.log(), "log1p": lambda e: e.log1p(), "exp": lambda e: e.exp(), "sqrt": lambda e: e.sqrt(),
-         "abs": lambda e: e.abs()}
+FUNCS = {
+    "log": lambda e: e.log(),
+    "log1p": lambda e: e.log1p(),
+    "exp": lambda e: e.exp(),
+    "sqrt": lambda e: e.sqrt(),
+    "abs": lambda e: e.abs(),
+}
 
 
 def _bad(msg: str) -> HTTPException:
@@ -112,7 +118,9 @@ def check_spec(kind: str, spec: dict, columns: list[str]) -> list[str]:
         return [src]
     fields, values = spec.get("fields"), spec.get("values")
     if not isinstance(fields, list) or not fields or (unknown := [f for f in fields if f not in columns]):
-        raise _bad(f"Unknown field(s): {', '.join(map(repr, unknown))}" if fields else "Choose the fields to count across")
+        raise _bad(
+            f"Unknown field(s): {', '.join(map(repr, unknown))}" if fields else "Choose the fields to count across"
+        )
     if not isinstance(values, list) or not values:
         raise _bad("Give the values to count")
     return list(fields)
@@ -124,8 +132,11 @@ def compute(df: pl.DataFrame, kind: str, spec: dict) -> pl.Series:
         return df.select(_formula(spec["expr"], df.columns)[0]).to_series()
     if kind == "count":
         values = [str(v) for v in spec["values"]]
-        return df.select(pl.sum_horizontal([pl.col(f).cast(pl.Utf8).is_in(values).fill_null(False).cast(pl.Int64)
-                                            for f in spec["fields"]])).to_series()
+        return df.select(
+            pl.sum_horizontal(
+                [pl.col(f).cast(pl.Utf8).is_in(values).fill_null(False).cast(pl.Int64) for f in spec["fields"]]
+            )
+        ).to_series()
     src = df[spec["source"]]
     text, num = src.cast(pl.Utf8), src.cast(pl.Utf8).cast(pl.Float64, strict=False)
     labels = [str(g["label"]).strip() for g in spec["groups"]]
@@ -138,7 +149,11 @@ def compute(df: pl.DataFrame, kind: str, spec: dict) -> pl.Series:
         for lo, hi in g.get("ranges") or []:
             hit = hit | pl.col("n").is_between(_num(lo), _num(hi))
         expr = pl.when(hit.fill_null(False)).then(pl.lit(label)).otherwise(expr)
-    out = pl.DataFrame({"t": text, "n": num}).select(pl.when(pl.col("t").is_null()).then(None).otherwise(expr)).to_series()
+    out = (
+        pl.DataFrame({"t": text, "n": num})
+        .select(pl.when(pl.col("t").is_null()).then(None).otherwise(expr))
+        .to_series()
+    )
     if all(_num(v) is not None for v in [*labels, other]):
         out = out.cast(pl.Float64)
     return out
@@ -147,8 +162,10 @@ def compute(df: pl.DataFrame, kind: str, spec: dict) -> pl.Series:
 def check_name(name: str, existing: list[str]) -> str:
     name = (name or "").strip()
     if not NAME_RE.match(name):
-        raise _bad("A field name starts with a letter and uses letters, digits, spaces, dots, dashes or underscores "
-                   "(at most 63 characters)")
+        raise _bad(
+            "A field name starts with a letter and uses letters, digits, spaces, dots, dashes or underscores "
+            "(at most 63 characters)"
+        )
     if name.lower() in {n.lower() for n in existing}:
         raise _bad(f"There is already a field named {name!r}")
     return name

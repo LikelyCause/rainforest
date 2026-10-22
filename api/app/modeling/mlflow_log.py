@@ -3,6 +3,7 @@
 Logging is best effort. Training never waits long on it or fails because of it: any error comes back as a message
 that the caller stores as `mlflow_error` in the run report.
 """
+
 from __future__ import annotations
 
 import logging
@@ -148,8 +149,14 @@ def _experiment(client, dataset_id: int, dataset_name: str) -> str:
         return exp.experiment_id
 
 
-def log_run(run: dict, dataset_name: str, report: dict, model_dir: Path | None, user: str | None = None,
-            tracking_uri: str | None = None) -> tuple[str, str]:
+def log_run(
+    run: dict,
+    dataset_name: str,
+    report: dict,
+    model_dir: Path | None,
+    user: str | None = None,
+    tracking_uri: str | None = None,
+) -> tuple[str, str]:
     """Log one finished model run; returns (experiment id, MLflow run id). Raises on any failure, after deleting
     a half-logged MLflow run so a retry (or the backfill) doesn't leave a duplicate behind.
 
@@ -173,12 +180,15 @@ def log_run(run: dict, dataset_name: str, report: dict, model_dir: Path | None, 
         step_ts = _ms(run.get("finished_at")) or _ms(datetime.now())
         prep = {"prep.adjusted_fields": run["adjustments"].get("count", 0)} if run.get("adjustments") else {}
         cfg = run.get("export_config") or {}
-        prep |= {f"prep.{k}": cfg[c] for k, c in (("valid_size", "valid_size"), ("test_size", "test_size"),
-                                                  ("split_seed", "seed")) if cfg.get(c) is not None}
+        prep |= {
+            f"prep.{k}": cfg[c]
+            for k, c in (("valid_size", "valid_size"), ("test_size", "test_size"), ("split_seed", "seed"))
+            if cfg.get(c) is not None
+        }
         params = [Param(k, str(v)) for k, v in {**run_params(report), **prep}.items()]
         metrics = [Metric(k, v, step_ts, 0) for k, v in run_metrics(report).items()]
         for i in range(0, max(len(params), len(metrics)), 100):
-            client.log_batch(mlflow_run_id, metrics=metrics[i:i + 100], params=params[i:i + 100])
+            client.log_batch(mlflow_run_id, metrics=metrics[i : i + 100], params=params[i : i + 100])
         if model_dir is not None:
             if (Path(model_dir) / REPORT_FILE).exists():
                 client.log_artifact(mlflow_run_id, str(Path(model_dir) / REPORT_FILE))
@@ -247,8 +257,9 @@ def log_model_run(run_id: int, report: dict, user: str | None = None) -> dict[st
         if run["finished_at"] is None:
             run["finished_at"] = datetime.now().astimezone()
         model_dir = Path(report["model_dir"]) if report.get("model_dir") else None
-        experiment_id, mlflow_run_id = log_run(run, run["dataset_name"], report, model_dir,
-                                               user or run.pop("user_label"))
+        experiment_id, mlflow_run_id = log_run(
+            run, run["dataset_name"], report, model_dir, user or run.pop("user_label")
+        )
         return {"mlflow_experiment_id": experiment_id, "mlflow_run_id": mlflow_run_id, "mlflow_error": None}
     except Exception as exc:  # noqa: BLE001
         log.warning("MLflow logging for model run %s failed: %s", run_id, exc)

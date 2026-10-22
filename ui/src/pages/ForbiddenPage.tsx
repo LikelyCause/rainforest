@@ -18,15 +18,24 @@ export function ForbiddenPage() {
   return (
     <div className="login tools-login">
       <div className="card login-card stack">
-        <div className="login-brand"><Logo /> Rainforest</div>
+        <div className="login-brand">
+          <Logo /> Rainforest
+        </div>
         <h1>No access</h1>
         {reason === "deactivated" ? (
           <p className="secondary">A lead has deactivated your Rainforest account. Ask a lead to reactivate it.</p>
         ) : (
           <p className="secondary">
             You signed in with {provider}, but your account isn't in
-            {cfg.data ? <> the <code>{cfg.data.lead_group}</code> or <code>{cfg.data.member_group}</code> group</> : " a Rainforest group"},
-            so it can't use Rainforest. Ask whoever manages {provider} to add you.
+            {cfg.data ? (
+              <>
+                {" "}
+                the <code>{cfg.data.lead_group}</code> or <code>{cfg.data.member_group}</code> group
+              </>
+            ) : (
+              " a Rainforest group"
+            )}
+            , so it can't use Rainforest. Ask whoever manages {provider} to add you.
           </p>
         )}
         <ErrorAlert error={out.error} />

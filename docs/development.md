@@ -55,6 +55,24 @@ same rule. One more test runs against a real tracking server when `MLFLOW_TEST_U
 | `RAINFOREST_TEST_DATABASE_URL=postgresql://user:pw@host:5432/db pytest` (from `api/`) | the full suite against your own empty database |
 | `cd ui && npm test` | the UI tests (Vitest, no browser needed) |
 
+## Lint and format
+
+Ruff lints and formats the API (`api/ruff.toml`). ESLint lints the UI (`ui/eslint.config.js`) and Prettier formats it
+(`ui/.prettierrc.json`), all at 120 columns. The stylesheets aren't formatted.
+
+| Command | What it does |
+|---|---|
+| `make lint` | the checks CI runs, in containers: no local Python or Node needed |
+| `make format` | sorts imports and formats `api/` and `ui/src` in place, in containers |
+| `ruff check .` / `ruff format .` (from `api/`) | the same, with ruff from `requirements-dev.txt` |
+| `npm run lint` / `npm run format` (from `ui/`) | the same for the UI |
+
+ESLint warns on hook dependency lists it can't confirm, and `npm run lint` allows the warnings that exist today and no
+more.
+
+`.git-blame-ignore-revs` lists the formatting commit, so blame skips it. GitHub reads it already. For `git blame`
+locally, run `git config blame.ignoreRevsFile .git-blame-ignore-revs` once per clone.
+
 ## CI
 
 `.github/workflows/ci.yml` runs on pushes to `main` and on pull requests. It runs:
@@ -62,6 +80,7 @@ same rule. One more test runs against a real tracking server when `MLFLOW_TEST_U
 - the API tests, with a Postgres service (so nothing skips) and an MLflow server container
 - the UI typecheck, tests and build
 - `docker compose --profile keycloak build` for the images
+- ruff, ESLint, and the formatters' checks (the *Lint* job)
 
 ## Schema changes
 

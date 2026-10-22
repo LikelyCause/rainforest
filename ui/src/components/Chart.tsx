@@ -2,14 +2,27 @@ import { useEffect, useRef } from "react";
 import * as echarts from "echarts/core";
 import { BarChart, BoxplotChart, HeatmapChart, LineChart, ScatterChart } from "echarts/charts";
 import {
-  GridComponent, LegendComponent, MarkLineComponent, TooltipComponent, VisualMapComponent,
+  GridComponent,
+  LegendComponent,
+  MarkLineComponent,
+  TooltipComponent,
+  VisualMapComponent,
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import type { EChartsCoreOption } from "echarts/core";
 
 echarts.use([
-  BarChart, BoxplotChart, HeatmapChart, LineChart, ScatterChart,
-  GridComponent, LegendComponent, MarkLineComponent, TooltipComponent, VisualMapComponent, CanvasRenderer,
+  BarChart,
+  BoxplotChart,
+  HeatmapChart,
+  LineChart,
+  ScatterChart,
+  GridComponent,
+  LegendComponent,
+  MarkLineComponent,
+  TooltipComponent,
+  VisualMapComponent,
+  CanvasRenderer,
 ]);
 
 interface Props {
@@ -49,5 +62,7 @@ export function Chart({ option, className = "chart", height, onBarClick, onItemC
     inst.current?.setOption(option, { notMerge: true, lazyUpdate: true });
   }, [option]);
 
-  return <div ref={el} className={className} style={height ? { height } : undefined} role="img" aria-label={ariaLabel} />;
+  return (
+    <div ref={el} className={className} style={height ? { height } : undefined} role="img" aria-label={ariaLabel} />
+  );
 }

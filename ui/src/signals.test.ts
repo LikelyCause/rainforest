@@ -3,21 +3,67 @@ import { attentionOf, fieldSignals, LEAK_AT, missingTone } from "./signals";
 import type { FieldDetail, FieldListItem, TargetAssoc } from "./types";
 
 const field = (patch: Partial<FieldDetail> = {}): FieldDetail => ({
-  id: 1, dataset_id: 1, ordinal: 0, name: "income", db_column: "income", physical_dtype: "Float64",
-  inferred_type: "numeric_continuous", inference_confidence: 0.92, inference_reasons: [], is_target: false,
-  row_count: 1000, null_count: 0, null_pct: 0, n_unique: 900, unique_pct: 0.9, mean: 1, std: 1, min_value: 0,
-  max_value: 10, median: 1, skewness: 0.3, kurtosis: 0, zeros_pct: 0, outlier_pct: 0.01, top_value: null,
-  top_value_pct: null, avg_length: null, max_target_assoc: null, leakage_flag: false, active_family: "tree",
-  stats: {}, charts: {}, suggestion: {} as FieldDetail["suggestion"], ...patch,
+  id: 1,
+  dataset_id: 1,
+  ordinal: 0,
+  name: "income",
+  db_column: "income",
+  physical_dtype: "Float64",
+  inferred_type: "numeric_continuous",
+  inference_confidence: 0.92,
+  inference_reasons: [],
+  is_target: false,
+  row_count: 1000,
+  null_count: 0,
+  null_pct: 0,
+  n_unique: 900,
+  unique_pct: 0.9,
+  mean: 1,
+  std: 1,
+  min_value: 0,
+  max_value: 10,
+  median: 1,
+  skewness: 0.3,
+  kurtosis: 0,
+  zeros_pct: 0,
+  outlier_pct: 0.01,
+  top_value: null,
+  top_value_pct: null,
+  avg_length: null,
+  max_target_assoc: null,
+  leakage_flag: false,
+  active_family: "tree",
+  stats: {},
+  charts: {},
+  suggestion: {} as FieldDetail["suggestion"],
+  ...patch,
 });
 
 const listItem = (patch: Partial<FieldListItem> = {}): FieldListItem => ({
-  id: 1, ordinal: 0, name: "f", inferred_type: "numeric_continuous", inference_confidence: 0.9, is_target: false,
-  null_pct: 0, n_unique: 50, max_target_assoc: 0.1, leakage: false, action: "keep", semantic_type: "numeric_continuous",
-  reviewed: false, source: "suggested", ...patch,
+  id: 1,
+  ordinal: 0,
+  name: "f",
+  inferred_type: "numeric_continuous",
+  inference_confidence: 0.9,
+  is_target: false,
+  null_pct: 0,
+  n_unique: 50,
+  max_target_assoc: 0.1,
+  leakage: false,
+  action: "keep",
+  semantic_type: "numeric_continuous",
+  reviewed: false,
+  source: "suggested",
+  ...patch,
 });
 
-const assoc = (name: string, strength: number): TargetAssoc => ({ field_id: 9, name, method: "spearman", value: strength, strength });
+const assoc = (name: string, strength: number): TargetAssoc => ({
+  field_id: 9,
+  name,
+  method: "spearman",
+  value: strength,
+  strength,
+});
 const byKey = (signals: ReturnType<typeof fieldSignals>) => Object.fromEntries(signals.map((s) => [s.key, s]));
 
 describe("missingTone", () => {
@@ -54,7 +100,13 @@ describe("fieldSignals", () => {
   });
 
   it("reports values read as missing, with examples", () => {
-    const s = byKey(fieldSignals(field({ stats: { unparseable_count: 3, inf_count: 2, unparseable_examples: ["n/a?"] } }), [], "numeric_continuous"));
+    const s = byKey(
+      fieldSignals(
+        field({ stats: { unparseable_count: 3, inf_count: 2, unparseable_examples: ["n/a?"] } }),
+        [],
+        "numeric_continuous",
+      ),
+    );
     expect(s.coerced.value).toBe("5");
     expect(s.coerced.rule).toContain("n/a?");
   });

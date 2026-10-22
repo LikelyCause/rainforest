@@ -2,6 +2,7 @@
 
 Needs an empty database: RAINFOREST_TEST_DATABASE_URL=postgresql://user:pw@host:port/db pytest
 """
+
 import os
 
 import pytest
@@ -56,20 +57,31 @@ def test_second_statement_is_rejected(client, q):
     assert _sql(client, "SELECT current_setting('statement_timeout') AS t").json()["rows"] == [["2s"]]
 
 
-@pytest.mark.parametrize("q", ["SET statement_timeout = 0", "COMMIT", "CREATE TEMP TABLE t (x int)",
-                               "DELETE FROM meta.datasets", "EXPLAIN SELECT 1"])
+@pytest.mark.parametrize(
+    "q",
+    [
+        "SET statement_timeout = 0",
+        "COMMIT",
+        "CREATE TEMP TABLE t (x int)",
+        "DELETE FROM meta.datasets",
+        "EXPLAIN SELECT 1",
+    ],
+)
 def test_only_queries_run(client, q):
     r = _sql(client, q)
     assert r.status_code == 400, r.text
     assert "SELECT" in r.json()["detail"]["detail"]
 
 
-@pytest.mark.parametrize("q, rows", [
-    ("SELECT $$;$$ AS s", [[";"]]),
-    ("SELECT ';' AS s, '100%' AS p;", [[";", "100%"]]),
-    ("WITH a AS (SELECT 1 AS x) SELECT x FROM a", [[1]]),
-    ("VALUES (1, 'a')", [[1, "a"]]),
-])
+@pytest.mark.parametrize(
+    "q, rows",
+    [
+        ("SELECT $$;$$ AS s", [[";"]]),
+        ("SELECT ';' AS s, '100%' AS p;", [[";", "100%"]]),
+        ("WITH a AS (SELECT 1 AS x) SELECT x FROM a", [[1]]),
+        ("VALUES (1, 'a')", [[1, "a"]]),
+    ],
+)
 def test_single_queries_with_tricky_text_run(client, q, rows):
     r = _sql(client, q)
     assert r.status_code == 200, r.text
@@ -94,8 +106,11 @@ def test_timeout_and_session_state_do_not_leak(client):
     assert r.status_code == 400 and "statement timeout" in r.json()["detail"]["message"]
     r = _sql(client, "SELECT set_config('statement_timeout', '0', false), pg_advisory_lock(4242)")
     assert r.status_code == 200, r.text
-    after = _sql(client, "SELECT current_setting('statement_timeout') AS t, "
-                         "(SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 4242) AS locks").json()
+    after = _sql(
+        client,
+        "SELECT current_setting('statement_timeout') AS t, "
+        "(SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = 4242) AS locks",
+    ).json()
     assert after["rows"] == [["2s", 0]]
 
 

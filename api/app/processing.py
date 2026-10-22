@@ -1,4 +1,5 @@
 """Dataset processing job: ingest -> profile -> correlate -> seed decisions."""
+
 from __future__ import annotations
 
 import json
@@ -22,9 +23,23 @@ log = logging.getLogger(__name__)
 LEAKAGE_THRESHOLD = 0.95
 
 SUMMARY_COLS = [
-    "row_count", "null_count", "null_pct", "n_unique", "unique_pct", "mean", "std", "min_value",
-    "max_value", "median", "skewness", "kurtosis", "zeros_pct", "outlier_pct", "top_value",
-    "top_value_pct", "avg_length",
+    "row_count",
+    "null_count",
+    "null_pct",
+    "n_unique",
+    "unique_pct",
+    "mean",
+    "std",
+    "min_value",
+    "max_value",
+    "median",
+    "skewness",
+    "kurtosis",
+    "zeros_pct",
+    "outlier_pct",
+    "top_value",
+    "top_value_pct",
+    "avg_length",
 ]
 
 
@@ -103,10 +118,14 @@ def process_dataset(dataset_id: int, upload_path: str | None, fmt: str) -> None:
         execute("UPDATE meta.datasets SET row_count = %s WHERE id = %s", (n_rows, dataset_id))
         rejected = [p.name for p in profiles if p.name in targets and not p.is_target]
         if rejected:
-            warnings.append(f"Not used as target(s): {', '.join(rejected)} (text, identifiers and dates can't be "
-                            "targets, nor labels with more than 100 values)")
-            execute("UPDATE meta.datasets SET target_columns = %s, warnings = %s WHERE id = %s",
-                    ([t for t in targets if t not in rejected], warnings, dataset_id))
+            warnings.append(
+                f"Not used as target(s): {', '.join(rejected)} (text, identifiers and dates can't be "
+                "targets, nor labels with more than 100 values)"
+            )
+            execute(
+                "UPDATE meta.datasets SET target_columns = %s, warnings = %s WHERE id = %s",
+                ([t for t in targets if t not in rejected], warnings, dataset_id),
+            )
 
         # ---- 3. correlations ------------------------------------------------------
         st.set("correlating", 0.75, "Computing pairwise associations", force=True)
@@ -163,17 +182,33 @@ def _apply_pending_recipe(dataset_id: int) -> None:
             start = queue_target_work(conn, dataset_id, uncorrelated, added, inline=True)
         start()
     except HTTPException as exc:
-        execute("""UPDATE meta.recipes SET parent_id = NULL
-                    WHERE id = (SELECT min(id) FROM meta.recipes WHERE dataset_id = %s)""", (dataset_id,))
-        execute("UPDATE meta.datasets SET warnings = array_append(warnings, %s) WHERE id = %s",
-                (f"Could not start from the recipe: {exc.detail}", dataset_id))
+        execute(
+            """UPDATE meta.recipes SET parent_id = NULL
+                    WHERE id = (SELECT min(id) FROM meta.recipes WHERE dataset_id = %s)""",
+            (dataset_id,),
+        )
+        execute(
+            "UPDATE meta.datasets SET warnings = array_append(warnings, %s) WHERE id = %s",
+            (f"Could not start from the recipe: {exc.detail}", dataset_id),
+        )
 
 
 def insert_field(conn, dataset_id: int, p: profiling.FieldProfile, db_col: str, derived: dict | None = None) -> int:
     """A profiled column as a field, with its suggestions seeded into the working decisions."""
     cols = [
-        "dataset_id", "ordinal", "name", "db_column", "physical_dtype", "inferred_type",
-        "inference_confidence", "inference_reasons", "is_target", *SUMMARY_COLS, "stats", "charts", "suggestion",
+        "dataset_id",
+        "ordinal",
+        "name",
+        "db_column",
+        "physical_dtype",
+        "inferred_type",
+        "inference_confidence",
+        "inference_reasons",
+        "is_target",
+        *SUMMARY_COLS,
+        "stats",
+        "charts",
+        "suggestion",
         "derived",
     ]
     insert = sql.SQL("INSERT INTO meta.fields ({}) VALUES ({}) RETURNING id").format(
@@ -181,9 +216,20 @@ def insert_field(conn, dataset_id: int, p: profiling.FieldProfile, db_col: str, 
     )
     by_family = suggest_all(p.inferred_type, p.summary, p.is_target)
     row = [
-        dataset_id, p.ordinal, p.name, db_col, p.physical_dtype, p.inferred_type, p.confidence,
-        p.reasons, p.is_target, *[json_safe(p.summary.get(c)) for c in SUMMARY_COLS],
-        jsonb(p.stats), jsonb(p.charts), jsonb(by_family), jsonb(derived) if derived else None,
+        dataset_id,
+        p.ordinal,
+        p.name,
+        db_col,
+        p.physical_dtype,
+        p.inferred_type,
+        p.confidence,
+        p.reasons,
+        p.is_target,
+        *[json_safe(p.summary.get(c)) for c in SUMMARY_COLS],
+        jsonb(p.stats),
+        jsonb(p.charts),
+        jsonb(by_family),
+        jsonb(derived) if derived else None,
     ]
     fid = conn.execute(insert, row).fetchone()["id"]
     seed_decision(conn, dataset_id, fid, by_family)
@@ -221,17 +267,31 @@ def upsert_settings(conn, dataset_id: int, field_id: int, family: str, d: dict, 
               scaling = EXCLUDED.scaling, encoding = EXCLUDED.encoding, params = EXCLUDED.params,
               source = EXCLUDED.source, updated_at = now()
            RETURNING *""",
-        (field_id, family, dataset_id, d["imputation"], d.get("impute_value"), d.get("add_missing_indicator", False),
-         d["transform"], d["scaling"], d["encoding"], jsonb(d.get("params") or {}), source),
+        (
+            field_id,
+            family,
+            dataset_id,
+            d["imputation"],
+            d.get("impute_value"),
+            d.get("add_missing_indicator", False),
+            d["transform"],
+            d["scaling"],
+            d["encoding"],
+            jsonb(d.get("params") or {}),
+            source,
+        ),
     ).fetchone()
 
 
 def _persist_correlations(dataset_id: int, field_ids: list[int], assocs) -> None:
     with connection() as conn:
         conn.execute("DELETE FROM meta.field_correlations WHERE dataset_id = %s", (dataset_id,))
-        with conn.cursor() as cur, cur.copy(
-            "COPY meta.field_correlations (dataset_id, field_a, field_b, method, value, strength, n_obs) FROM STDIN"
-        ) as copy:
+        with (
+            conn.cursor() as cur,
+            cur.copy(
+                "COPY meta.field_correlations (dataset_id, field_a, field_b, method, value, strength, n_obs) FROM STDIN"
+            ) as copy,
+        ):
             for a in assocs:
                 fa, fb = field_ids[a.i], field_ids[a.j]
                 if fa > fb:
@@ -256,8 +316,10 @@ def target_suggestion(t: str, stats: dict, is_target: bool, max_target_assoc: fl
     by_family = suggest_all(t, stats, is_target)
     leak = not is_target and max_target_assoc is not None and max_target_assoc >= LEAKAGE_THRESHOLD
     if leak:
-        reason = (f"Drop: likely target leakage; its association with a target is {max_target_assoc:.2f}, too close to "
-                  "the target itself")
+        reason = (
+            f"Drop: likely target leakage; its association with a target is {max_target_assoc:.2f}, too close to "
+            "the target itself"
+        )
         by_family = {
             fam: {**sugg, "action": "drop", "reasons": [reason, *sugg.get("reasons", [])]}
             for fam, sugg in by_family.items()
@@ -334,8 +396,12 @@ def sweep_uploads(min_age_s: float = 600) -> list[Path]:
     uploads = get_settings().uploads_dir
     if not uploads.is_dir():
         return []
-    needed = {r["upload_path"] for r in fetch_all(
-        "SELECT upload_path FROM meta.datasets WHERE status IN ('pending', 'ingesting') AND upload_path IS NOT NULL")}
+    needed = {
+        r["upload_path"]
+        for r in fetch_all(
+            "SELECT upload_path FROM meta.datasets WHERE status IN ('pending', 'ingesting') AND upload_path IS NOT NULL"
+        )
+    }
     cutoff = time.time() - min_age_s
     removed = []
     for p in uploads.iterdir():
@@ -354,4 +420,3 @@ def delete_dataset_files(dataset_id: int) -> None:
     s = get_settings()
     shutil.rmtree(s.datasets_dir / str(dataset_id), ignore_errors=True)
     execute(sql.SQL("DROP TABLE IF EXISTS {}").format(sql.Identifier("raw", f"ds_{dataset_id}")))
-

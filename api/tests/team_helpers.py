@@ -1,5 +1,6 @@
 """Shared fixtures and helpers for the DB-backed team tests (baselines, experiment adjustments). Import the fixtures
 into a test module (`from .team_helpers import app_, people`) to use them there."""
+
 import os
 import time
 import uuid
@@ -9,8 +10,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 DB_URL = os.environ.get("RAINFOREST_TEST_DATABASE_URL")
-KEYS = ("action", "semantic_type", "imputation", "impute_value", "add_missing_indicator", "transform", "scaling",
-        "encoding", "params", "notes", "reviewed")
+KEYS = (
+    "action",
+    "semantic_type",
+    "imputation",
+    "impute_value",
+    "add_missing_indicator",
+    "transform",
+    "scaling",
+    "encoding",
+    "params",
+    "notes",
+    "reviewed",
+)
 
 
 @pytest.fixture(scope="module")
@@ -50,7 +62,8 @@ def csv_text(n=400, seed=3) -> str:
     rng = np.random.default_rng(seed)
     return "x,z,w,c,y\n" + "".join(
         f"{'' if i % 9 == 0 else f'{a:.3f}'},{b:.3f},{c:.3f},{'pqr'[i % 3]},{'ab'[i % 2]}\n"
-        for i, (a, b, c) in enumerate(zip(rng.normal(size=n), rng.normal(size=n), rng.normal(size=n))))
+        for i, (a, b, c) in enumerate(zip(rng.normal(size=n), rng.normal(size=n), rng.normal(size=n)))
+    )
 
 
 def wait(fn, timeout=120.0):
@@ -62,8 +75,9 @@ def wait(fn, timeout=120.0):
 
 
 def upload(client, csv=None, targets="y") -> dict:
-    ds = client.post("/api/datasets/upload", files={"file": ("t.csv", csv or csv_text(), "text/csv")},
-                     data={"targets": targets}).json()
+    ds = client.post(
+        "/api/datasets/upload", files={"file": ("t.csv", csv or csv_text(), "text/csv")}, data={"targets": targets}
+    ).json()
     ds = wait(lambda: (d := client.get(f"/api/datasets/{ds['id']}").json())["status"] in ("ready", "failed") and d)
     assert ds["status"] == "ready", ds
     return ds
@@ -89,9 +103,16 @@ def review_all(client, ds, view: str | None = None):
 
 
 def start(lead, ds, family, assessors, start="scratch", source=None, targets=("y",), expect=200) -> dict:
-    r = lead.post(f"/api/datasets/{ds['id']}/baselines", json={
-        "family": family, "start": start, "source_recipe_id": source, "targets": list(targets),
-        "assessors": [u.user["id"] for u in assessors]})
+    r = lead.post(
+        f"/api/datasets/{ds['id']}/baselines",
+        json={
+            "family": family,
+            "start": start,
+            "source_recipe_id": source,
+            "targets": list(targets),
+            "assessors": [u.user["id"] for u in assessors],
+        },
+    )
     assert r.status_code == expect, r.text
     return r.json()
 

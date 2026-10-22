@@ -8,9 +8,8 @@ from typing import Callable
 
 import polars as pl
 import pyarrow.parquet as pq
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from psycopg import sql
-
-from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 
 from .. import experiments, jobs, recipes, reuse
 from ..assessment import source_for
@@ -22,9 +21,9 @@ from ..modeling.registry import MODELS
 from ..processing import _Status, delete_dataset_files, process_dataset, upsert_correlations
 from ..profiling import corr_vector, sample_indices
 from ..sample_data import generate
-from ..schemas import DatasetPatch, SampleRequest
 from ..sample_library import LIBRARY
 from ..sample_library import path_of as library_path
+from ..schemas import DatasetPatch, SampleRequest
 from ..semantics import NUMERIC
 from .fields import _sync_targets, has_screen_fields, screen_pairs, screen_targets, set_targets
 
@@ -35,8 +34,10 @@ router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 DATASET_COLS = """id, name, source_filename, file_format, target_columns, model_family, row_count, column_count, status,
                   progress, status_message, error, warnings, created_at, updated_at, profiled_at, raw_table, created_by"""
 # A dataset `d` with its current recipe version `rc` (recipes.CURRENT_JOIN).
-SELECT_DATASET = ", ".join("d." + c.strip() for c in DATASET_COLS.split(",")) + \
-    ", rc.id AS recipe_id, rc.version AS recipe_version, rc.phase"
+SELECT_DATASET = (
+    ", ".join("d." + c.strip() for c in DATASET_COLS.split(","))
+    + ", rc.id AS recipe_id, rc.version AS recipe_version, rc.phase"
+)
 
 
 def _targets(raw: str | None) -> list[str]:
@@ -46,15 +47,21 @@ def _targets(raw: str | None) -> list[str]:
     return list(dict.fromkeys(t.strip() for t in raw.split(",") if t.strip()))
 
 
-def _create(name: str, filename: str | None, fmt: str, targets: list[str], user_id: int,
-            upload_path: Path | None = None, recipe_id: int | None = None) -> dict:
+def _create(
+    name: str,
+    filename: str | None,
+    fmt: str,
+    targets: list[str],
+    user_id: int,
+    upload_path: Path | None = None,
+    recipe_id: int | None = None,
+) -> dict:
     with connection() as conn:
         ds = conn.execute(
             """INSERT INTO meta.datasets (name, source_filename, file_format, target_columns, status, status_message,
                                           owner, upload_path, created_by)
                VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s, %s) RETURNING id""",
-            (name, filename, fmt, targets, jobs.owner_id(), None if upload_path is None else str(upload_path),
-             user_id),
+            (name, filename, fmt, targets, jobs.owner_id(), None if upload_path is None else str(upload_path), user_id),
         ).fetchone()
         first = recipes.create_first(conn, ds["id"], user_id)
         if recipe_id is not None:
@@ -137,7 +144,10 @@ def _team_glance(conn, row: dict, user: dict) -> dict:
         kinds = conn.execute(
             sql.SQL("""SELECT f.name, d.target_task FROM meta.fields f JOIN {} d ON d.field_id = f.id
                         WHERE f.dataset_id = %s AND f.name = ANY(%s) AND d.action = 'target'""").format(
-                src.decisions()), (row["id"], row["target_columns"])).fetchall()
+                src.decisions()
+            ),
+            (row["id"], row["target_columns"]),
+        ).fetchall()
         out["target_kinds"] = {k["name"]: TASK_KIND.get(k["target_task"] or "classes") for k in kinds}
         out["target_kinds_suggested"] = src.kind == "suggested" or (src.team and recipe["phase"] == "assessing")
     return out
@@ -165,9 +175,16 @@ def best_by_dataset(ids: list[int], visible: str) -> dict[int, dict]:
 
     def entry(r: dict, chosen: bool) -> dict:
         metric = next((m for m in experiments.HEADLINE_METRICS if isinstance(r["scores"].get(m), (int, float))), None)
-        return {"run_id": r["id"], "experiment_id": r["experiment_id"], "experiment_name": r["experiment_name"],
-                "model": r["model"], "model_label": r["label"] or (MODELS[r["model"]].label if r["model"] in MODELS else r["model"]),
-                "chosen": chosen, "metric": metric, "value": None if metric is None else float(r["scores"][metric])}
+        return {
+            "run_id": r["id"],
+            "experiment_id": r["experiment_id"],
+            "experiment_name": r["experiment_name"],
+            "model": r["model"],
+            "model_label": r["label"] or (MODELS[r["model"]].label if r["model"] in MODELS else r["model"]),
+            "chosen": chosen,
+            "metric": metric,
+            "value": None if metric is None else float(r["scores"][metric]),
+        }
 
     out: dict[int, dict] = {}
     for ds_id, scored in by_ds.items():
@@ -186,21 +203,40 @@ def best_by_dataset(ids: list[int], visible: str) -> dict[int, dict]:
 def _with_latest(row: dict) -> dict:
     out = {k: v for k, v in row.items() if not k.startswith(("e_", "r_", "my_")) and k != "assigned"}
     # Who assesses the current version and how many have submitted (counts only; the team sees these anyway).
-    out["assessors"] = None if not row["my_assessors_total"] else {
-        "total": row["my_assessors_total"], "submitted": row["my_assessors_submitted"]}
+    out["assessors"] = (
+        None
+        if not row["my_assessors_total"]
+        else {"total": row["my_assessors_total"], "submitted": row["my_assessors_submitted"]}
+    )
     # The viewer's own assessment of the current version, when they are assigned to it.
-    out["my_assessment"] = None if not row["assigned"] else {
-        "reviewed": row["my_reviewed"], "submitted": row["my_submitted_at"] is not None}
-    out["last_export"] = None if row["e_id"] is None else {
-        "id": row["e_id"], "model_family": row["e_model_family"], "status": row["e_status"],
-        "created_at": row["e_created_at"], "n_features": row["e_n_features"],
-    }
-    out["last_run"] = None if row["r_id"] is None else {
-        "id": row["r_id"], "model": row["r_model"],
-        "model_label": row["r_label"] or (MODELS[row["r_model"]].label if row["r_model"] in MODELS else row["r_model"]),
-        "status": row["r_status"],
-        **headline_metric(row["r_status"], row["r_order"], row["r_test"]),
-    }
+    out["my_assessment"] = (
+        None
+        if not row["assigned"]
+        else {"reviewed": row["my_reviewed"], "submitted": row["my_submitted_at"] is not None}
+    )
+    out["last_export"] = (
+        None
+        if row["e_id"] is None
+        else {
+            "id": row["e_id"],
+            "model_family": row["e_model_family"],
+            "status": row["e_status"],
+            "created_at": row["e_created_at"],
+            "n_features": row["e_n_features"],
+        }
+    )
+    out["last_run"] = (
+        None
+        if row["r_id"] is None
+        else {
+            "id": row["r_id"],
+            "model": row["r_model"],
+            "model_label": row["r_label"]
+            or (MODELS[row["r_model"]].label if row["r_model"] in MODELS else row["r_model"]),
+            "status": row["r_status"],
+            **headline_metric(row["r_status"], row["r_order"], row["r_test"]),
+        }
+    )
     return out
 
 
@@ -294,11 +330,17 @@ def create_sample(req: SampleRequest, user: CurrentUser) -> dict:
     width = req.fields + int(req.numeric_target)
     if req.rows * width > cap:
         raise HTTPException(
-            422, f"rows × fields must be at most {cap:,} (asked for {req.rows:,} × {width} = "
-                 f"{req.rows * width:,}). With {width} fields, use up to {cap // width:,} rows.")
+            422,
+            f"rows × fields must be at most {cap:,} (asked for {req.rows:,} × {width} = "
+            f"{req.rows * width:,}). With {width} fields, use up to {cap // width:,} rows.",
+        )
     ds = _create(
-        req.name or f"sample-{req.rows // 1000}k-{req.fields}f-{req.target_kind}" + ("-num" if req.numeric_target else ""),
-        None, "generated", ["column_a", "column_b", *(["column_c"] if req.numeric_target else [])], user["id"],
+        req.name
+        or f"sample-{req.rows // 1000}k-{req.fields}f-{req.target_kind}" + ("-num" if req.numeric_target else ""),
+        None,
+        "generated",
+        ["column_a", "column_b", *(["column_c"] if req.numeric_target else [])],
+        user["id"],
     )
     jobs.submit(_generate_and_process, ds["id"], req.model_dump())
     return ds
@@ -327,8 +369,9 @@ def _generate_and_process(dataset_id: int, req: dict) -> None:
 
 @router.get("/{dataset_id}")
 def get_dataset(dataset_id: int) -> dict:
-    ds = fetch_one(f"SELECT {SELECT_DATASET} FROM meta.datasets d {recipes.CURRENT_JOIN} WHERE d.id = %s",
-                   (dataset_id,))
+    ds = fetch_one(
+        f"SELECT {SELECT_DATASET} FROM meta.datasets d {recipes.CURRENT_JOIN} WHERE d.id = %s", (dataset_id,)
+    )
     if ds is None:
         raise HTTPException(404, "Dataset not found")
     return with_baselines([ds])[0]
@@ -352,8 +395,10 @@ def with_baselines(rows: list[dict]) -> list[dict]:
                 ORDER BY r.dataset_id, r.family, r.id DESC""",
             (ids,),
         ).fetchall()
-        current = {r["dataset_id"]: r for r in conn.execute(
-            """SELECT DISTINCT ON (r.dataset_id) r.dataset_id, r.id, r.family, r.version, r.phase,
+        current = {
+            r["dataset_id"]: r
+            for r in conn.execute(
+                """SELECT DISTINCT ON (r.dataset_id) r.dataset_id, r.id, r.family, r.version, r.phase,
                       meta.baseline_name(r.dataset_id, r.family) AS name,
                       (r.version = 1 AND r.phase = 'assessing' AND r.parent_id IS NULL AND r.reuse IS NULL
                        AND NOT EXISTS (SELECT 1 FROM meta.dataset_assessors a WHERE a.recipe_id = r.id)
@@ -361,20 +406,31 @@ def with_baselines(rows: list[dict]) -> list[dict]:
                        AND NOT EXISTS (SELECT 1 FROM meta.recipes o WHERE o.dataset_id = r.dataset_id
                                          AND o.id <> r.id)) AS setup
                  FROM meta.recipes r WHERE r.dataset_id = ANY(%s) ORDER BY r.dataset_id, r.id DESC""",
-            (ids,),
-        ).fetchall()}
+                (ids,),
+            ).fetchall()
+        }
     order = list(recipes.FAMILY_LABEL)
     by_ds: dict[int, list[dict]] = {}
     for r in sorted(latest, key=lambda r: order.index(r["family"])):
         by_ds.setdefault(r["dataset_id"], []).append(
-            {k: r[k] for k in ("family", "id", "version", "phase", "latest_finalized_id", "name")} | {"label": recipes.label(r)})
+            {k: r[k] for k in ("family", "id", "version", "phase", "latest_finalized_id", "name")}
+            | {"label": recipes.label(r)}
+        )
     out = []
     for row in rows:
         cur = current.get(row["id"])
-        out.append({**row, "baselines": by_ds.get(row["id"], []),
-                    "baseline": None if cur is None else {**{k: cur[k] for k in ("id", "family", "version", "phase",
-                                                                                 "setup", "name")},
-                                                          "label": recipes.label(cur)}})
+        out.append(
+            {
+                **row,
+                "baselines": by_ds.get(row["id"], []),
+                "baseline": None
+                if cur is None
+                else {
+                    **{k: cur[k] for k in ("id", "family", "version", "phase", "setup", "name")},
+                    "label": recipes.label(cur),
+                },
+            }
+        )
     return out
 
 
@@ -383,8 +439,9 @@ def update_dataset(dataset_id: int, body: DatasetPatch, user: CurrentUser) -> di
     """Rename a dataset or choose its targets. Its model family is its current baseline's."""
     ds = get_dataset(dataset_id)
     if body.model_family is not None and body.model_family != ds["model_family"]:
-        raise HTTPException(422, "The model type comes from the baseline. Start a baseline for another type on the "
-                                 "Baselines page.")
+        raise HTTPException(
+            422, "The model type comes from the baseline. Start a baseline for another type on the Baselines page."
+        )
     if body.target_columns is not None and ds["status"] != "ready":
         raise HTTPException(409, "Targets can be changed once the dataset is ready")
     start = _nothing
@@ -406,8 +463,9 @@ def _nothing() -> None:
     pass
 
 
-def queue_target_work(conn, dataset_id: int, uncorrelated: list[dict], added: list[int],
-                      inline: bool = False) -> Callable[[], None]:
+def queue_target_work(
+    conn, dataset_id: int, uncorrelated: list[dict], added: list[int], inline: bool = False
+) -> Callable[[], None]:
     """After targets changed (fields.set_targets): the work still to do, to call once the transaction commits.
     Targets with no associations yet get them computed (the dataset shows as correlating meanwhile), new targets get
     the leak screen. `inline` runs it in the calling job instead of queueing a job."""
@@ -439,17 +497,24 @@ def _check_targets_editable(conn, dataset_id: int, user: dict, names: list[str])
     into a later version keep their role."""
     recipe = recipes.current(conn, dataset_id, lock="update")
     if recipe["phase"] == "assessing":
-        if conn.execute("SELECT 1 FROM meta.dataset_assessors WHERE recipe_id = %s LIMIT 1",
-                        (recipe["id"],)).fetchone():
-            raise HTTPException(409, "Targets are fixed once assessors are assigned. A lead can change them in "
-                                     "review, or unassign everyone first.")
+        if conn.execute(
+            "SELECT 1 FROM meta.dataset_assessors WHERE recipe_id = %s LIMIT 1", (recipe["id"],)
+        ).fetchone():
+            raise HTTPException(
+                409,
+                "Targets are fixed once assessors are assigned. A lead can change them in "
+                "review, or unassign everyone first.",
+            )
     else:
         source_for(conn, dataset_id, user, recipe).require_write()
-    changed = [r["id"] for r in conn.execute(
-        """SELECT f.id FROM meta.fields f JOIN meta.field_decisions d ON d.field_id = f.id
+    changed = [
+        r["id"]
+        for r in conn.execute(
+            """SELECT f.id FROM meta.fields f JOIN meta.field_decisions d ON d.field_id = f.id
             WHERE f.dataset_id = %s AND (d.action = 'target') <> (f.name = ANY(%s))""",
-        (dataset_id, names),
-    ).fetchall()]
+            (dataset_id, names),
+        ).fetchall()
+    ]
     if (locked := recipes.locked_problem(conn, recipe, changed)) is not None:
         raise HTTPException(409, locked)
 
@@ -493,8 +558,17 @@ def correlate_targets(dataset_id: int, target_ids: list[int], screen_ids: list[i
                     """INSERT INTO meta.field_correlations
                               (dataset_id, field_a, field_b, method, value, strength, n_obs)
                        VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (field_a, field_b) DO NOTHING""",
-                    [(dataset_id, *sorted((fields[a.i]["id"], fields[a.j]["id"])), a.method, a.value, abs(a.value),
-                      a.n_obs) for a in assocs],
+                    [
+                        (
+                            dataset_id,
+                            *sorted((fields[a.i]["id"], fields[a.j]["id"])),
+                            a.method,
+                            a.value,
+                            abs(a.value),
+                            a.n_obs,
+                        )
+                        for a in assocs
+                    ],
                 )
             upsert_correlations(conn, dataset_id, screened)
             _sync_targets(conn, dataset_id)
@@ -534,11 +608,13 @@ def delete_dataset(dataset_id: int, _: LeadUser) -> dict:
         ).fetchone()["busy"]
         if busy:
             raise HTTPException(409, "An export or model run for this dataset is still running")
-        exports = [r["id"] for r in conn.execute(
-            "SELECT id FROM meta.exports WHERE dataset_id = %s", (dataset_id,)).fetchall()]
+        exports = [
+            r["id"] for r in conn.execute("SELECT id FROM meta.exports WHERE dataset_id = %s", (dataset_id,)).fetchall()
+        ]
         runs = conn.execute("SELECT id, model_dir FROM meta.model_runs WHERE dataset_id = %s", (dataset_id,)).fetchall()
-        n_fields = conn.execute("SELECT count(*) AS n FROM meta.fields WHERE dataset_id = %s",
-                                (dataset_id,)).fetchone()["n"]
+        n_fields = conn.execute(
+            "SELECT count(*) AS n FROM meta.fields WHERE dataset_id = %s", (dataset_id,)
+        ).fetchone()["n"]
         conn.execute("DELETE FROM meta.datasets WHERE id = %s", (dataset_id,))
     delete_dataset_files(dataset_id)
     for e in exports:

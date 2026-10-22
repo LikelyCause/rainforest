@@ -7,7 +7,18 @@ import { can } from "./can";
 import { Avatar } from "./components/Avatar";
 import { Logo } from "./components/Logo";
 import { PictureDialog } from "./components/PictureDialog";
-import { ConfirmRegion, Icon, LensChip, PhaseRail, Tabs, isModalOpen, stageOf, useDismiss, type Lens, type Stage } from "./components/kit";
+import {
+  ConfirmRegion,
+  Icon,
+  LensChip,
+  PhaseRail,
+  Tabs,
+  isModalOpen,
+  stageOf,
+  useDismiss,
+  type Lens,
+  type Stage,
+} from "./components/kit";
 import { NextStep } from "./components/NextStep";
 import { ExperimentBar } from "./components/ExperimentBar";
 import { DatasetsPage } from "./pages/DatasetsPage";
@@ -50,8 +61,9 @@ function DatasetTabs({ ds }: { ds: Dataset }) {
   const runs = useQuery({ queryKey: ["runs", ds.id], queryFn: () => api.runs(ds.id), refetchInterval: busy });
   const all = fields.data ?? [];
   const reviewed = all.filter((f) => f.reviewed);
-  const running = [...(exports.data ?? []), ...(runs.data ?? [])]
-    .filter((j: ExportJob | ModelRun) => j.status === "pending" || j.status === "running").length;
+  const running = [...(exports.data ?? []), ...(runs.data ?? [])].filter(
+    (j: ExportJob | ModelRun) => j.status === "pending" || j.status === "running",
+  ).length;
   const nextTodo = access.canEdit && !view ? all.find((f) => !f.reviewed) : undefined;
   const inReview = ds.phase === "review" && !view;
   const open = team.data?.review?.open;
@@ -61,7 +73,15 @@ function DatasetTabs({ ds }: { ds: Dataset }) {
     if (onReview) return;
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
-      if (e.key !== "u" || e.metaKey || e.ctrlKey || e.altKey || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) || el.isContentEditable) return;
+      if (
+        e.key !== "u" ||
+        e.metaKey ||
+        e.ctrlKey ||
+        e.altKey ||
+        ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) ||
+        el.isContentEditable
+      )
+        return;
       if (isModalOpen()) return;
       if (nextTodo) nav(`/d/${ds.id}/review/${nextTodo.id}`);
     };
@@ -70,21 +90,48 @@ function DatasetTabs({ ds }: { ds: Dataset }) {
   }, [onReview, nextTodo, nav, ds.id]);
 
   return (
-    <Tabs label="Dataset" className="dataset-tabs" items={[
-      {
-        to: inReview ? `/d/${ds.id}/team` : withView(`/d/${ds.id}/review`, view), label: "Fields",
-        active: Boolean(onReview || onBulk || onQueue),
-        count: inReview ? (open != null ? `${open} open` : undefined) : all.length ? `${reviewed.length}/${all.length}` : undefined,
-        title: inReview ? "The team review queue, then every field" : `${reviewed.length} of ${all.length} reviewed`,
-      },
-      { to: `/d/${ds.id}/explore`, label: "Explore" },
-      { to: `/d/${ds.id}/baseline`, label: "Baseline", active: Boolean(onBaseline || onVersions), title: "Progress, assessors, versions" },
-      {
-        to: `/d/${ds.id}/experiments`,
-        label: <>Experiments{running > 0 && <span className="running-dot" role="status" aria-label={`${running} in progress`}
-          title={`${running} export${running === 1 ? " or run" : "s or runs"} in progress`} />}</>,
-      },
-    ]} />
+    <Tabs
+      label="Dataset"
+      className="dataset-tabs"
+      items={[
+        {
+          to: inReview ? `/d/${ds.id}/team` : withView(`/d/${ds.id}/review`, view),
+          label: "Fields",
+          active: Boolean(onReview || onBulk || onQueue),
+          count: inReview
+            ? open != null
+              ? `${open} open`
+              : undefined
+            : all.length
+              ? `${reviewed.length}/${all.length}`
+              : undefined,
+          title: inReview ? "The team review queue, then every field" : `${reviewed.length} of ${all.length} reviewed`,
+        },
+        { to: `/d/${ds.id}/explore`, label: "Explore" },
+        {
+          to: `/d/${ds.id}/baseline`,
+          label: "Baseline",
+          active: Boolean(onBaseline || onVersions),
+          title: "Progress, assessors, versions",
+        },
+        {
+          to: `/d/${ds.id}/experiments`,
+          label: (
+            <>
+              Experiments
+              {running > 0 && (
+                <span
+                  className="running-dot"
+                  role="status"
+                  aria-label={`${running} in progress`}
+                  title={`${running} export${running === 1 ? " or run" : "s or runs"} in progress`}
+                />
+              )}
+            </>
+          ),
+        },
+      ]}
+    />
   );
 }
 
@@ -96,17 +143,34 @@ function DatasetSwitcher({ ds }: { ds: Dataset }) {
   const list = useQuery({ queryKey: ["datasets"], queryFn: api.datasets, enabled: open });
   return (
     <div ref={ref} style={{ position: "relative", minWidth: 0 }}>
-      <button type="button" className="ghost switcher" aria-expanded={open} aria-haspopup="true" onClick={() => setOpen(!open)} title={ds.name}>
-        <span className="ds-name">{ds.name}</span><Icon name="chevron-down" />
+      <button
+        type="button"
+        className="ghost switcher"
+        aria-expanded={open}
+        aria-haspopup="true"
+        onClick={() => setOpen(!open)}
+        title={ds.name}
+      >
+        <span className="ds-name">{ds.name}</span>
+        <Icon name="chevron-down" />
       </button>
       {open && (
         <div className="popover" style={{ left: 0, right: "auto", minWidth: 260 }}>
           {list.data?.map((d) => (
-            <Link key={d.id} to={`/d/${d.id}`} className="menu-link" aria-current={d.id === ds.id ? "true" : undefined} onClick={close}>
-              <span className="grow">{d.name}</span>{d.id === ds.id && <Icon name="check" />}
+            <Link
+              key={d.id}
+              to={`/d/${d.id}`}
+              className="menu-link"
+              aria-current={d.id === ds.id ? "true" : undefined}
+              onClick={close}
+            >
+              <span className="grow">{d.name}</span>
+              {d.id === ds.id && <Icon name="check" />}
             </Link>
           ))}
-          <Link to="/" className="menu-link" onClick={close}>All datasets</Link>
+          <Link to="/" className="menu-link" onClick={close}>
+            All datasets
+          </Link>
         </div>
       )}
     </div>
@@ -123,18 +187,29 @@ function TopBar() {
     <header className={`topbar${d ? " in-dataset" : ""}`}>
       <div className="topbar-row">
         {d ? (
-          <Link to="/" className="brand" aria-label="Rainforest: all datasets"><Logo /><span className="brand-name">Rainforest</span></Link>
+          <Link to="/" className="brand" aria-label="Rainforest: all datasets">
+            <Logo />
+            <span className="brand-name">Rainforest</span>
+          </Link>
         ) : (
-          <NavLink to="/" className="brand"><Logo /> Rainforest</NavLink>
+          <NavLink to="/" className="brand">
+            <Logo /> Rainforest
+          </NavLink>
         )}
         {d ? (
           <>
-            <span className="crumb-sep" aria-hidden="true">/</span>
+            <span className="crumb-sep" aria-hidden="true">
+              /
+            </span>
             <DatasetSwitcher ds={d} />
             {d.status === "ready" && <DatasetTabs ds={d} />}
           </>
         ) : (
-          <Tabs label="Main" className="main-tabs" items={[{ to: "/", label: "Datasets", end: true, active: Boolean(onHome) }]} />
+          <Tabs
+            label="Main"
+            className="main-tabs"
+            items={[{ to: "/", label: "Datasets", end: true, active: Boolean(onHome) }]}
+          />
         )}
         <UserMenu compact={Boolean(d)} />
       </div>
@@ -169,8 +244,16 @@ function UserMenu({ compact }: { compact?: boolean }) {
   const pick = u.mode === "pick";
   return (
     <div ref={ref} className="user-menu" style={{ position: "relative" }}>
-      <button ref={button} type="button" className="ghost profile-button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}
-        aria-label={`Profile menu: ${u.name}, ${roleLabel(u.role)}`} title={u.email ?? undefined}>
+      <button
+        ref={button}
+        type="button"
+        className="ghost profile-button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        aria-label={`Profile menu: ${u.name}, ${roleLabel(u.role)}`}
+        title={u.email ?? undefined}
+      >
         <Avatar user={u} size={28} />
         {!compact && <span className="user-name">{u.name}</span>}
       </button>
@@ -183,21 +266,56 @@ function UserMenu({ compact }: { compact?: boolean }) {
               <span className="muted small-text">{roleLabel(u.role)}</span>
             </div>
           </div>
-          <button type="button" role="menuitem" className="ghost menu-item" onClick={() => { close(); setPicture(true); }}>Change picture…</button>
-          <NavLink role="menuitem" className="menu-item" to="/settings" onClick={close}>Settings</NavLink>
-          <NavLink role="menuitem" className="menu-item" to="/people" onClick={close}>People</NavLink>
+          <button
+            type="button"
+            role="menuitem"
+            className="ghost menu-item"
+            onClick={() => {
+              close();
+              setPicture(true);
+            }}
+          >
+            Change picture…
+          </button>
+          <NavLink role="menuitem" className="menu-item" to="/settings" onClick={close}>
+            Settings
+          </NavLink>
+          <NavLink role="menuitem" className="menu-item" to="/people" onClick={close}>
+            People
+          </NavLink>
           {system.data?.mlflow && (
-            <a role="menuitem" className="menu-item" href="/mlflow/" target="_blank" rel="noopener noreferrer" onClick={close}>
+            <a
+              role="menuitem"
+              className="menu-item"
+              href="/mlflow/"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={close}
+            >
               MLflow <Icon name="external" size={14} />
             </a>
           )}
-          <button type="button" role="menuitem" className="ghost menu-item" disabled={out.isPending} onClick={() => out.mutate()}>
+          <button
+            type="button"
+            role="menuitem"
+            className="ghost menu-item"
+            disabled={out.isPending}
+            onClick={() => out.mutate()}
+          >
             {pick ? "Switch profile" : "Sign out"}
           </button>
         </div>
       )}
       {/* The menu item that opened it is gone by now, so focus returns to the profile button. */}
-      {picture && <PictureDialog user={u} onClose={() => { setPicture(false); button.current?.focus(); }} />}
+      {picture && (
+        <PictureDialog
+          user={u}
+          onClose={() => {
+            setPicture(false);
+            button.current?.focus();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -218,12 +336,22 @@ function VersionSwitcher({ ds, stage }: { ds: Dataset; stage: Stage }) {
   const b = ds.baseline;
   if (!b) return null;
   const name = stage === "setup" ? "No baseline yet" : baselineLabel(b.family, b.version, true, b.name);
-  const where = (v: RecipeVersion) => v.id === b.id ? `/d/${ds.id}/baseline`
-    : v.phase === "finalized" ? `/d/${ds.id}/review?view=baseline:${v.id}` : `/d/${ds.id}/baselines?v=${v.id}`;
+  const where = (v: RecipeVersion) =>
+    v.id === b.id
+      ? `/d/${ds.id}/baseline`
+      : v.phase === "finalized"
+        ? `/d/${ds.id}/review?view=baseline:${v.id}`
+        : `/d/${ds.id}/baselines?v=${v.id}`;
   return (
     <div ref={ref} className="version-switch">
-      <button type="button" className="ghost switcher version-switcher" aria-expanded={open} aria-haspopup="true" onClick={() => setOpen(!open)}
-        title={stage === "setup" ? "This dataset's first baseline isn't set up yet" : b.label}>
+      <button
+        type="button"
+        className="ghost switcher version-switcher"
+        aria-expanded={open}
+        aria-haspopup="true"
+        onClick={() => setOpen(!open)}
+        title={stage === "setup" ? "This dataset's first baseline isn't set up yet" : b.label}
+      >
         <span className="ds-name">{name}</span>
         {stage !== "setup" && <span className="badge">{familyShort(b.family)}</span>}
         <Icon name="chevron-down" />
@@ -234,34 +362,74 @@ function VersionSwitcher({ ds, stage }: { ds: Dataset; stage: Stage }) {
           <ErrorAlert error={lines.error} />
           {(lines.data ?? []).map((l) => (
             <div key={l.family} role="group" aria-label={`${l.name ?? l.label} baseline`}>
-              {(lines.data ?? []).length > 1 && <span className="menu-note muted small-text">{l.name ?? `${l.label} baseline`} · {l.label}</span>}
+              {(lines.data ?? []).length > 1 && (
+                <span className="menu-note muted small-text">
+                  {l.name ?? `${l.label} baseline`} · {l.label}
+                </span>
+              )}
               {l.versions.map((v) => {
                 const current = v.id === b.id;
                 return (
-                  <Link key={v.id} to={where(v)} className="menu-link" aria-current={current ? "true" : undefined} onClick={close}
-                    title={current ? "The version being worked: its progress" : v.phase === "finalized" ? "Browse its fields, read-only" : "See it on the versions page"}>
-                    <span className="grow">{baselineLabel(v.family, v.version, true, v.name)}{current && <span className="muted"> · current</span>}</span>
+                  <Link
+                    key={v.id}
+                    to={where(v)}
+                    className="menu-link"
+                    aria-current={current ? "true" : undefined}
+                    onClick={close}
+                    title={
+                      current
+                        ? "The version being worked: its progress"
+                        : v.phase === "finalized"
+                          ? "Browse its fields, read-only"
+                          : "See it on the versions page"
+                    }
+                  >
+                    <span className="grow">
+                      {baselineLabel(v.family, v.version, true, v.name)}
+                      {current && <span className="muted"> · current</span>}
+                    </span>
                     <span className="muted small-text">{PHASE_WORD[v.phase]}</span>
-                    {current ? <Icon name="check" /> : v.phase === "finalized" ? <Icon name="lock" size={14} className="muted" /> : null}
+                    {current ? (
+                      <Icon name="check" />
+                    ) : v.phase === "finalized" ? (
+                      <Icon name="lock" size={14} className="muted" />
+                    ) : null}
                   </Link>
                 );
               })}
             </div>
           ))}
           <hr />
-          <Link to={`/d/${ds.id}/baselines`} className="menu-link" onClick={close}>Versions and compare</Link>
-          {can(me, "startBaseline") && <Link to={`/d/${ds.id}/baselines`} className="menu-link" onClick={close}>New version or baseline…</Link>}
+          <Link to={`/d/${ds.id}/baselines`} className="menu-link" onClick={close}>
+            Versions and compare
+          </Link>
+          {can(me, "startBaseline") && (
+            <Link to={`/d/${ds.id}/baselines`} className="menu-link" onClick={close}>
+              New version or baseline…
+            </Link>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function lensOf(stage: Stage, access: Access, me: { role: string } | undefined, team: TeamState | undefined, onBaseline: boolean): { lens: Lens; text: string } {
+function lensOf(
+  stage: Stage,
+  access: Access,
+  me: { role: string } | undefined,
+  team: TeamState | undefined,
+  onBaseline: boolean,
+): { lens: Lens; text: string } {
   // The Baseline tab shows progress only while assessing, whoever is looking.
-  if (onBaseline && stage === "assessing") return { lens: "suggestions", text: "Progress only · nobody's choices show" };
-  if (access.source === "mine") return { lens: "private", text: team?.me?.submitted ? "Private · submitted" : "Private · your assessment" };
-  if (me?.role === "viewer") return stage === "finalized" ? { lens: "frozen", text: "Frozen snapshot" } : { lens: "suggestions", text: "Read-only" };
+  if (onBaseline && stage === "assessing")
+    return { lens: "suggestions", text: "Progress only · nobody's choices show" };
+  if (access.source === "mine")
+    return { lens: "private", text: team?.me?.submitted ? "Private · submitted" : "Private · your assessment" };
+  if (me?.role === "viewer")
+    return stage === "finalized"
+      ? { lens: "frozen", text: "Frozen snapshot" }
+      : { lens: "suggestions", text: "Read-only" };
   if (stage === "setup") return { lens: "suggestions", text: "Suggestions only" };
   if (stage === "assessing") return { lens: "suggestions", text: "Suggestions · not assessing" };
   if (stage === "review") return { lens: "team", text: "Team decision · visible to all" };
@@ -277,10 +445,13 @@ function gateText(stage: Stage, team: TeamState | undefined, lead: boolean): str
     if (n === 0) return lead ? "Nobody is assigned yet" : "Nobody is assigned yet";
     return `Team review opens when ${n === 1 ? "the assessor submits" : n === 2 ? "both submit" : `all ${n} submit`} · ${k} in`;
   }
-  if (stage === "review" && team.review) return `${fmtInt(team.review.adopted)} adopted · ${fmtInt(team.review.open)} open`;
+  if (stage === "review" && team.review)
+    return `${fmtInt(team.review.adopted)} adopted · ${fmtInt(team.review.open)} open`;
   if (stage === "finalized") {
     const who = team.recipe.finalized_by_name;
-    return team.recipe.finalized_at ? `${who ? `by ${who}, ` : ""}${new Date(team.recipe.finalized_at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}` : null;
+    return team.recipe.finalized_at
+      ? `${who ? `by ${who}, ` : ""}${new Date(team.recipe.finalized_at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`
+      : null;
   }
   return null;
 }
@@ -290,17 +461,25 @@ function ViewBar({ ds }: { ds: Dataset }) {
   const view = useView();
   const v = parseView(view);
   const x = useExperiment(v?.kind === "experiment" ? v.id : null);
-  const lines = useQuery({ queryKey: ["baselines", ds.id], queryFn: () => api.baselines(ds.id), enabled: v?.kind === "baseline" });
+  const lines = useQuery({
+    queryKey: ["baselines", ds.id],
+    queryFn: () => api.baselines(ds.id),
+    enabled: v?.kind === "baseline",
+  });
   if (!v) return null;
   if (v.kind === "baseline") {
     const ver = (lines.data ?? []).flatMap((l) => l.versions).find((r) => r.id === v.id);
     return (
       <>
-        <b className="version-name">{ver ? baselineLabel(ver.family, ver.version, true, ver.name) : "A finalized baseline"}</b>
+        <b className="version-name">
+          {ver ? baselineLabel(ver.family, ver.version, true, ver.name) : "A finalized baseline"}
+        </b>
         <span className="secondary small-text">Browsing a finalized baseline</span>
         <span className="spacer" />
         <LensChip lens="frozen">Frozen snapshot · read-only</LensChip>
-        <Link className="btn primary" to={`/d/${ds.id}/baselines?v=${v.id}`}>Back to versions</Link>
+        <Link className="btn primary" to={`/d/${ds.id}/baselines?v=${v.id}`}>
+          Back to versions
+        </Link>
       </>
     );
   }
@@ -311,14 +490,36 @@ function ViewBar({ ds }: { ds: Dataset }) {
       {d && (
         <span className="secondary small-text">
           built from {baselineLabel(d.recipe_family, d.recipe_version, true, d.recipe_name)}
-          {d.adjustments.count > 0 && <> · <b className="num">{d.adjustments.count}</b> field{d.adjustments.count === 1 ? "" : "s"} adjusted</>}
-          {!d.can_adjust && <> · read-only{d.is_default ? ": start your own experiment to adjust fields" : `: only ${d.owner_name ?? "its owner"} adjusts it`}</>}
+          {d.adjustments.count > 0 && (
+            <>
+              {" "}
+              · <b className="num">{d.adjustments.count}</b> field{d.adjustments.count === 1 ? "" : "s"} adjusted
+            </>
+          )}
+          {!d.can_adjust && (
+            <>
+              {" "}
+              · read-only
+              {d.is_default
+                ? ": start your own experiment to adjust fields"
+                : `: only ${d.owner_name ?? "its owner"} adjusts it`}
+            </>
+          )}
         </span>
       )}
       {d?.adjustments.targets_changed && <span className="badge warn">targets changed</span>}
       <span className="spacer" />
-      <LensChip lens="experiment" title={d?.can_adjust ? "Changes apply to this experiment only; the baseline stays as the team agreed it." : undefined}>Experiment copy</LensChip>
-      <Link className="btn primary" to={`/d/${ds.id}/experiments/${v.id}`}>Back to the experiment</Link>
+      <LensChip
+        lens="experiment"
+        title={
+          d?.can_adjust ? "Changes apply to this experiment only; the baseline stays as the team agreed it." : undefined
+        }
+      >
+        Experiment copy
+      </LensChip>
+      <Link className="btn primary" to={`/d/${ds.id}/experiments/${v.id}`}>
+        Back to the experiment
+      </Link>
     </>
   );
 }
@@ -345,7 +546,9 @@ function DatasetBar({ ds }: { ds: Dataset }) {
         <PhaseRail stage={stage} />
         {gate && <span className="gate-text num">{gate}</span>}
         <span className="spacer" />
-        <LensChip lens={lens.lens} title={access.note || undefined}>{lens.text}</LensChip>
+        <LensChip lens={lens.lens} title={access.note || undefined}>
+          {lens.text}
+        </LensChip>
         <NextStep ds={ds} stage={stage} access={access} team={team.data} />
       </>
     );
@@ -373,8 +576,13 @@ function RequireAuth() {
     return (
       <div className="login">
         <div className="card login-card stack">
-          <div className="login-brand"><Logo /> Rainforest</div>
-          <ErrorAlert error={me.error} title={me.error instanceof ApiError && me.error.status === 503 ? "Not set up yet." : "Can't reach the API."} />
+          <div className="login-brand">
+            <Logo /> Rainforest
+          </div>
+          <ErrorAlert
+            error={me.error}
+            title={me.error instanceof ApiError && me.error.status === 503 ? "Not set up yet." : "Can't reach the API."}
+          />
         </div>
       </div>
     );
@@ -397,8 +605,22 @@ export default function App() {
   return (
     <div className="app">
       <Routes>
-        <Route path="/login" element={<main className="main"><LoginPage /></main>} />
-        <Route path="/forbidden" element={<main className="main"><ForbiddenPage /></main>} />
+        <Route
+          path="/login"
+          element={
+            <main className="main">
+              <LoginPage />
+            </main>
+          }
+        />
+        <Route
+          path="/forbidden"
+          element={
+            <main className="main">
+              <ForbiddenPage />
+            </main>
+          }
+        />
         <Route element={<RequireAuth />}>
           <Route path="/" element={<DatasetsPage />} />
           <Route path="/people" element={<TeamPage />} />
@@ -419,7 +641,14 @@ export default function App() {
             <Route path="baselines" element={<BaselinesPage />} />
             <Route path="versions" element={<Navigate to="../baselines" replace />} />
           </Route>
-          <Route path="*" element={<div className="empty">Page not found. <NavLink to="/">Go home</NavLink></div>} />
+          <Route
+            path="*"
+            element={
+              <div className="empty">
+                Page not found. <NavLink to="/">Go home</NavLink>
+              </div>
+            }
+          />
         </Route>
       </Routes>
       <ToastRegion />

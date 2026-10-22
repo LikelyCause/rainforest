@@ -13,7 +13,9 @@ export function modelLabel(m: Named, kinds: (string | undefined)[]): string {
 
 /** The model's description for targets of these kinds: its regressor's when every target is a number. */
 export function modelDescription(m: Named, kinds: (string | undefined)[]): string {
-  return kinds.length && kinds.every((k) => k === "regression") && m.regressor_description ? m.regressor_description : m.description;
+  return kinds.length && kinds.every((k) => k === "regression") && m.regressor_description
+    ? m.regressor_description
+    : m.description;
 }
 
 /** A run's model name: the one it was trained under, else the catalog's for the targets it trained on. */
@@ -48,9 +50,9 @@ export function spreadFor(r: ModelRun, target: string, m: RunMetric): number | u
   return x ? x[keyFor(x, m)]?.std : undefined;
 }
 
-
 /** RMSE is the one metric here where lower is better. */
-const lowerIsBetter = (r: ModelRun, target: string, m: RunMetric) => m === "secondary" && isNumber(r.metrics?.valid?.[target]);
+const lowerIsBetter = (r: ModelRun, target: string, m: RunMetric) =>
+  m === "secondary" && isNumber(r.metrics?.valid?.[target]);
 
 /**
  * Which run to star per target and metric (keys `target:metric`, values run ids), among runs of one export.
@@ -66,7 +68,10 @@ export function bestRuns(runs: ModelRun[], targets: string[]): Record<string, nu
         return v === undefined ? [] : [{ id: r.id, v, low: lowerIsBetter(r, t, m) }];
       });
       // A tie goes to the earliest run, as the API's own "best on validation" does, so both name the same run.
-      if (scored.length > 1) out[`${t}:${m}`] = scored.reduce((a, b) => ((b.low ? b.v < a.v : b.v > a.v) || (b.v === a.v && b.id < a.id) ? b : a)).id;
+      if (scored.length > 1)
+        out[`${t}:${m}`] = scored.reduce((a, b) =>
+          (b.low ? b.v < a.v : b.v > a.v) || (b.v === a.v && b.id < a.id) ? b : a,
+        ).id;
     }
   }
   return out;
@@ -74,8 +79,16 @@ export function bestRuns(runs: ModelRun[], targets: string[]): Record<string, nu
 
 /** A target's columns in the runs table; PR AUC is the score to compare when the positive class is rare. */
 export function runColumns(kind: string | undefined): { metric: RunMetric; label: string }[] {
-  return kind === "regression" ? [{ metric: "primary", label: "R²" }, { metric: "secondary", label: "RMSE" }]
-    : [{ metric: "primary", label: "AUC" }, { metric: "pr", label: "PR AUC" }, { metric: "secondary", label: "F1 (macro)" }];
+  return kind === "regression"
+    ? [
+        { metric: "primary", label: "R²" },
+        { metric: "secondary", label: "RMSE" },
+      ]
+    : [
+        { metric: "primary", label: "AUC" },
+        { metric: "pr", label: "PR AUC" },
+        { metric: "secondary", label: "F1 (macro)" },
+      ];
 }
 
 /** The export the Train panel works on: the chosen one while it's finished, else the newest finished one. */
@@ -87,9 +100,12 @@ export function pickExport<E extends { id: number }>(done: E[], chosen: number |
  * number than another run's; the tooltip says why. */
 export function starTitle(r: ModelRun, split: Split, target: string, m: RunMetric): string {
   if (split === "valid") return "Best on the validation split";
-  if (split === "cv") return `Best on the validation split (${fmtMetric(metricFor(r, "valid", target, m))}); the ★ is picked there whichever scores are shown.`;
-  return `Best on the validation split (${fmtMetric(metricFor(r, "valid", target, m))}). The ★ is picked there so the `
-    + "test split stays an honest check; switch to Validation to see the scores it was picked on.";
+  if (split === "cv")
+    return `Best on the validation split (${fmtMetric(metricFor(r, "valid", target, m))}); the ★ is picked there whichever scores are shown.`;
+  return (
+    `Best on the validation split (${fmtMetric(metricFor(r, "valid", target, m))}). The ★ is picked there so the ` +
+    "test split stays an honest check; switch to Validation to see the scores it was picked on."
+  );
 }
 
 /** Why a run failed, in a sentence: the API's own message (its first line, without the exception type), or a plain

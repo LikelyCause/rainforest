@@ -33,7 +33,8 @@ class DecisionIn(BaseModel):
     encoding: str = "none"
     params: dict[str, Any] = Field(default_factory=dict)
     target_task: Literal["classes", "regression", "bins"] | None = Field(
-        None, description="How a target is predicted; omitted keeps the stored task (or the type's default)")
+        None, description="How a target is predicted; omitted keeps the stored task (or the type's default)"
+    )
     target_bins: dict[str, Any] | None = Field(None, description='Bands: {"k": 2-20} or {"edges": [ascending numbers]}')
     notes: str | None = Field(None, max_length=4000)
     reviewed: bool = True
@@ -50,6 +51,7 @@ class FieldFilter(BaseModel):
 
 class BulkDecisionIn(BaseModel):
     """Target set is either explicit `field_ids` or `filters` resolved server-side (same semantics as /fields/query)."""
+
     field_ids: list[int] | None = Field(None, min_length=1, max_length=5000)
     filters: list[FieldFilter] | None = Field(None, max_length=20)
     excluded_ids: list[int] = Field(default_factory=list, max_length=5000)
@@ -80,8 +82,12 @@ class SqlRequest(BaseModel):
 
 class ExcludeRule(BaseModel):
     field: str = Field(..., max_length=500)
-    values: list[str] = Field(..., min_length=1, max_length=1000, description="Rows whose field has one of these "
-                                                                              "values (compared as text) are left out")
+    values: list[str] = Field(
+        ...,
+        min_length=1,
+        max_length=1000,
+        description="Rows whose field has one of these values (compared as text) are left out",
+    )
 
 
 class FirstPer(BaseModel):
@@ -91,10 +97,13 @@ class FirstPer(BaseModel):
 
 class RowRules(BaseModel):
     """Which rows an export keeps, and how its split keeps related rows together."""
+
     dedupe: bool = Field(False, description="Leave out exact duplicate rows (all columns equal), keeping the first")
     exclude: list[ExcludeRule] = Field(default_factory=list, max_length=20)
     first_per: FirstPer | None = None
-    group_by: str | None = Field(None, max_length=500, description="Keep each value's rows in one split and one CV fold")
+    group_by: str | None = Field(
+        None, max_length=500, description="Keep each value's rows in one split and one CV fold"
+    )
 
 
 class ExportRowsRequest(RowRules):
@@ -108,11 +117,15 @@ class ExportRowsRequest(RowRules):
 class ExportRequest(RowRules):
     model_config = ConfigDict(protected_namespaces=())
     source: Literal["recipe", "assessment"] | None = Field(
-        None, description="recipe: a finalized recipe version; assessment: your own assessment (needs experiment_id). "
-                          "Default: the experiment's source, else recipe")
+        None,
+        description="recipe: a finalized recipe version; assessment: your own assessment (needs experiment_id). "
+        "Default: the experiment's source, else recipe",
+    )
     recipe_id: int | None = Field(None, description="The finalized version to build from (default: the latest)")
-    experiment_id: int | None = Field(None, description="The experiment the export belongs to (default for a team "
-                                                        "export: the version's Team experiment)")
+    experiment_id: int | None = Field(
+        None,
+        description="The experiment the export belongs to (default for a team export: the version's Team experiment)",
+    )
     model_family: str | None = Field(None, description="Prepare features for this family (default: dataset's)")
     valid_size: float = Field(0.15, ge=0, lt=0.5)
     test_size: float = Field(0.15, ge=0, lt=0.5)
@@ -125,8 +138,9 @@ class RunRequest(BaseModel):
     model: str = "lightgbm"
     order: list[str] | None = None
     cv: int = Field(5, ge=0, le=10, description="0 chains the ground truth; otherwise 2-10 folds")
-    cv_folds: int = Field(5, ge=0, le=20, description="Cross-validation on the training rows: 0 for none, else 2-20 "
-                                                      "folds")
+    cv_folds: int = Field(
+        5, ge=0, le=20, description="Cross-validation on the training rows: 0 for none, else 2-20 folds"
+    )
     seed: int = 42
     params: dict[str, Any] = Field(default_factory=dict)
     device: Literal["cpu", "cuda"] = "cpu"
@@ -152,8 +166,12 @@ class AnalysisParams(BaseModel):
 
     def normalised(self, kind: str) -> dict[str, Any]:
         """Only the keys that change the result for `kind`, so equivalent requests share a cache key."""
-        out: dict[str, Any] = {"data": self.data, "kept": self.kept and self.data == "raw",
-                               "target": self.target or None, "sample": self.sample}
+        out: dict[str, Any] = {
+            "data": self.data,
+            "kept": self.kept and self.data == "raw",
+            "target": self.target or None,
+            "sample": self.sample,
+        }
         if kind == "map":
             out["method"] = self.method
             if self.method == "tsne":
@@ -167,8 +185,12 @@ class AnalysisRequest(BaseModel):
     kind: Literal["map", "tests", "importance"]
     params: AnalysisParams = Field(default_factory=AnalysisParams)
     recompute: bool = False
-    view: str | None = Field(None, max_length=40, description="Whose decisions raw-data analyses use: "
-                             "experiment:<id> or baseline:<recipe_id>; default the baseline in progress")
+    view: str | None = Field(
+        None,
+        max_length=40,
+        description="Whose decisions raw-data analyses use: "
+        "experiment:<id> or baseline:<recipe_id>; default the baseline in progress",
+    )
 
 
 class CorrelationQuery(BaseModel):
@@ -176,8 +198,11 @@ class CorrelationQuery(BaseModel):
     view: str | None = Field(None, max_length=40)
     target: str | None = Field(None, max_length=500)
     limit: int = Field(60, ge=2, le=400)
-    add: str | None = Field(None, pattern=r"^\s*\d+(\s*,\s*\d+)*\s*$|^\s*$",
-                            description="Comma-separated field ids to include beyond the limit")
+    add: str | None = Field(
+        None,
+        pattern=r"^\s*\d+(\s*,\s*\d+)*\s*$|^\s*$",
+        description="Comma-separated field ids to include beyond the limit",
+    )
 
     @property
     def add_ids(self) -> list[int]:
@@ -195,13 +220,16 @@ class CommentIn(BaseModel):
 class StartBaselineIn(BaseModel):
     family: str
     start: Literal["scratch", "baseline", "recipe"] = Field(
-        "scratch", description="scratch: the suggestions; baseline: a finalized baseline of this dataset; recipe: a "
-                               "finalized baseline of another dataset (a new dataset's first baseline only)")
+        "scratch",
+        description="scratch: the suggestions; baseline: a finalized baseline of this dataset; recipe: a "
+        "finalized baseline of another dataset (a new dataset's first baseline only)",
+    )
     source_recipe_id: int | None = None
     targets: list[str] = Field(default_factory=list, max_length=50)
     assessors: list[int] = Field(default_factory=list, max_length=200)
-    name: str | None = Field(None, max_length=200, description="The baseline's name, for a model type that has none "
-                                                                "yet; blank for none")
+    name: str | None = Field(
+        None, max_length=200, description="The baseline's name, for a model type that has none yet; blank for none"
+    )
 
 
 class RenameBaselineIn(BaseModel):
@@ -210,8 +238,11 @@ class RenameBaselineIn(BaseModel):
 
 class NewVersionIn(BaseModel):
     family: str | None = Field(None, description="The baseline's model family; default: the current baseline's")
-    reopen: list[int] = Field(default_factory=list, max_length=5000,
-                              description="Fields to assess again; none means the lead edits the decisions directly")
+    reopen: list[int] = Field(
+        default_factory=list,
+        max_length=5000,
+        description="Fields to assess again; none means the lead edits the decisions directly",
+    )
 
 
 class ApplyRecipeIn(BaseModel):

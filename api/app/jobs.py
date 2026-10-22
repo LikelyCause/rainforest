@@ -13,6 +13,7 @@ its native thread pools are limited to cpu_count // JOB_SLOTS threads. Waiting j
 ticket on submit and holds a lock on it (on the owner connection) until it gets a slot, and a job takes a free slot
 only when no lower ticket is still held.
 """
+
 from __future__ import annotations
 
 import logging
@@ -116,22 +117,31 @@ def sweep(owner: int | None = None) -> None:
     dead = sql.SQL(_DEAD) if owner is None else sql.SQL("owner = {}").format(sql.Literal(owner))
     with connection() as conn:
         # A profiled dataset only loses the associations of targets chosen later; it stays usable.
-        conn.execute(sql.SQL(
-            """UPDATE meta.datasets
+        conn.execute(
+            sql.SQL(
+                """UPDATE meta.datasets
                   SET status = 'ready', progress = 1, status_message = 'Ready', updated_at = now(),
                       warnings = array_append(warnings, 'Associations for the new target(s) were interrupted '
                                               'by an API restart; choose the targets again to retry.')
-                WHERE status = 'correlating' AND profiled_at IS NOT NULL AND {}""").format(dead))
-        conn.execute(sql.SQL(
-            """UPDATE meta.datasets
+                WHERE status = 'correlating' AND profiled_at IS NOT NULL AND {}"""
+            ).format(dead)
+        )
+        conn.execute(
+            sql.SQL(
+                """UPDATE meta.datasets
                   SET status = 'failed', error = 'Interrupted by an API restart; upload or generate it again.',
                       updated_at = now()
-                WHERE status IN ('pending', 'ingesting', 'profiling', 'correlating') AND {}""").format(dead))
+                WHERE status IN ('pending', 'ingesting', 'profiling', 'correlating') AND {}"""
+            ).format(dead)
+        )
         for table in ("exports", "model_runs", "analyses"):
-            conn.execute(sql.SQL(
-                """UPDATE meta.{} SET status = 'failed', error = 'Interrupted by an API restart.',
+            conn.execute(
+                sql.SQL(
+                    """UPDATE meta.{} SET status = 'failed', error = 'Interrupted by an API restart.',
                           status_message = 'Failed', finished_at = now(), updated_at = now()
-                    WHERE status IN ('pending', 'running') AND {}""").format(sql.Identifier(table), dead))
+                    WHERE status IN ('pending', 'running') AND {}"""
+                ).format(sql.Identifier(table), dead)
+            )
 
 
 def start() -> None:
@@ -197,6 +207,7 @@ def _get() -> ThreadPoolExecutor:
 
 def submit(fn: Callable[..., Any], *args: Any) -> None:
     """Queue `fn(*args)`. Its job row must carry `owner = owner_id()` so a restart can tell it was interrupted."""
+
     def run() -> None:
         try:
             # Taken here, not at submit: a job waiting for one of this process's threads mustn't hold a place in the

@@ -1,6 +1,7 @@
 """Cross-validation of a run on its training rows: which rows each fold holds out, and the mean ± spread of each
 metric across folds. The run's model is still the one fit on every training row; these scores only say how stable
 it is."""
+
 from __future__ import annotations
 
 import math
@@ -10,8 +11,9 @@ import numpy as np
 from sklearn.model_selection import GroupKFold, KFold, StratifiedGroupKFold, StratifiedKFold
 
 
-def folds(y_strat: np.ndarray | None, n: int, k: int, seed: int,
-          strat_name: str | None, groups: np.ndarray | None = None) -> tuple[list[tuple[np.ndarray, np.ndarray]], str | None, bool]:
+def folds(
+    y_strat: np.ndarray | None, n: int, k: int, seed: int, strat_name: str | None, groups: np.ndarray | None = None
+) -> tuple[list[tuple[np.ndarray, np.ndarray]], str | None, bool]:
     """(train rows, held-out rows) for each of `k` folds of `n` rows, stratified on `y_strat` when every class has
     at least `k` rows. Returns the folds, a note when they differ from what was asked, and whether they're
     stratified."""
@@ -26,15 +28,21 @@ def folds(y_strat: np.ndarray | None, n: int, k: int, seed: int,
     if groups is not None:
         # The export's groups stay whole in each fold, as they do across its splits.
         if y_strat is not None:
-            return list(StratifiedGroupKFold(k, shuffle=True, random_state=seed).split(idx, y_strat, groups)), note, True
+            return (
+                list(StratifiedGroupKFold(k, shuffle=True, random_state=seed).split(idx, y_strat, groups)),
+                note,
+                True,
+            )
         return list(GroupKFold(k).split(idx, groups=groups)), note, False
     if y_strat is not None:
         counts = np.bincount(y_strat.astype(int))
         rarest = int(counts[counts > 0].min())
         if rarest >= k:
             return list(StratifiedKFold(k, shuffle=True, random_state=seed).split(idx, y_strat)), note, True
-        unstratified = (f"Folds aren't stratified: the rarest class of {strat_name} has {rarest} training "
-                        f"row{'' if rarest == 1 else 's'}")
+        unstratified = (
+            f"Folds aren't stratified: the rarest class of {strat_name} has {rarest} training "
+            f"row{'' if rarest == 1 else 's'}"
+        )
         note = f"{note}. {unstratified}" if note else unstratified
     return list(KFold(k, shuffle=True, random_state=seed).split(idx)), note, False
 

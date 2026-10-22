@@ -29,9 +29,15 @@ export function ExplorePage() {
   return (
     <div className="page explore tools-explore">
       <h1 className="tools-sr">Explore · {VIEWS.find((v) => v.key === view)!.label}</h1>
-      <Tabs label="Analyses" className="sub lined" items={VIEWS.map((v) => ({
-        to: `/d/${ds.id}/explore/${v.key}${search ? `?${search}` : ""}`, label: v.label, active: view === v.key,
-      }))} />
+      <Tabs
+        label="Analyses"
+        className="sub lined"
+        items={VIEWS.map((v) => ({
+          to: `/d/${ds.id}/explore/${v.key}${search ? `?${search}` : ""}`,
+          label: v.label,
+          active: view === v.key,
+        }))}
+      />
       <Toolbar ds={ds} st={st} sampled={view !== "correlations"} />
       <ViewBody view={view as View} ds={ds} st={st} />
     </div>
@@ -41,10 +47,14 @@ export function ExplorePage() {
 // Only the visible view mounts, so only it requests an analysis.
 function ViewBody({ view, ds, st }: { view: View; ds: Dataset; st: ExploreState }) {
   switch (view) {
-    case "map": return <MapView ds={ds} st={st} />;
-    case "tests": return <TestsView ds={ds} st={st} />;
-    case "importance": return <ImportanceView ds={ds} st={st} />;
-    default: return <CorrelationsView ds={ds} st={st} />;
+    case "map":
+      return <MapView ds={ds} st={st} />;
+    case "tests":
+      return <TestsView ds={ds} st={st} />;
+    case "importance":
+      return <ImportanceView ds={ds} st={st} />;
+    default:
+      return <CorrelationsView ds={ds} st={st} />;
   }
 }
 
@@ -61,7 +71,9 @@ function Toolbar({ ds, st, sampled }: { ds: Dataset; st: ExploreState; sampled: 
           <option value="raw">Raw fields</option>
           {done.map((e) => (
             <option key={e.id} value={`export:${e.id}`}>
-              Export #{e.id}{e.experiment_name ? ` · ${e.experiment_name}` : ""} · {familyShort(e.model_family)} · train split · {new Date(e.finished_at ?? e.created_at).toLocaleDateString()}
+              Export #{e.id}
+              {e.experiment_name ? ` · ${e.experiment_name}` : ""} · {familyShort(e.model_family)} · train split ·{" "}
+              {new Date(e.finished_at ?? e.created_at).toLocaleDateString()}
             </option>
           ))}
           {unknown && <option value={st.data}>Export #{st.data.slice(7)}</option>}
@@ -69,8 +81,14 @@ function Toolbar({ ds, st, sampled }: { ds: Dataset; st: ExploreState; sampled: 
       </label>
       {st.isRaw && <DecisionsPicker ds={ds} st={st} />}
       {st.isRaw && (
-        <label className="check small-text" title={mine && !st.view ? "Only the fields you kept in your assessment; otherwise every field except targets"
-          : "Only fields marked keep; otherwise every field except targets"}>
+        <label
+          className="check small-text"
+          title={
+            mine && !st.view
+              ? "Only the fields you kept in your assessment; otherwise every field except targets"
+              : "Only fields marked keep; otherwise every field except targets"
+          }
+        >
           <input type="checkbox" checked={st.kept} onChange={(e) => st.set({ kept: e.target.checked ? "1" : null })} />
           {mine && !st.view ? "Kept only (your choices)" : "Kept only"}
         </label>
@@ -78,20 +96,39 @@ function Toolbar({ ds, st, sampled }: { ds: Dataset; st: ExploreState; sampled: 
       {st.targets.length > 0 && (
         <label className="tools-control">
           <span className="secondary small-text">Target</span>
-          {st.targets.length === 1 ? <Chip tone="accent" icon="target">{st.target}</Chip> : (
-            <select value={st.target ?? ""} onChange={(e) => st.set({ target: e.target.value === st.targets[0] ? null : e.target.value })}>
-              {st.targets.map((t) => <option key={t} value={t}>{t}</option>)}
+          {st.targets.length === 1 ? (
+            <Chip tone="accent" icon="target">
+              {st.target}
+            </Chip>
+          ) : (
+            <select
+              value={st.target ?? ""}
+              onChange={(e) => st.set({ target: e.target.value === st.targets[0] ? null : e.target.value })}
+            >
+              {st.targets.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
             </select>
           )}
         </label>
       )}
-      {sampled && <div className="tools-control">
-        <span className="secondary small-text" aria-hidden="true">Sample</span>
-        <Segmented size="small" label="Sample rows" value={String(st.sample)}
-          options={SAMPLES.map((n) => ({ value: String(n), label: fmtCompact(n) }))}
-          onChange={(n) => st.set({ sample: n === "5000" ? null : n })} />
-        <span className="muted small-text">rows{ds.row_count ? ` of ${fmtCompact(ds.row_count)}` : ""}</span>
-      </div>}
+      {sampled && (
+        <div className="tools-control">
+          <span className="secondary small-text" aria-hidden="true">
+            Sample
+          </span>
+          <Segmented
+            size="small"
+            label="Sample rows"
+            value={String(st.sample)}
+            options={SAMPLES.map((n) => ({ value: String(n), label: fmtCompact(n) }))}
+            onChange={(n) => st.set({ sample: n === "5000" ? null : n })}
+          />
+          <span className="muted small-text">rows{ds.row_count ? ` of ${fmtCompact(ds.row_count)}` : ""}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -107,14 +144,33 @@ function DecisionsPicker({ ds, st }: { ds: Dataset; st: ExploreState }) {
   return (
     <label className="tools-control">
       <span className="secondary small-text">Decisions</span>
-      <select value={st.view ?? ""} onChange={(e) => st.set({ decisions: e.target.value || null })} aria-label="Whose decisions">
-        <option value="">{cur ? `${cur.label} (${cur.phase === "finalized" ? "finalized" : "as it stands"})` : "Current"}</option>
-        {finalized.filter((v) => v.id !== cur?.id || cur?.phase !== "finalized").map((v) => (
-          <option key={v.id} value={`baseline:${v.id}`}>{v.label}</option>
+      <select
+        value={st.view ?? ""}
+        onChange={(e) => st.set({ decisions: e.target.value || null })}
+        aria-label="Whose decisions"
+      >
+        <option value="">
+          {cur ? `${cur.label} (${cur.phase === "finalized" ? "finalized" : "as it stands"})` : "Current"}
+        </option>
+        {finalized
+          .filter((v) => v.id !== cur?.id || cur?.phase !== "finalized")
+          .map((v) => (
+            <option key={v.id} value={`baseline:${v.id}`}>
+              {v.label}
+            </option>
+          ))}
+        {adjusted.map((x) => (
+          <option key={x.id} value={`experiment:${x.id}`}>
+            Experiment: {x.name}
+          </option>
         ))}
-        {adjusted.map((x) => <option key={x.id} value={`experiment:${x.id}`}>Experiment: {x.name}</option>)}
-        {st.view && lines.data && xs.data && !finalized.some((v) => `baseline:${v.id}` === st.view)
-          && !adjusted.some((x) => `experiment:${x.id}` === st.view) && <option value={st.view}>Unavailable ({st.view})</option>}
+        {st.view &&
+          lines.data &&
+          xs.data &&
+          !finalized.some((v) => `baseline:${v.id}` === st.view) &&
+          !adjusted.some((x) => `experiment:${x.id}` === st.view) && (
+            <option value={st.view}>Unavailable ({st.view})</option>
+          )}
       </select>
     </label>
   );

@@ -1,21 +1,40 @@
 """Baselines: one per model type, each assessed and finalized like a recipe version, started from scratch, from
 another baseline, or from another dataset's. Needs RAINFOREST_TEST_DATABASE_URL."""
+
 from .conftest import set_phase
-from .team_helpers import app_, people  # noqa: F401  (fixtures)
-from .team_helpers import experiment, export, fields, finalized_trees, save, start, submit_and_finalize, upload
+from .team_helpers import (  # noqa: F401  (fixtures)
+    app_,
+    experiment,
+    export,
+    fields,
+    finalized_trees,
+    people,
+    save,
+    start,
+    submit_and_finalize,
+    upload,
+)
 
 
 def test_recipes_have_a_family_and_versions_count_per_family(app_):
     from app.db import connection
 
     with connection() as conn:
-        cols = {r["column_name"] for r in conn.execute(
-            "SELECT column_name FROM information_schema.columns WHERE table_schema='meta' AND table_name='recipes'")}
+        cols = {
+            r["column_name"]
+            for r in conn.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema='meta' AND table_name='recipes'"
+            )
+        }
         assert "family" in cols
         idx = conn.execute("SELECT indexdef FROM pg_indexes WHERE schemaname='meta' AND tablename='recipes'").fetchall()
         assert any("(dataset_id, family, version)" in r["indexdef"] for r in idx)
-        xcols = {r["column_name"] for r in conn.execute(
-            "SELECT column_name FROM information_schema.columns WHERE table_schema='meta' AND table_name='experiments'")}
+        xcols = {
+            r["column_name"]
+            for r in conn.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema='meta' AND table_name='experiments'"
+            )
+        }
         assert "is_default" in xcols
 
 
@@ -94,10 +113,15 @@ def test_start_validates_its_input(people):
     lead, a = people["lead"], people["a"]
     ds = upload(lead)
     base = {"family": "tree", "start": "scratch", "targets": ["y"], "assessors": [lead.user["id"]]}
-    for patch, code in (({"family": "svm"}, 422), ({"assessors": []}, 422), ({"assessors": [999999]}, 422),
-                        ({"targets": []}, 422), ({"targets": ["nope"]}, 422),
-                        ({"start": "baseline", "source_recipe_id": 999999}, 404),
-                        ({"start": "baseline"}, 422)):
+    for patch, code in (
+        ({"family": "svm"}, 422),
+        ({"assessors": []}, 422),
+        ({"assessors": [999999]}, 422),
+        ({"targets": []}, 422),
+        ({"targets": ["nope"]}, 422),
+        ({"start": "baseline", "source_recipe_id": 999999}, 404),
+        ({"start": "baseline"}, 422),
+    ):
         r = lead.post(f"/api/datasets/{ds['id']}/baselines", json={**base, **patch})
         assert r.status_code == code, (patch, r.text)
     assert a.post(f"/api/datasets/{ds['id']}/baselines", json=base).status_code == 403
@@ -125,8 +149,10 @@ def test_one_baseline_in_progress_at_a_time(people):
     start(lead, ds, "tree", [lead])
     submit_and_finalize(lead, ds)
     start(lead, ds, "linear", [lead])
-    r = lead.post(f"/api/datasets/{ds['id']}/baselines", json={"family": "neural", "start": "scratch",
-                  "targets": ["y"], "assessors": [lead.user["id"]]})
+    r = lead.post(
+        f"/api/datasets/{ds['id']}/baselines",
+        json={"family": "neural", "start": "scratch", "targets": ["y"], "assessors": [lead.user["id"]]},
+    )
     assert r.status_code == 409 and "finalize" in r.json()["detail"]
     assert lead.post(f"/api/datasets/{ds['id']}/recipes", json={"family": "tree", "reopen": []}).status_code == 409
 
@@ -183,8 +209,9 @@ def test_dataset_shows_its_baselines_and_refuses_family_switch(people):
     start(lead, ds, "linear", [lead])
     row = next(x for x in lead.get("/api/datasets").json() if x["id"] == ds["id"])
     assert row["baseline"]["label"] == "Linear baseline v1" and row["baseline"]["setup"] is False
-    assert {b["family"]: (b["version"], b["phase"], b["latest_finalized_id"] is not None)
-            for b in row["baselines"]} == {"tree": (1, "finalized", True), "linear": (1, "assessing", False)}
+    assert {
+        b["family"]: (b["version"], b["phase"], b["latest_finalized_id"] is not None) for b in row["baselines"]
+    } == {"tree": (1, "finalized", True), "linear": (1, "assessing", False)}
 
 
 def test_exports_take_the_baselines_family_and_name_it(people):
@@ -261,6 +288,7 @@ def test_populating_keeps_the_sources_decisions_whatever_the_last_worked_targets
     submit_and_finalize(lead, ds)
     start(lead, ds, "neural", [lead], start="baseline", source=trees)
     import time
+
     time.sleep(3)  # any leak screen the start queued has run
     assert fields(lead, ds)["cc"]["action"] == "drop"
 
@@ -282,8 +310,10 @@ def test_personal_experiments_keep_their_versions_carried_fields(people):
     submit_and_finalize(lead, ds)
     v2 = lead.post(f"/api/datasets/{ds['id']}/recipes", json={"family": "tree", "reopen": [f["x"]["id"]]}).json()
     lead.post(f"/api/datasets/{ds['id']}/assessors", json={"user_id": lead.user["id"]})
-    x = lead.post(f"/api/datasets/{ds['id']}/experiments", json={
-        "name": "mine", "source": f"assessment:{v2['recipe']['id']}:{lead.user['id']}"}).json()
+    x = lead.post(
+        f"/api/datasets/{ds['id']}/experiments",
+        json={"name": "mine", "source": f"assessment:{v2['recipe']['id']}:{lead.user['id']}"},
+    ).json()
     submit_and_finalize(lead, ds)
     start(lead, ds, "linear", [lead])  # the working copy now holds Linear's decisions: w kept
     e = export(lead, ds, x)
@@ -320,12 +350,23 @@ def test_explore_uses_the_decisions_it_is_given(people):
     assert r.status_code == 200 and "w" not in {x["name"] for x in r.json()["fields"]}
     r = c.get(f"/api/datasets/{ds['id']}/explore/correlations?kept=1")
     assert "w" in {x["name"] for x in r.json()["fields"]}
-    an = c.post(f"/api/datasets/{ds['id']}/analyses", json={
-        "kind": "importance", "view": f"baseline:{trees}", "params": {"target": "y", "kept": True, "sample": 1000}})
+    an = c.post(
+        f"/api/datasets/{ds['id']}/analyses",
+        json={
+            "kind": "importance",
+            "view": f"baseline:{trees}",
+            "params": {"target": "y", "kept": True, "sample": 1000},
+        },
+    )
     assert an.status_code == 200 and an.json()["params"]["decisions"] == f"baseline:{trees}"
     assert c.get(f"/api/analyses/{an.json()['id']}").status_code == 200
-    assert c.post(f"/api/datasets/{ds['id']}/analyses", json={
-        "kind": "importance", "view": "baseline:999999", "params": {"target": "y", "kept": True}}).status_code == 404
+    assert (
+        c.post(
+            f"/api/datasets/{ds['id']}/analyses",
+            json={"kind": "importance", "view": "baseline:999999", "params": {"target": "y", "kept": True}},
+        ).status_code
+        == 404
+    )
 
 
 def test_sql_views_name_the_baseline(people):
@@ -337,11 +378,16 @@ def test_sql_views_name_the_baseline(people):
     e = export(lead, ds, x)
     run = lead.post(f"/api/exports/{e['id']}/runs", json={"model": "lightgbm", "cv": 0, "params": {"n_estimators": 5}})
     from .team_helpers import wait
+
     wait(lambda: lead.get(f"/api/runs/{run.json()['id']}").json()["status"] in ("done", "failed"))
     with connection() as conn:
-        row = conn.execute("SELECT baseline_family, baseline_version FROM meta.v_fields WHERE dataset_id = %s LIMIT 1",
-                           (ds["id"],)).fetchone()
+        row = conn.execute(
+            "SELECT baseline_family, baseline_version FROM meta.v_fields WHERE dataset_id = %s LIMIT 1", (ds["id"],)
+        ).fetchone()
         assert (row["baseline_family"], row["baseline_version"]) == ("tree", 1)
-        m = conn.execute("""SELECT baseline_family, baseline_version, experiment_id FROM meta.v_model_metrics
-                             WHERE dataset_id = %s LIMIT 1""", (ds["id"],)).fetchone()
+        m = conn.execute(
+            """SELECT baseline_family, baseline_version, experiment_id FROM meta.v_model_metrics
+                             WHERE dataset_id = %s LIMIT 1""",
+            (ds["id"],),
+        ).fetchone()
         assert (m["baseline_family"], m["baseline_version"], m["experiment_id"]) == ("tree", 1, x["id"])

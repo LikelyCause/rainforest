@@ -88,7 +88,9 @@ function NameForm({ me }: { me: Me }) {
           Name
           <input value={name} onChange={(e) => setName(e.target.value)} required maxLength={200} autoComplete="name" />
         </label>
-        <button type="submit" className="primary" disabled={!changed || save.isPending}>Save</button>
+        <button type="submit" className="primary" disabled={!changed || save.isPending}>
+          Save
+        </button>
       </div>
       <span className="muted small-text">Shown on the sign-in page, the top bar and everything you change.</span>
       <ErrorAlert error={save.error} />
@@ -104,18 +106,32 @@ function Profile({ me }: { me: Me }) {
         <div className="row tools-gap-16">
           <Avatar user={me} size={64} />
           <div className="stack tools-gap-4">
-            <button type="button" onClick={() => setPicture(true)}>Change picture…</button>
+            <button type="button" onClick={() => setPicture(true)}>
+              Change picture…
+            </button>
             <span className="muted small-text">JPEG, PNG or WebP, up to 5 MB.</span>
           </div>
         </div>
         <NameForm key={me.name} me={me} />
         <div className="grid-2 tools-gap-12">
-          <div className="field">Email<span className="settings-value">{me.email ?? "—"}</span></div>
+          <div className="field">
+            Email<span className="settings-value">{me.email ?? "—"}</span>
+          </div>
           <div className="field">
             Role
-            <span className="settings-value"><Chip tone={me.role === "lead" ? "accent" : "plain"} className={`role-${me.role}`}>{roleLabel(me.role)}</Chip></span>
+            <span className="settings-value">
+              <Chip tone={me.role === "lead" ? "accent" : "plain"} className={`role-${me.role}`}>
+                {roleLabel(me.role)}
+              </Chip>
+            </span>
             <span className="muted small-text">
-              {me.mode === "oidc" ? "Set by your identity provider's groups." : <>A Team Lead changes roles on the <Link to="/people">People</Link> page.</>}
+              {me.mode === "oidc" ? (
+                "Set by your identity provider's groups."
+              ) : (
+                <>
+                  A Team Lead changes roles on the <Link to="/people">People</Link> page.
+                </>
+              )}
             </span>
           </div>
         </div>
@@ -158,13 +174,23 @@ function Integrations() {
         <div className="row tools-between">
           <h2>MLflow</h2>
           {system.data && (
-            <Chip tone={system.data.mlflow ? "good" : "plain"}>{system.data.mlflow ? "Logging on" : "Logging off"}</Chip>
+            <Chip tone={system.data.mlflow ? "good" : "plain"}>
+              {system.data.mlflow ? "Logging on" : "Logging off"}
+            </Chip>
           )}
         </div>
         <p className="secondary tools-lead">
-          {system.data?.mlflow
-            ? <>Model runs are logged to the built-in MLflow server. <a href="/mlflow/" target="_blank" rel="noopener noreferrer" className="tools-inline-icon">Open MLflow<Icon name="external" size={13} label="opens in a new tab" /></a></>
-            : "Model runs aren't logged to MLflow. It is turned off with MLFLOW_TRACKING_URI in .env."}
+          {system.data?.mlflow ? (
+            <>
+              Model runs are logged to the built-in MLflow server.{" "}
+              <a href="/mlflow/" target="_blank" rel="noopener noreferrer" className="tools-inline-icon">
+                Open MLflow
+                <Icon name="external" size={13} label="opens in a new tab" />
+              </a>
+            </>
+          ) : (
+            "Model runs aren't logged to MLflow. It is turned off with MLFLOW_TRACKING_URI in .env."
+          )}
         </p>
       </div>
       <ComingSoon title="An existing MLflow deployment">
@@ -179,7 +205,14 @@ function Integrations() {
 
 function Application() {
   return (
-    <Section title="Application" intro={<>Settings for the whole app. Today they live in <code>.env</code>; see docs/configuration.md.</>}>
+    <Section
+      title="Application"
+      intro={
+        <>
+          Settings for the whole app. Today they live in <code>.env</code>; see docs/configuration.md.
+        </>
+      }
+    >
       <ComingSoon title="App settings">
         Change defaults such as export splits, cross-validation folds and background job limits from here, without
         editing <code>.env</code> and restarting.
@@ -213,7 +246,9 @@ export function SettingsPage() {
       <nav className="settings-nav" aria-label="Settings">
         <h2 className="settings-nav-title">Settings</h2>
         {sections.map((s) => (
-          <NavLink key={s.key} to={`/settings/${s.key}`} className="settings-nav-link">{s.label}</NavLink>
+          <NavLink key={s.key} to={`/settings/${s.key}`} className="settings-nav-link">
+            {s.label}
+          </NavLink>
         ))}
       </nav>
       <div className="settings-body">{body[current.key]}</div>

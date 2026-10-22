@@ -5,7 +5,13 @@ const state = (qs: string) => finderState(new URLSearchParams(qs));
 
 describe("finderState", () => {
   it("opens on the Unreviewed preset", () => {
-    expect(state("")).toMatchObject({ tab: "fields", preset: "unreviewed", modified: false, sort: "ordinal", filters: PRESETS[0].filters });
+    expect(state("")).toMatchObject({
+      tab: "fields",
+      preset: "unreviewed",
+      modified: false,
+      sort: "ordinal",
+      filters: PRESETS[0].filters,
+    });
   });
 
   it("uses a preset's filters and default sort", () => {
@@ -35,14 +41,16 @@ describe("finderState", () => {
 
 describe("completeFilters", () => {
   it("drops filters still being written", () => {
-    expect(completeFilters([
-      { column: "null_pct", op: ">" },
-      { column: "null_pct", op: ">", value: "" },
-      { column: "action", op: "in", value: [] },
-      { column: "notes", op: "is_null" },
-      { column: "action", op: "in", value: ["keep"] },
-      { column: "n_unique", op: ">", value: 0 },
-    ])).toEqual([
+    expect(
+      completeFilters([
+        { column: "null_pct", op: ">" },
+        { column: "null_pct", op: ">", value: "" },
+        { column: "action", op: "in", value: [] },
+        { column: "notes", op: "is_null" },
+        { column: "action", op: "in", value: ["keep"] },
+        { column: "n_unique", op: ">", value: 0 },
+      ]),
+    ).toEqual([
       { column: "notes", op: "is_null" },
       { column: "action", op: "in", value: ["keep"] },
       { column: "n_unique", op: ">", value: 0 },

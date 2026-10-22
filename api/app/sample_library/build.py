@@ -2,6 +2,7 @@
     python -m app.sample_library.build [key ...]
 Downloads each UCI archive, reads it the way its file is laid out, and writes data/<key>.parquet. Concrete strength
 ships as an .xls file, so rebuilding it needs `pip install fastexcel` (a build-time dependency only)."""
+
 from __future__ import annotations
 
 import io
@@ -20,8 +21,17 @@ ARCHIVES = {
     "steel_faults": "https://archive.ics.uci.edu/static/public/198/steel+plates+faults.zip",
     "concrete_strength": "https://archive.ics.uci.edu/static/public/165/concrete+compressive+strength.zip",
 }
-CONCRETE_COLUMNS = ["cement", "blast_furnace_slag", "fly_ash", "water", "superplasticizer", "coarse_aggregate",
-                    "fine_aggregate", "age_days", "strength_mpa"]
+CONCRETE_COLUMNS = [
+    "cement",
+    "blast_furnace_slag",
+    "fly_ash",
+    "water",
+    "superplasticizer",
+    "coarse_aggregate",
+    "fine_aggregate",
+    "age_days",
+    "strength_mpa",
+]
 
 
 def _zip(url: str) -> zipfile.ZipFile:

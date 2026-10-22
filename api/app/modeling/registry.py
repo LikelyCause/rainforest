@@ -4,6 +4,7 @@ Adding a model = adding one `ModelSpec` below. A spec says which family it belon
 which exports it can train on), whether it routes NaN natively, how to build it, and how to read
 feature importances back out. Optional libraries (XGBoost) register only when importable.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -121,50 +122,98 @@ MODELS: dict[str, ModelSpec] = {
     m.key: m
     for m in [
         ModelSpec(
-            "lightgbm", "LightGBM", "tree", True, _lightgbm,
-            {"n_estimators": 600, "learning_rate": 0.04, "num_leaves": 63, "min_child_samples": 40,
-             "subsample": 0.8, "subsample_freq": 1, "colsample_bytree": 0.7, "reg_lambda": 1.0,
-             "n_jobs": -1, "verbose": -1},
+            "lightgbm",
+            "LightGBM",
+            "tree",
+            True,
+            _lightgbm,
+            {
+                "n_estimators": 600,
+                "learning_rate": 0.04,
+                "num_leaves": 63,
+                "min_child_samples": 40,
+                "subsample": 0.8,
+                "subsample_freq": 1,
+                "colsample_bytree": 0.7,
+                "reg_lambda": 1.0,
+                "n_jobs": -1,
+                "verbose": -1,
+            },
             importance="booster_gain",
             description="Leaf-wise gradient boosting. The default.",
             build_regressor=_lightgbm_reg,
         ),
         ModelSpec(
-            "xgboost", "XGBoost", "tree", True, _xgboost,
-            {"n_estimators": 600, "learning_rate": 0.05, "max_depth": 6, "subsample": 0.8,
-             "colsample_bytree": 0.7, "tree_method": "hist", "n_jobs": -1, "verbosity": 0},
+            "xgboost",
+            "XGBoost",
+            "tree",
+            True,
+            _xgboost,
+            {
+                "n_estimators": 600,
+                "learning_rate": 0.05,
+                "max_depth": 6,
+                "subsample": 0.8,
+                "colsample_bytree": 0.7,
+                "tree_method": "hist",
+                "n_jobs": -1,
+                "verbosity": 0,
+            },
             requires="xgboost",
             description="Depth-wise gradient boosting; trains on an NVIDIA GPU in the GPU image.",
             cuda_params={"device": "cuda", "tree_method": "hist"},
             build_regressor=_xgboost_reg,
         ),
         ModelSpec(
-            "hist_gradient_boosting", "Histogram GBM (sklearn)", "tree", True, _hgb,
-            {"max_iter": 400, "learning_rate": 0.06, "max_leaf_nodes": 63, "l2_regularization": 1.0,
-             "early_stopping": False},
+            "hist_gradient_boosting",
+            "Histogram GBM (sklearn)",
+            "tree",
+            True,
+            _hgb,
+            {
+                "max_iter": 400,
+                "learning_rate": 0.06,
+                "max_leaf_nodes": 63,
+                "l2_regularization": 1.0,
+                "early_stopping": False,
+            },
             importance="none",
             description="scikit-learn's LightGBM-style booster; no extra dependency.",
             build_regressor=_hgb_reg,
         ),
         ModelSpec(
-            "random_forest", "Random forest", "tree", True, _random_forest,
+            "random_forest",
+            "Random forest",
+            "tree",
+            True,
+            _random_forest,
             {"n_estimators": 400, "min_samples_leaf": 3, "max_features": "sqrt", "n_jobs": -1},
             description="Bagged trees; a robust, low-tuning baseline.",
             build_regressor=_random_forest_reg,
         ),
         ModelSpec(
-            "logistic_regression", "Logistic regression", "linear", False, _logreg,
+            "logistic_regression",
+            "Logistic regression",
+            "linear",
+            False,
+            _logreg,
             {"max_iter": 3000, "C": 1.0},
             importance="coef_",
             description="Linear baseline; needs a linear-family export (scaled, imputed, one-hot). Numbers use ridge "
-                        "regression.",
-            build_regressor=_ridge, regressor_defaults={"alpha": 1.0},
-            regressor_label="Ridge regression", mixed_label="Logistic and ridge regression",
+            "regression.",
+            build_regressor=_ridge,
+            regressor_defaults={"alpha": 1.0},
+            regressor_label="Ridge regression",
+            mixed_label="Logistic and ridge regression",
             regressor_description="Linear baseline for numbers; needs a linear-family export (scaled, imputed, "
-                                  "one-hot). Class targets use logistic regression.",
+            "one-hot). Class targets use logistic regression.",
         ),
         ModelSpec(
-            "mlp", "MLP", "neural", False, _mlp,
+            "mlp",
+            "MLP",
+            "neural",
+            False,
+            _mlp,
             {"hidden_layer_sizes": "128,64", "alpha": 1e-4, "early_stopping": True, "max_iter": 200},
             importance="none",
             description="Small feed-forward network; needs a neural-family export.",
@@ -235,8 +284,20 @@ def param_problems(spec: ModelSpec, params: dict[str, Any]) -> list[str]:
 
 
 # Accepted by some regressors too (LGBMRegressor takes class_weight), but they describe classes.
-CLASSIFIER_ONLY = {"class_weight", "is_unbalance", "unbalance", "unbalanced_sets", "scale_pos_weight", "objective",
-                   "num_class", "num_classes", "multi_class", "C", "penalty", "l1_ratio"}
+CLASSIFIER_ONLY = {
+    "class_weight",
+    "is_unbalance",
+    "unbalance",
+    "unbalanced_sets",
+    "scale_pos_weight",
+    "objective",
+    "num_class",
+    "num_classes",
+    "multi_class",
+    "C",
+    "penalty",
+    "l1_ratio",
+}
 
 
 def _classifier_only(spec: ModelSpec) -> set[str]:
@@ -291,7 +352,9 @@ def dry_fit_problem(spec: ModelSpec, params: dict[str, Any], kinds: list[str]) -
         for y in shapes:
             spec.build(classifier_params(spec, merged), 0).fit(X, y)
         if "regression" in kinds and spec.build_regressor is not None:
-            spec.build_regressor({**spec.regressor_defaults, **regressor_params(spec, merged)}, 0).fit(X, np.abs(X[:, 0]) + 1)
+            spec.build_regressor({**spec.regressor_defaults, **regressor_params(spec, merged)}, 0).fit(
+                X, np.abs(X[:, 0]) + 1
+            )
     except Exception as exc:  # noqa: BLE001 - the library's own message is the useful part
         text = str(exc)
         plain = next((msg for needle, msg in LIBRARY_RULES.items() if needle in text), text)
@@ -302,7 +365,7 @@ def dry_fit_problem(spec: ModelSpec, params: dict[str, Any], kinds: list[str]) -
 # LightGBM's fatal checks, in words.
 LIBRARY_RULES = {
     "rf.hpp": "Random forest needs bagging (a row sample below 1 with a bagging frequency above 0) or a feature sample "
-              "below 1",
+    "below 1",
     "goss.hpp": "the GOSS top and other shares must add up to at most 1",
     "is_unbalance and scale_pos_weight": "set Unbalanced or a positive-class weight, not both",
     "supports only": "this optimizer doesn't support that penalty: L1 needs SAGA or liblinear, elastic net needs SAGA",
@@ -320,8 +383,10 @@ def compatibility(spec: ModelSpec, export_family: str, contains_nan: bool) -> st
     if contains_nan and not spec.handles_nan:
         return f"{spec.label} can't handle missing values and this export contains NaN"
     if spec.family != export_family and spec.family != "tree":
-        return (f"{spec.label} needs a {FAMILIES[spec.family]['label'].lower()} export "
-                f"(this one was prepared for {FAMILIES[export_family]['label'].lower()})")
+        return (
+            f"{spec.label} needs a {FAMILIES[spec.family]['label'].lower()} export "
+            f"(this one was prepared for {FAMILIES[export_family]['label'].lower()})"
+        )
     return None
 
 
@@ -336,11 +401,20 @@ PLANNED = {
 
 def catalog() -> list[dict[str, Any]]:
     return [
-        {"key": m.key, "label": m.label, "family": m.family, "handles_nan": m.handles_nan,
-         "available": m.available, "description": m.description, "devices": m.devices, "planned": False,
-         "regressor_label": m.regressor_label, "regressor_description": m.regressor_description,
-         "mixed_label": m.mixed_label,
-         "settings": [s.to_json() for s in model_params.settings_for(m.key) or []] or None}
+        {
+            "key": m.key,
+            "label": m.label,
+            "family": m.family,
+            "handles_nan": m.handles_nan,
+            "available": m.available,
+            "description": m.description,
+            "devices": m.devices,
+            "planned": False,
+            "regressor_label": m.regressor_label,
+            "regressor_description": m.regressor_description,
+            "mixed_label": m.mixed_label,
+            "settings": [s.to_json() for s in model_params.settings_for(m.key) or []] or None,
+        }
         for m in MODELS.values()
     ] + [
         {"key": key, **p, "handles_nan": False, "available": False, "devices": [], "planned": True, "settings": None}

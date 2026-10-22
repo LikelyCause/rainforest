@@ -25,7 +25,10 @@ export function DatasetLayout() {
   const nav = useNavigate();
   const del = useMutation({
     mutationFn: () => api.deleteDataset(datasetId),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["datasets"] }); nav("/"); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["datasets"] });
+      nav("/");
+    },
   });
 
   if (ds.isLoading) {
@@ -40,8 +43,16 @@ export function DatasetLayout() {
     const notFound = Number.isNaN(datasetId) || !ds.error || (ds.error as { status?: number }).status === 404;
     return (
       <div className="state-card card">
-        {notFound ? <h1>Dataset #{params(datasetId)} doesn't exist</h1> : <ErrorAlert error={ds.error} title="Couldn't load the dataset." />}
-        <div><Link className="btn" to="/">Back to datasets</Link></div>
+        {notFound ? (
+          <h1>Dataset #{params(datasetId)} doesn't exist</h1>
+        ) : (
+          <ErrorAlert error={ds.error} title="Couldn't load the dataset." />
+        )}
+        <div>
+          <Link className="btn" to="/">
+            Back to datasets
+          </Link>
+        </div>
       </div>
     );
   }
@@ -52,7 +63,9 @@ export function DatasetLayout() {
         <h1>{d.name}</h1>
         <ProgressBar value={Math.max(d.progress, 0.02)} max={1} label={`Processing ${d.name}`} color="var(--accent)" />
         <span className="secondary">{d.status_message ?? "Processing…"}</span>
-        <span className="muted small-text">Fields, Explore, Baseline and Experiments open when profiling finishes.</span>
+        <span className="muted small-text">
+          Fields, Explore, Baseline and Experiments open when profiling finishes.
+        </span>
       </div>
     );
   }
@@ -61,15 +74,36 @@ export function DatasetLayout() {
       <div className="state-card card">
         <h1>{d.name}</h1>
         <ErrorAlert error={{ message: `Processing failed: ${d.error?.split("\n")[0] ?? "unknown error"}` }}>
-          {d.error && d.error.includes("\n") && <details><summary>Details</summary><pre>{d.error}</pre></details>}
+          {d.error && d.error.includes("\n") && (
+            <details>
+              <summary>Details</summary>
+              <pre>{d.error}</pre>
+            </details>
+          )}
         </ErrorAlert>
         <ErrorAlert error={del.error} />
         <div className="row">
           {can(me, "deleteDataset") && (
-            <button type="button" className="danger" disabled={del.isPending}
-              onClick={async () => (await confirmDialog({ title: `Delete ${d.name}?`, body: "Its fields, exports, model runs and their files go too. MLflow keeps its own copies.", confirm: "Delete dataset", cancel: "Keep it", danger: true })) && del.mutate()}>Delete</button>
+            <button
+              type="button"
+              className="danger"
+              disabled={del.isPending}
+              onClick={async () =>
+                (await confirmDialog({
+                  title: `Delete ${d.name}?`,
+                  body: "Its fields, exports, model runs and their files go too. MLflow keeps its own copies.",
+                  confirm: "Delete dataset",
+                  cancel: "Keep it",
+                  danger: true,
+                })) && del.mutate()
+              }
+            >
+              Delete
+            </button>
           )}
-          <Link className="btn" to="/">Back to datasets</Link>
+          <Link className="btn" to="/">
+            Back to datasets
+          </Link>
         </div>
       </div>
     );

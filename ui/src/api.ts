@@ -1,11 +1,57 @@
 import type { StartBaselineForm } from "./baselines";
 import { type View, viewQuery } from "./view";
 import type {
-  Analysis, AnalysisKind, AnalysisParams, AuthConfig, DerivedField, DerivedInput, DerivedPreview, BandPreview, BaselineLine, BulkRequest, BulkResult, CorrMatrix, Correlation, Dataset, Decision, DecisionInput, Device, Experiment, ExperimentDetail, ExportJob, ExportPreview, ExportRows, FamilyKey, FieldFilter, FieldListItem, FieldResponse, FieldReview, FinalizedRecipe, LibraryEntry, Me, ModelOption, ModelRun, OptionCatalog, PickUser, RecipeDiff, RecipeVersion, ReviewComment, ReviewQueue, Role, SqlResult, SystemInfo, TeamState, TeamUser,
+  Analysis,
+  AnalysisKind,
+  AnalysisParams,
+  AuthConfig,
+  DerivedField,
+  DerivedInput,
+  DerivedPreview,
+  BandPreview,
+  BaselineLine,
+  BulkRequest,
+  BulkResult,
+  CorrMatrix,
+  Correlation,
+  Dataset,
+  Decision,
+  DecisionInput,
+  Device,
+  Experiment,
+  ExperimentDetail,
+  ExportJob,
+  ExportPreview,
+  ExportRows,
+  FamilyKey,
+  FieldFilter,
+  FieldListItem,
+  FieldResponse,
+  FieldReview,
+  FinalizedRecipe,
+  LibraryEntry,
+  Me,
+  ModelOption,
+  ModelRun,
+  OptionCatalog,
+  PickUser,
+  RecipeDiff,
+  RecipeVersion,
+  ReviewComment,
+  ReviewQueue,
+  Role,
+  SqlResult,
+  SystemInfo,
+  TeamState,
+  TeamUser,
 } from "./types";
 
 export class ApiError extends Error {
-  constructor(message: string, public status: number, public details: string[] = []) {
+  constructor(
+    message: string,
+    public status: number,
+    public details: string[] = [],
+  ) {
     super(message);
   }
 }
@@ -51,8 +97,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export function errorFromBody(status: number, body: any, fallback = `Request failed (${status})`): ApiError {
   const detail = body?.detail;
   if (typeof detail === "string") return new ApiError(detail, status);
-  if (detail?.message) return new ApiError(detail.message, status, detail.errors ?? (detail.detail ? [detail.detail] : []));
-  if (Array.isArray(detail)) return new ApiError("Invalid request", status, detail.map((d: any) => `${d.loc?.join(".")}: ${d.msg}`));
+  if (detail?.message)
+    return new ApiError(detail.message, status, detail.errors ?? (detail.detail ? [detail.detail] : []));
+  if (Array.isArray(detail))
+    return new ApiError(
+      "Invalid request",
+      status,
+      detail.map((d: any) => `${d.loc?.join(".")}: ${d.msg}`),
+    );
   return new ApiError(fallback, status);
 }
 
@@ -86,7 +138,8 @@ export const api = {
   options: () => request<OptionCatalog>("/api/options"),
   datasets: () => request<Dataset[]>("/api/datasets"),
   dataset: (id: number) => request<Dataset>(`/api/datasets/${id}`),
-  deleteDataset: (id: number) => request<{ fields: number; exports: number; runs: number }>(`/api/datasets/${id}`, { method: "DELETE" }),
+  deleteDataset: (id: number) =>
+    request<{ fields: number; exports: number; runs: number }>(`/api/datasets/${id}`, { method: "DELETE" }),
   patchDataset: (id: number, data: { name?: string; target_columns?: string[] }) =>
     request<Dataset>(`/api/datasets/${id}`, json("PATCH", data)),
   createSample: (data: { rows: number; fields: number; seed: number; target_kind: string; numeric_target?: boolean }) =>
@@ -103,24 +156,45 @@ export const api = {
   bulk: (datasetId: number, data: BulkRequest, view: View = null) =>
     request<BulkResult>(`/api/datasets/${datasetId}/decisions/bulk${viewQuery(view)}`, json("POST", data)),
   bulkUndo: (datasetId: number, batchId: string, view: View = null) =>
-    request<{ restored: number }>(`/api/datasets/${datasetId}/decisions/bulk/${batchId}/undo${viewQuery(view)}`, { method: "POST" }),
-  queryFields: (datasetId: number, data: { filters: FieldFilter[]; order_by: string; descending: boolean; limit?: number }, view: View = null) =>
+    request<{ restored: number }>(`/api/datasets/${datasetId}/decisions/bulk/${batchId}/undo${viewQuery(view)}`, {
+      method: "POST",
+    }),
+  queryFields: (
+    datasetId: number,
+    data: { filters: FieldFilter[]; order_by: string; descending: boolean; limit?: number },
+    view: View = null,
+  ) =>
     request<Record<string, unknown>[]>(`/api/datasets/${datasetId}/fields/query${viewQuery(view)}`, json("POST", data)),
   sql: (sql: string) => request<SqlResult>("/api/sql", json("POST", { sql })),
   sqlExamples: () => request<{ title: string; sql: string }[]>("/api/sql/examples"),
   exportPreview: (id: number, family: string, recipeId?: number | null, experimentId?: number | null) =>
-    request<ExportPreview>(`/api/datasets/${id}/export-preview?family=${family}${recipeId ? `&recipe_id=${recipeId}` : ""}${experimentId ? `&experiment_id=${experimentId}` : ""}`),
+    request<ExportPreview>(
+      `/api/datasets/${id}/export-preview?family=${family}${recipeId ? `&recipe_id=${recipeId}` : ""}${experimentId ? `&experiment_id=${experimentId}` : ""}`,
+    ),
   /** How many rows these row rules leave to split, counted by the export's own code. */
   exportRows: (id: number, rules: Record<string, unknown>, experimentId?: number | null) =>
-    request<ExportRows>(`/api/datasets/${id}/export-rows`, json("POST", { ...rules, experiment_id: experimentId ?? null })),
+    request<ExportRows>(
+      `/api/datasets/${id}/export-rows`,
+      json("POST", { ...rules, experiment_id: experimentId ?? null }),
+    ),
   exports: (id: number, experimentId?: number) =>
     request<ExportJob[]>(`/api/datasets/${id}/exports${experimentId ? `?experiment_id=${experimentId}` : ""}`),
   startExport: (id: number, cfg: Record<string, unknown>) =>
     request<ExportJob>(`/api/datasets/${id}/exports`, json("POST", cfg)),
   modelsForExport: (exportId: number) => request<ModelOption[]>(`/api/exports/${exportId}/models`),
   system: () => request<SystemInfo>("/api/system"),
-  startRun: (exportId: number, data: { model: string; order?: string[]; cv?: number; cv_folds?: number; seed?: number; params?: Record<string, unknown>; device?: Device }) =>
-    request<ModelRun>(`/api/exports/${exportId}/runs`, json("POST", data)),
+  startRun: (
+    exportId: number,
+    data: {
+      model: string;
+      order?: string[];
+      cv?: number;
+      cv_folds?: number;
+      seed?: number;
+      params?: Record<string, unknown>;
+      device?: Device;
+    },
+  ) => request<ModelRun>(`/api/exports/${exportId}/runs`, json("POST", data)),
   derived: (datasetId: number) => request<DerivedField[]>(`/api/datasets/${datasetId}/derived`),
   previewDerived: (datasetId: number, body: DerivedInput) =>
     request<DerivedPreview>(`/api/datasets/${datasetId}/derived/preview`, json("POST", body)),
@@ -128,7 +202,8 @@ export const api = {
     request<{ id: number; name: string }>(`/api/datasets/${datasetId}/derived`, json("POST", body)),
   removeDerived: (datasetId: number, fieldId: number) =>
     request<{ removed: string }>(`/api/datasets/${datasetId}/derived/${fieldId}`, { method: "DELETE" }),
-  updateRun: (runId: number, body: { note?: string; chosen?: boolean }) => request<ModelRun>(`/api/runs/${runId}`, json("PATCH", body)),
+  updateRun: (runId: number, body: { note?: string; chosen?: boolean }) =>
+    request<ModelRun>(`/api/runs/${runId}`, json("PATCH", body)),
   runs: (datasetId: number, experimentId?: number) =>
     request<ModelRun[]>(`/api/datasets/${datasetId}/runs${experimentId ? `?experiment_id=${experimentId}` : ""}`),
   experiments: (datasetId: number) => request<Experiment[]>(`/api/datasets/${datasetId}/experiments`),
@@ -139,8 +214,10 @@ export const api = {
     request<ExperimentDetail>(`/api/experiments/${id}/adjustments/revert`, json("POST", { field_ids: fieldIds })),
   patchExperiment: (id: number, data: { name?: string; notes?: string | null; archived?: boolean }) =>
     request<Experiment>(`/api/experiments/${id}`, json("PATCH", data)),
-  createAnalysis: (datasetId: number, data: { kind: AnalysisKind; params: AnalysisParams; recompute?: boolean; view?: View }) =>
-    request<Analysis>(`/api/datasets/${datasetId}/analyses`, json("POST", data)),
+  createAnalysis: (
+    datasetId: number,
+    data: { kind: AnalysisKind; params: AnalysisParams; recompute?: boolean; view?: View },
+  ) => request<Analysis>(`/api/datasets/${datasetId}/analyses`, json("POST", data)),
   analysis: (id: number) => request<Analysis>(`/api/analyses/${id}`),
   team: (datasetId: number) => request<TeamState>(`/api/datasets/${datasetId}/team`),
   assign: (datasetId: number, userId: number) =>
@@ -171,7 +248,10 @@ export const api = {
     request<RecipeDiff>(`/api/datasets/${datasetId}/recipes/diff?a=${a}&b=${b}`),
   newVersion: (datasetId: number, family: FamilyKey, reopen: number[]) =>
     request<TeamState>(`/api/datasets/${datasetId}/recipes`, json("POST", { family, reopen })),
-  corrMatrix: (datasetId: number, q: { kept: boolean; target: string | null; limit?: number; add?: number[]; view?: View }) => {
+  corrMatrix: (
+    datasetId: number,
+    q: { kept: boolean; target: string | null; limit?: number; add?: number[]; view?: View },
+  ) => {
     const p = new URLSearchParams({ kept: q.kept ? "1" : "0", limit: String(q.limit ?? 60) });
     if (q.view) p.set("view", q.view);
     if (q.target) p.set("target", q.target);
@@ -182,7 +262,10 @@ export const api = {
 
 /** Upload with progress (fetch has no upload progress events). */
 export function uploadDataset(
-  file: File, name: string, targets: string, onProgress: (frac: number) => void,
+  file: File,
+  name: string,
+  targets: string,
+  onProgress: (frac: number) => void,
 ): Promise<Dataset> {
   return new Promise((resolve, reject) => {
     const form = new FormData();
@@ -194,7 +277,11 @@ export function uploadDataset(
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
     xhr.onload = () => {
       let body: any = null;
-      try { body = JSON.parse(xhr.responseText); } catch { /* non-JSON error page */ }
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {
+        /* non-JSON error page */
+      }
       if (xhr.status === 401) signedOut();
       if (xhr.status >= 200 && xhr.status < 300) resolve(body);
       else reject(errorFromBody(xhr.status, body, `Upload failed (${xhr.status})`));

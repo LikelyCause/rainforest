@@ -2,13 +2,13 @@
 Postgres (RAINFOREST_TEST_DATABASE_URL): new versions with and without reopened fields, locked carried fields, the
 reopened-only assessment, version history and diffs, reusing a recipe on new data, provenance, and exports built from
 a version's snapshot."""
+
 import json
 import uuid
 from pathlib import Path
 
 import numpy as np
 import pytest
-from fastapi.testclient import TestClient
 
 from app import recipes
 from app.reuse import drift, match
@@ -21,9 +21,16 @@ def _stats(null_pct=0.0, n_unique=10, t="numeric_continuous"):
     return {"inferred_type": t, "null_pct": null_pct, "n_unique": n_unique}
 
 
-@pytest.mark.parametrize("before,after,drifted", [
-    (0.0, 0.10, False), (0.7, 0.8, False), (0.8, 0.7, False), (0.2, 0.3001, True), (0.5, 0.39, True),
-])
+@pytest.mark.parametrize(
+    "before,after,drifted",
+    [
+        (0.0, 0.10, False),
+        (0.7, 0.8, False),
+        (0.8, 0.7, False),
+        (0.2, 0.3001, True),
+        (0.5, 0.39, True),
+    ],
+)
 def test_null_share_drifts_past_ten_points(before, after, drifted):
     out = drift(_stats(null_pct=before), _stats(null_pct=after))
     assert (out is not None) is drifted
@@ -31,10 +38,20 @@ def test_null_share_drifts_past_ten_points(before, after, drifted):
         assert out == {"null_pct": [before, after]}
 
 
-@pytest.mark.parametrize("before,after,drifted", [
-    (10, 20, False), (10, 5, False), (10, 21, True), (10, 4, True), (0, 0, False), (0, 3, True), (3, 0, True),
-    (3, 6, False), (3, 7, True),
-])
+@pytest.mark.parametrize(
+    "before,after,drifted",
+    [
+        (10, 20, False),
+        (10, 5, False),
+        (10, 21, True),
+        (10, 4, True),
+        (0, 0, False),
+        (0, 3, True),
+        (3, 0, True),
+        (3, 6, False),
+        (3, 7, True),
+    ],
+)
 def test_distinct_values_drift_outside_half_to_double(before, after, drifted):
     out = drift(_stats(n_unique=before), _stats(n_unique=after))
     assert (out is not None) is drifted
@@ -44,8 +61,12 @@ def test_distinct_values_drift_outside_half_to_double(before, after, drifted):
 
 def test_match_carries_unchanged_fields_and_reopens_the_rest():
     snap = {"fields": {"a": _stats(), "b": _stats(), "c": _stats(0.0, 10), "gone": _stats()}}
-    new = [{"name": "a", **_stats()}, {"name": "b", **_stats(t="categorical")}, {"name": "c", **_stats(0.3, 10)},
-           {"name": "new", **_stats()}]
+    new = [
+        {"name": "a", **_stats()},
+        {"name": "b", **_stats(t="categorical")},
+        {"name": "c", **_stats(0.3, 10)},
+        {"name": "new", **_stats()},
+    ]
     m = match(snap, new)
     assert m["carried"] == ["a"] and m["missing"] == ["gone"]
     assert m["reopened"] == [
@@ -56,17 +77,36 @@ def test_match_carries_unchanged_fields_and_reopens_the_rest():
 
 
 def _entry(action="keep", t="numeric_continuous", notes=None, **tree):
-    settings = {"imputation": "none", "impute_value": None, "add_missing_indicator": False, "transform": "none",
-                "scaling": "none", "encoding": "none", "params": {}}
-    return {"decision": {"action": action, "semantic_type": t, "notes": notes},
-            "settings": {"tree": {**settings, **tree}, "linear": settings}}
+    settings = {
+        "imputation": "none",
+        "impute_value": None,
+        "add_missing_indicator": False,
+        "transform": "none",
+        "scaling": "none",
+        "encoding": "none",
+        "params": {},
+    }
+    return {
+        "decision": {"action": action, "semantic_type": t, "notes": notes},
+        "settings": {"tree": {**settings, **tree}, "linear": settings},
+    }
 
 
 def test_diff_lists_changed_decisions_settings_and_targets():
-    a = {"fields": {"x": _entry(), "y": _entry("target", "binary"), "z": _entry(impute_value=0), "old": _entry()},
-         "target_order": ["y"]}
-    b = {"fields": {"x": _entry("drop"), "y": _entry("target", "binary"), "z": _entry(impute_value="0"),
-                    "w": _entry(imputation="mean"), "new": _entry()}, "target_order": ["y"]}
+    a = {
+        "fields": {"x": _entry(), "y": _entry("target", "binary"), "z": _entry(impute_value=0), "old": _entry()},
+        "target_order": ["y"],
+    }
+    b = {
+        "fields": {
+            "x": _entry("drop"),
+            "y": _entry("target", "binary"),
+            "z": _entry(impute_value="0"),
+            "w": _entry(imputation="mean"),
+            "new": _entry(),
+        },
+        "target_order": ["y"],
+    }
     b["fields"]["y"]["settings"]["linear"] = {**b["fields"]["y"]["settings"]["linear"], "scaling": "standard"}
     out = recipes.diff(a, b)
     by = {f["name"]: f for f in out["fields"]}
@@ -98,14 +138,16 @@ def _finalize_v1(people, ds, edits=None):
 
 def _snapshot(recipe_id):
     from app.db import fetch_one
+
     return fetch_one("SELECT snapshot FROM meta.recipes WHERE id = %s", (recipe_id,))["snapshot"]
 
 
 def _export(client, ds, **body):
     r = client.post(f"/api/datasets/{ds['id']}/exports", json=body)
     assert r.status_code == 202, r.text
-    exp = _wait(lambda: (x := client.get(f"/api/exports/{r.json()['id']}").json())["status"] in ("done", "failed")
-                and x)
+    exp = _wait(
+        lambda: (x := client.get(f"/api/exports/{r.json()['id']}").json())["status"] in ("done", "failed") and x
+    )
     assert exp["status"] == "done", exp["error"]
     return exp, json.loads((Path(exp["output_dir"]) / "manifest.json").read_text())
 
@@ -121,11 +163,14 @@ def test_a_new_version_reopens_only_the_chosen_fields(people):
         r = _save(lead, ids["z"], action="drop")
         assert r.status_code == 409 and "new version" in r.json()["detail"], "a finalized version says how to change"
         assert a.post(f"/api/datasets/{ds['id']}/recipes", json={"reopen": [ids["x"]]}).status_code == 403
-        r = lead.post(f"/api/datasets/{ds['id']}/recipes", json={"reopen": [ids["x"], 10 ** 12]})
+        r = lead.post(f"/api/datasets/{ds['id']}/recipes", json={"reopen": [ids["x"], 10**12]})
         assert r.status_code == 422
         team = lead.post(f"/api/datasets/{ds['id']}/recipes", json={"reopen": [ids["x"], ids["w"]]}).json()
-        assert (team["recipe"]["version"], team["recipe"]["phase"], team["recipe"]["scope"]) == (2, "assessing",
-                                                                                                "reopened")
+        assert (team["recipe"]["version"], team["recipe"]["phase"], team["recipe"]["scope"]) == (
+            2,
+            "assessing",
+            "reopened",
+        )
         assert team["recipe"]["reopened"] == 2 and team["recipe"]["parent_id"] == v1["id"]
         assert lead.post(f"/api/datasets/{ds['id']}/recipes", json={}).status_code == 409, "one open version at most"
 
@@ -167,7 +212,9 @@ def test_a_new_version_reopens_only_the_chosen_fields(people):
 
         versions = c.get(f"/api/datasets/{ds['id']}/recipes").json()
         assert [(v["family"], v["version"], v["phase"], v["reopened"]) for v in versions] == [
-            ("tree", 2, "finalized", 2), ("tree", 1, "finalized", None)]
+            ("tree", 2, "finalized", 2),
+            ("tree", 1, "finalized", None),
+        ]
         assert versions[0]["label"] == "Trees baseline v2"
         assert versions[0]["created_by_name"] == lead.user["name"] and versions[0]["finalized_at"]
         assert versions[0]["parent_version"] == 1
@@ -181,8 +228,7 @@ def test_a_new_version_with_nothing_reopened_is_edited_directly(people):
     try:
         _finalize_v1(people, ds)
         team = lead.post(f"/api/datasets/{ds['id']}/recipes", json={"reopen": []}).json()
-        assert (team["recipe"]["phase"], team["recipe"]["scope"], team["recipe"]["reopened"]) == ("review", "all",
-                                                                                                 None)
+        assert (team["recipe"]["phase"], team["recipe"]["scope"], team["recipe"]["reopened"]) == ("review", "all", None)
         assert team["review"]["open"] == 0
         z = _fields(lead, ds)["z"]["id"]
         assert _save(a, z, action="drop").status_code == 403
@@ -192,8 +238,7 @@ def test_a_new_version_with_nothing_reopened_is_edited_directly(people):
         assert lead.post(f"/api/datasets/{ds['id']}/finalize", json={}).json()["recipe"]["version"] == 2
         v = {r["version"]: r["id"] for r in lead.get(f"/api/datasets/{ds['id']}/recipes").json()}
         d = lead.get(f"/api/datasets/{ds['id']}/recipes/diff?a={v[1]}&b={v[2]}").json()
-        assert d["fields"][0]["changes"] == [{"key": "imputation", "family": "tree", "before": "none",
-                                              "after": "mean"}]
+        assert d["fields"][0]["changes"] == [{"key": "imputation", "family": "tree", "before": "none", "after": "mean"}]
     finally:
         lead.delete(f"/api/datasets/{ds['id']}")
 
@@ -207,13 +252,20 @@ def test_versions_and_diffs_show_no_assessment_while_assessing(people):
         x = _fields(lead, ds)["x"]["id"]
         lead.post(f"/api/datasets/{ds['id']}/recipes", json={"reopen": [x]})
         _assign(lead, ds, a, b)
-        assert _save(b, x, action="drop", imputation="constant", impute_value="13579.2468", notes=secret
-                     ).status_code == 200
+        assert (
+            _save(b, x, action="drop", imputation="constant", impute_value="13579.2468", notes=secret).status_code
+            == 200
+        )
         v = {r["version"]: r["id"] for r in lead.get(f"/api/datasets/{ds['id']}/recipes").json()}
         for who in (a, lead, c):
-            for path in (f"/api/datasets/{ds['id']}/recipes", f"/api/datasets/{ds['id']}/recipes/diff?a={v[1]}&b={v[2]}",
-                         f"/api/datasets/{ds['id']}/recipes/diff?a={v[2]}&b={v[1]}", "/api/recipes",
-                         f"/api/datasets/{ds['id']}/team", f"/api/datasets/{ds['id']}/export-preview"):
+            for path in (
+                f"/api/datasets/{ds['id']}/recipes",
+                f"/api/datasets/{ds['id']}/recipes/diff?a={v[1]}&b={v[2]}",
+                f"/api/datasets/{ds['id']}/recipes/diff?a={v[2]}&b={v[1]}",
+                "/api/recipes",
+                f"/api/datasets/{ds['id']}/team",
+                f"/api/datasets/{ds['id']}/export-preview",
+            ):
                 r = who.get(path)
                 assert r.status_code == 200, (path, r.text)
                 assert secret not in r.text and "13579.2468" not in r.text, f"{path} leaked to {who.user['name']}"
@@ -245,7 +297,9 @@ def test_exports_are_built_from_a_versions_snapshot(people):
         v2 = lead.post(f"/api/datasets/{ds['id']}/finalize", json={}).json()["recipe"]
         pv = lead.get(f"/api/datasets/{ds['id']}/export-preview").json()
         assert pv["recipe"]["version"] == 2 and pv["changed_since_export"] == 2
-        assert lead.get(f"/api/datasets/{ds['id']}/export-preview?recipe_id={v1['id']}").json()["kept"] == pv["kept"] + 1
+        assert (
+            lead.get(f"/api/datasets/{ds['id']}/export-preview?recipe_id={v1['id']}").json()["kept"] == pv["kept"] + 1
+        )
         e3, m3 = _export(lead, ds, recipe_id=v1["id"])
         assert e3["recipe_version"] == 1 and m3["fields"] == m1["fields"], "v1 re-exports the same way"
         e4, m4 = _export(lead, ds)
@@ -272,7 +326,8 @@ def _changed_csv(n=400, seed=3) -> str:
     rng = np.random.default_rng(seed)
     return "x,z,w2,c,y,n\n" + "".join(
         f"v{i % 5},{'' if i % 3 == 0 else f'{b:.3f}'},{c:.3f},{'pqr'[i % 3]},{'ab'[i % 2]},{i % 50}\n"
-        for i, (b, c) in enumerate(zip(rng.normal(size=n), rng.normal(size=n))))
+        for i, (b, c) in enumerate(zip(rng.normal(size=n), rng.normal(size=n)))
+    )
 
 
 def test_a_new_upload_starts_from_a_recipe(people):
@@ -289,14 +344,19 @@ def test_a_new_upload_starts_from_a_recipe(people):
 
         new = _upload(lead, _changed_csv())
         assert a.post(f"/api/datasets/{new['id']}/recipes/apply", json={"recipe_id": v1["id"]}).status_code == 403
-        assert lead.post(f"/api/datasets/{new['id']}/recipes/apply", json={"recipe_id": 10 ** 12}).status_code == 404
+        assert lead.post(f"/api/datasets/{new['id']}/recipes/apply", json={"recipe_id": 10**12}).status_code == 404
         team = lead.post(f"/api/datasets/{new['id']}/recipes/apply", json={"recipe_id": v1["id"]}).json()
         rec = team["recipe"]
-        assert (rec["version"], rec["phase"], rec["scope"], rec["parent_id"]) == (1, "assessing", "reopened",
-                                                                                 v1["id"])
+        assert (rec["version"], rec["phase"], rec["scope"], rec["parent_id"]) == (1, "assessing", "reopened", v1["id"])
         reuse = rec["reuse"]
-        assert reuse["source"] == {"recipe_id": v1["id"], "dataset_id": src["id"], "dataset_name": src["name"],
-                                   "family": "tree", "version": 1, "name": None}
+        assert reuse["source"] == {
+            "recipe_id": v1["id"],
+            "dataset_id": src["id"],
+            "dataset_name": src["name"],
+            "family": "tree",
+            "version": 1,
+            "name": None,
+        }
         assert reuse["carried"] == ["c", "y"] and reuse["missing"] == ["w"] and reuse["targets"] == ["y"]
         why = {r["name"]: r for r in reuse["reopened"]}
         assert [r["name"] for r in reuse["reopened"]] == ["x", "z", "w2", "n"]
@@ -339,14 +399,17 @@ def test_reuse_with_nothing_to_assess_is_confirmed_by_finalizing(people):
     new = None
     try:
         v1 = _finalize_v1(people, src, {"z": {"imputation": "mean"}})
-        r = a.post("/api/datasets/upload", files={"file": ("t.csv", _csv(), "text/csv")},
-                   data={"recipe_id": str(v1["id"])})
+        r = a.post(
+            "/api/datasets/upload", files={"file": ("t.csv", _csv(), "text/csv")}, data={"recipe_id": str(v1["id"])}
+        )
         assert r.status_code == 403
-        r = lead.post("/api/datasets/upload", files={"file": ("t.csv", _csv(), "text/csv")},
-                      data={"recipe_id": str(v1["id"])})
+        r = lead.post(
+            "/api/datasets/upload", files={"file": ("t.csv", _csv(), "text/csv")}, data={"recipe_id": str(v1["id"])}
+        )
         assert r.status_code == 202, r.text
-        new = _wait(lambda: (d := lead.get(f"/api/datasets/{r.json()['id']}").json())["status"] in ("ready", "failed")
-                    and d)
+        new = _wait(
+            lambda: (d := lead.get(f"/api/datasets/{r.json()['id']}").json())["status"] in ("ready", "failed") and d
+        )
         assert new["status"] == "ready" and new["phase"] == "review", "applied while processing; nothing to assess"
         team = lead.get(f"/api/datasets/{new['id']}/team").json()
         assert team["recipe"]["reuse"]["carried"] == ["x", "z", "w", "c", "y"] and team["recipe"]["reopened"] == 0
@@ -383,8 +446,9 @@ def test_targets_carry_over_only_while_still_valid(people):
         f = _fields(lead, new)
         if f["k"]["inferred_type"] != _snapshot(v1["id"])["fields"]["k"]["inferred_type"]:
             pytest.skip("profiling typed the wider column differently")
-        reuse = lead.post(f"/api/datasets/{new['id']}/recipes/apply",
-                          json={"recipe_id": v1["id"]}).json()["recipe"]["reuse"]
+        reuse = lead.post(f"/api/datasets/{new['id']}/recipes/apply", json={"recipe_id": v1["id"]}).json()["recipe"][
+            "reuse"
+        ]
         assert reuse["targets"] == [] and [t["name"] for t in reuse["targets_not_carried"]] == ["k"]
         assert "at most 100" in reuse["targets_not_carried"][0]["problem"]
         assert {r["name"]: r["reason"] for r in reuse["reopened"]} == {"k": "target"}

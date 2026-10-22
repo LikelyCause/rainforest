@@ -15,7 +15,13 @@ export function stripLabels(box: { p01: number; p50: number; p99: number }): Str
   const at = (box.p50 - box.p01) / (box.p99 - box.p01);
   return [
     { key: "p1", text: `p1 ${fmtNum(box.p01)}`, at: 0, anchor: "start", row: "below" },
-    { key: "median", text: `median ${fmtNum(box.p50)}`, at, anchor: at < 0.1 ? "start" : at > 0.9 ? "end" : "middle", row: "above" },
+    {
+      key: "median",
+      text: `median ${fmtNum(box.p50)}`,
+      at,
+      anchor: at < 0.1 ? "start" : at > 0.9 ? "end" : "middle",
+      row: "above",
+    },
     { key: "p99", text: `p99 ${fmtNum(box.p99)}`, at: 1, anchor: "end", row: "below" },
   ];
 }

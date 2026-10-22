@@ -2,12 +2,59 @@ import { describe, expect, it } from "vitest";
 import { addSweepValues, combinations, parseSweep, readSweepValue, SWEEP_MAX } from "./sweep";
 import type { ModelSetting } from "./types";
 
-const base = { help: "", group: "trees", step: null, log: false, options: null, applies: "both", when: null, none_value: null, none_label: null } as const;
-const leaves: ModelSetting = { ...base, name: "num_leaves", label: "Leaves", kind: "int", default: 31, min: 2, max: 4096 };
-const lr: ModelSetting = { ...base, name: "learning_rate", label: "Rate", kind: "float", default: 0.1, min: 0.001, max: 1 };
-const depth: ModelSetting = { ...base, name: "max_depth", label: "Depth", kind: "int_or_none", default: -1, min: 1, max: 64, none_value: -1, none_label: "no limit" };
-const boost: ModelSetting = { ...base, name: "boosting_type", label: "Boosting", kind: "choice", default: "gbdt", min: null, max: null,
-  options: [{ value: "gbdt", label: "GBDT" }, { value: "dart", label: "DART" }] };
+const base = {
+  help: "",
+  group: "trees",
+  step: null,
+  log: false,
+  options: null,
+  applies: "both",
+  when: null,
+  none_value: null,
+  none_label: null,
+} as const;
+const leaves: ModelSetting = {
+  ...base,
+  name: "num_leaves",
+  label: "Leaves",
+  kind: "int",
+  default: 31,
+  min: 2,
+  max: 4096,
+};
+const lr: ModelSetting = {
+  ...base,
+  name: "learning_rate",
+  label: "Rate",
+  kind: "float",
+  default: 0.1,
+  min: 0.001,
+  max: 1,
+};
+const depth: ModelSetting = {
+  ...base,
+  name: "max_depth",
+  label: "Depth",
+  kind: "int_or_none",
+  default: -1,
+  min: 1,
+  max: 64,
+  none_value: -1,
+  none_label: "no limit",
+};
+const boost: ModelSetting = {
+  ...base,
+  name: "boosting_type",
+  label: "Boosting",
+  kind: "choice",
+  default: "gbdt",
+  min: null,
+  max: null,
+  options: [
+    { value: "gbdt", label: "GBDT" },
+    { value: "dart", label: "DART" },
+  ],
+};
 
 describe("parseSweep", () => {
   it("reads numbers, dropping repeats", () => {
@@ -30,8 +77,16 @@ describe("parseSweep", () => {
 
 describe("combinations", () => {
   it("crosses every axis over the base values", () => {
-    const out = combinations({ seed: 1 }, [{ name: "a", values: [1, 2] }, { name: "b", values: ["x", "y"] }]);
-    expect(out).toEqual([{ seed: 1, a: 1, b: "x" }, { seed: 1, a: 1, b: "y" }, { seed: 1, a: 2, b: "x" }, { seed: 1, a: 2, b: "y" }]);
+    const out = combinations({ seed: 1 }, [
+      { name: "a", values: [1, 2] },
+      { name: "b", values: ["x", "y"] },
+    ]);
+    expect(out).toEqual([
+      { seed: 1, a: 1, b: "x" },
+      { seed: 1, a: 1, b: "y" },
+      { seed: 1, a: 2, b: "x" },
+      { seed: 1, a: 2, b: "y" },
+    ]);
   });
   it("is capped", () => {
     expect(SWEEP_MAX).toBe(50);
