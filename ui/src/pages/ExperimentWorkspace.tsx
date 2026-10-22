@@ -306,6 +306,42 @@ function CopyCommand({ command }: { command: string }) {
 }
 
 
+/** Downloads the export's script: a Python file that reads the original data the way Rainforest did and rebuilds this
+ * export with its decisions, then checks its result against the export. Fetched rather than linked, so a refusal (a
+ * sample made before Rainforest recorded how) shows here. */
+function ScriptDownload({ exportId }: { exportId: number }) {
+  const [state, setState] = useState<"idle" | "busy" | Error>("idle");
+  const save = async () => {
+    setState("busy");
+    try {
+      const { name, blob } = await api.exportScript(exportId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      setState("idle");
+    } catch (err) {
+      setState(err as Error);
+    }
+  };
+  return (
+    <div className="stack exp-gap-2">
+      <div className="row">
+        <button type="button" className="small" disabled={state === "busy"} onClick={save}>
+          <Icon name="download" size={14} />{state === "busy" ? "Writing script…" : "Python script (.py)"}
+        </button>
+      </div>
+      <span className="muted small-text">
+        The decisions as code you can edit. Run it on the original data and it rebuilds this export, then checks it
+        matches.
+      </span>
+      {state instanceof Error && <ErrorAlert error={state} />}
+    </div>
+  );
+}
+
 function featuresByType(e: ExportJob): string {
   const by = e.summary?.features_by_type as Record<string, { fields: number; features: number }> | undefined;
   if (!by) return "";
@@ -365,6 +401,8 @@ function ExportRow({ e, canAdd, onTrain }: { e: ExportJob; canAdd: boolean; onTr
           )}</Pop>
           <Pop label="Use from code">{() => (
             <>
+              <span className="secondary small-text">Rebuild it in Python, outside the app</span>
+              <ScriptDownload exportId={e.id} />
               <span className="secondary small-text">Train from a shell</span>
               <CopyCommand command={s.train_command ?? `docker compose exec api python -m app.modeling.train --export-id ${e.id}`} />
               {s.targets && (

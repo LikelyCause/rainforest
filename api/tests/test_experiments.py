@@ -54,6 +54,7 @@ def _sees(client, ds, xid, exp_id, run_id) -> dict[str, bool]:
         "exports": exp_id in [e["id"] for e in client.get(f"/api/datasets/{d}/exports").json()],
         "export": client.get(f"/api/exports/{exp_id}").status_code == 200,
         "manifest": client.get(f"/api/exports/{exp_id}/files/manifest").status_code == 200,
+        "script": client.get(f"/api/exports/{exp_id}/files/code").status_code == 200,
         "models": client.get(f"/api/exports/{exp_id}/models").status_code == 200,
         "runs": run_id in [r["id"] for r in client.get(f"/api/datasets/{d}/runs").json()],
         "run": client.get(f"/api/runs/{run_id}").status_code == 200,
