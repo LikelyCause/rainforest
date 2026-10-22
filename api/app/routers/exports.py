@@ -144,11 +144,11 @@ def target_aware_problems(
                 continue
             name = (r["params"] or {}).get("target")
             if name is not None and name not in targets:
-                blocking.append(f"{spec.label} on `{r['name']}` uses `{name}`, which this {noun} doesn't predict.")
+                blocking.append(f"{spec.label} on {r['name']!r} uses {name!r}, which this {noun} doesn't predict.")
             elif name is None and moved:
                 warnings.append(
-                    f"{spec.label} on `{r['name']}` follows the first target, now `{targets[0]}` "
-                    f"(`{base_targets[0]}` in {base_label})."
+                    f"{spec.label} on {r['name']!r} follows the first target, now {targets[0]!r} "
+                    f"({base_targets[0]!r} in {base_label})."
                 )
     return blocking, warnings
 

@@ -39,13 +39,13 @@ def _keep(name, encoding="target", **params):
 def test_target_aware_problems_block_and_warn():
     keep = [_keep("diag_1", target="G2"), _keep("mjob"), _keep("age", encoding="onehot")]
     blocking, warnings = target_aware_problems(keep, ["G1", "G3"], ["G1", "G2", "G3"], "experiment", "Trees v1")
-    assert blocking == ["Target encoding on `diag_1` uses `G2`, which this experiment doesn't predict."]
+    assert blocking == ["Target encoding on 'diag_1' uses 'G2', which this experiment doesn't predict."]
     assert warnings == []
     blocking, warnings = target_aware_problems(keep, ["G2", "G3"], ["G1", "G2", "G3"], "experiment", "Trees v1")
     assert blocking == []
-    assert warnings == ["Target encoding on `mjob` follows the first target, now `G2` (`G1` in Trees v1)."]
+    assert warnings == ["Target encoding on 'mjob' follows the first target, now 'G2' ('G1' in Trees v1)."]
     assert target_aware_problems(keep, ["G1"], None, "baseline", "Trees v1")[0] == [
-        "Target encoding on `diag_1` uses `G2`, which this baseline doesn't predict."
+        "Target encoding on 'diag_1' uses 'G2', which this baseline doesn't predict."
     ]
 
 
@@ -86,4 +86,4 @@ def test_the_export_preview_blocks_a_target_no_longer_predicted(client):
         ).rowcount
     assert n == 1
     p = client.get(f"/api/datasets/{ds['id']}/export-preview").json()
-    assert "Target encoding on `c` uses `gone`, which this baseline doesn't predict." in p["blocking"]
+    assert "Target encoding on 'c' uses 'gone', which this baseline doesn't predict." in p["blocking"]
