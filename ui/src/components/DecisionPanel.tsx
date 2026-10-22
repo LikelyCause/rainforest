@@ -23,7 +23,7 @@ import {
   withOption,
 } from "../decision";
 import { baselineDiff, revertedInput } from "../experiments";
-import { fmtSetting, settingProblem } from "../settings";
+import { fmtSetting, settingProblem, targetChoice } from "../settings";
 import type {
   Action,
   DecisionInput,
@@ -308,6 +308,10 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
   const paramValue = (s: ModelSetting) => (draft.params?.[s.name] as SettingValue | undefined) ?? s.default;
   const setParam = (s: ModelSetting, v: SettingValue) =>
     update({ params: { ...draftRef.current.params, [s.name]: v } });
+  const targets = data.targets ?? [];
+  const shown = (s: ModelSetting) => (s.kind === "target" ? targetChoice(s, targets, paramValue(s)) : s);
+  const staleTarget = (s: ModelSetting) =>
+    s.kind === "target" && typeof paramValue(s) === "string" && !targets.includes(paramValue(s) as string);
   const registryOption = (dim: Dim) => catalog.transforms.find((o) => o.dimension === dim && o.key === draft[dim]);
   const unavailable = (dim: Dim) => !allowed[dim].includes(draft[dim]) && labels[dim][draft[dim]] === undefined;
 
@@ -432,7 +436,7 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
                 {paramsOf(dim).map((s) => (
                   <div key={s.name} className="setting-row">
                     <dt>{s.label}</dt>
-                    <dd>{fmtSetting(s, paramValue(s))}</dd>
+                    <dd>{fmtSetting(shown(s), paramValue(s))}</dd>
                   </div>
                 ))}
               </Fragment>
@@ -680,12 +684,14 @@ export const DecisionPanel = forwardRef<DecisionPanelHandle, Props>(function Dec
               )}
               {registryOption(dim) && <span className="secondary option-help">{registryOption(dim)!.help}</span>}
               {paramsOf(dim).map((s) => (
-                <ParamRow
-                  key={`${draft[dim]}-${s.name}`}
-                  s={s}
-                  value={paramValue(s)}
-                  onChange={(v) => setParam(s, v)}
-                />
+                <Fragment key={`${draft[dim]}-${s.name}`}>
+                  <ParamRow s={shown(s)} value={paramValue(s)} onChange={(v) => setParam(s, v)} />
+                  {staleTarget(s) && (
+                    <span className="inline-warn">
+                      {String(paramValue(s))} isn't a target here. Choose another target.
+                    </span>
+                  )}
+                </Fragment>
               ))}
             </div>
           ))}

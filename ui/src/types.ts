@@ -99,13 +99,13 @@ export interface ModelSetting {
   label: string;
   help: string;
   group: string;
-  kind: "choice" | "int" | "float" | "bool" | "int_or_none";
+  kind: "choice" | "int" | "float" | "bool" | "int_or_none" | "float_or_none" | "target";
   default: SettingValue;
   min: number | null;
   max: number | null;
   step: number | null;
   log: boolean;
-  options: { value: SettingValue; label: string; help?: string }[] | null;
+  options: { value: SettingValue; label: string; help?: string; disabled?: boolean }[] | null;
   applies: "both" | "classes" | "numbers";
   when: Record<string, SettingValue[]> | null;
   none_value: number | null;
@@ -267,6 +267,8 @@ export interface FieldResponse {
   family: string;
   decision: Decision;
   target_associations: TargetAssoc[];
+  /** The source's targets in chain order (what a target-aware option can be fit on). */
+  targets: string[];
   /** Why the field can't change in this version (carried over), or null. */
   locked?: string | null;
   /** In an experiment: the baseline's own decision and settings for this field. */

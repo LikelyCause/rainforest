@@ -40,7 +40,7 @@ function NumberInput({
       type="number"
       inputMode="decimal"
       value={text}
-      step={s.step ?? (s.kind === "float" ? "any" : 1)}
+      step={s.step ?? (s.kind === "float" || s.kind === "float_or_none" ? "any" : 1)}
       onChange={(e) => {
         setText(e.target.value);
         const n = Number(e.target.value);
@@ -70,7 +70,7 @@ export function SettingControl({
     return (
       <select id={id} value={JSON.stringify(value)} onChange={(e) => onChange(JSON.parse(e.target.value))}>
         {(s.options ?? []).map((o) => (
-          <option key={JSON.stringify(o.value)} value={JSON.stringify(o.value)} title={o.help}>
+          <option key={JSON.stringify(o.value)} value={JSON.stringify(o.value)} title={o.help} disabled={o.disabled}>
             {o.label}
           </option>
         ))}
@@ -85,7 +85,7 @@ export function SettingControl({
       </label>
     );
   }
-  if (s.kind === "int_or_none") {
+  if (s.kind === "int_or_none" || s.kind === "float_or_none") {
     const none = value === s.none_value;
     return (
       <div className="row exp-nowrap">
