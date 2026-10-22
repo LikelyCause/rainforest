@@ -194,3 +194,18 @@ def test_pick_target_feeds_one_column():
     assert list(binary.transformer_.classes_) == [0, 1]
     with pytest.raises(ValueError, match="needs the targets"):
         registry.PickTarget(TARGET.build(TARGET.defaults(), ctx("binary")), "first", "binary").fit(X)
+
+
+def test_target_encoding_is_offered_to_categoricals_and_checked():
+    for fam in ("tree", "linear", "neural"):
+        assert allowed("categorical", fam)["encoding"][-1] == "target"
+        assert "target" not in allowed("binary", fam)["encoding"]
+    d = {**suggest("categorical", {}, False, "tree"), "encoding": "target", "params": dict(TARGET.defaults())}
+    assert validate_decision(d, "tree") == []
+    assert validate_decision({**d, "params": {**d["params"], "cv": 11}}, "tree") == ["params.cv must be from 2 to 10"]
+    g2 = {**d, "params": {**d["params"], "target": "G2"}}
+    assert validate_decision(g2, "tree", targets=["G1", "G3"]) == [
+        "params.target 'G2' isn't one of this source's targets (G1, G3)"
+    ]
+    assert validate_decision(g2, "tree", targets=["G1", "G2"]) == []
+    assert validate_decision(g2, "tree") == []  # without the source's targets, the export preview decides

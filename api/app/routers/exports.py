@@ -13,7 +13,7 @@ import polars as pl
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from .. import bands, experiments, jobs, recipes
+from .. import bands, experiments, jobs, recipes, transforms
 from ..auth import CurrentUser
 from ..config import get_settings
 from ..db import connection, execute, fetch_all, fetch_one, jsonb
@@ -131,6 +131,28 @@ def preview(
         return _preview_of(conn, dataset_id, user, recipe, snap, x, family)
 
 
+def target_aware_problems(
+    keep: list[dict], targets: list[str], base_targets: list[str] | None, noun: str, base_label: str
+) -> tuple[list[str], list[str]]:
+    """Blocks a target-aware option whose named target this source doesn't predict. Warns when a default one follows a
+    first target that differs from the baseline's, since its features then encode another target."""
+    blocking, warnings = [], []
+    moved = bool(base_targets) and bool(targets) and base_targets[0] != targets[0]
+    for r in keep:
+        for spec in (transforms.get(r["transform"]), transforms.get(r["encoding"])):
+            if spec is None or not spec.needs_target:
+                continue
+            name = (r["params"] or {}).get("target")
+            if name is not None and name not in targets:
+                blocking.append(f"{spec.label} on `{r['name']}` uses `{name}`, which this {noun} doesn't predict.")
+            elif name is None and moved:
+                warnings.append(
+                    f"{spec.label} on `{r['name']}` follows the first target, now `{targets[0]}` "
+                    f"(`{base_targets[0]}` in {base_label})."
+                )
+    return blocking, warnings
+
+
 def _preview_of(
     conn, dataset_id: int, user: dict, recipe: dict, snap: dict, x: dict | None, family: str | None
 ) -> dict:
@@ -206,6 +228,10 @@ def _preview_of(
             f"{len(invalid)} field(s) have settings that aren't valid for {FAMILIES[fam]['label'].lower()}: "
             f"{', '.join(invalid[:8])}{'…' if len(invalid) > 8 else ''}"
         )
+    noun = "baseline" if x is None else ("assessment" if personal else "experiment")
+    aware_blocking, aware_warnings = target_aware_problems(keep, targets, base_targets, noun, recipes.label(recipe))
+    blocking += aware_blocking
+    warnings += aware_warnings
     return {
         "family": fam,
         "recipe": {
