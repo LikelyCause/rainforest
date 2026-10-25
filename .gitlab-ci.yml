@@ -1,12 +1,13 @@
 # Rainforest on GitLab CI. Merge requests and the default branch run the tests; the default branch also pushes
 # images tagged with the commit; a release tag (1.2.3 or v1.2.3) runs everything: tests, images, the packaged chart
-# in the project's Helm registry, and a smoke test on kind.
+# in the project's Helm registry, and a smoke test on kind. The smoke test runs before the chart is uploaded, so a
+# release that fails it never reaches the Helm registry. Only semver tags are releases; other tags run the tests.
 #
 # Needs a runner with the Docker executor in privileged mode (the `docker:27-dind` service), tagged however your
 # group tags its Docker runners (add `tags:` to `.build-image` and `smoke` if it needs one). `.github/workflows/ci.yml`
 # runs the same test commands; change both together.
 
-stages: [test, build, chart, smoke]
+stages: [test, build, smoke, chart]
 
 workflow:
   rules:
@@ -17,8 +18,15 @@ workflow:
 variables:
   PIP_CACHE_DIR: $CI_PROJECT_DIR/.cache/pip
   npm_config_cache: $CI_PROJECT_DIR/.cache/npm
-  # The Helm the `alpine/helm` and `helm-unittest` images below carry; the smoke job installs the same one.
+  # The Helm in the `alpine/helm` and `helm-unittest` images, and the one the smoke job installs. The unit-test
+  # image's plugin version (-0.8.2 below) must match deploy/chart/test.sh.
   HELM_VERSION: 3.17.3
+
+# A release is a semver tag, with or without a leading v (1.2.3, v1.2.3, 1.2.3-rc1): the chart version must be semver,
+# so any other tag stops at the tests rather than pushing images and failing at `helm package`.
+.release-tag:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v?\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/
 
 # ------------------------------------------------------------------------------------------------ test
 
@@ -135,7 +143,7 @@ lint-ui:
 chart-lint:
   extends: .test
   image:
-    name: alpine/helm:3.17.3
+    name: alpine/helm:$HELM_VERSION
     entrypoint: [""]
   timeout: 10m
   before_script:
@@ -143,13 +151,15 @@ chart-lint:
   script:
     - helm lint deploy/chart/rainforest -f deploy/chart/rainforest/ci/dev-values.yaml
     - helm lint deploy/chart/rainforest -f deploy/chart/rainforest/ci/team-values.yaml
+    - helm template t deploy/chart/rainforest -f deploy/chart/rainforest/ci/dev-values.yaml >/dev/null
+    - helm template t deploy/chart/rainforest -f deploy/chart/rainforest/ci/team-values.yaml >/dev/null
     - bash -n deploy/smoke.sh
 
 # The unit-test image is the job image, so CI runs exactly what `bash deploy/chart/test.sh` runs locally.
 chart-unittest:
   extends: .test
   image:
-    name: helmunittest/helm-unittest:3.17.3-0.8.2
+    name: helmunittest/helm-unittest:$HELM_VERSION-0.8.2
     entrypoint: [""]
   timeout: 10m
   script:
@@ -174,7 +184,7 @@ chart-unittest:
     BUILD_ARGS: ""
   timeout: 30m
   rules:
-    - if: $CI_COMMIT_TAG
+    - !reference [.release-tag, rules]
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   before_script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
@@ -230,15 +240,16 @@ mlflow:
 # placeholders (0.1.0) stay untouched and no sed/yq step can leave them half-edited.
 #   version     the tag without a leading `v` (a chart version must be semver; helm package rejects anything else)
 #   appVersion  the tag as pushed, so the chart's default image tag (appVersion) is the tag the build jobs pushed
-# Waits for all five images so a chart never lands in the registry without the images it points at.
+# Waits for all five images and the smoke test, so a chart never lands in the registry without the images it points
+# at or after a failed smoke test.
 chart:
   stage: chart
   image:
-    name: alpine/helm:3.17.3
+    name: alpine/helm:$HELM_VERSION
     entrypoint: [""]
-  needs: [api-cpu, api-cuda13, api-cu12, ui, mlflow]
+  needs: [api-cpu, api-cuda13, api-cu12, ui, mlflow, smoke]
   rules:
-    - if: $CI_COMMIT_TAG
+    - !reference [.release-tag, rules]
   timeout: 10m
   before_script:
     - apk add --no-cache curl
@@ -255,8 +266,9 @@ chart:
 
 # ------------------------------------------------------------------------------------------------ smoke
 
-# The release gate: installs the chart on kind and trains a run (deploy/smoke.sh). It runs after `chart`, so a
-# failure here marks the release bad but does not unpublish the chart; fix forward with a new tag.
+# The release gate: installs the chart from the checked-out source on kind and trains a run (deploy/smoke.sh). It
+# needs only the three images, and `chart` waits for it, so a failure here keeps the chart out of the Helm registry.
+# The images are already pushed by then; fix forward with a new tag.
 #
 # Registry credentials: smoke.sh with BUILD=0 pulls any missing image with the Docker daemon's own login (the
 # `docker login` below), then `kind load`s it into the cluster and installs the chart with pullPolicy Never. The
@@ -271,9 +283,9 @@ smoke:
   image: docker:27
   services:
     - docker:27-dind
-  needs: [chart, api-cpu, ui, mlflow]
+  needs: [api-cpu, ui, mlflow]
   rules:
-    - if: $CI_COMMIT_TAG
+    - !reference [.release-tag, rules]
   timeout: 45m
   variables:
     DOCKER_HOST: tcp://docker:2375
