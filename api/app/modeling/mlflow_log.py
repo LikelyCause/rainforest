@@ -46,7 +46,7 @@ def enabled() -> bool:
 
 
 def experiment_name(dataset_id: int, dataset_name: str) -> str:
-    return f"rainforest/{dataset_id}-{dataset_name}"
+    return f"{get_settings().mlflow_experiment_prefix}/{dataset_id}-{dataset_name}"
 
 
 def browse_base() -> str:

@@ -64,6 +64,18 @@ def test_browse_base_strips_a_trailing_slash(monkeypatch):
     get_settings.cache_clear()
 
 
+@pytest.fixture
+def experiment_prefix(monkeypatch):
+    monkeypatch.setenv("MLFLOW_EXPERIMENT_PREFIX", "vehicles")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def test_experiment_name_takes_the_prefix(experiment_prefix):
+    assert mlflow_log.experiment_name(3, "curated") == "vehicles/3-curated"
+
+
 def _model_dir(tmp_path):
     d = tmp_path / "model"
     d.mkdir()

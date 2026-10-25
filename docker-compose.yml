@@ -61,6 +61,7 @@ services:
       # Empty turns MLflow logging off. The server serves everything, its REST API too, under /mlflow.
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI-http://mlflow:5000/mlflow}
       MLFLOW_BROWSE_URL: ${MLFLOW_BROWSE_URL:-}
+      MLFLOW_EXPERIMENT_PREFIX: ${MLFLOW_EXPERIMENT_PREFIX:-rainforest}
       # Tuning (docs/configuration.md); the defaults match api/app/config.py.
       PROFILE_SAMPLE_ROWS: ${PROFILE_SAMPLE_ROWS:-500000}
       CORR_SAMPLE_ROWS: ${CORR_SAMPLE_ROWS:-100000}
