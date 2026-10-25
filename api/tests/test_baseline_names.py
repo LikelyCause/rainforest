@@ -216,4 +216,4 @@ def test_a_name_left_by_a_model_type_without_versions_never_blocks(people):
 
 
 def test_system_says_whether_mlflow_is_on(people):
-    assert isinstance(people["lead"].get("/api/system").json()["mlflow"], bool)
+    assert isinstance(people["lead"].get("/api/system").json()["mlflow"]["enabled"], bool)

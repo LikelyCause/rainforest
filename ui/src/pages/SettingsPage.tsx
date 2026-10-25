@@ -174,16 +174,21 @@ function Integrations() {
         <div className="row tools-between">
           <h2>MLflow</h2>
           {system.data && (
-            <Chip tone={system.data.mlflow ? "good" : "plain"}>
-              {system.data.mlflow ? "Logging on" : "Logging off"}
+            <Chip tone={system.data.mlflow.enabled ? "good" : "plain"}>
+              {system.data.mlflow.enabled ? "Logging on" : "Logging off"}
             </Chip>
           )}
         </div>
         <p className="secondary tools-lead">
-          {system.data?.mlflow ? (
+          {system.data?.mlflow.enabled ? (
             <>
-              Model runs are logged to the built-in MLflow server.{" "}
-              <a href="/mlflow/" target="_blank" rel="noopener noreferrer" className="tools-inline-icon">
+              Model runs are logged to MLflow.{" "}
+              <a
+                href={system.data.mlflow.browseUrl ?? undefined}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="tools-inline-icon"
+              >
                 Open MLflow
                 <Icon name="external" size={13} label="opens in a new tab" />
               </a>

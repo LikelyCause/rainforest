@@ -134,10 +134,20 @@ describe("sourceOptions", () => {
 
 describe("mlflowExperimentUrl", () => {
   it("filters the dataset's MLflow experiment to this experiment's runs", () => {
-    expect(mlflowExperimentUrl(null, 4)).toBeNull();
-    const url = mlflowExperimentUrl("7", 4)!;
+    expect(mlflowExperimentUrl("/mlflow", null, 4)).toBeNull();
+    const url = mlflowExperimentUrl("/mlflow", "7", 4)!;
     expect(url.startsWith("/mlflow/#/experiments/7?searchFilter=")).toBe(true);
     expect(decodeURIComponent(url.split("=").slice(1).join("="))).toBe("tags.`rainforest.experiment_id` = '4'");
+  });
+
+  it("builds the experiment's MLflow link on the browse base", () => {
+    expect(mlflowExperimentUrl("/mlflow", "9", 4)).toBe(
+      "/mlflow/#/experiments/9?searchFilter=" + encodeURIComponent("tags.`rainforest.experiment_id` = '4'"),
+    );
+    expect(mlflowExperimentUrl("https://mlflow.example.com", "9", 4)).toMatch(
+      /^https:\/\/mlflow\.example\.com\/#\/experiments\/9/,
+    );
+    expect(mlflowExperimentUrl(null, "9", 4)).toBeNull();
   });
 });
 

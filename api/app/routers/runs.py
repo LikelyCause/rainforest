@@ -34,12 +34,17 @@ from .exports import visible_export
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["models"])
 
-MLFLOW_URL = """CASE WHEN mlflow_run_id IS NOT NULL
-                   THEN '/mlflow/#/experiments/' || mlflow_experiment_id || '/runs/' || mlflow_run_id END AS mlflow_url"""
-RUN_COLS = f"""id, export_id, dataset_id, model, family, status, status_message, error, config, metrics,
+RUN_COLS = """id, export_id, dataset_id, model, family, status, status_message, error, config, metrics,
               report, created_at, updated_at, finished_at, mlflow_experiment_id,
-              mlflow_run_id, {MLFLOW_URL}, created_by, experiment_id, note, chosen_at,
+              mlflow_run_id, created_by, experiment_id, note, chosen_at,
               (SELECT name FROM meta.users u WHERE u.id = chosen_by) AS chosen_by_name"""
+
+
+def _with_url(row: dict | None) -> dict | None:
+    """The run row with its MLflow link, built from `MLFLOW_BROWSE_URL`."""
+    if row is None:
+        return None
+    return {**row, "mlflow_url": mlflow_log.mlflow_url(row["mlflow_experiment_id"], row["mlflow_run_id"])}
 
 
 @router.get("/models")
@@ -50,8 +55,10 @@ def list_models() -> list[dict]:
 @router.get("/system")
 def system() -> dict:
     """Training hardware (`gpu` is null when no NVIDIA GPU is visible to the API container), and whether runs are
-    logged to MLflow."""
-    return {"gpu": gpu.detect(), "mlflow": mlflow_log.enabled()}
+    logged to MLflow and where browsers open it."""
+    enabled = mlflow_log.enabled()
+    browse_url = mlflow_log.browse_base() if enabled else None
+    return {"gpu": gpu.detect(), "mlflow": {"enabled": enabled, "browseUrl": browse_url}}
 
 
 def _export_manifest(export_id: int, user: dict) -> tuple[dict, dict]:
@@ -140,27 +147,29 @@ def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
         ),
     )
     jobs.submit(_run, run["id"], exp["output_dir"], req.model_dump())
-    return run
+    return _with_url(run)
 
 
 @router.get("/datasets/{dataset_id}/runs")
 def list_runs(dataset_id: int, user: CurrentUser, experiment_id: int | None = None) -> list[dict]:
-    return fetch_all(
+    rows = fetch_all(
         f"""SELECT {RUN_COLS} FROM meta.model_runs
              WHERE dataset_id = %s AND experiment_id IN ({experiments.visible_ids(user["id"])})
                AND (%s::bigint IS NULL OR experiment_id = %s) ORDER BY created_at DESC""",
         (dataset_id, experiment_id, experiment_id),
     )
+    return [_with_url(r) for r in rows]
 
 
 def run_row(run_id: int, user_id: int | None = None) -> dict | None:
     """One run with its MLflow link; with `user_id`, only if that user may see its experiment."""
     visible = "" if user_id is None else f" AND experiment_id IN ({experiments.visible_ids(user_id)})"
-    return fetch_one(
-        f"""SELECT *, {MLFLOW_URL}, (SELECT name FROM meta.users u WHERE u.id = chosen_by) AS chosen_by_name
+    row = fetch_one(
+        f"""SELECT *, (SELECT name FROM meta.users u WHERE u.id = chosen_by) AS chosen_by_name
                           FROM meta.model_runs WHERE id = %s{visible}""",
         (run_id,),
     )
+    return _with_url(row)
 
 
 @router.get("/runs/{run_id}")

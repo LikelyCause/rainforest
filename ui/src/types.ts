@@ -443,8 +443,8 @@ export interface GpuInfo {
 
 export interface SystemInfo {
   gpu: GpuInfo | null;
-  /** Whether runs are logged to MLflow (the profile menu links it only then). */
-  mlflow: boolean;
+  /** Whether runs are logged to MLflow (links to it show only then), and the address browsers open it at. */
+  mlflow: { enabled: boolean; browseUrl: string | null };
 }
 
 /** What the export's row rules leave to split (POST /export-rows): the file's rows, the rows the rules keep, the kept
@@ -569,7 +569,7 @@ export interface ModelRun {
   chosen_at?: string | null;
   chosen_by_name?: string | null;
   mlflow_run_id: string | null;
-  /** The run in the MLflow UI (served at /mlflow/); null when it wasn't logged. */
+  /** The run in the MLflow UI, on the server's MLFLOW_BROWSE_URL; null when it wasn't logged. */
   mlflow_url: string | null;
   created_at: string;
   finished_at: string | null;

@@ -625,7 +625,7 @@ export function TrainPanel({
         <p className="muted small-text exp-flush">
           You'll go to Runs, where {count > 1 ? "they appear" : "it appears"} at the top as{" "}
           {count > 1 ? "they train" : "it trains"}.
-          {system.data?.mlflow &&
+          {system.data?.mlflow.enabled &&
             ` ${count > 1 ? "Each one is" : "It's"} logged to MLflow${personal ? " once review opens" : ""}.`}
         </p>
       </aside>

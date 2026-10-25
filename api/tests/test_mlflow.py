@@ -49,6 +49,21 @@ def file_store(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
+def test_browse_base_defaults_to_same_origin(monkeypatch):
+    monkeypatch.delenv("MLFLOW_BROWSE_URL", raising=False)
+    get_settings.cache_clear()
+    assert mlflow_log.browse_base() == "/mlflow"
+    assert mlflow_log.mlflow_url("3", "abc") == "/mlflow/#/experiments/3/runs/abc"
+    assert mlflow_log.mlflow_url(None, None) is None
+
+
+def test_browse_base_strips_a_trailing_slash(monkeypatch):
+    monkeypatch.setenv("MLFLOW_BROWSE_URL", "https://mlflow.example.com/")
+    get_settings.cache_clear()
+    assert mlflow_log.mlflow_url("3", "abc") == "https://mlflow.example.com/#/experiments/3/runs/abc"
+    get_settings.cache_clear()
+
+
 def _model_dir(tmp_path):
     d = tmp_path / "model"
     d.mkdir()
@@ -218,6 +233,17 @@ def _train_run(export_dir, phase="review", personal=False) -> int:
     req = {"model": "lightgbm", "order": None, "seed": 0, "cv": 2, "params": {"n_estimators": 20}, "device": "cpu"}
     runs._run(run_id, str(export_dir), req)
     return run_id
+
+
+def test_run_link_uses_the_browse_url(database, file_store, tree_export, monkeypatch):  # noqa: F811
+    from app.routers import runs
+
+    monkeypatch.setenv("MLFLOW_BROWSE_URL", "https://mlflow.example.com")
+    get_settings.cache_clear()
+    run = runs.run_row(_train_run(tree_export))
+    assert run["mlflow_url"] == (
+        f"https://mlflow.example.com/#/experiments/{run['mlflow_experiment_id']}/runs/{run['mlflow_run_id']}"
+    )
 
 
 def test_training_run_is_logged_and_linked(database, file_store, tree_export):  # noqa: F811

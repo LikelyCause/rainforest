@@ -91,14 +91,16 @@ export function sourceOptions(
   return out;
 }
 
-/** The experiment's runs in the MLflow UI: the dataset's MLflow experiment, filtered to this experiment's tag. */
+/** The experiment's runs in the MLflow UI: the dataset's MLflow experiment, filtered to this experiment's tag.
+    `base` is the browse URL from /api/system; null when runs aren't logged to MLflow. */
 export function mlflowExperimentUrl(
+  base: string | null,
   mlflowExperimentId: string | null | undefined,
   experimentId: number,
 ): string | null {
-  if (!mlflowExperimentId) return null;
+  if (!base || !mlflowExperimentId) return null;
   const filter = `tags.\`rainforest.experiment_id\` = '${experimentId}'`;
-  return `/mlflow/#/experiments/${mlflowExperimentId}?searchFilter=${encodeURIComponent(filter)}`;
+  return `${base}/#/experiments/${mlflowExperimentId}?searchFilter=${encodeURIComponent(filter)}`;
 }
 
 export function metricLabel(metric: string): string {

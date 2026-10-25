@@ -115,7 +115,7 @@ make up                 # builds and starts everything; the first build takes a 
 > changing it later has no effect.
 
 Open `http://localhost:8080` (or the Docker host's address; `UI_PORT` sets the port) and pick the *Admin* profile.
-MLflow is at `/mlflow/`.
+MLflow is at `/mlflow/`; `MLFLOW_BROWSE_URL` points every MLflow link at another address instead.
 
 > [!WARNING]
 > The default sign-in mode doesn't authenticate: anyone who reaches the page can pick any profile, a lead's included.

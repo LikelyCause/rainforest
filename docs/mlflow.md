@@ -17,7 +17,8 @@ Open `http://localhost:8080/mlflow/`, or *MLflow ↗* in your profile menu.
 
 The runs table has an *MLflow ↗* link per logged run, and the run's detail links to it too. An experiment's page
 links to the dataset's MLflow experiment, filtered to its runs. `meta.model_runs` stores `mlflow_experiment_id` and
-`mlflow_run_id`, and the API returns `mlflow_url`.
+`mlflow_run_id`, and the API returns `mlflow_url`, built on `MLFLOW_BROWSE_URL` (the address browsers open MLflow at;
+empty means the bundled `/mlflow/`).
 
 ## Layout
 

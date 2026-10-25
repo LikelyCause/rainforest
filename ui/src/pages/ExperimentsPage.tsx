@@ -370,7 +370,8 @@ function NotesTab({ ds, x, me, blocked }: { ds: Dataset; x: ExperimentDetail; me
       return;
     patch.mutate({ archived: !x.archived_at });
   };
-  const mlflow = mlflowExperimentUrl(x.mlflow_experiment_id, x.id);
+  const system = useQuery({ queryKey: ["system"], queryFn: api.system, staleTime: Infinity });
+  const mlflow = mlflowExperimentUrl(system.data?.mlflow.browseUrl ?? null, x.mlflow_experiment_id, x.id);
   const note = privacyNote(x);
   return (
     <div className="page exp-narrow">

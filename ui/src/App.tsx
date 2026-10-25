@@ -283,11 +283,11 @@ function UserMenu({ compact }: { compact?: boolean }) {
           <NavLink role="menuitem" className="menu-item" to="/people" onClick={close}>
             People
           </NavLink>
-          {system.data?.mlflow && (
+          {system.data?.mlflow.enabled && (
             <a
               role="menuitem"
               className="menu-item"
-              href="/mlflow/"
+              href={system.data.mlflow.browseUrl ?? undefined}
               target="_blank"
               rel="noopener noreferrer"
               onClick={close}

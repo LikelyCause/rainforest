@@ -49,8 +49,13 @@ def experiment_name(dataset_id: int, dataset_name: str) -> str:
     return f"rainforest/{dataset_id}-{dataset_name}"
 
 
+def browse_base() -> str:
+    """The MLflow address browsers use, without a trailing slash."""
+    return get_settings().mlflow_browse_url.strip().rstrip("/") or "/mlflow"
+
+
 def mlflow_url(experiment_id: str | None, run_id: str | None) -> str | None:
-    return f"/mlflow/#/experiments/{experiment_id}/runs/{run_id}" if experiment_id and run_id else None
+    return f"{browse_base()}/#/experiments/{experiment_id}/runs/{run_id}" if experiment_id and run_id else None
 
 
 def _key(*parts: str) -> str:

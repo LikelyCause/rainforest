@@ -59,6 +59,8 @@ class Settings(BaseSettings):
 
     # Empty: training runs are not logged to MLflow.
     mlflow_tracking_uri: str = ""
+    # Where browsers open MLflow; empty is the same-origin /mlflow/ the bundled nginx proxies.
+    mlflow_browse_url: str = ""
     git_sha: str = ""
 
     @property
