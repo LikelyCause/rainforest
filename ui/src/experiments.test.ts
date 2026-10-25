@@ -12,6 +12,7 @@ import {
   filterExperiments,
   finalizedPrompt,
   mlflowExperimentUrl,
+  mlflowHome,
   privacyNote,
   revertedInput,
   sourceChip,
@@ -129,6 +130,14 @@ describe("sourceOptions", () => {
   it("puts the dataset's current baseline first once it is finalized", () => {
     const current = { recipe: { id: 13, family: "linear", version: 1, phase: "finalized" as const }, me: null };
     expect(sourceOptions(versions, current, me).map((o) => o.value)).toEqual(["recipe:13", "recipe:11", "recipe:10"]);
+  });
+});
+
+describe("mlflowHome", () => {
+  it("ends in a slash, since nginx serves /mlflow/ only", () => {
+    expect(mlflowHome("/mlflow")).toBe("/mlflow/");
+    expect(mlflowHome("https://mlflow.example.com")).toBe("https://mlflow.example.com/");
+    expect(mlflowHome(null)).toBeNull();
   });
 });
 

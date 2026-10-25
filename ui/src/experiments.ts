@@ -91,6 +91,12 @@ export function sourceOptions(
   return out;
 }
 
+/** MLflow's front page. The bundled nginx serves `/mlflow/` only and redirects `/mlflow` to an absolute URL that
+    drops the port, so the link needs the trailing slash. */
+export function mlflowHome(base: string | null): string | null {
+  return base ? `${base}/` : null;
+}
+
 /** The experiment's runs in the MLflow UI: the dataset's MLflow experiment, filtered to this experiment's tag.
     `base` is the browse URL from /api/system; null when runs aren't logged to MLflow. */
 export function mlflowExperimentUrl(

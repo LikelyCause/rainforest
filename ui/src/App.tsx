@@ -36,6 +36,7 @@ import { DatasetTeamPage } from "./pages/DatasetTeamPage";
 import { DatasetLayout, useDatasetContext } from "./components/DatasetLayout";
 import { ErrorAlert } from "./components/ui";
 import { baselineLabel, familyShort, fmtInt, roleLabel } from "./format";
+import { mlflowHome } from "./experiments";
 import { ToastRegion, showError } from "./toast";
 import { parseView, useView, withView } from "./view";
 import type { Dataset, ExportJob, ModelRun, RecipeVersion, TeamState } from "./types";
@@ -287,7 +288,7 @@ function UserMenu({ compact }: { compact?: boolean }) {
             <a
               role="menuitem"
               className="menu-item"
-              href={system.data.mlflow.browseUrl ?? undefined}
+              href={mlflowHome(system.data.mlflow.browseUrl) ?? undefined}
               target="_blank"
               rel="noopener noreferrer"
               onClick={close}

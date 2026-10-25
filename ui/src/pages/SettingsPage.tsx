@@ -8,6 +8,7 @@ import { PictureDialog } from "../components/PictureDialog";
 import { ErrorAlert } from "../components/ui";
 import { Chip, Icon, Segmented } from "../components/kit";
 import { roleLabel } from "../format";
+import { mlflowHome } from "../experiments";
 import { getThemePref, setThemePref, type ThemePref } from "../theme";
 import { toast } from "../toast";
 import { TeamPage } from "./TeamPage";
@@ -184,7 +185,7 @@ function Integrations() {
             <>
               Model runs are logged to MLflow.{" "}
               <a
-                href={system.data.mlflow.browseUrl ?? undefined}
+                href={mlflowHome(system.data.mlflow.browseUrl) ?? undefined}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="tools-inline-icon"
