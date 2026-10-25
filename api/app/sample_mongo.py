@@ -4,7 +4,9 @@
 whose type is mixed ("n/a" among numbers), and rows that repeat curated ones under a new `_id`, for deduplication.
 Tests seed a throwaway database with it, and the Compose seeder runs the same function.
 
-CLI:  python -m app.sample_mongo mongodb://host:27017 database
+CLI:  python -m app.sample_mongo mongodb://host:27017 database [--if-empty]
+
+`--if-empty` leaves a database that already has collections as it is, so a Compose restart keeps edits made to the data.
 """
 
 from __future__ import annotations
@@ -73,11 +75,24 @@ def seed(db) -> None:
         db[name].insert_many(docs)
 
 
-if __name__ == "__main__":
-    import sys
+def main(argv: list[str] | None = None) -> None:
+    import argparse
 
     import pymongo
 
-    if len(sys.argv) != 3:
-        sys.exit(__doc__)
-    seed(pymongo.MongoClient(sys.argv[1])[sys.argv[2]])
+    parser = argparse.ArgumentParser(description="Seed the sample MongoDB collections.")
+    parser.add_argument("uri")
+    parser.add_argument("database")
+    parser.add_argument("--if-empty", action="store_true", help="do nothing when the database has collections")
+    args = parser.parse_args(argv)
+    client = pymongo.MongoClient(args.uri, serverSelectionTimeoutMS=10_000)
+    db = client[args.database]
+    if args.if_empty and db.list_collection_names():
+        print(f"{args.database} already has collections; left as it is")
+        return
+    seed(db)
+    print(f"Seeded {args.database}: curated ({CURATED_DOCS} documents) and massive ({MASSIVE_DOCS})")
+
+
+if __name__ == "__main__":
+    main()

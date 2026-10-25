@@ -1,4 +1,4 @@
-.PHONY: up up-gpu up-keycloak gpu-check down logs ps train models mlflow-backfill test test-db test-mongo lint format psql sample-csv clean
+.PHONY: up up-gpu up-keycloak up-mongo gpu-check down logs ps train models mlflow-backfill test test-db test-mongo lint format psql sample-csv clean
 
 # Tagged on MLflow runs (baked into the API image).
 GIT_SHA ?= $(shell git rev-parse HEAD 2>/dev/null)
@@ -37,6 +37,20 @@ up-keycloak:   ## `make up` plus the dev-only Keycloak, filling the sign-in sett
 	  *) echo "RAINFOREST_AUTH_MODE is $(call setting,RAINFOREST_AUTH_MODE); set it to oidc, or remove it, in .env." >&2; exit 1;; esac
 	env $(kc_fill) $(kc_profile) docker compose up -d --build
 	@$(if $(kc_keep),printf '%s\n' "These applied to this run only. To keep them for \`make up\` add them to .env:" $(foreach d,$(kc_keep),"  $(d)"))
+
+# The sample MongoDB (mongo profile) is the connection "dev"; sources .env already has are kept.
+dev_source = dev=mongodb://mongo:27017
+mongo_sources = $(call setting,RAINFOREST_MONGO_SOURCES)
+mongo_have = $(findstring $(dev_source),$(mongo_sources))
+mongo_value = $(if $(mongo_sources),$(mongo_sources);)$(dev_source)
+mongo_fill = $(if $(mongo_have),,RAINFOREST_MONGO_SOURCES='$(subst ','\'',$(mongo_value))')
+mongo_on = $(filter mongo,$(subst $(comma), ,$(kc_profiles)))
+mongo_profile = COMPOSE_PROFILES=$(if $(mongo_on),$(kc_profiles),$(if $(kc_profiles),$(kc_profiles)$(comma))mongo)
+mongo_keep = $(strip $(if $(mongo_on),,$(mongo_profile)) $(if $(mongo_have),,RAINFOREST_MONGO_SOURCES=$(if $(mongo_sources),<your-sources>;)$(dev_source)))
+# The docker line is silent because it carries the connection strings .env already has.
+up-mongo:      ## `make up` plus a sample MongoDB (database rf_dev) as the connection "dev", for this run only (docs/data-preparation.md › Connected datasets)
+	@env $(mongo_fill) $(mongo_profile) docker compose up -d --build
+	@$(if $(mongo_keep),printf '%s\n' "These applied to this run only. To keep them for \`make up\` add them to .env:" $(foreach d,$(mongo_keep),"  $(d)"))
 
 gpu-check:     ## what the running API sees: GPU name, memory, driver, and whether XGBoost can use it
 	docker compose exec api python -c "import json; from app.gpu import detect; print(json.dumps(detect(), indent=2))"

@@ -12,7 +12,7 @@ The defaults below are the ones `docker-compose.yml` applies when `.env` leaves 
 | Variable | Default | Purpose |
 |---|---|---|
 | `COMPOSE_FILE` | `docker-compose.yml` | `docker-compose.yml:docker-compose.gpu.yml` for the GPU image (see [GPU](deployment.md#gpu)) |
-| `COMPOSE_PROFILES` | – | `keycloak` to run the reference Keycloak (see [Reference Keycloak](deployment.md#reference-keycloak-development-only)) |
+| `COMPOSE_PROFILES` | – | `keycloak` to run the reference Keycloak (see [Reference Keycloak](deployment.md#reference-keycloak-development-only)); `mongo` to run a sample MongoDB (see [Connected datasets](data-preparation.md#connected-datasets)) |
 | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | rainforest | database name and owner; Postgres applies them when it creates the `pgdata` volume, so set them before the first start |
 | `READONLY_ROLE`, `READONLY_PASSWORD` | rainforest_ro | name and password of the SQL console's role |
 | `RAINFOREST_MANAGED_ROLES` | `true` | `false` when an operator creates the console role instead (see [SQL console](sql.md#when-the-api-cant-create-roles)); the API then only grants to it |
@@ -34,6 +34,7 @@ The defaults below are the ones `docker-compose.yml` applies when `.env` leaves 
 | `RAINFOREST_LEAD_GROUP`, `RAINFOREST_MEMBER_GROUP` | `rainforest-lead`, `rainforest-member` | groups that make a lead or a member |
 | `KEYCLOAK_URL`, `RAINFOREST_URL` | `http://localhost:8081`, `http://localhost:8080` | Keycloak profile only: the URLs browsers use for Keycloak (its issuer) and Rainforest (written into the realm's redirect URIs on first import) |
 | `KEYCLOAK_PORT`, `KEYCLOAK_ADMIN_PASSWORD` | 8081, admin | Keycloak profile only: published port and admin console password |
+| `MONGO_PORT` | 27017 | Mongo profile only: the port the sample MongoDB is published on, on localhost |
 | `RAINFOREST_SESSION_SECRET` | generated | key that signs session cookies; if empty, one is generated on first start and kept in the data volume (`/data/session_secret`) |
 | `RAINFOREST_ALLOWED_HOSTS` | `*` | comma-separated hostnames / IPs the API answers to (`*.example.com` allowed). Set this to the names and addresses you use, e.g. `rainforest.lan,192.168.1.20`; `localhost`, `127.0.0.1` and `::1` are always accepted |
 | `MLFLOW_TRACKING_URI` | `http://mlflow:5000/mlflow` | where the API logs model runs; empty turns MLflow logging off (see [MLflow](mlflow.md#turning-it-off)) |

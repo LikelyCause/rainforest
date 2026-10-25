@@ -141,10 +141,21 @@ api:
     EXPORT_CHUNK_MB: 256
     EXPORT_FIT_MB: 512
     SAMPLE_MAX_CELLS: 60000000
+    SOURCE_MAX_CELLS: 600000000
+    SOURCE_PULL_TIMEOUT_S: 3600
     DB_POOL_MAX: 10
     SQL_TIMEOUT_MS: 15000
     SQL_MAX_ROWS: 2000
     SQL_POOL_MAX: 4
+
+# Named connections for datasets created from MongoDB collections (Datasets > Connect). Each URI lives in a Secret you
+# manage, so none sits in a values file or the ConfigMap. The name is a slug (lowercase letters, digits, dashes).
+sources:
+  mongodb: []
+  #  - name: vehicles
+  #    existingSecret: rainforest-vehicles-mongo
+  #    # The Secret key holding the URI.
+  #    key: uri
 
 ui:
   replicas: 1

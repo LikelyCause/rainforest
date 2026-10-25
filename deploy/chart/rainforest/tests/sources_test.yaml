@@ -1,0 +1,139 @@
+suite: sources
+release:
+  name: rf
+  namespace: team
+templates:
+  - api-deployment.yaml
+  - configmap.yaml
+  - secret.yaml
+set:
+  hostname: vehicles.example.com
+  secrets.values.postgresPassword: pg-pass
+  secrets.values.readonlyPassword: ro-pass
+tests:
+  - it: gives each MongoDB source its URI from the named Secret and composes RAINFOREST_MONGO_SOURCES from them
+    template: api-deployment.yaml
+    set:
+      sources.mongodb:
+        - name: vehicles
+          existingSecret: rainforest-vehicles-mongo
+        - name: archive-2
+          existingSecret: rainforest-archive-mongo
+          key: connection
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MONGO_URI_VEHICLES
+            valueFrom:
+              secretKeyRef:
+                name: rainforest-vehicles-mongo
+                key: uri
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MONGO_URI_ARCHIVE_2
+            valueFrom:
+              secretKeyRef:
+                name: rainforest-archive-mongo
+                key: connection
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: RAINFOREST_MONGO_SOURCES
+            value: vehicles=$(MONGO_URI_VEHICLES);archive-2=$(MONGO_URI_ARCHIVE_2)
+
+  - it: defines every URI variable before the one that expands them
+    template: api-deployment.yaml
+    set:
+      sources.mongodb:
+        - name: vehicles
+          existingSecret: rainforest-vehicles-mongo
+        - name: archive
+          existingSecret: rainforest-archive-mongo
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[5].name
+          value: MONGO_URI_VEHICLES
+      - equal:
+          path: spec.template.spec.containers[0].env[6].name
+          value: MONGO_URI_ARCHIVE
+      - equal:
+          path: spec.template.spec.containers[0].env[7].name
+          value: RAINFOREST_MONGO_SOURCES
+
+  - it: keeps the URIs out of the ConfigMap
+    template: configmap.yaml
+    set:
+      sources.mongodb:
+        - name: vehicles
+          existingSecret: rainforest-vehicles-mongo
+    asserts:
+      - notExists:
+          path: data.RAINFOREST_MONGO_SOURCES
+
+  - it: sets neither with no sources
+    template: api-deployment.yaml
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.containers[0].env
+          count: 5
+
+  - it: refuses a source name that is not a slug
+    template: api-deployment.yaml
+    set:
+      sources.mongodb:
+        - name: Vehicles_DB
+          existingSecret: rainforest-vehicles-mongo
+    asserts:
+      - failedTemplate:
+          errorPattern: sources.mongodb
+
+  - it: refuses a source name that is empty
+    template: api-deployment.yaml
+    set:
+      sources.mongodb:
+        - name: ""
+          existingSecret: rainforest-vehicles-mongo
+    asserts:
+      - failedTemplate:
+          errorPattern: sources.mongodb
+
+  - it: refuses a source without a Secret
+    template: api-deployment.yaml
+    set:
+      sources.mongodb:
+        - name: vehicles
+    asserts:
+      - failedTemplate:
+          errorPattern: existingSecret
+
+  - it: refuses two sources of one name
+    template: api-deployment.yaml
+    set:
+      sources.mongodb:
+        - name: vehicles
+          existingSecret: a
+        - name: vehicles
+          existingSecret: b
+    asserts:
+      - failedTemplate:
+          errorPattern: twice
+
+  - it: refuses a tuning key that collides with RAINFOREST_MONGO_SOURCES
+    template: configmap.yaml
+    set:
+      api.tuning.RAINFOREST_MONGO_SOURCES: "x=mongodb://elsewhere"
+    asserts:
+      - failedTemplate:
+          errorPattern: api.tuning.RAINFOREST_MONGO_SOURCES
+
+  - it: passes the source budget and pull limit through the tuning defaults
+    template: configmap.yaml
+    asserts:
+      - equal:
+          path: data.SOURCE_MAX_CELLS
+          value: "600000000"
+      - equal:
+          path: data.SOURCE_PULL_TIMEOUT_S
+          value: "3600"

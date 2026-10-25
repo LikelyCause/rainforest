@@ -3,6 +3,137 @@
 How Rainforest reads your data, what it suggests for each field, and why. Terms are defined in
 [Concepts](concepts.md).
 
+## Connected datasets
+
+A dataset can be created from one or more MongoDB collections instead of an uploaded file. Rainforest pulls the
+documents into the same Parquet copy and raw table an upload gets, profiles them the same way and remembers where they
+came from. Review, baselines, Explore, exports and training treat the dataset like any other. A lead can pull again
+with *Refresh*, which carries the team's decisions forward.
+
+### Creating one
+
+Connections are named by the deployment, in `RAINFOREST_MONGO_SOURCES` for Compose or `sources.mongodb` for the
+chart (see [Configuration](configuration.md) and [deploy/README.md](../deploy/README.md#mongodb-sources)). Nobody types
+a connection string into Rainforest. *Datasets → Connect ▾ → MongoDB collection…* appears when at least one is named.
+To try it without a cluster, `make up-mongo` starts a sample MongoDB (database `rf_dev`, collections `curated` and
+`massive`) as the connection `dev`; [Deployment](deployment.md#trying-an-option-for-one-run) says what it changes.
+
+Members and leads can create a connected dataset. In the dialog:
+
+1. Choose the **connection**, the **database** and the **collections**. List the most trusted collection first.
+2. Optionally give each collection a **filter** and a **projection**, as JSON documents. MongoDB's extended JSON
+   (`{"$oid": …}`, `{"$date": …}`) is accepted. They are passed to the server as written, so connect with a read-only
+   account.
+3. **Preview** samples 200 documents per collection and shows the flattened columns with their types and how often
+   each is present, the columns flagged (arrays, mixed types), and the estimated rows and cells against the
+   [size budget](#size).
+4. Name the dataset and choose whether to add a **source column** and to **leave out exact duplicate rows**
+   ([below](#the-source-column-and-duplicates)).
+
+The pull runs as a background job. The dataset is *Pending* while it waits, then *Ingesting* while the documents are
+pulled and combined, and then goes through the same profiling, associations and baseline set-up as an upload. The
+*Datasets* page marks it as connected and shows when it was last pulled. A pull that fails (the server is unreachable,
+the account is refused, the size budget is exceeded, the time limit passes) leaves the dataset *Failed* with the
+reason. Error messages name the connection, never its address or credentials.
+
+### How documents become columns
+
+Each document is flattened to one row by these rules, and the column set is the union of the keys over every pulled
+document, in the order first seen. A key that first appears in document 400,000 is still a column.
+
+| Value in the document | Becomes |
+|---|---|
+| nested document `{a: {b: 1}}` | the column `a.b`; dots inside a key are replaced by `_`, and nesting can be any depth |
+| array of numbers, text or documents | one text column holding the array as JSON; it profiles as text and can be dropped |
+| `ObjectId`, `UUID`, `Binary` | text (binary other than a UUID as base64); `_id` is kept and profiles as an identifier |
+| `Int32`, `Int64`, `Double`, `Decimal128` | a number (`Decimal128` as a float) |
+| `Date` | a datetime |
+| `true`, `false` | a boolean, which profiles as a binary field |
+| `null`, or a missing key | missing |
+| a key whose values have different kinds across documents (numbers and text, say) | the whole column read as text, and listed in the dataset's warnings |
+
+The names follow what `mongoexport --type=csv` writes, so a baseline built on a CSV export of a collection matches the
+connected dataset's fields by name. Field names keep the dots (`a.b`); the raw table that the SQL console reads cleans
+every column name to lowercase letters, digits and underscores (`a_b`), as for an upload.
+
+Edge cases:
+
+- **Empty-string keys.** A key `""` gives a column with an empty name, and `{a: {"": 1}}` gives `a.`. Field names keep
+  such oddities; the raw table, which the SQL console reads, cleans every column name to lowercase letters, digits and
+  underscores as for an upload, so these become `col_<position>` and `a`.
+- **A field that is always `{}`** produces no column: an empty document has no values to flatten, so the field
+  vanishes. One that is `{}` in some documents and has keys in others is a column wherever it has keys.
+- **Mixed types** are read as text, with numbers and booleans written in their text form, so nothing is lost. The type
+  is then inferred from the text as for an upload.
+- **Arrays** are JSON text. Elements that are documents keep their keys inside the text, and BSON types inside become
+  strings or numbers.
+- **Keys that collide** after the dot replacement (`{"a.b": 1, "a_b": 2}` would give `a_b` twice) keep the name of the
+  one that had no dot and give the other a `_2`, `_3`, … suffix; the warning lists each rename.
+
+### The source column and duplicates
+
+With several collections, a `source` column names the collection each row came from (or the label typed for it in the
+dialog). It is an ordinary categorical field, reviewed and droppable like any other. It is on, and locked on, when more
+than one collection is chosen, and optional for one. If the documents have a field named `source`, the column is
+`source_2`.
+
+Leaving out exact duplicates removes rows that are equal on the **comparison columns**:
+
+- By default these are the columns every chosen collection has, less `_id`, the `source` column and any column that
+  profiles as an identifier (unique-looking keys such as `…_id` and UUIDs), because each collection's own keys would
+  make every row distinct. Columns that only some collections have never take part, so a row of a collection with
+  extra fields can still match a row without them.
+- A **Match on** list in the dialog replaces them, for example the record's natural key.
+- Duplicates are removed within a collection as well as across them. Of a group of equal rows, the one from the
+  collection listed first stays.
+
+The number removed from each collection is recorded on the pull and listed in the dataset's warnings. When the
+collections share no comparable columns, the warning says nothing was compared.
+
+### Size
+
+`SOURCE_MAX_CELLS` (600,000,000 by default) caps the whole dataset: documents × projected fields, summed over the
+collections and estimated before duplicates are removed. A pull over it is refused before any document is read in full.
+The default fits three collections of the vehicle team's size, about 450 million cells.
+
+The pull streams the documents in chunks of 50,000 to Parquet files, but combining the chunks, removing duplicates and
+writing the dataset holds all of it in memory at once. Plan on roughly 2–3 times the dataset's in-memory size while a
+pull assembles it: about 8 GiB for 1.5 million rows of 300 columns. Profiling, the raw-table load and the rest of
+processing are bounded by `PROFILE_SAMPLE_ROWS` and `COPY_BATCH_ROWS`, as for an upload. One pull may take
+`SOURCE_PULL_TIMEOUT_S` (an hour) before the job fails.
+
+### Refresh
+
+*Refresh…* in a connected dataset's menu, for leads, pulls every collection again and replaces the dataset's data.
+It always re-pulls all of them: the combined rows and the duplicate removal depend on all of them together.
+
+**It keeps** every field that is still in the data, by name, with its id, so its decisions, history, settings and notes
+stay. Derived fields are computed again with the same formulas, and the dataset's targets stay targets.
+
+**It replaces** the Parquet copy and the raw table, the fields' statistics and inferred types, and the associations.
+Every Explore result of the dataset is marked out of date, since it was computed on the old rows. New fields come in
+with suggestions, as at upload. A field that is no longer in the data is deleted with its decisions and history, and so
+is a derived field whose inputs vanished; each is listed in the dataset's warnings. A target that vanished stops being
+a target, with a warning. An experiment's adjustments on a removed field are dropped, and its Adjustments card says so.
+
+**It reopens nothing by itself.** For each model family with a finalized baseline, it compares the new fields with that
+family's latest finalized baseline by the rules for [reusing a baseline](team-workflow.md#reusing-another-datasets-baseline):
+a field is *carried* when its type is unchanged and its statistics haven't drifted (the missing share within 10 points,
+the distinct values within half to double), and *reopened* when it is new, has a new type or has drifted, with the
+numbers. Fields of the baseline that are gone are listed. The result is that pull's **drift summary**, shown for each
+family on the *Team* page and on the baseline's card, where a lead can start a new version with the reopened fields
+selected. Until a baseline is finalized the summary is informational: the working decisions follow the new statistics.
+
+**While it runs** the dataset is locked. Its pages open read-only with a banner, and the API refuses writes to the
+dataset and new exports, runs and Explore computations on it with `409`. A refresh is refused with `409` while a
+baseline version is being assessed or is in team review, and while an export or a run of the dataset is running. If
+the pull fails, the dataset, its fields and its data stay as they were and the failed pull is recorded with its error.
+
+**Exports after a refresh** are built from the new data. Each export of a connected dataset records the pull it was made
+from in its manifest and MLflow parameters, and the exports list shows it (*pull #3*), so it stays clear which data a
+run was trained on; an export made earlier keeps its own Parquet file. The export preview blocks when a field of the
+baseline is no longer in the data, and warns when the baseline was finalized before the latest pull.
+
 ## Type inference
 
 Rainforest proposes a type for every field, with a confidence score and the reasons. The code is in
