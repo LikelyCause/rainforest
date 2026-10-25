@@ -12,6 +12,7 @@ from pymongo.errors import PyMongoError
 from app import db, recipes, refresh
 from app.analysis.runner import data_version, public
 from app.config import get_settings
+from app.processing import not_used_as_targets
 from app.routers.datasets import SELECT_DATASET
 from app.routers.derived import DerivedIn, add_derived
 from app.routers.fields import set_targets
@@ -146,8 +147,8 @@ def _fresh_docs(n: int, null_share: float) -> list[dict]:
     ]
 
 
-def _add_analysis(ds: int) -> None:
-    params = {"data": "raw", "method": "pca", "kept": [], "target": None, "sample": 1000}
+def _add_analysis(ds: int, data: str = "raw") -> None:
+    params = {"data": data, "method": "pca", "kept": [], "target": None, "sample": 1000}
     with db.connection() as conn:
         version = data_version(conn, ds, params)
         conn.execute(
@@ -167,14 +168,15 @@ def _settings(ds: int, name: str, family: str) -> dict:
 
 def _analyses(ds: int) -> list[dict]:
     with db.connection() as conn:
-        rows = conn.execute("SELECT * FROM meta.analyses WHERE dataset_id = %s", (ds,)).fetchall()
+        rows = conn.execute("SELECT * FROM meta.analyses WHERE dataset_id = %s ORDER BY id", (ds,)).fetchall()
         return [public(r, data_version(conn, ds, r["params"])) for r in rows]
 
 
 def test_refresh_keeps_field_ids_and_reports_drift(source):
     ds = _connect(source)
     _add_analysis(ds)
-    assert [a["stale"] for a in _analyses(ds)] == [False]
+    _add_analysis(ds, "export:1")  # an export's files don't change in a refresh
+    assert [a["stale"] for a in _analyses(ds)] == [False, False]
     before = _field(ds, "vehicle")
     settings_before = db.fetch_all("SELECT * FROM meta.field_settings WHERE field_id = %s", (before["id"],))
     max_before = _settings(ds, "rpm.max", "linear")
@@ -218,7 +220,7 @@ def test_refresh_keeps_field_ids_and_reports_drift(source):
     assert reopened["engine"]["reason"] == "drift" and "null_pct" in reopened["engine"]["drift"]
     assert reopened["fresh"] == {"name": "fresh", "reason": "new"}
     assert "vehicle" in pull["drift"]["tree"]["carried"] and pull["drift"]["tree"]["missing"] == []
-    assert [a["stale"] for a in _analyses(ds)] == [True]
+    assert [a["stale"] for a in _analyses(ds)] == [True, False]
     assert _leftovers(ds) == [] and not _new_table(ds)
 
 
@@ -226,17 +228,75 @@ def test_refresh_removes_vanished_fields_and_targets(source):
     ds = _connect(source, target="engine")
     assert _dataset(ds)["target_columns"] == ["engine"]
     for coll in (source.curated, source.massive):
-        coll.update_many({}, {"$unset": {"engine": ""}})
+        coll.update_many({}, {"$unset": {"engine": "", "tags": ""}})
 
     pull = _refresh(ds)
 
     assert pull["status"] == "done", pull["error"]
-    assert _field(ds, "engine") is None and _field(ds, "vehicle") is not None
+    assert _field(ds, "engine") is None and _field(ds, "tags") is None and _field(ds, "vehicle") is not None
     row = _dataset(ds)
     assert row["target_columns"] == []
+    # A vanished target is listed once, as a target.
+    assert "Fields no longer in the data: tags" in row["warnings"]
     assert "Target column no longer in the data: engine" in row["warnings"]
-    assert pull["drift"]["tree"]["missing"] == ["engine"]
+    assert [w for w in row["warnings"] if "engine" in w] == ["Target column no longer in the data: engine"]
+    assert sorted(pull["drift"]["tree"]["missing"]) == ["engine", "tags"]
     assert not db.fetch_one("SELECT bool_or(is_target) AS t FROM meta.fields WHERE dataset_id = %s", (ds,))["t"]
+
+
+def test_refresh_drops_a_target_profiling_now_rejects(source):
+    ds = _connect(source, target="engine")
+    engine = _field(ds, "engine")
+    history = len(db.fetch_all("SELECT id FROM meta.decision_history WHERE field_id = %s", (engine["id"],)))
+    # More than 100 distinct labels: no longer a valid target.
+    source.massive.insert_many(
+        [{"vehicle": "van", "engine": f"E{i:03d}", "rpm": {"mean": 1000.0 + i}} for i in range(200)]
+    )
+
+    pull = _refresh(ds)
+
+    assert pull["status"] == "done", pull["error"]
+    row = _dataset(ds)
+    assert row["target_columns"] == [] and not_used_as_targets(["engine"]) in row["warnings"]
+    after = _field(ds, "engine")
+    assert after["id"] == engine["id"] and not after["is_target"] and after["n_unique"] > 100
+    decision = db.fetch_one("SELECT * FROM meta.field_decisions WHERE field_id = %s", (engine["id"],))
+    assert decision["action"] != "target" and decision["source"] == "suggested" and not decision["reviewed"]
+    assert len(db.fetch_all("SELECT id FROM meta.decision_history WHERE field_id = %s", (engine["id"],))) > history
+
+
+def test_refresh_leaves_reviewed_and_unchanged_settings_alone(source):
+    from app.assessment import settings_key
+
+    ds = _connect(source)
+    max_id = _field(ds, "rpm.max")["id"]
+    db.execute("UPDATE meta.field_decisions SET reviewed = true WHERE field_id = %s", (max_id,))
+
+    def settings() -> dict:
+        rows = db.fetch_all("SELECT * FROM meta.field_settings WHERE dataset_id = %s", (ds,))
+        return {(r["field_id"], r["family"]): r for r in rows}
+
+    def decisions() -> dict:
+        rows = db.fetch_all("SELECT * FROM meta.field_decisions WHERE dataset_id = %s", (ds,))
+        return {r["field_id"]: r for r in rows}
+
+    settings_before, decisions_before = settings(), decisions()
+    source.massive.insert_many(_fresh_docs(200, 0.6))
+
+    assert _refresh(ds)["status"] == "done"
+
+    settings_after, decisions_after = settings(), decisions()
+    # rpm.max's linear suggestion moved (it has missing values now), but it was reviewed with what it had.
+    assert _field(ds, "rpm.max")["suggestion"]["linear"]["add_missing_indicator"]
+    assert all(settings_after[k] == r for k, r in settings_before.items() if k[0] == max_id)
+    unchanged = [k for k, r in settings_before.items() if settings_key(settings_after[k]) == settings_key(r)]
+    assert unchanged and all(settings_after[k]["updated_at"] == settings_before[k]["updated_at"] for k in unchanged)
+    same = [
+        fid
+        for fid, d in decisions_before.items()
+        if (d["action"], d["semantic_type"]) == (decisions_after[fid]["action"], decisions_after[fid]["semantic_type"])
+    ]
+    assert same and all(decisions_after[f]["updated_at"] == decisions_before[f]["updated_at"] for f in same)
 
 
 def test_refresh_recomputes_derived_and_drops_orphans(source):
@@ -257,6 +317,7 @@ def test_refresh_recomputes_derived_and_drops_orphans(source):
     assert db.fetch_one("SELECT 1 FROM meta.field_decisions WHERE field_id = %s", (orphan["id"],)) is None
     row = _dataset(ds)
     assert any(w.startswith("Derived field removed: max_k") and "rpm.max" in w for w in row["warnings"])
+    assert "Fields no longer in the data: rpm.max" in row["warnings"]
     df = pl.read_parquet(row["parquet_path"])
     assert "max_k" not in df.columns and df.height == 751
     expected = df["rpm.mean"].cast(pl.Float64, strict=False) / 1000
@@ -367,3 +428,20 @@ def test_a_restart_puts_a_refreshing_dataset_back_to_ready(database):
     assert row["status"] == "ready" and row["status_message"] == "Ready" and row["error"] is None
     pull = db.fetch_one("SELECT * FROM meta.dataset_pulls WHERE dataset_id = %s", (ds,))
     assert pull["status"] == "failed" and pull["finished_at"] is not None
+
+
+def test_a_restart_leaves_a_refresh_with_a_live_owner_alone(database):
+    from app import jobs
+
+    try:
+        ds = db.fetch_one(
+            """INSERT INTO meta.datasets (name, file_format, status, owner, created_by)
+               VALUES ('connected', 'mongodb', 'refreshing', %s, %s) RETURNING id""",
+            (jobs.owner_id(), _user()),
+        )["id"]
+        db.execute("INSERT INTO meta.dataset_pulls (dataset_id, status) VALUES (%s, 'running')", (ds,))
+        jobs.sweep()
+        assert _dataset(ds)["status"] == "refreshing"
+        assert db.fetch_one("SELECT status FROM meta.dataset_pulls WHERE dataset_id = %s", (ds,))["status"] == "running"
+    finally:
+        jobs.shutdown()

@@ -118,10 +118,7 @@ def process_dataset(dataset_id: int, upload_path: str | None, fmt: str) -> None:
         execute("UPDATE meta.datasets SET row_count = %s WHERE id = %s", (n_rows, dataset_id))
         rejected = [p.name for p in profiles if p.name in targets and not p.is_target]
         if rejected:
-            warnings.append(
-                f"Not used as target(s): {', '.join(rejected)} (text, identifiers and dates can't be "
-                "targets, nor labels with more than 100 values)"
-            )
+            warnings.append(not_used_as_targets(rejected))
             execute(
                 "UPDATE meta.datasets SET target_columns = %s, warnings = %s WHERE id = %s",
                 ([t for t in targets if t not in rejected], warnings, dataset_id),
@@ -239,8 +236,8 @@ def insert_field(conn, dataset_id: int, p: profiling.FieldProfile, db_col: str, 
 def update_field(conn, field_id: int, p: profiling.FieldProfile, db_col: str) -> None:
     """A field's new profile after a refresh, keeping its id, name and whatever anyone decided about it. A decision
     or settings nobody chose (still the suggestion) follow the new suggestion, as a new field's would, except a
-    target's type, which is part of its role; actions and target state are re-derived by refresh_target_state
-    afterwards."""
+    target's type, which is part of its role, and a reviewed field's settings; actions and target state are
+    re-derived by refresh_target_state afterwards."""
     by_family = suggest_all(p.inferred_type, p.summary, p.is_target)
     values = {
         "ordinal": p.ordinal,
@@ -261,27 +258,40 @@ def update_field(conn, field_id: int, p: profiling.FieldProfile, db_col: str) ->
         [*values.values(), field_id],
     )
     first = next(iter(by_family.values()))
-    decided = conn.execute(
-        """UPDATE meta.field_decisions
-              SET semantic_type = CASE WHEN source = 'suggested' AND NOT reviewed AND action <> 'target' THEN %s
-                                       ELSE semantic_type END
-            WHERE field_id = %s RETURNING dataset_id, semantic_type""",
-        (first["semantic_type"], field_id),
+    d = conn.execute(
+        "SELECT dataset_id, action, semantic_type, source, reviewed FROM meta.field_decisions WHERE field_id = %s",
+        (field_id,),
     ).fetchone()
-    if decided is None:
+    # A reviewed field's settings were looked at with its decision, so they stay as they were.
+    if d is None or d["reviewed"]:
         return
-    t = decided["semantic_type"]
+    t = d["semantic_type"]
+    if d["source"] == "suggested" and d["action"] != "target" and t != first["semantic_type"]:
+        t = first["semantic_type"]
+        conn.execute(
+            "UPDATE meta.field_decisions SET semantic_type = %s, updated_at = now() WHERE field_id = %s", (t, field_id)
+        )
     if t != first["semantic_type"]:
         by_family = suggest_all(t, p.summary, p.is_target)
-    chosen = {
-        r["family"]
-        for r in conn.execute(
-            "SELECT family FROM meta.field_settings WHERE field_id = %s AND source = 'user'", (field_id,)
-        ).fetchall()
+    from .assessment import settings_key  # assessment imports this module
+
+    current = {
+        r["family"]: r
+        for r in conn.execute("SELECT * FROM meta.field_settings WHERE field_id = %s", (field_id,)).fetchall()
     }
     for family, sugg in by_family.items():
-        if family not in chosen:
-            upsert_settings(conn, decided["dataset_id"], field_id, family, sugg, "suggested")
+        row = current.get(family)
+        # Rewritten only when the suggestion moved, so updated_at keeps meaning "changed".
+        if row is None or (row["source"] != "user" and settings_key(row) != settings_key(sugg)):
+            upsert_settings(conn, d["dataset_id"], field_id, family, sugg, "suggested")
+
+
+def not_used_as_targets(names: list[str]) -> str:
+    """The warning for named targets profiling turned down."""
+    return (
+        f"Not used as target(s): {', '.join(names)} (text, identifiers and dates can't be targets, nor labels with "
+        "more than 100 values)"
+    )
 
 
 def _persist_profiles(dataset_id: int, profiles: list[profiling.FieldProfile], db_cols: list[str]) -> list[int]:

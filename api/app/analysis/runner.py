@@ -57,11 +57,12 @@ def public(row: dict, current_version: str | None) -> dict:
 
 
 def mark_stale(conn, dataset_id: int) -> None:
-    """After the data itself changed (a refresh): every result reads out of date, whatever decisions it was computed
-    from. Rows still computing too, since they read the data that was replaced."""
+    """After the data itself changed (a refresh): every result on the dataset's data reads out of date, whatever
+    decisions it was computed from. Rows still computing too, since they read the data that was replaced. Results on
+    an export are left alone: its files don't change."""
     conn.execute(
         """UPDATE meta.analyses SET data_version = 'stale', updated_at = now()
-            WHERE dataset_id = %s AND status <> 'failed'""",
+            WHERE dataset_id = %s AND status <> 'failed' AND data_version NOT LIKE 'export:%%'""",
         (dataset_id,),
     )
 

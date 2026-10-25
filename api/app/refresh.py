@@ -26,11 +26,13 @@ from .db import connection, execute, fetch_all, fetch_one, jsonb
 from .processing import (
     _Status,
     insert_field,
+    not_used_as_targets,
     refresh_target_state,
     replace_correlations,
     update_field,
     upsert_correlations,
 )
+from .routers.fields import _merged_many, _write_history
 from .sources.pull import names, pull_into, warnings_for
 
 log = logging.getLogger(__name__)
@@ -119,19 +121,27 @@ def _refresh(ds: dict, src: dict, pull_id: int) -> None:
     with connection() as conn:
         recipes.lock_dataset(conn, dataset_id)
         _swap_tables(conn, dataset_id)
+        row = conn.execute(
+            "SELECT model_family, target_columns FROM meta.datasets WHERE id = %s", (dataset_id,)
+        ).fetchone()
+        family, targets = row["model_family"], list(row["target_columns"] or [])
+        rejected = [p.name for p in profiles if p.name in targets and not p.is_target]
+        rejected_ids, before = _untarget(conn, dataset_id, family, rejected)
         field_ids, vanished = _reconcile(conn, dataset_id, profiles, db_cols, dropped)
         replace_correlations(conn, dataset_id, field_ids, assocs)
         upsert_correlations(conn, dataset_id, [(field_ids[a.i], field_ids[a.j], a) for a in screened])
         refresh_target_state(conn, dataset_id)
+        if rejected_ids:
+            _write_history(conn, dataset_id, family, None, before, _merged_many(conn, rejected_ids, family), None)
         mark_stale(conn, dataset_id)
-        targets = conn.execute("SELECT target_columns FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()
-        targets = list(targets["target_columns"] or [])
         # The refresh reports anew: none of the old warnings (the last pull's notes, processing's, a recipe's) are
         # kept, since they described data that is gone.
         warnings = warnings_for(pulled["flatten_notes"], pulled["removed_duplicates"], src["dedupe"]) + load_warnings
-        if vanished:
-            warnings.append(f"Fields no longer in the data: {names(vanished)}")
+        if others := [n for n in vanished if n not in targets]:
+            warnings.append(f"Fields no longer in the data: {names(others)}")
         warnings += [f"Target column no longer in the data: {t}" for t in targets if t not in columns]
+        if rejected:
+            warnings.append(not_used_as_targets(rejected))
         warnings += dropped_warnings
         fields = conn.execute(
             "SELECT name, inferred_type, null_pct, n_unique FROM meta.fields WHERE dataset_id = %s ORDER BY ordinal",
@@ -156,7 +166,7 @@ def _refresh(ds: dict, src: dict, pull_id: int) -> None:
                 WHERE id = %s""",
             (
                 warnings,
-                [t for t in targets if t in columns],
+                [t for t in targets if t in columns and t not in rejected],
                 n_rows,
                 len(columns),
                 str(live),
@@ -217,6 +227,27 @@ def _swap_tables(conn, dataset_id: int) -> None:
                 sql.Identifier("raw", live), sql.Identifier(pkey["conname"]), sql.Identifier(f"{live}_pkey")
             )
         )
+
+
+def _untarget(conn, dataset_id: int, family: str, rejected: list[str]) -> tuple[list[int], dict[int, dict]]:
+    """Targets profiling turns down on the new data (labels with more than 100 values, say) stop being targets, as at
+    upload: features again, unreviewed, so they follow their suggestions. Returns their ids and decisions before."""
+    if not rejected:
+        return [], {}
+    ids = [
+        r["id"]
+        for r in conn.execute(
+            "SELECT id FROM meta.fields WHERE dataset_id = %s AND name = ANY(%s)", (dataset_id, rejected)
+        ).fetchall()
+    ]
+    before = _merged_many(conn, ids, family)
+    conn.execute(
+        """UPDATE meta.field_decisions SET action = 'keep', source = 'suggested', reviewed = false, updated_at = now()
+            WHERE field_id = ANY(%s) AND action = 'target'""",
+        (ids,),
+    )
+    conn.execute("UPDATE meta.fields SET is_target = false WHERE id = ANY(%s)", (ids,))
+    return ids, before
 
 
 def _reconcile(
