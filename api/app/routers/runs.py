@@ -29,6 +29,7 @@ from ..modeling.registry import (
     regression_problem,
 )
 from ..schemas import RunRequest
+from ._lock import refuse_while_refreshing
 from .exports import visible_export
 
 log = logging.getLogger(__name__)
@@ -128,24 +129,26 @@ def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
         if problem := dry_fit_problem(spec, req.params, kinds):
             raise HTTPException(422, problem)
     with connection() as conn:
+        # Recorded under the row lock, so a refresh starting now sees the run and refuses.
+        refuse_while_refreshing(conn, exp["dataset_id"])
         experiments.require_writable(experiments.get_visible(conn, exp["experiment_id"], user), user)
-    # Named for its targets from the start ("Ridge regression" for numbers), so a queued or failed run reads right too.
-    run = fetch_one(
-        f"""INSERT INTO meta.model_runs (export_id, dataset_id, model, family, status, status_message, config, owner,
-                                         created_by, experiment_id, report)
-            VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s, %s, %s, %s) RETURNING {RUN_COLS}""",
-        (
-            export_id,
-            exp["dataset_id"],
-            spec.key,
-            spec.family,
-            jsonb(req.model_dump(exclude={"experiment_id"})),
-            jobs.owner_id(),
-            user["id"],
-            exp["experiment_id"],
-            jsonb({"model_label": label_for(spec, kinds)}),
-        ),
-    )
+        # Named for its targets from the start ("Ridge regression" for numbers), so a queued or failed run reads right.
+        run = conn.execute(
+            f"""INSERT INTO meta.model_runs (export_id, dataset_id, model, family, status, status_message, config,
+                                             owner, created_by, experiment_id, report)
+                VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s, %s, %s, %s) RETURNING {RUN_COLS}""",
+            (
+                export_id,
+                exp["dataset_id"],
+                spec.key,
+                spec.family,
+                jsonb(req.model_dump(exclude={"experiment_id"})),
+                jobs.owner_id(),
+                user["id"],
+                exp["experiment_id"],
+                jsonb({"model_label": label_for(spec, kinds)}),
+            ),
+        ).fetchone()
     jobs.submit(_run, run["id"], exp["output_dir"], req.model_dump())
     return _with_url(run)
 

@@ -10,6 +10,7 @@ from ..assessment import seed
 from ..auth import CurrentUser, LeadUser
 from ..db import connection
 from ..schemas import RenameBaselineIn, StartBaselineIn
+from ._lock import refuse_refreshing
 from .datasets import queue_target_work
 from .team import _team_state, review_of
 
@@ -74,9 +75,11 @@ def start_baseline(dataset_id: int, body: StartBaselineIn, user: LeadUser) -> di
         raise HTTPException(422, "Choose the baseline to start from")
     name = recipes.clean_name(body.name)
     with connection() as conn:
-        ds = conn.execute("SELECT status FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()
+        # Locked now rather than at lock_dataset below, so a refresh can't start in between.
+        ds = conn.execute("SELECT status FROM meta.datasets WHERE id = %s FOR UPDATE", (dataset_id,)).fetchone()
         if ds is None:
             raise HTTPException(404, "Dataset not found")
+        refuse_refreshing(ds["status"])
         if ds["status"] != "ready":
             raise HTTPException(409, "Start a baseline once the dataset is ready")
         users = {
@@ -164,6 +167,8 @@ def rename_baseline(dataset_id: int, family: str, body: RenameBaselineIn, user: 
     name = recipes.clean_name(body.name)
     with connection() as conn:
         recipes.lock_dataset(conn, dataset_id)
+        ds = conn.execute("SELECT status FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()
+        refuse_refreshing(ds and ds["status"])
         if (
             conn.execute(
                 "SELECT 1 FROM meta.recipes WHERE dataset_id = %s AND family = %s LIMIT 1", (dataset_id, family)

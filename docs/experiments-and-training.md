@@ -115,6 +115,12 @@ The manifest's `config` records:
 | `baseline` | `recipe_id`, `family`, `version`, `name`, `label` |
 | `adjustments` | `count`, `fields`, `targets_changed`, `targets`, and `detail`: each adjusted field's changes |
 | `assessor_id` | for a personal export only |
+| `pull_id` | for a connected dataset only: the pull its data came from |
+
+A connected dataset's data changes when a lead refreshes it, so an export of one also records the pull it was built
+from: the newest finished pull when the export starts. The export row carries it as `pull_id`, the manifest's `config` repeats it, and each run trained on the export logs it to MLflow as the parameter
+`rainforest.pull_id`. A refresh never touches an export's files, so a run on an older export still trains on the pull
+that export names.
 
 ### Before you export
 
@@ -127,11 +133,14 @@ It warns about:
 - kept fields that look like a leak of the export's own targets
 - targets no leak check has run for
 - targets that differ from the baseline's
+- a baseline finalized before the connected dataset's latest pull (*Baseline finalized before pull #3; consider a new
+  version*)
 
 These block the export:
 
 - no target
 - no kept features
+- a field in the baseline that a refresh took out of the data
 - a target class with a single row
 - a numeric target with values that don't read as numbers, or with a single value
 - a band with fewer than 2 rows

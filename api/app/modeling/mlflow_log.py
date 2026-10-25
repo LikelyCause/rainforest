@@ -217,6 +217,8 @@ def log_run(
             for k, c in (("valid_size", "valid_size"), ("test_size", "test_size"), ("split_seed", "seed"))
             if cfg.get(c) is not None
         }
+        if cfg.get("pull_id") is not None:  # the pull of a connected dataset the export was built from
+            prep["rainforest.pull_id"] = cfg["pull_id"]
         params = [Param(k, str(v)) for k, v in {**run_params(report), **prep}.items()]
         metrics = [Metric(k, v, step_ts, 0) for k, v in run_metrics(report).items()]
         for i in range(0, max(len(params), len(metrics)), 100):

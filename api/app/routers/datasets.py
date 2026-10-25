@@ -21,6 +21,7 @@ from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..modeling.registry import MODELS
 from ..processing import _Status, delete_dataset_files, process_dataset, upsert_correlations
 from ..profiling import corr_vector, sample_indices
+from ..refresh import run_refresh
 from ..sample_data import generate
 from ..sample_library import LIBRARY
 from ..sample_library import path_of as library_path
@@ -28,6 +29,8 @@ from ..schemas import ConnectRequest, DatasetPatch, SampleRequest
 from ..semantics import NUMERIC
 from ..sources import SourceError
 from ..sources.pull import RANK, run_connect
+from ._lock import REFRESHING, refuse_while_refreshing
+from .exports import PHASE_WAIT
 from .fields import _sync_targets, has_screen_fields, screen_pairs, screen_targets, set_targets
 from .sources import _source, collection_specs
 
@@ -47,6 +50,9 @@ SELECT_DATASET = (
                                   'finished_at', p.finished_at, 'rows', p.rows, 'has_drift', p.drift IS NOT NULL)
           FROM meta.dataset_pulls p WHERE p.dataset_id = d.id ORDER BY p.id DESC LIMIT 1) AS last_pull"""
 )
+PULL_SELECT = """SELECT p.id, p.status, p.started_at, p.finished_at, p.rows, p.per_source, p.flatten_notes, p.drift,
+                        p.error, u.name AS created_by_name
+                   FROM meta.dataset_pulls p LEFT JOIN meta.users u ON u.id = p.created_by"""
 
 
 def _targets(raw: str | None) -> list[str]:
@@ -479,13 +485,57 @@ def get_dataset(dataset_id: int) -> dict:
 def list_pulls(dataset_id: int, user: CurrentUser) -> list[dict]:
     if fetch_one("SELECT 1 FROM meta.datasets WHERE id = %s", (dataset_id,)) is None:
         raise HTTPException(404, "Dataset not found")
-    return fetch_all(
-        """SELECT p.id, p.status, p.started_at, p.finished_at, p.rows, p.per_source, p.flatten_notes, p.drift,
-                  p.error, u.name AS created_by_name
-             FROM meta.dataset_pulls p LEFT JOIN meta.users u ON u.id = p.created_by
-            WHERE p.dataset_id = %s ORDER BY p.id DESC""",
-        (dataset_id,),
-    )
+    return fetch_all(f"{PULL_SELECT} WHERE p.dataset_id = %s ORDER BY p.id DESC", (dataset_id,))
+
+
+@router.post("/{dataset_id}/refresh", status_code=202)
+def refresh_dataset(dataset_id: int, user: LeadUser) -> dict:
+    """Pull a connected dataset's collections again (refresh.run_refresh). Refused while its baseline is being worked
+    on (as derived fields are) or an export or run reads its data; the dataset is `refreshing`, and locked, until the
+    job ends. This worker owns it, so another worker's startup sweep leaves the live refresh alone."""
+    with connection() as conn:
+        ds = conn.execute("SELECT status FROM meta.datasets WHERE id = %s FOR UPDATE", (dataset_id,)).fetchone()
+        if ds is None:
+            raise HTTPException(404, "Dataset not found")
+        src = conn.execute(
+            "SELECT connection FROM meta.dataset_sources WHERE dataset_id = %s", (dataset_id,)
+        ).fetchone()
+        if src is None:
+            raise HTTPException(404, "This dataset isn't connected to a source")
+        if conn.execute(
+            "SELECT 1 FROM meta.dataset_pulls WHERE dataset_id = %s AND status = 'running'", (dataset_id,)
+        ).fetchone():
+            raise HTTPException(409, "A pull of this dataset is already running")
+        if ds["status"] != "ready":
+            raise HTTPException(409, "Refresh the dataset once it is ready")
+        cur = recipes.current(conn, dataset_id)
+        if cur["phase"] != "finalized" and not recipes.is_setup(conn, cur):
+            raise HTTPException(
+                409, f"{recipes.label(cur)} {PHASE_WAIT[cur['phase']]}; refresh once a lead finalizes it."
+            )
+        busy = conn.execute(
+            """SELECT EXISTS (SELECT 1 FROM meta.exports
+                               WHERE dataset_id = %(ds)s AND status IN ('pending', 'running'))
+                   OR EXISTS (SELECT 1 FROM meta.model_runs
+                               WHERE dataset_id = %(ds)s AND status IN ('pending', 'running')) AS busy""",
+            {"ds": dataset_id},
+        ).fetchone()["busy"]
+        if busy:
+            raise HTTPException(
+                409, "An export or model run of this dataset is still running; refresh once it finishes."
+            )
+        pull = conn.execute(
+            "INSERT INTO meta.dataset_pulls (dataset_id, status, created_by) VALUES (%s, 'running', %s) RETURNING id",
+            (dataset_id, user["id"]),
+        ).fetchone()
+        conn.execute(
+            """UPDATE meta.datasets SET status = 'refreshing', progress = 0, error = NULL, status_message = %s,
+                      owner = %s, updated_at = now() WHERE id = %s""",
+            (f"Refreshing from {src['connection']}", jobs.owner_id(), dataset_id),
+        )
+        row = conn.execute(f"{PULL_SELECT} WHERE p.id = %s", (pull["id"],)).fetchone()
+    jobs.submit(run_refresh, dataset_id, pull["id"])
+    return row
 
 
 def with_baselines(rows: list[dict]) -> list[dict]:
@@ -557,6 +607,7 @@ def update_dataset(dataset_id: int, body: DatasetPatch, user: CurrentUser) -> di
         raise HTTPException(409, "Targets can be changed once the dataset is ready")
     start = _nothing
     with connection() as conn:
+        refuse_while_refreshing(conn, dataset_id)
         if body.target_columns is not None:
             _check_targets_editable(conn, dataset_id, user, list(dict.fromkeys(body.target_columns)))
         conn.execute(
@@ -708,6 +759,8 @@ def delete_dataset(dataset_id: int, _: LeadUser) -> dict:
         ds = conn.execute("SELECT status FROM meta.datasets WHERE id = %s FOR UPDATE", (dataset_id,)).fetchone()
         if ds is None:
             raise HTTPException(404, "Dataset not found")
+        if ds["status"] == "refreshing":
+            raise HTTPException(409, REFRESHING)
         if ds["status"] in ("pending", "ingesting", "profiling", "correlating"):
             raise HTTPException(409, "Dataset is still processing")
         busy = conn.execute(

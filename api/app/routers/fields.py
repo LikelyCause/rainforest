@@ -29,6 +29,7 @@ from ..semantics import (
     target_problem,
     validate_decision,
 )
+from ._lock import refuse_while_refreshing
 from .query import fields_where
 
 log = logging.getLogger(__name__)
@@ -200,6 +201,7 @@ def save_decision(field_id: int, body: DecisionIn, user: CurrentUser, view: str 
     d = body.model_dump(exclude={"family"})
     screen_after = False
     with connection() as conn:
+        refuse_while_refreshing(conn, f["dataset_id"])
         src = source_for(conn, f["dataset_id"], user, lock="share", view=view)
         fam = _family(src, body.family)
         d = _with_stored_task(d, _merged(conn, field_id, fam, src))
@@ -316,6 +318,7 @@ def _remember_datetime_format(conn, f: dict) -> None:
 def bulk_decisions(dataset_id: int, body: BulkDecisionIn, user: CurrentUser, view: str | None = None) -> dict:
     _active_family(dataset_id)
     with connection() as conn:
+        refuse_while_refreshing(conn, dataset_id)
         src = source_for(conn, dataset_id, user, lock="share", view=view)
         src.require_write()
         fam = src.family
@@ -411,6 +414,7 @@ def undo_bulk(dataset_id: int, batch_id: str, user: CurrentUser, view: str | Non
         raise HTTPException(404, "Bulk batch not found") from None
     _active_family(dataset_id)
     with connection() as conn:
+        refuse_while_refreshing(conn, dataset_id)
         src = source_for(conn, dataset_id, user, lock="share", view=view)
         fam = src.family
         batches = "assessment_batches" if src.personal else "experiment_batches"

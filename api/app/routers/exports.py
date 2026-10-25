@@ -22,6 +22,7 @@ from ..profiling import coerce_numeric
 from ..schemas import ExportRequest, ExportRowsRequest, RowRules
 from ..semantics import FAMILIES, NON_FEATURE_TYPES, grouped_target, validate_decision
 from ..transform import FieldSpec, check_target_classes, rows_after_rules, run_export
+from ._lock import refuse_refreshing, refuse_while_refreshing
 from .fields import _same_settings
 
 log = logging.getLogger(__name__)
@@ -36,7 +37,8 @@ FILES = {
 
 EXPORT_COLS = """e.id, e.dataset_id, e.status, e.progress, e.status_message, e.error, e.model_family, e.config,
                  e.output_dir, e.n_rows, e.n_features, e.summary, e.created_at, e.updated_at, e.finished_at, e.owner,
-                 e.created_by, e.recipe_id, e.experiment_id, r.family AS recipe_family, r.version AS recipe_version,
+                 e.created_by, e.recipe_id, e.experiment_id, e.pull_id, r.family AS recipe_family,
+                 r.version AS recipe_version,
                  meta.baseline_name(r.dataset_id, r.family) AS recipe_name, x.name AS experiment_name"""
 EXPORT_SELECT = (
     f"SELECT {EXPORT_COLS} FROM meta.exports e LEFT JOIN meta.recipes r ON r.id = e.recipe_id "
@@ -189,6 +191,9 @@ def _preview_of(
     leaks = [r["name"] for r in keep if r["name"] in leaking]
     if leaks:
         warnings.append(f"Kept field(s) flagged as possible target leakage: {', '.join(leaks)}")
+    pull = latest_pull(conn, dataset_id)
+    if pull is not None and recipe["finalized_at"] is not None and pull["finished_at"] > recipe["finalized_at"]:
+        warnings.append(f"Baseline finalized before pull #{pull['id']}; consider a new version")
     invalid = [r["name"] for r in keep if validate_decision({**r, "action": "keep"}, fam)]
     by_type: dict[str, int] = {}
     for r in keep:
@@ -197,10 +202,15 @@ def _preview_of(
     personal = x is not None and x["assessor_id"] is not None
     if not personal and (problem := source_problem(recipe)) is not None:
         blocking.insert(0, problem)
-    class_targets = [t for t in targets if tasks[t]["task"] == "classes"]
+    # A refresh can take away fields a finalized snapshot names; the data checks read only the columns still there.
+    present = {
+        r["name"] for r in conn.execute("SELECT name FROM meta.fields WHERE dataset_id = %s", (dataset_id,)).fetchall()
+    }
+    blocking += [f"Field in the baseline is no longer in the data: {n}" for n in snap["fields"] if n not in present]
+    class_targets = [t for t in targets if tasks[t]["task"] == "classes" and t in present]
     if lone := _lone_class_problem(ds["parquet_path"], class_targets):
         blocking.append(lone)
-    blocking += _numeric_target_problems(ds["parquet_path"], tasks)
+    blocking += _numeric_target_problems(ds["parquet_path"], {t: v for t, v in tasks.items() if t in present})
     if invalid:
         blocking.append(
             f"{len(invalid)} field(s) have settings that aren't valid for {FAMILIES[fam]['label'].lower()}: "
@@ -226,6 +236,15 @@ def _preview_of(
         "last_export": None if last is None else {k: last[k] for k in ("id", "created_at", "status", "recipe_id")},
         "changed_since_export": changed,
     }
+
+
+def latest_pull(conn, dataset_id: int) -> dict | None:
+    """A connected dataset's newest finished pull (the data as it is now); None for an uploaded dataset."""
+    return conn.execute(
+        """SELECT id, finished_at FROM meta.dataset_pulls WHERE dataset_id = %s AND status = 'done'
+            ORDER BY id DESC LIMIT 1""",
+        (dataset_id,),
+    ).fetchone()
 
 
 def _numeric_target_problems(parquet_path: str | None, tasks: dict[str, dict]) -> list[str]:
@@ -313,6 +332,7 @@ def export_rows(dataset_id: int, req: ExportRowsRequest, user: CurrentUser) -> d
     ds = fetch_one("SELECT status, parquet_path FROM meta.datasets WHERE id = %s", (dataset_id,))
     if ds is None:
         raise HTTPException(404, "Dataset not found")
+    refuse_refreshing(ds["status"])
     if ds["status"] != "ready" or not ds["parquet_path"] or not Path(ds["parquet_path"]).exists():
         raise HTTPException(409, "Dataset is not ready")
     if req.valid_size + req.test_size >= 0.9:
@@ -338,11 +358,14 @@ def start_export(dataset_id: int, req: ExportRequest, user: CurrentUser) -> dict
     ds = fetch_one("SELECT status FROM meta.datasets WHERE id = %s", (dataset_id,))
     if ds is None:
         raise HTTPException(404, "Dataset not found")
+    refuse_refreshing(ds["status"])
     if ds["status"] != "ready":
         raise HTTPException(409, "Dataset is not ready")
     if req.valid_size + req.test_size >= 0.9:
         raise HTTPException(422, "valid_size + test_size must be < 0.9")
     with connection() as conn:
+        # Again under the row lock: the export is recorded before a refresh can start, which then refuses.
+        refuse_while_refreshing(conn, dataset_id)
         if req.experiment_id is None:
             if req.source == "assessment":
                 raise HTTPException(
@@ -399,11 +422,25 @@ def start_export(dataset_id: int, req: ExportRequest, user: CurrentUser) -> dict
         }
         if personal:
             config["assessor_id"] = x["assessor_id"]
+        # The data a connected dataset has now; the manifest carries the config, so it says which pull too.
+        pull = latest_pull(conn, dataset_id)
+        if pull is not None:
+            config["pull_id"] = pull["id"]
         exp = conn.execute(
             """INSERT INTO meta.exports (dataset_id, status, status_message, model_family, config, owner, created_by,
-                                         recipe_id, experiment_id, snapshot)
-               VALUES (%s, 'pending', 'Queued', %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
-            (dataset_id, pv["family"], jsonb(config), jobs.owner_id(), user["id"], recipe["id"], x["id"], jsonb(snap)),
+                                         recipe_id, experiment_id, snapshot, pull_id)
+               VALUES (%s, 'pending', 'Queued', %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+            (
+                dataset_id,
+                pv["family"],
+                jsonb(config),
+                jobs.owner_id(),
+                user["id"],
+                recipe["id"],
+                x["id"],
+                jsonb(snap),
+                None if pull is None else pull["id"],
+            ),
         ).fetchone()
         out = conn.execute(f"{EXPORT_SELECT} WHERE e.id = %s", (exp["id"],)).fetchone()
     jobs.submit(_run, exp["id"])

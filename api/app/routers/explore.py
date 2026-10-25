@@ -14,6 +14,7 @@ from ..assessment import Source, from_key, key_owner, source_for
 from ..auth import CurrentUser
 from ..db import connection, fetch_all
 from ..schemas import AnalysisRequest, CorrelationQuery
+from ._lock import refuse_refreshing
 
 router = APIRouter(prefix="/api", tags=["explore"])
 
@@ -24,6 +25,7 @@ def _ready_dataset(conn, dataset_id: int, lock: bool = False) -> dict:
     ).fetchone()
     if ds is None:
         raise HTTPException(404, "Dataset not found")
+    refuse_refreshing(ds["status"])
     if ds["status"] != "ready":
         raise HTTPException(409, "Dataset is not ready")
     return ds

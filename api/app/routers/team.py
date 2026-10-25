@@ -22,6 +22,7 @@ from ..auth import CurrentUser, LeadUser
 from ..db import connection
 from ..schemas import AssessorIn, CommentIn, FinalizeIn
 from ..semantics import suggest
+from ._lock import refuse_while_refreshing
 from .fields import (
     STAT_KEYS,
     _active_family,
@@ -153,6 +154,7 @@ def team_state(dataset_id: int, user: CurrentUser) -> dict:
 @router.post("/datasets/{dataset_id}/assessors")
 def assign(dataset_id: int, body: AssessorIn, user: LeadUser) -> dict:
     with connection() as conn:
+        refuse_while_refreshing(conn, dataset_id)
         recipe = recipes.current(conn, dataset_id, lock="update")
         _require_phase(recipe, "assessing", doing="assigning assessors")
         ds = conn.execute("SELECT status FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()
@@ -180,6 +182,7 @@ def unassign(dataset_id: int, user_id: int, user: LeadUser) -> dict:
     count. If everyone left has submitted, review opens."""
     screen: list[int] = []
     with connection() as conn:
+        refuse_while_refreshing(conn, dataset_id)
         recipe = recipes.current(conn, dataset_id, lock="update")
         _require_phase(recipe, "assessing", doing="changing assessors")
         gone = conn.execute(
@@ -207,6 +210,7 @@ def _after_phase_change(dataset_id: int, recipe: dict, state: dict, screen: list
 def submit(dataset_id: int, user: CurrentUser) -> dict:
     screen: list[int] = []
     with connection() as conn:
+        refuse_while_refreshing(conn, dataset_id)
         recipe = recipes.current(conn, dataset_id, lock="update")
         _require_phase(recipe, "assessing", doing="submitting")
         mine = assessor_row(conn, recipe["id"], user["id"])
@@ -236,6 +240,7 @@ def submit(dataset_id: int, user: CurrentUser) -> dict:
 @router.post("/datasets/{dataset_id}/assessment/unsubmit")
 def unsubmit(dataset_id: int, user: CurrentUser) -> dict:
     with connection() as conn:
+        refuse_while_refreshing(conn, dataset_id)
         recipe = recipes.current(conn, dataset_id, lock="update")
         if recipe["phase"] != "assessing":
             raise HTTPException(409, "Review has opened; assessments can't change any more.")
@@ -418,6 +423,7 @@ def _comments(conn, recipe_id: int, field_id: int) -> list[dict]:
 def add_comment(field_id: int, body: CommentIn, user: CurrentUser) -> list[dict]:
     f = _field(field_id)
     with connection() as conn:
+        refuse_while_refreshing(conn, f["dataset_id"])
         recipe = recipes.current(conn, f["dataset_id"], lock="share")
         _require_phase(recipe, "review", doing="commenting")
         conn.execute(
@@ -432,6 +438,7 @@ def finalize(dataset_id: int, body: FinalizeIn, user: LeadUser) -> dict:
     """Freeze the team decision as this recipe version's snapshot. Disagreements nobody settled need
     `accept_open`, which keeps their current team decision."""
     with connection() as conn:
+        refuse_while_refreshing(conn, dataset_id)
         recipe = recipes.current(conn, dataset_id, lock="update")
         _require_phase(recipe, "review", doing="finalizing")
         status = conn.execute("SELECT status FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()["status"]

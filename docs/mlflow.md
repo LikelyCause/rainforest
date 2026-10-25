@@ -45,6 +45,7 @@ empty means the bundled `/mlflow/`).
 | `prep.adjusted_fields` | how many fields the experiment adjusted from its baseline |
 | `target.<name>.task` | each target's *Predict as*: `classes`, `regression` or `bins` |
 | `prep.valid_size`, `prep.test_size`, `prep.split_seed` | the export's split |
+| `rainforest.pull_id` | for a connected dataset, the pull the export's data came from |
 
 ### Metrics
 

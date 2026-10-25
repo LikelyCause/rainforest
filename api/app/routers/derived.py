@@ -18,6 +18,7 @@ from ..db import connection
 from ..ingest import sanitize_identifiers
 from ..processing import insert_field
 from ..profiling import profile_column, sample_indices
+from ._lock import refuse_refreshing
 from .datasets import queue_target_work
 
 router = APIRouter(prefix="/api", tags=["derived"])
@@ -33,6 +34,7 @@ def _dataset(conn, dataset_id: int) -> dict:
     ds = conn.execute("SELECT id, status, parquet_path FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()
     if ds is None:
         raise HTTPException(404, "Dataset not found")
+    refuse_refreshing(ds["status"])
     if ds["status"] != "ready" or not ds["parquet_path"]:
         raise HTTPException(409, "Add fields once the dataset is ready")
     return ds

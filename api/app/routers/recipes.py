@@ -8,6 +8,7 @@ from .. import recipes, reuse
 from ..auth import CurrentUser, LeadUser
 from ..db import connection
 from ..schemas import ApplyRecipeIn, NewVersionIn
+from ._lock import refuse_refreshing
 from .datasets import queue_target_work
 from .team import _team_state
 
@@ -94,9 +95,11 @@ def new_version(dataset_id: int, body: NewVersionIn, user: LeadUser) -> dict:
     (the version opens in review) and finalizes."""
     reopen = list(dict.fromkeys(body.reopen))
     with connection() as conn:
-        status = conn.execute("SELECT status FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()
+        # Locked (as start_version locks it) before the check, so a refresh can't start in between.
+        status = conn.execute("SELECT status FROM meta.datasets WHERE id = %s FOR UPDATE", (dataset_id,)).fetchone()
         if status is None:
             raise HTTPException(404, "Dataset not found")
+        refuse_refreshing(status["status"])
         if status["status"] != "ready":
             raise HTTPException(409, "The dataset is still processing")
         known = {
@@ -143,9 +146,10 @@ def apply_recipe(dataset_id: int, body: ApplyRecipeIn, user: LeadUser) -> dict:
     """Start a new dataset from a finalized recipe of any dataset (see reuse.py). The team state's recipe carries the
     reuse summary."""
     with connection() as conn:
-        status = conn.execute("SELECT status FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone()
+        status = conn.execute("SELECT status FROM meta.datasets WHERE id = %s FOR UPDATE", (dataset_id,)).fetchone()
         if status is None:
             raise HTTPException(404, "Dataset not found")
+        refuse_refreshing(status["status"])
         if status["status"] != "ready":
             raise HTTPException(409, "Start from a recipe once the dataset is ready")
         recipe = recipes.current(conn, dataset_id, lock="update")

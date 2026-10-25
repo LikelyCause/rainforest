@@ -8,6 +8,7 @@ from .. import experiments
 from ..auth import CurrentUser
 from ..db import connection
 from ..schemas import ExperimentIn, ExperimentPatch, RevertIn
+from ._lock import refuse_while_refreshing
 from .exports import list_exports
 from .runs import list_runs
 
@@ -28,6 +29,7 @@ def create_experiment(dataset_id: int, body: ExperimentIn, user: CurrentUser) ->
     with connection() as conn:
         if conn.execute("SELECT 1 FROM meta.datasets WHERE id = %s", (dataset_id,)).fetchone() is None:
             raise HTTPException(404, "Dataset not found")
+        refuse_while_refreshing(conn, dataset_id)
         return experiments.create(conn, dataset_id, body.name, body.source, user, body.notes)
 
 
@@ -53,6 +55,7 @@ def revert_adjustments(experiment_id: int, body: RevertIn, user: CurrentUser) ->
     """Put fields of a team experiment (all of them when `field_ids` is null) back to its baseline: its owner."""
     with connection() as conn:
         x = experiments.get_visible(conn, experiment_id, user)
+        refuse_while_refreshing(conn, x["dataset_id"])
         x = conn.execute(
             f"SELECT {experiments.COLS} FROM {experiments.FROM} WHERE x.id = %s FOR UPDATE OF x", (x["id"],)
         ).fetchone()
