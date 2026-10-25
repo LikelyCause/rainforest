@@ -63,6 +63,12 @@ anything the team can't afford to lose.
    | `mlflowTrackingUsername`, `mlflowTrackingPassword` | basic-auth credentials for an external MLflow server | optional, external MLflow only |
    | `mlflowTrackingToken` | a bearer token for an external MLflow server | optional, external MLflow only |
 
+   The values file below names a TLS Secret, `vehicles-rainforest-tls`, which the chart does not create. Create it
+   in the same namespace (`kubectl -n rainforest-vehicles create secret tls vehicles-rainforest-tls --cert=… --key=…`),
+   or leave it to cert-manager by putting its annotation under `ingress.annotations` (for example
+   `cert-manager.io/cluster-issuer: letsencrypt`); until the Secret exists the controller serves its own default
+   certificate.
+
    The database password reaches the API and MLflow as `PGPASSWORD`, never inside a URL, so it may contain any
    character.
 
@@ -118,7 +124,9 @@ anything the team can't afford to lose.
    and a member someone in `auth.oidc.memberGroup`.
 
 `hostname` is required: the chart refuses to render without it. It feeds the Ingress host and the API's
-`RAINFOREST_ALLOWED_HOSTS`. A request for any other host gets `400`.
+`RAINFOREST_ALLOWED_HOSTS`. The ingress controller answers a request for any other name itself, usually with a
+`404`. The API answers `400` when the UI is reached under a host that isn't `hostname`, such as through a
+`kubectl port-forward`: the page loads and its `/api/` calls fail.
 
 ### Trying it without a team
 
@@ -135,7 +143,7 @@ file, with the passwords in `secrets.values` (the chart creates the Secret from 
 | `hostname` | the name people open Rainforest at |
 | `api.image.repository`, `ui.image.repository`, `mlflow.image.repository` | your registry's paths; `imagePullSecrets` when it needs credentials |
 | `postgresql.database`, `postgresql.user` (in-chart) or `postgresql.external.*` | the team's database and user; one database per release on a shared server |
-| `auth.oidc.issuer`, `leadGroup`, `memberGroup` | your provider and this team's groups |
+| `auth.oidc.issuer`, `clientId`, `leadGroup`, `memberGroup` | your provider, the client registered there for this release (default `rainforest`; teams sharing one provider usually register one each), and this team's groups |
 | `mlflow.experimentPrefix` | a name unique among the releases that share an MLflow server |
 | `secrets.existingSecret` | the Secret you created for this release |
 | `ingress.className`, `ingress.tls.secretName` | your controller's class and the TLS Secret (see [Uploads and the ingress controller](#uploads-and-the-ingress-controller)) |
@@ -233,8 +241,9 @@ changing the Secret.
 
 **The in-chart server.** `postgresql.enabled: true` runs `postgres:16-alpine` as a StatefulSet with the Compose
 file's tuning (`postgresql.tuning`). The image reads `POSTGRES_PASSWORD` only when it first initialises an empty
-volume. Changing `postgresPassword` later restarts the API and MLflow with the new password, but does not change it in
-the database: run `ALTER ROLE` there too, or the API can no longer connect.
+volume. Changing `postgresPassword` later does not change it in the database: run `ALTER ROLE` there too, or the API can no
+longer connect. When the chart created the Secret, changing it restarts the API and MLflow; with `existingSecret`,
+restart them yourself (see [Upgrading](#upgrading)).
 
 ## GPU
 
@@ -340,13 +349,14 @@ Secret and an external database are not touched.
 
 | Symptom | Cause and fix |
 |---|---|
-| The page answers `400` | The request's host isn't `hostname`. Open the site at the name you set, or change `hostname`. |
+| The page loads but its calls fail with `400` | The UI was reached under a host that isn't `hostname` (a port-forward, say). Open the site at the name you set, or change `hostname`. |
+| The ingress controller answers `404` | The request's host isn't `hostname`, or the Ingress's `className` doesn't match a controller. |
 | An upload fails with `413` | The ingress controller's body limit. See [Uploads and the ingress controller](#uploads-and-the-ingress-controller). |
 | The API pod restarts and its log names a missing role | `managedRoles: false` and the console role doesn't exist. Create it as above. |
 | The MLflow pod restarts and its log names a missing database | `managedRoles: false` with in-chart MLflow and no `<database>_mlflow`. Create it as above. |
 | A pod stays `Pending` | Its volume has no storage class or no capacity, or (GPU) no node offers `nvidia.com/gpu` or tolerates the taints. `kubectl describe pod` says which. |
 | `helm lint` fails on `hostname` | The chart requires it. Lint with `helm lint deploy/chart/rainforest -f deploy/chart/rainforest/ci/dev-values.yaml`. |
-| The API can't connect after changing `postgresPassword` | The in-chart Postgres keeps the password it was created with. Run `ALTER ROLE` in the database. |
+| The API can't connect after changing `postgresPassword` | The in-chart Postgres keeps the password it was created with. Run `ALTER ROLE` in the database, and restart the API and MLflow if you manage the Secret yourself. |
 | Sign-in reaches the provider and then fails | The redirect URL registered there differs from `<URL>/api/auth/oidc/callback`, in scheme too. |
 
 Pick mode works in Kubernetes but doesn't authenticate; the install notes say so.

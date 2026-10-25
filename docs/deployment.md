@@ -42,8 +42,9 @@ as `.env` describes.
 
 Everything on this page describes Compose on one machine. To run Rainforest for several teams on a cluster, use the
 Helm chart in `deploy/chart/rainforest`: one release per team, each with its own database, MLflow experiments and
-sign-in groups. It sets the same environment variables as `.env`, named in [Configuration](configuration.md), from chart values. The operator's guide, [deploy/README.md](../deploy/README.md), covers the install, MLflow, an external
-Postgres, GPU nodes, upgrades and backups there.
+sign-in groups. It sets the same settings as `.env`, listed in [Configuration](configuration.md), from chart values.
+The operator's guide, [deploy/README.md](../deploy/README.md), covers installing, MLflow, an external Postgres, GPU
+nodes, upgrades and backups on Kubernetes.
 
 ## Sign-in
 
