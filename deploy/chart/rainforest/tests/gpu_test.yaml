@@ -16,7 +16,7 @@ tests:
     set:
       api.image.repository: reg.example.com/rf/api
       api.gpu.enabled: true
-      api.gpu.imageTag: 0.1.0-cuda13
+      api.gpu.cuda: cuda13
       api.gpu.count: 2
       api.gpu.nodeSelector:
         nvidia.com/gpu.present: "true"
@@ -44,11 +44,11 @@ tests:
             name: NVIDIA_DRIVER_CAPABILITIES
             value: compute,utility
 
-  - it: requests one GPU by default
+  - it: requests one GPU by default and runs the cu12 build of the appVersion
     template: api-deployment.yaml
     set:
       api.gpu.enabled: true
-      api.gpu.imageTag: 0.1.0-cu12
+      api.gpu.cuda: cu12
     asserts:
       - equal:
           path: spec.template.spec.containers[0].resources.limits["nvidia.com/gpu"]
@@ -57,9 +57,43 @@ tests:
           path: spec.template.spec.containers[0].image
           pattern: ':0\.1\.0-cu12$'
 
+  - it: builds the GPU tag from api.image.tag when that is set
+    template: api-deployment.yaml
+    set:
+      api.image.tag: v1.2.3
+      api.gpu.enabled: true
+      api.gpu.cuda: cuda13
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: ':v1\.2\.3-cuda13$'
+
+  - it: runs api.gpu.imageTag as given, over the computed tag
+    template: api-deployment.yaml
+    set:
+      api.image.tag: v1.2.3
+      api.gpu.enabled: true
+      api.gpu.cuda: cuda13
+      api.gpu.imageTag: nightly-gpu
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: ':nightly-gpu$'
+
+  - it: accepts api.gpu.imageTag without api.gpu.cuda
+    template: api-deployment.yaml
+    set:
+      api.gpu.enabled: true
+      api.gpu.imageTag: nightly-gpu
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: ':nightly-gpu$'
+
   - it: adds nothing GPU-related when disabled, even with the gpu values filled in
     template: api-deployment.yaml
     set:
+      api.gpu.cuda: cuda13
       api.gpu.imageTag: 0.1.0-cuda13
       api.gpu.count: 4
       api.gpu.nodeSelector:
@@ -90,19 +124,38 @@ tests:
           path: spec.template.spec.containers[0].image
           pattern: ':abc123$'
 
-  - it: refuses to enable the GPU build without an imageTag
+  - it: refuses to enable the GPU build without a CUDA variant or an imageTag
     template: api-deployment.yaml
     set:
       api.gpu.enabled: true
     asserts:
       - failedTemplate:
-          errorPattern: api.gpu.imageTag
+          errorPattern: api.gpu.cuda
+
+  - it: refuses an unknown CUDA variant
+    template: api-deployment.yaml
+    set:
+      api.gpu.enabled: true
+      api.gpu.cuda: cuda11
+    asserts:
+      - failedTemplate:
+          errorPattern: api.gpu.cuda
+
+  - it: refuses fewer than one GPU
+    template: api-deployment.yaml
+    set:
+      api.gpu.enabled: true
+      api.gpu.cuda: cuda13
+      api.gpu.count: 0
+    asserts:
+      - failedTemplate:
+          errorPattern: api.gpu.count
 
   - it: keeps the operator's resources next to the GPU limit
     template: api-deployment.yaml
     set:
       api.gpu.enabled: true
-      api.gpu.imageTag: 0.1.0-cuda13
+      api.gpu.cuda: cuda13
       api.resources:
         requests:
           cpu: "4"
@@ -127,7 +180,7 @@ tests:
     template: api-deployment.yaml
     set:
       api.gpu.enabled: true
-      api.gpu.imageTag: 0.1.0-cuda13
+      api.gpu.cuda: cuda13
       api.nodeSelector:
         disk: ssd
         pool: general
@@ -157,7 +210,7 @@ tests:
     template: api-deployment.yaml
     set:
       api.gpu.enabled: true
-      api.gpu.imageTag: 0.1.0-cuda13
+      api.gpu.cuda: cuda13
       api.nodeSelector:
         disk: ssd
       api.tolerations:

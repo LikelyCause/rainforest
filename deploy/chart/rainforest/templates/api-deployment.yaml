@@ -1,17 +1,16 @@
 {{- /*
-  api.gpu.enabled layers the GPU settings over the plain api.* ones: the CUDA image tag replaces api.image.tag, the
+  api.gpu.enabled layers the GPU settings over the plain api.* ones: the CUDA build's tag replaces the CPU one, the
   nvidia.com/gpu limit is added to api.resources.limits, api.gpu.nodeSelector wins over api.nodeSelector on a shared key,
   and api.gpu.tolerations come after api.tolerations.
 */ -}}
-{{- $image := .Values.api.image }}
+{{- $image := merge (dict "tag" (include "rainforest.apiImageTag" .)) .Values.api.image }}
 {{- $resources := deepCopy .Values.api.resources }}
 {{- $nodeSelector := .Values.api.nodeSelector }}
 {{- $tolerations := .Values.api.tolerations }}
 {{- if .Values.api.gpu.enabled }}
-{{- if not .Values.api.gpu.imageTag }}
-{{- fail "api.gpu.imageTag is required when api.gpu.enabled is true: set it to the CUDA build's full tag, e.g. 0.1.0-cuda13" }}
+{{- if lt (int .Values.api.gpu.count) 1 }}
+{{- fail (printf "api.gpu.count is %v: the pod must claim at least one GPU" .Values.api.gpu.count) }}
 {{- end }}
-{{- $image = merge (dict "tag" .Values.api.gpu.imageTag) .Values.api.image }}
 {{- $limits := default dict $resources.limits }}
 {{- $_ := set $limits "nvidia.com/gpu" (int .Values.api.gpu.count) }}
 {{- $_ = set $resources "limits" $limits }}

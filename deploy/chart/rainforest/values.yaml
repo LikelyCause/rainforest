@@ -4,6 +4,9 @@
 
 # Required: the host name people open Rainforest at. Feeds the Ingress and RAINFOREST_ALLOWED_HOSTS.
 hostname: ""
+# The scheme people open it with, for the OIDC redirect URL and the install notes. Empty: https when
+# ingress.tls.secretName is set, else http. Set https when TLS ends in front of the Ingress (a load balancer, say).
+publicScheme: ""
 
 # Registry credentials for the images below, as for any pod spec: [{name: regcred}].
 imagePullSecrets: []
@@ -73,8 +76,9 @@ mlflow:
   externalUrl: ""
   # Where the API logs to when that differs from externalUrl (often an internal address without the SSO in front).
   trackingUri: ""
-  # Experiments are named <prefix>/<dataset id>-<dataset name>; releases sharing one server each set their own.
-  experimentPrefix: rainforest
+  # Experiments are named <prefix>/<dataset id>-<dataset name> and found by dataset id and prefix, so releases sharing
+  # one server need different prefixes. Empty: the release's namespace. Letters, digits and . _ / - only.
+  experimentPrefix: ""
 
   # The settings below apply to in-chart mode only.
   # The server's backend database, on the same Postgres server as Rainforest's. Empty: <postgresql database>_mlflow. It
@@ -113,19 +117,22 @@ api:
     workers: 2
     # Background jobs running at once across all workers; each gets cpu_count // slots threads.
     slots: 1
-  # GPU training on the CUDA build of the API (which driver each tag needs: deploy/README.md). Needs the NVIDIA device
-  # plugin on the cluster. Enabled, the pod runs api.gpu.imageTag instead of api.image.tag, limits nvidia.com/gpu to
+  # GPU training on the CUDA build of the API (which driver each build needs: deploy/README.md). Needs the NVIDIA device
+  # plugin on the cluster. Enabled, the pod runs the tag <api.image.tag or appVersion>-<cuda>, limits nvidia.com/gpu to
   # count (added to api.resources.limits), and sets NVIDIA_DRIVER_CAPABILITIES=compute,utility.
   gpu:
     enabled: false
-    # Required when enabled: the full tag of the CUDA build of the same version, e.g. 0.1.0-cuda13 or 0.1.0-cu12.
+    # Required when enabled: the CUDA build, cuda13 or cu12.
+    cuda: ""
+    # A full tag that replaces the computed one, for a build outside the release's tags.
     imageTag: ""
-    # GPUs the pod claims.
+    # GPUs the pod claims; at least 1.
     count: 1
     # Added to api.nodeSelector (this wins on a shared key) and after api.tolerations, only when enabled.
     nodeSelector: {}
     tolerations: []
-  # Settings by their .env.example names; the defaults match api/app/config.py.
+  # Settings by their .env.example names; the defaults match api/app/config.py. A key the chart already sets from
+  # another value (LOG_LEVEL, DATABASE_URL, ...) fails the render.
   tuning:
     PROFILE_SAMPLE_ROWS: 500000
     CORR_SAMPLE_ROWS: 100000

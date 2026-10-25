@@ -85,7 +85,6 @@ anything the team can't afford to lose.
        memberGroup: rainforest-vehicles-member
 
    mlflow:
-     experimentPrefix: vehicles
      image: {repository: registry.example.com/team/rainforest-mlflow}
 
    api:
@@ -129,8 +128,9 @@ anything the team can't afford to lose.
 
 `hostname` is required: the chart refuses to render without it. It feeds the Ingress host and the API's
 `RAINFOREST_ALLOWED_HOSTS`. The ingress controller answers a request for any other name itself, usually with a
-`404`. The API answers `400` when the UI is reached under a host that isn't `hostname`, such as through a
-`kubectl port-forward`: the page loads and its `/api/` calls fail.
+`404`. The API answers `400` when the UI is reached under a host that is neither `hostname` nor localhost: the page
+loads and its `/api/` calls fail. A `kubectl port-forward` to `localhost` works, because the API always accepts
+localhost.
 
 ### Trying it without a team
 
@@ -148,12 +148,14 @@ file, with the passwords in `secrets.values` (the chart creates the Secret from 
 | `api.image.repository`, `ui.image.repository`, `mlflow.image.repository` | your registry's paths; `imagePullSecrets` when it needs credentials |
 | `postgresql.database`, `postgresql.user` (in-chart) or `postgresql.external.*` | the team's database and user; one database per release on a shared server |
 | `auth.oidc.issuer`, `clientId`, `leadGroup`, `memberGroup` | your provider, the client registered there for this release (default `rainforest`; teams sharing one provider usually register one each), and this team's groups |
-| `mlflow.experimentPrefix` | a name unique among the releases that share an MLflow server |
+| `mlflow.experimentPrefix` | nothing, usually: empty, it is the release's namespace, which already differs per team. Set it only to choose another name unique among the releases that share an MLflow server |
 | `secrets.existingSecret` | the Secret you created for this release |
 | `ingress.className`, `ingress.tls.secretName` | your controller's class and the TLS Secret (see [Uploads and the ingress controller](#uploads-and-the-ingress-controller)) |
 
 `ingress.tls.secretName` names a Secret the chart does not create: make it yourself or have cert-manager issue it
-(put its annotation under `ingress.annotations`). Setting it also makes the OIDC redirect URL `https`.
+(put its annotation under `ingress.annotations`). Setting it also makes the OIDC redirect URL `https`. When TLS ends in
+front of the Ingress instead, at a load balancer for example, set `publicScheme: https`; it decides the scheme of the
+redirect URL and of the URL in the install notes, whatever `ingress.tls` says.
 
 The sizes of the three volumes (`persistence.data.size`, `mlflow.persistence.size`, `postgresql.persistence.size`),
 `api.resources` and `api.gpu` depend on the team's data. [Sizing](../docs/deployment.md#sizing) gives the figures: a
@@ -179,7 +181,6 @@ mlflow:
   mode: external
   externalUrl: https://mlflow.example.com               # what browsers open; required
   trackingUri: http://mlflow.infra.svc.cluster.local:5000   # what the API logs to; defaults to externalUrl
-  experimentPrefix: vehicles
 ```
 
 `trackingUri` is for when the API reaches the server over a different address than browsers do, often an internal
@@ -189,8 +190,11 @@ adds no authentication of its own.
 
 **Experiment prefix.** Rainforest names an MLflow experiment `<prefix>/<dataset id>-<dataset name>` and finds it again
 by dataset id **and** prefix, so releases that share a server and happen to share dataset ids never share an
-experiment. Give each release its own `mlflow.experimentPrefix` (default `rainforest`). Changing the prefix on an
-install that has runs starts a new experiment per dataset; the old experiments stay in MLflow under their old names.
+experiment. The prefix is `mlflow.experimentPrefix`, and when that is empty (the default) the release's namespace, so
+releases in their own namespaces never need to set it. It may hold letters, digits and `.`, `_`, `/` and `-`; the
+chart refuses anything else. Changing the prefix on an install that has runs, or moving the release to another
+namespace with the prefix unset, starts a new experiment per dataset; the old experiments stay in MLflow under their old
+names.
 
 With `in-chart`, MLflow keeps its runs in a database on the same Postgres server as Rainforest, named
 `<postgresql database>_mlflow` unless `mlflow.database` says otherwise, and its artifacts on the `mlflow` volume.
@@ -270,7 +274,7 @@ next to the CPU image:
 api:
   gpu:
     enabled: true
-    imageTag: 0.1.0-cuda13        # required when enabled; the same version as the other images
+    cuda: cuda13                  # required when enabled: cuda13 or cu12
     count: 1                      # GPUs the pod claims
     nodeSelector: {nvidia.com/gpu.present: "true"}
     tolerations:
@@ -278,8 +282,10 @@ api:
         operator: Exists
 ```
 
-With `api.gpu.enabled`, the pod runs `api.gpu.imageTag` instead of `api.image.tag`, limits `nvidia.com/gpu` to `count`
-(added to any limits in `api.resources`), and sets `NVIDIA_DRIVER_CAPABILITIES=compute,utility`. The node selector
+With `api.gpu.enabled`, the pod runs the CUDA build of the same version as the other images, tagged
+`<api.image.tag, or the chart's appVersion>-<api.gpu.cuda>`, so it follows the chart's `appVersion` on an upgrade
+with nothing else to edit. `api.gpu.imageTag`, when set, is used as the whole tag instead, for a build outside the
+release's tags. The pod also limits `nvidia.com/gpu` to `count` (at least 1, added to any limits in `api.resources`), and sets `NVIDIA_DRIVER_CAPABILITIES=compute,utility`. The node selector
 and tolerations apply only then. The cluster needs the NVIDIA device plugin; nothing else in the release changes.
 
 To check it, sign in and look for the CPU / GPU switch in the *Train a model* panel. `GET /api/system` reports the
@@ -372,7 +378,7 @@ not touched.
 
 | Symptom | Cause and fix |
 |---|---|
-| The page loads but its calls fail with `400` | The UI was reached under a host that isn't `hostname` (a port-forward, say). Open the site at the name you set, or change `hostname`. |
+| The page loads but its calls fail with `400` | The UI was reached under a host that isn't `hostname` or localhost (another DNS name or an IP address, say). Open the site at the name you set, or change `hostname`. |
 | The ingress controller answers `404` | The request's host isn't `hostname`, or the Ingress's `className` doesn't match a controller. |
 | An upload fails with `413` | The ingress controller's body limit. See [Uploads and the ingress controller](#uploads-and-the-ingress-controller). |
 | The API pod restarts and its log names a missing role | `managedRoles: false` and the console role doesn't exist. Create it as above. |
@@ -458,8 +464,8 @@ helm upgrade --install rainforest rainforest/rainforest --version 1.2.3 \
 ```
 
 Set `api.image.repository`, `ui.image.repository` and `mlflow.image.repository` to
-`registry.gitlab.example.com/<group>/<project>/{api,ui,mlflow}`. With `api.gpu.enabled`, `api.gpu.imageTag` is the
-release tag plus `-cuda13` or `-cu12`, as in [GPU](#gpu).
+`registry.gitlab.example.com/<group>/<project>/{api,ui,mlflow}`. With `api.gpu.enabled`, the chart runs the release
+tag plus `-cuda13` or `-cu12`, as `api.gpu.cuda` says (see [GPU](#gpu)).
 
 **The smoke job.** It needs a runner with the Docker executor in privileged mode, for the `docker:27-dind` service.
 `deploy/smoke.sh` runs with `BUILD=0`: it pulls the three images with the job's `docker login`, loads them into the

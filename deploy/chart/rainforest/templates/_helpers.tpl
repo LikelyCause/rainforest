@@ -128,8 +128,65 @@ is what the API's client sends, and the short Service name covers anything else 
 {{- if eq .Values.mlflow.mode "external" }}{{ include "rainforest.mlflowExternalUrl" . }}{{ end }}
 {{- end }}
 
+{{/* The scheme people open Rainforest with: publicScheme, else https exactly when the Ingress terminates TLS. */}}
 {{- define "rainforest.scheme" -}}
-{{- if .Values.ingress.tls.secretName }}https{{ else }}http{{ end }}
+{{- if .Values.publicScheme }}{{ .Values.publicScheme }}{{ else if .Values.ingress.tls.secretName }}https{{ else }}http{{ end }}
+{{- end }}
+
+{{/* Each release on a shared MLflow server needs its own prefix, and the namespace already differs per release. */}}
+{{- define "rainforest.experimentPrefix" -}}
+{{- default .Release.Namespace .Values.mlflow.experimentPrefix }}
+{{- end }}
+
+{{/*
+The ConfigMap's keys the chart sets from other values. api.tuning may not repeat one, nor a name in
+rainforest.podEnvNames (pod env wins over envFrom, so a tuning key there would be ignored without a word).
+*/}}
+{{- define "rainforest.configData" -}}
+RAINFOREST_AUTH_MODE: {{ .Values.auth.mode | quote }}
+RAINFOREST_USERS: {{ .Values.auth.users | quote }}
+RAINFOREST_OIDC_ISSUER: {{ .Values.auth.oidc.issuer | quote }}
+RAINFOREST_OIDC_DISCOVERY_URL: {{ .Values.auth.oidc.discoveryUrl | quote }}
+RAINFOREST_OIDC_CLIENT_ID: {{ .Values.auth.oidc.clientId | quote }}
+RAINFOREST_OIDC_REDIRECT_URL: {{ printf "%s://%s/api/auth/oidc/callback" (include "rainforest.scheme" .) .Values.hostname | quote }}
+RAINFOREST_OIDC_SCOPES: {{ .Values.auth.oidc.scopes | quote }}
+RAINFOREST_OIDC_GROUPS_CLAIM: {{ .Values.auth.oidc.groupsClaim | quote }}
+RAINFOREST_OIDC_PROVIDER_NAME: {{ .Values.auth.oidc.providerName | quote }}
+RAINFOREST_LEAD_GROUP: {{ .Values.auth.oidc.leadGroup | quote }}
+RAINFOREST_MEMBER_GROUP: {{ .Values.auth.oidc.memberGroup | quote }}
+RAINFOREST_ALLOWED_HOSTS: {{ .Values.hostname | quote }}
+RAINFOREST_MANAGED_ROLES: {{ include "rainforest.managedRoles" . | quote }}
+READONLY_ROLE: {{ include "rainforest.readonlyRole" . | quote }}
+WEB_CONCURRENCY: {{ include "rainforest.num" .Values.api.workers | quote }}
+JOB_WORKERS: {{ include "rainforest.num" .Values.api.jobs.workers | quote }}
+JOB_SLOTS: {{ include "rainforest.num" .Values.api.jobs.slots | quote }}
+LOG_LEVEL: {{ .Values.api.logLevel | quote }}
+MLFLOW_TRACKING_URI: {{ include "rainforest.mlflowTrackingUri" . | quote }}
+MLFLOW_BROWSE_URL: {{ include "rainforest.mlflowBrowseUrl" . | quote }}
+MLFLOW_EXPERIMENT_PREFIX: {{ include "rainforest.experimentPrefix" . | quote }}
+{{- end }}
+
+{{/* The variables api-deployment.yaml sets under env:, space-separated. */}}
+{{- define "rainforest.podEnvNames" -}}
+PGPASSWORD DATABASE_URL READONLY_PASSWORD DATA_DIR RAINFOREST_SESSION_SECRET NVIDIA_DRIVER_CAPABILITIES RAINFOREST_OIDC_CLIENT_SECRET MLFLOW_TRACKING_USERNAME MLFLOW_TRACKING_PASSWORD MLFLOW_TRACKING_TOKEN
+{{- end }}
+
+{{/*
+The API image: under api.gpu.enabled, api.gpu.imageTag as given, else <api.image.tag or appVersion>-<api.gpu.cuda>.
+*/}}
+{{- define "rainforest.apiImageTag" -}}
+{{- $base := default .Chart.AppVersion .Values.api.image.tag }}
+{{- if not .Values.api.gpu.enabled }}{{ $base }}
+{{- else }}
+{{- $cuda := .Values.api.gpu.cuda }}
+{{- if and $cuda (not (has $cuda (list "cuda13" "cu12"))) }}
+{{- fail (printf "api.gpu.cuda is %q: use cuda13 or cu12" $cuda) }}
+{{- end }}
+{{- if .Values.api.gpu.imageTag }}{{ .Values.api.gpu.imageTag }}
+{{- else if $cuda }}{{ printf "%s-%s" $base $cuda }}
+{{- else }}{{ fail "api.gpu.cuda is required when api.gpu.enabled is true: cuda13 or cu12 (deploy/README.md, GPU, says which driver each needs)" }}
+{{- end }}
+{{- end }}
 {{- end }}
 
 {{/* On the data and MLflow claims: helm uninstall and an Argo CD delete or prune leave them in place. */}}

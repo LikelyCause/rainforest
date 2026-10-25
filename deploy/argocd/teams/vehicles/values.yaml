@@ -24,7 +24,9 @@ mlflow:
   mode: external
   externalUrl: https://mlflow.example.com
   trackingUri: http://mlflow.infra.svc.cluster.local:5000
-  experimentPrefix: vehicles
+  # Experiments are named after the namespace (rainforest-<team>) unless experimentPrefix says otherwise. A prefix set
+  # here must change with the directory name when this file is copied for another team.
+  # experimentPrefix: vehicles
   image:
     repository: registry.gitlab.example.com/platform/rainforest/mlflow
 
@@ -42,9 +44,8 @@ api:
       memory: 16Gi
   gpu:
     enabled: true
-    # The CUDA build of the release: the tag as pushed plus -cuda13 (or -cu12), so v0.1.0-cuda13 for the tag v0.1.0.
-    # Unlike config.yaml's chart version, it keeps the leading "v". Change it together with config.yaml.
-    imageTag: v0.1.0-cuda13
+    # The CUDA build of the chart's appVersion (v0.1.0-cuda13 for the tag v0.1.0), so it moves with config.yaml.
+    cuda: cuda13
     tolerations:
       - key: nvidia.com/gpu
         operator: Exists

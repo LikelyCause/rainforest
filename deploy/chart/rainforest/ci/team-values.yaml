@@ -24,7 +24,8 @@ mlflow:
   mode: external
   externalUrl: https://mlflow.example.com
   trackingUri: http://mlflow.infra.svc.cluster.local:5000
-  experimentPrefix: vehicles
+  # Experiments are named after the namespace unless experimentPrefix says otherwise:
+  # experimentPrefix: vehicles
 
 api:
   image:
@@ -35,7 +36,7 @@ api:
       memory: 16Gi
   gpu:
     enabled: true
-    imageTag: 0.1.0-cuda13
+    cuda: cuda13
     tolerations:
       - key: nvidia.com/gpu
         operator: Exists

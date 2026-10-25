@@ -64,9 +64,9 @@ Secret in each team's namespace and list it under `imagePullSecrets` in that tea
 
 1. Copy a team directory, `cp -r teams/vehicles teams/<name>`, and edit both files. In `config.yaml`, set the chart
    version. In `values.yaml`, set `hostname`, the identity provider and groups, the database, MLflow, resources and
-   `secrets.existingSecret` (the convention is `rainforest-<name>`). When `api.gpu.enabled` is true, `api.gpu.imageTag`
-   is the release tag as pushed plus `-cuda13` (or `-cu12`): `v0.1.0-cuda13` for the tag `v0.1.0`. It includes the `v`
-   when the tag has one, whereas the chart version in `config.yaml` never does.
+   `secrets.existingSecret` (the convention is `rainforest-<name>`). MLflow experiments are named after the namespace,
+   `rainforest-<name>`, so a copied directory gets its own without an edit. When `api.gpu.enabled` is true,
+   `api.gpu.cuda` picks the CUDA build, `cuda13` or `cu12`; the chart appends it to its `appVersion` to make the tag.
 2. Create the namespace and the Secret named in `secrets.existingSecret`, before the first sync. The keys are the ones
    `NOTES.txt` lists for the team's settings; for the OIDC and external-MLflow team above:
 
@@ -86,12 +86,11 @@ Secret in each team's namespace and list it under `imagePullSecrets` in that tea
 
 ## Rolling a team forward
 
-Change `chart.version` in that team's `config.yaml` (and `api.gpu.imageTag` in its `values.yaml`, which carries the
-release tag as pushed, `v` included), commit, push and sync the team's Application. The chart's default image tags
-are its `appVersion`, the release tag, so the images move with the chart. The other teams stay where they are, so the
-first team can run a release before the rest.
+Change `chart.version` in that team's `config.yaml`, commit, push and sync the team's Application. The chart's default
+image tags are its `appVersion`, the release tag, and the GPU build's tag is that plus `-<api.gpu.cuda>`, so every
+image moves with the chart. The other teams stay where they are, so the first team can run a release before the rest.
 
-To roll every team forward, make the same change in each team's `config.yaml` and `values.yaml` in one commit.
+To roll every team forward, make the same change in each team's `config.yaml` in one commit.
 Review the diff Argo shows before syncing: a chart upgrade can include template changes as well as new images.
 
 ## Removing a team

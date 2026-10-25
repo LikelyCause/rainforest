@@ -241,6 +241,32 @@ tests:
           path: data.RAINFOREST_OIDC_REDIRECT_URL
           value: http://vehicles.example.com/api/auth/oidc/callback
 
+  - it: builds an https OIDC redirect URL from publicScheme when TLS ends before the Ingress
+    template: configmap.yaml
+    set:
+      publicScheme: https
+    asserts:
+      - equal:
+          path: data.RAINFOREST_OIDC_REDIRECT_URL
+          value: https://vehicles.example.com/api/auth/oidc/callback
+
+  - it: lets publicScheme http win over the Ingress's TLS
+    template: configmap.yaml
+    set:
+      publicScheme: http
+      ingress.tls.secretName: vehicles-tls
+    asserts:
+      - equal:
+          path: data.RAINFOREST_OIDC_REDIRECT_URL
+          value: http://vehicles.example.com/api/auth/oidc/callback
+
+  - it: refuses a publicScheme other than http or https
+    template: configmap.yaml
+    set:
+      publicScheme: ftp
+    asserts:
+      - failedTemplate: {}
+
   - it: carries the auth settings
     template: configmap.yaml
     set:
@@ -426,6 +452,31 @@ tests:
       - equal:
           path: data.LOG_LEVEL
           value: info
+
+  - it: passes a tuning key the chart doesn't set
+    template: configmap.yaml
+    set:
+      api.tuning.SQL_STATEMENT_LIMIT: 5
+    asserts:
+      - equal:
+          path: data.SQL_STATEMENT_LIMIT
+          value: "5"
+
+  - it: refuses a tuning key that collides with a ConfigMap key the chart sets
+    template: configmap.yaml
+    set:
+      api.tuning.LOG_LEVEL: debug
+    asserts:
+      - failedTemplate:
+          errorPattern: api.tuning.LOG_LEVEL
+
+  - it: refuses a tuning key that collides with a variable the chart sets on the pod
+    template: configmap.yaml
+    set:
+      api.tuning.DATABASE_URL: postgresql://elsewhere/db
+    asserts:
+      - failedTemplate:
+          errorPattern: api.tuning.DATABASE_URL
 
   - it: refuses an external server without a host
     template: api-deployment.yaml

@@ -17,6 +17,7 @@ helm lint deploy/chart/rainforest -f deploy/chart/rainforest/ci/dev-values.yaml
 | Key | Default | Meaning |
 |---|---|---|
 | `hostname` | `""` | **Required.** The name people open Rainforest at. Feeds the Ingress host and the API's `RAINFOREST_ALLOWED_HOSTS`. |
+| `publicScheme` | `""` | The scheme people open Rainforest with, `https` or `http`, used for the OIDC redirect URL and the URL in the install notes. Empty: `https` when `ingress.tls.secretName` is set, else `http`. Set `https` when TLS ends in front of the Ingress. |
 | `imagePullSecrets` | `[]` | Registry credentials for the images, as in any pod spec: `[{name: regcred}]`. |
 | `clusterDomain` | `cluster.local` | Used to build the in-cluster addresses nginx proxies to; its resolver ignores search domains. |
 | `nameOverride` | `""` | Replaces the chart name in resource names. |
@@ -37,8 +38,8 @@ helm lint deploy/chart/rainforest -f deploy/chart/rainforest/ci/dev-values.yaml
 | `auth.oidc.memberGroup` | `rainforest-member` | Members of this group are members. Someone in neither gets a *No access* page. |
 | `auth.oidc.discoveryUrl` | `""` | Only when the pod can't reach the issuer URL itself. |
 
-The OIDC redirect URL is derived: `https://<hostname>/api/auth/oidc/callback` when `ingress.tls.secretName` is set,
-`http://` otherwise.
+The OIDC redirect URL is derived: `<publicScheme>://<hostname>/api/auth/oidc/callback`, where an empty `publicScheme`
+is `https` when `ingress.tls.secretName` is set and `http` otherwise.
 
 ## postgresql
 
@@ -78,7 +79,7 @@ Used when `postgresql.enabled` is `false`.
 | `mlflow.mode` | `in-chart` | `in-chart`: an MLflow server in the release, reached by people at the UI's `/mlflow/` behind the Rainforest sign-in. `external`: an existing server; the API logs to `trackingUri` (or `externalUrl`) and *MLflow ↗* opens `externalUrl`. `off`: no experiment logging and no MLflow link. |
 | `mlflow.externalUrl` | `""` | Where browsers open an external server. Required when `mlflow.mode` is `external`. |
 | `mlflow.trackingUri` | `""` | Where the API logs to when that differs from `externalUrl`, often an internal address without the single sign-on in front. |
-| `mlflow.experimentPrefix` | `rainforest` | Experiments are named `<prefix>/<dataset id>-<dataset name>` and found by dataset id and prefix. Releases sharing one server each set their own. Changing it on an install with runs starts new experiments; the old ones stay. |
+| `mlflow.experimentPrefix` | `""` | Experiments are named `<prefix>/<dataset id>-<dataset name>` and found by dataset id and prefix, so releases sharing one server need different prefixes. Empty: the release's namespace. Letters, digits and `.` `_` `/` `-` only. Changing it on an install with runs starts new experiments; the old ones stay. |
 
 Credentials for an external server are the optional Secret keys `mlflowTrackingUsername`, `mlflowTrackingPassword` and
 `mlflowTrackingToken`.
@@ -121,16 +122,19 @@ GPU training on the CUDA build of the API. Which driver each tag needs is in
 
 | Key | Default | Meaning |
 |---|---|---|
-| `api.gpu.enabled` | `false` | Enabled, the pod runs `api.gpu.imageTag` instead of `api.image.tag`, limits `nvidia.com/gpu` to `count` (added to `api.resources.limits`) and sets `NVIDIA_DRIVER_CAPABILITIES=compute,utility`. |
-| `api.gpu.imageTag` | `""` | Required when enabled: the full tag of the CUDA build of the same version, such as `0.1.0-cuda13` or `0.1.0-cu12`. |
-| `api.gpu.count` | `1` | GPUs the pod claims. |
+| `api.gpu.enabled` | `false` | Enabled, the pod runs the CUDA build `<api.image.tag or appVersion>-<api.gpu.cuda>`, limits `nvidia.com/gpu` to `count` (added to `api.resources.limits`) and sets `NVIDIA_DRIVER_CAPABILITIES=compute,utility`. |
+| `api.gpu.cuda` | `""` | Required when enabled, unless `imageTag` is set: `cuda13` or `cu12`. Anything else fails the render. |
+| `api.gpu.imageTag` | `""` | Optional: a full tag used instead of the computed one, for a build outside the release's tags. |
+| `api.gpu.count` | `1` | GPUs the pod claims; at least 1. |
 | `api.gpu.nodeSelector` | `{}` | Added to `api.nodeSelector` (this wins on a shared key), only when enabled. |
 | `api.gpu.tolerations` | `[]` | Added after `api.tolerations`, only when enabled. |
 
 ### api.tuning
 
 Settings by their `.env.example` names; the defaults match `api/app/config.py`. Each key becomes an environment
-variable of the same name, and any other `.env.example` setting can be added here.
+variable of the same name, and any `.env.example` setting the chart doesn't already set from another value can be
+added here. A key the chart sets itself, such as `LOG_LEVEL` (`api.logLevel`), `READONLY_ROLE`
+(`postgresql.readonlyRole`) or `DATABASE_URL`, fails the render with a message naming it.
 
 | Key | Default |
 |---|---|
@@ -198,4 +202,4 @@ Nothing is generated, so every render of the chart is identical. The Postgres pa
 |---|---|---|
 | `ingress.className` | `""` | Your controller's class. `nginx` also sets the ingress-nginx annotations large uploads need: no request-body limit, no request buffering, and 600-second read and send timeouts. For any other controller, set the equivalents with `ingress.annotations` or the controller's own settings, or uploads over its default size fail with `413`. |
 | `ingress.annotations` | `{}` | Annotations on the Ingress, such as `cert-manager.io/cluster-issuer: letsencrypt`. One with the same name as an annotation the chart sets wins. |
-| `ingress.tls.secretName` | `""` | The name of the TLS Secret. Empty: plain HTTP. Set, it also makes the OIDC redirect URL `https`. The chart doesn't create this Secret. |
+| `ingress.tls.secretName` | `""` | The name of the TLS Secret. Empty: plain HTTP. Set, it also makes the OIDC redirect URL `https` unless `publicScheme` says otherwise. The chart doesn't create this Secret. |

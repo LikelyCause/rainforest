@@ -484,16 +484,16 @@ tests:
 
   # all modes
 
-  - it: in-chart names experiments rainforest/... by default
+  - it: in-chart names experiments after the release's namespace by default
     template: configmap.yaml
     set:
       mlflow.mode: in-chart
     asserts:
       - equal:
           path: data.MLFLOW_EXPERIMENT_PREFIX
-          value: rainforest
+          value: team
 
-  - it: external names experiments rainforest/... by default
+  - it: external names experiments after the release's namespace by default
     template: configmap.yaml
     set:
       mlflow.mode: external
@@ -501,16 +501,16 @@ tests:
     asserts:
       - equal:
           path: data.MLFLOW_EXPERIMENT_PREFIX
-          value: rainforest
+          value: team
 
-  - it: off names experiments rainforest/... by default
+  - it: off names experiments after the release's namespace by default
     template: configmap.yaml
     set:
       mlflow.mode: "off"
     asserts:
       - equal:
           path: data.MLFLOW_EXPERIMENT_PREFIX
-          value: rainforest
+          value: team
 
   - it: in-chart takes the experiment prefix from values
     template: configmap.yaml
@@ -543,6 +543,29 @@ tests:
           path: data.MLFLOW_EXPERIMENT_PREFIX
           value: vehicles
 
+  - it: accepts a prefix with dots, slashes, dashes and underscores
+    template: configmap.yaml
+    set:
+      mlflow.experimentPrefix: fleet/vehicles-2_x.y
+    asserts:
+      - equal:
+          path: data.MLFLOW_EXPERIMENT_PREFIX
+          value: fleet/vehicles-2_x.y
+
+  - it: refuses a prefix with a quote, which would break the MLflow search filter
+    template: configmap.yaml
+    set:
+      mlflow.experimentPrefix: "team's"
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses a prefix with whitespace
+    template: configmap.yaml
+    set:
+      mlflow.experimentPrefix: "my team"
+    asserts:
+      - failedTemplate: {}
+
   # notes
 
   - it: tells the operator to create the mlflow database when the chart does not manage the server's roles
@@ -561,3 +584,15 @@ tests:
     asserts:
       - notMatchRegexRaw:
           pattern: _mlflow
+
+  - it: prints the URL and the redirect URL with publicScheme
+    template: NOTES.txt
+    set:
+      publicScheme: https
+      auth.mode: oidc
+      secrets.values.oidcClientSecret: oidc-secret
+    asserts:
+      - matchRegexRaw:
+          pattern: 'URL: https://vehicles\.example\.com/'
+      - matchRegexRaw:
+          pattern: 'register with the identity provider: https://vehicles\.example\.com/api/auth/oidc/callback'

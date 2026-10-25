@@ -4,6 +4,7 @@
   "required": ["hostname"],
   "properties": {
     "hostname": { "type": "string", "minLength": 1 },
+    "publicScheme": { "type": "string", "enum": ["", "https", "http"] },
     "clusterDomain": { "type": "string", "minLength": 1 },
     "imagePullSecrets": { "type": "array" },
     "auth": {
@@ -15,7 +16,8 @@
     "mlflow": {
       "type": "object",
       "properties": {
-        "mode": { "type": "string", "enum": ["in-chart", "external", "off"] }
+        "mode": { "type": "string", "enum": ["in-chart", "external", "off"] },
+        "experimentPrefix": { "type": "string", "pattern": "^[A-Za-z0-9._/-]*$" }
       }
     },
     "postgresql": {
@@ -26,6 +28,20 @@
           "type": "object",
           "properties": {
             "managedRoles": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "api": {
+      "type": "object",
+      "properties": {
+        "gpu": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "cuda": { "type": "string", "enum": ["", "cuda13", "cu12"] },
+            "imageTag": { "type": "string" },
+            "count": { "type": "integer", "minimum": 1 }
           }
         }
       }
