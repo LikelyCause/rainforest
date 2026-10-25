@@ -73,6 +73,7 @@ jobs:
       - run: npm run build
       - name: nginx config rendering
         run: |
+          sudo apt-get update
           sudo apt-get install -y --no-install-recommends gettext-base
           bash nginx/test.sh
 

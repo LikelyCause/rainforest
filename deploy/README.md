@@ -224,8 +224,8 @@ password of that user goes in the Secret as `postgresPassword`. Each release on 
 console role: the SQL console's `SELECT`-only role. It is named `<database>_ro` unless `postgresql.readonlyRole` says
 otherwise, so releases never share a role.
 
-**Roles the API creates itself (`managedRoles: true`).** The API creates the console role on every start, sets its
-password from `readonlyPassword`, and grants it its read access. That needs `CREATEROLE` on the user. With in-chart
+**Roles the API creates itself (`managedRoles: true`).** The API creates the console role on start when it is missing,
+and on every start sets its password from `readonlyPassword` and grants it its read access. That needs `CREATEROLE` on the user. With in-chart
 MLflow, the MLflow server also creates its database on start, which needs `CREATEDB`.
 
 **Roles the operator creates (`managedRoles: false`).** On a shared server, where a DBA won't give a tenant

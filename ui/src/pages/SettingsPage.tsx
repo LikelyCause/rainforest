@@ -199,9 +199,14 @@ function Integrations() {
           )}
         </p>
       </div>
-      <ComingSoon title="An existing MLflow deployment">
-        Log runs to your team's own MLflow tracking server instead of the built-in one.
-      </ComingSoon>
+      <div className="card stack">
+        <h2>An existing MLflow server</h2>
+        <p className="secondary tools-lead">
+          To log runs to your team's own tracking server instead of the built-in one, set{" "}
+          <code>MLFLOW_TRACKING_URI</code> to where the API logs and <code>MLFLOW_BROWSE_URL</code> to where browsers
+          open it; see docs/mlflow.md.
+        </p>
+      </div>
       <ComingSoon title="Data storage">
         Pull datasets from S3 or other object storage, or from a database, instead of uploading files.
       </ComingSoon>
