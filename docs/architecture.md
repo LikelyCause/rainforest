@@ -27,7 +27,7 @@ configuration from environment at start (`ui/nginx/*.template`), so one image se
 runs as one pod, because jobs run in its process and share `/data`. `deploy/smoke.sh` installs the chart on a `kind`
 cluster and trains a run. `.gitlab-ci.yml` tests the code, publishes the images (CPU and two CUDA builds) and the
 packaged chart, and runs that smoke test on a release tag. `deploy/argocd/` holds the Argo CD layout, one Application
-per team. See [deploy/README.md](../deploy/README.md).
+per team, and is the seed of a separate deploy repository. See [deploy/README.md](../deploy/README.md).
 
 ### API modules
 

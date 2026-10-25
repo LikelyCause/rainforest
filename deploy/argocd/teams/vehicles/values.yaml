@@ -1,0 +1,67 @@
+# The vehicles team's release. The chart's defaults are in its values.yaml (deploy/chart/rainforest/ in the
+# Rainforest repository); only differences from them are set here. No credential belongs in this file: they live in the Secret named by secrets.existingSecret.
+hostname: vehicles.rainforest.example.com
+
+auth:
+  mode: oidc
+  oidc:
+    issuer: https://sso.example.com/realms/rainforest
+    clientId: rainforest
+    providerName: Company SSO
+    leadGroup: rainforest-vehicles-lead
+    memberGroup: rainforest-vehicles-member
+
+postgresql:
+  enabled: false
+  external:
+    host: pg.example.com
+    port: 5432
+    database: rainforest_vehicles
+    user: rainforest_vehicles
+    managedRoles: false
+
+mlflow:
+  mode: external
+  externalUrl: https://mlflow.example.com
+  trackingUri: http://mlflow.infra.svc.cluster.local:5000
+  experimentPrefix: vehicles
+  image:
+    repository: registry.gitlab.example.com/platform/rainforest/mlflow
+
+# The repositories are what .gitlab-ci.yml pushes ($CI_REGISTRY_IMAGE/api, /ui, /mlflow). The tags are empty so the
+# chart's appVersion (the release tag, which is the tag CI pushed) applies; config.yaml's version moves them together.
+# A private registry also needs imagePullSecrets (a docker-registry Secret in this namespace).
+imagePullSecrets: []
+
+api:
+  image:
+    repository: registry.gitlab.example.com/platform/rainforest/api
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+  gpu:
+    enabled: true
+    # The CUDA build of the version in config.yaml: <version>-cuda13 (or -cu12). Change it together with config.yaml.
+    imageTag: 0.1.0-cuda13
+    tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+
+ui:
+  image:
+    repository: registry.gitlab.example.com/platform/rainforest/ui
+
+persistence:
+  data:
+    size: 500Gi
+
+secrets:
+  existingSecret: rainforest-vehicles
+
+ingress:
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+  tls:
+    secretName: vehicles-rainforest-tls

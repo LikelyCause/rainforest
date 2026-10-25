@@ -453,6 +453,9 @@ To check the pipeline file without a GitLab project, [`gitlab-ci-local`](https:/
 runs the test jobs on a laptop (`gitlab-ci-local api-tests`, `chart-lint`, and so on). Everything that pushes
 (`build`, `chart`) or needs the Docker-in-Docker service (`smoke`) only runs on a real runner.
 
-`deploy/argocd/` holds the Argo CD layout: one Argo Application per team, generated from the `teams/<name>/`
-directory that holds that team's chart version and values file. Adding a team is adding a directory, and each team
-pins its own chart version. The files themselves are the reference for the pipeline and for the layout.
+`deploy/argocd/` holds the Argo CD layout and is the seed of a separate `rainforest-deploy` repository: copy it into a
+repository of its own. It generates one Argo Application per team from the `teams/<name>/` directory that holds that
+team's chart version and values file. Adding a team is adding a directory, and each team pins its own chart version.
+[`deploy/argocd/README.md`](argocd/README.md) covers seeding the repository, adding a team, rolling a version forward and
+how Argo CD authenticates to the Git server and the Helm registry. The files themselves are the reference for the
+pipeline and for the layout.

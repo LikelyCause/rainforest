@@ -1,0 +1,48 @@
+# One Argo CD Application per directory under teams/. Apply this file once, to the cluster that runs Argo CD:
+#   kubectl apply -n argocd -f applicationset.yaml
+# Replace the repoURL below (twice) with this repository's URL. The chart's registry URL and version come from each
+# team's config.yaml, so a team is rolled forward by editing its own file.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: rainforest
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: https://gitlab.example.com/platform/rainforest-deploy.git
+        revision: main
+        files:
+          - path: "teams/*/config.yaml"
+  template:
+    metadata:
+      name: "rainforest-{{.path.basename}}"
+    spec:
+      project: default
+      sources:
+        # The chart, from the Helm registry; its values come from the second source.
+        - repoURL: "{{.chart.repo}}"
+          chart: rainforest
+          targetRevision: "{{.chart.version}}"
+          helm:
+            valueFiles:
+              - "$values/teams/{{.path.basename}}/values.yaml"
+        # The team's values.yaml, from this repository (referenced as $values above).
+        - repoURL: https://gitlab.example.com/platform/rainforest-deploy.git
+          targetRevision: main
+          ref: values
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "rainforest-{{.path.basename}}"
+      syncPolicy:
+        # Manual sync by default: a sync shows a diff and an operator applies it. Uncomment `automated` to let a
+        # team's commits apply themselves. `prune: true` also deletes whatever a commit removes, and deleting the
+        # release deletes the data and MLflow volumes (the Rainforest deploy/README.md, "Uninstalling"); enable it
+        # deliberately.
+        # automated:
+        #   prune: true
+        #   selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
