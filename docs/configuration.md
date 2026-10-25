@@ -23,6 +23,7 @@ The defaults below are the ones `docker-compose.yml` applies when `.env` leaves 
 | `LOG_LEVEL` | info | API log level |
 | `RAINFOREST_AUTH_MODE` | `pick` | `oidc` for team deployments; `pick` lists users to choose from and doesn't authenticate (see [Sign-in](deployment.md#sign-in)) |
 | `RAINFOREST_USERS` | – | pick mode's accounts, `key[#id]:Name:role;…` (roles `lead`, `member`, `viewer`); when set, the whole list, synced on every start (see [Accounts from .env](deployment.md#accounts-from-env)) |
+| `RAINFOREST_MONGO_SOURCES` | – | named MongoDB connections for datasets created from collections, `name=uri;name=uri` with names of lowercase letters, digits and dashes; empty hides the *Connect* menu, a malformed entry stops the API at startup |
 | `RAINFOREST_OIDC_ISSUER` | – | the provider's issuer URL, exactly as it appears in its tokens (e.g. `https://sso.example.com/realms/rainforest`). Required in `oidc` mode |
 | `RAINFOREST_OIDC_CLIENT_ID`, `RAINFOREST_OIDC_CLIENT_SECRET` | – | the confidential client registered for Rainforest. Required in `oidc` mode |
 | `RAINFOREST_OIDC_REDIRECT_URL` | from the request | `<Rainforest URL>/api/auth/oidc/callback`; set it when Rainforest sits behind a proxy |
@@ -55,6 +56,8 @@ These are read by the API (`api/app/config.py`), also from `.env`.
 | `COPY_BATCH_ROWS` | 100000 | rows per batch when loading `raw.ds_<id>` |
 | `EXPORT_CHUNK_MB`, `EXPORT_FIT_MB` | 256, 512 | export memory budgets (dense output per transform chunk, and for the fit sample) |
 | `SAMPLE_MAX_CELLS` | 60000000 | cap on rows × fields for generated samples (about 2 GB peak) |
+| `SOURCE_MAX_CELLS` | 600000000 | cap on documents × fields across the collections of a connected dataset; a larger pull is refused before it starts |
+| `SOURCE_PULL_TIMEOUT_S` | 3600 | wall-clock limit for one pull from a MongoDB connection, after which the job fails |
 | `DB_POOL_MAX` | 10 | connections per API worker |
 | `SQL_TIMEOUT_MS`, `SQL_MAX_ROWS` | 15000, 2000 | SQL console guard rails |
 | `SQL_POOL_MAX` | 4 | read-only console connections per API worker (also the number of console queries it runs at once) |

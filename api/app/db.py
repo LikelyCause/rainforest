@@ -173,9 +173,13 @@ def grant_readonly(conn: psycopg.Connection, s: Settings) -> None:
 
 def bootstrap() -> None:
     """Migrate the schema and (re)configure the read-only role. Safe to run from several workers."""
-    from . import experiments, recipes, users
+    from . import experiments, recipes, sources, users
 
     s = get_settings()
+    try:
+        sources.parse_sources(s.mongo_sources)  # before any DB work, like the account list below
+    except ValueError as exc:
+        raise SystemExit(f"RAINFOREST_MONGO_SOURCES: {exc}") from None
     if s.auth_mode == "pick" and s.users.strip():
         try:
             users.parse_accounts(s.users)  # before any write, so a bad list changes nothing

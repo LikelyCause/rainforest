@@ -61,6 +61,7 @@ services:
       RAINFOREST_ALLOWED_HOSTS: ${RAINFOREST_ALLOWED_HOSTS:-*}
       # false: an operator creates the SQL console's role (docs/sql.md); the API only grants to it.
       RAINFOREST_MANAGED_ROLES: ${RAINFOREST_MANAGED_ROLES:-true}
+      RAINFOREST_MONGO_SOURCES: ${RAINFOREST_MONGO_SOURCES:-}
       # Empty turns MLflow logging off. The server serves everything, its REST API too, under /mlflow.
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI-http://mlflow:5000/mlflow}
       MLFLOW_BROWSE_URL: ${MLFLOW_BROWSE_URL:-}
@@ -73,6 +74,8 @@ services:
       EXPORT_CHUNK_MB: ${EXPORT_CHUNK_MB:-256}
       EXPORT_FIT_MB: ${EXPORT_FIT_MB:-512}
       SAMPLE_MAX_CELLS: ${SAMPLE_MAX_CELLS:-60000000}
+      SOURCE_MAX_CELLS: ${SOURCE_MAX_CELLS:-600000000}
+      SOURCE_PULL_TIMEOUT_S: ${SOURCE_PULL_TIMEOUT_S:-3600}
       DB_POOL_MAX: ${DB_POOL_MAX:-10}
       SQL_TIMEOUT_MS: ${SQL_TIMEOUT_MS:-15000}
       SQL_MAX_ROWS: ${SQL_MAX_ROWS:-2000}

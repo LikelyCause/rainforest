@@ -27,3 +27,5 @@ xgboost-cpu==3.4.1; sys_platform == "linux" or sys_platform == "win32"
 xgboost==3.4.1; sys_platform == "darwin"
 # Profile pictures, re-encoded as WebP.
 pillow==12.3.0
+# Connected datasets (app/sources): MongoDB collections pulled into the dataset's Parquet.
+pymongo==4.10.1

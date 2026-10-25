@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     export_fit_mb: int = 512
     # Generated samples: rows x fields at most this (about 2 GB peak at the default).
     sample_max_cells: int = 60_000_000
+    # Connected datasets: documents x projected fields across all chosen collections, checked before a pull
+    # starts, and the wall-clock limit after which a pull fails.
+    source_max_cells: int = 600_000_000
+    source_pull_timeout_s: int = 3600
 
     # SQL console guard rails
     sql_timeout_ms: int = 15_000
@@ -57,6 +61,8 @@ class Settings(BaseSettings):
     member_group: str = Field("rainforest-member", validation_alias="RAINFOREST_MEMBER_GROUP")
     session_secret: str = Field("", validation_alias="RAINFOREST_SESSION_SECRET")
     allowed_hosts: str = Field("*", validation_alias="RAINFOREST_ALLOWED_HOSTS")
+    # Named MongoDB connections, "name=uri;name=uri" (slug names). Empty hides the Connect menu.
+    mongo_sources: str = Field("", validation_alias="RAINFOREST_MONGO_SOURCES")
     # False when an operator pre-creates the console role (the app's database user has no CREATEROLE).
     managed_roles: bool = Field(True, validation_alias="RAINFOREST_MANAGED_ROLES")
 
