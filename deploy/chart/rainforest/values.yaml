@@ -63,8 +63,11 @@ postgresql:
     managedRoles: true
 
 mlflow:
-  # in-chart: an MLflow server in this release behind the UI's /mlflow/. external: an existing server at externalUrl.
-  # off: no experiment logging.
+  # in-chart: an MLflow server in this release (Deployment, Service, artifact volume), reached by people at the UI's
+  #   /mlflow/ behind the Rainforest sign-in and by the API at its cluster address.
+  # external: an existing server. The API logs to trackingUri (or externalUrl) and the UI links browsers to externalUrl,
+  #   which is required; credentials come from the Secret keys mlflowTracking{Username,Password,Token}.
+  # off: no experiment logging and no MLflow link.
   mode: in-chart
   # Where browsers open an external server.
   externalUrl: ""
@@ -72,6 +75,26 @@ mlflow:
   trackingUri: ""
   # Experiments are named <prefix>/<dataset id>-<dataset name>; releases sharing one server each set their own.
   experimentPrefix: rainforest
+
+  # The settings below apply to in-chart mode only.
+  # The server's backend database, on the same Postgres server as Rainforest's. Empty: <postgresql database>_mlflow. It
+  # is created on start when the chart manages the server's roles (the in-chart Postgres, or external.managedRoles);
+  # otherwise the operator creates it first.
+  database: ""
+  image:
+    # The repo's mlflow/ image; set to your registry.
+    repository: registry.example.com/rainforest/mlflow
+    # Empty: the chart's appVersion.
+    tag: ""
+    pullPolicy: IfNotPresent
+  persistence:
+    # Artifacts (/mlartifacts); one ReadWriteOnce volume.
+    size: 20Gi
+    # Empty: the cluster's default class.
+    storageClass: ""
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
 
 api:
   image:

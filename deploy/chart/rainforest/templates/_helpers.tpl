@@ -62,7 +62,7 @@ app.kubernetes.io/managed-by: {{ .root.Release.Service }}
 {{- default (include "rainforest.fullname" .) .Values.secrets.existingSecret }}
 {{- end }}
 
-{{/* Database coordinates, shared by the API and (later) the in-chart MLflow server. */}}
+{{/* Database coordinates, shared by the API and the in-chart MLflow server. */}}
 {{- define "rainforest.databaseHost" -}}
 {{- if .Values.postgresql.enabled }}{{ include "rainforest.fullname" . }}-postgresql{{ else }}{{ required "postgresql.external.host is required when postgresql.enabled is false" .Values.postgresql.external.host }}{{ end }}
 {{- end }}
@@ -87,6 +87,21 @@ app.kubernetes.io/managed-by: {{ .root.Release.Service }}
 {{/* The in-chart server is always managed; an external one follows managedRoles. */}}
 {{- define "rainforest.managedRoles" -}}
 {{- if .Values.postgresql.enabled }}true{{ else }}{{ toString .Values.postgresql.external.managedRoles }}{{ end }}
+{{- end }}
+
+{{/* The in-chart MLflow server's backend database. */}}
+{{- define "rainforest.mlflowDatabase" -}}
+{{- default (printf "%s_mlflow" (include "rainforest.databaseName" .)) .Values.mlflow.database }}
+{{- end }}
+
+{{/*
+Host headers MLflow accepts (it compares them exactly): "mlflow" is what the UI's nginx sends, the FQDN with the port
+is what the API's client sends, and the short Service name covers anything else in the namespace.
+*/}}
+{{- define "rainforest.mlflowAllowedHosts" -}}
+{{- $short := printf "%s-mlflow" (include "rainforest.fullname" .) }}
+{{- $fqdn := include "rainforest.serviceFqdn" (dict "root" . "component" "mlflow") }}
+{{- join "," (list "mlflow" $short (printf "%s:5000" $short) $fqdn (printf "%s:5000" $fqdn)) }}
 {{- end }}
 
 {{/* Where the API logs experiments. Empty turns logging off. */}}

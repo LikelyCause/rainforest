@@ -8,6 +8,10 @@ WARNING: Pick mode lets anyone choose any profile and does not authenticate; swi
 {{- else }}
 Redirect URL to register with the identity provider: {{ include "rainforest.scheme" . }}://{{ .Values.hostname }}/api/auth/oidc/callback
 {{- end }}
+{{- if and (eq .Values.mlflow.mode "in-chart") (eq (include "rainforest.managedRoles" .) "false") }}
+
+MLflow keeps its data in the database "{{ include "rainforest.mlflowDatabase" . }}" on {{ include "rainforest.databaseHost" . }}. The chart does not create it on this server: create it, owned by {{ include "rainforest.databaseUser" . }}, before MLflow starts.
+{{- end }}
 {{- if not .Values.secrets.existingSecret }}
 
 Credentials come from secrets.values in your values file. That is for dev and CI; for a real install create a Secret

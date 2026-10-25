@@ -1,0 +1,524 @@
+suite: mlflow
+release:
+  name: rf
+  namespace: team
+templates:
+  - mlflow-deployment.yaml
+  - mlflow-service.yaml
+  - mlflow-pvc.yaml
+  - configmap.yaml
+  - api-deployment.yaml
+  - ui-deployment.yaml
+  - secret.yaml
+  - NOTES.txt
+set:
+  hostname: vehicles.example.com
+  secrets.values.postgresPassword: pg-pass
+  secrets.values.readonlyPassword: ro-pass
+tests:
+  # in-chart: the default mode
+
+  - it: in-chart renders the server, its Service and its volume
+    set:
+      mlflow.mode: in-chart
+    asserts:
+      - isKind:
+          of: Deployment
+        template: mlflow-deployment.yaml
+      - equal:
+          path: metadata.name
+          value: rf-rainforest-mlflow
+        template: mlflow-deployment.yaml
+      - isKind:
+          of: Service
+        template: mlflow-service.yaml
+      - equal:
+          path: metadata.name
+          value: rf-rainforest-mlflow
+        template: mlflow-service.yaml
+      - equal:
+          path: spec.ports[0].port
+          value: 5000
+        template: mlflow-service.yaml
+      - isKind:
+          of: PersistentVolumeClaim
+        template: mlflow-pvc.yaml
+
+  - it: in-chart points the API at the server by its FQDN
+    template: configmap.yaml
+    set:
+      mlflow.mode: in-chart
+    asserts:
+      - equal:
+          path: data.MLFLOW_TRACKING_URI
+          value: http://rf-rainforest-mlflow.team.svc.cluster.local:5000/mlflow
+      - equal:
+          path: data.MLFLOW_BROWSE_URL
+          value: ""
+
+  - it: in-chart follows clusterDomain
+    template: configmap.yaml
+    set:
+      clusterDomain: k8s.corp
+    asserts:
+      - equal:
+          path: data.MLFLOW_TRACKING_URI
+          value: http://rf-rainforest-mlflow.team.svc.k8s.corp:5000/mlflow
+
+  - it: in-chart enables the UI's /mlflow/ proxy
+    template: ui-deployment.yaml
+    set:
+      mlflow.mode: in-chart
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_ENABLED")].value
+          value: "1"
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_UPSTREAM")].value
+          value: http://rf-rainforest-mlflow.team.svc.cluster.local:5000
+
+  - it: in-chart gives the API no MLflow credential references
+    template: api-deployment.yaml
+    set:
+      mlflow.mode: in-chart
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_TRACKING_USERNAME")]
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_TRACKING_PASSWORD")]
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_TRACKING_TOKEN")]
+
+  # the server itself
+
+  - it: runs the repo's mlflow image, tagged with the appVersion unless a tag is set
+    template: mlflow-deployment.yaml
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: ^registry\.example\.com/rainforest/mlflow:\d
+
+  - it: takes the image repository and tag from values
+    template: mlflow-deployment.yaml
+    set:
+      mlflow.image.repository: reg.corp/rf/mlflow
+      mlflow.image.tag: "9.9.9"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: reg.corp/rf/mlflow:9.9.9
+
+  # The UI's nginx sends Host "mlflow"; the API sends the FQDN with the port; the short Service name is the
+  # same-namespace spelling. MLflow compares the header exactly.
+  - it: starts mlflow with the Compose arguments and an allowed-hosts list covering every name used
+    template: mlflow-deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].args
+          value:
+            - --host
+            - 0.0.0.0
+            - --port
+            - "5000"
+            - --workers
+            - "2"
+            - --serve-artifacts
+            - --artifacts-destination
+            - /mlartifacts
+            - --static-prefix
+            - /mlflow
+            - --allowed-hosts
+            - mlflow,rf-rainforest-mlflow,rf-rainforest-mlflow:5000,rf-rainforest-mlflow.team.svc.cluster.local,rf-rainforest-mlflow.team.svc.cluster.local:5000
+
+  - it: allows the FQDN under a custom clusterDomain
+    template: mlflow-deployment.yaml
+    set:
+      clusterDomain: k8s.corp
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].args[12]
+          pattern: rf-rainforest-mlflow\.team\.svc\.k8s\.corp:5000$
+
+  - it: builds the backend URI from the shared database coordinates, with the mlflow database
+    template: mlflow-deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[0]
+          value:
+            name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: rf-rainforest
+                key: postgresPassword
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_BACKEND_STORE_URI")].value
+          value: postgresql://rainforest:$(POSTGRES_PASSWORD)@rf-rainforest-postgresql:5432/rainforest_mlflow
+
+  - it: reads the password from a Secret the operator manages
+    template: mlflow-deployment.yaml
+    set:
+      secrets.existingSecret: team-secret
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[0].valueFrom.secretKeyRef.name
+          value: team-secret
+
+  - it: uses the external server's coordinates
+    template: mlflow-deployment.yaml
+    set:
+      postgresql.enabled: false
+      postgresql.external.host: pg.example.com
+      postgresql.external.port: 6432
+      postgresql.external.database: rf_vehicles
+      postgresql.external.user: rf_user
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_BACKEND_STORE_URI")].value
+          value: postgresql://rf_user:$(POSTGRES_PASSWORD)@pg.example.com:6432/rf_vehicles_mlflow
+
+  - it: names the mlflow database <database>_mlflow by default
+    template: mlflow-deployment.yaml
+    set:
+      postgresql.database: fleet
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_BACKEND_STORE_URI")].value
+          pattern: /fleet_mlflow$
+
+  - it: takes the mlflow database from mlflow.database when set
+    template: mlflow-deployment.yaml
+    set:
+      mlflow.database: tracking
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_BACKEND_STORE_URI")].value
+          pattern: /tracking$
+
+  - it: creates the database itself with the in-chart Postgres
+    template: mlflow-deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_MANAGED_DATABASE")].value
+          value: "true"
+
+  - it: creates the database itself on an external server with managedRoles
+    template: mlflow-deployment.yaml
+    set:
+      postgresql.enabled: false
+      postgresql.external.host: pg.example.com
+      postgresql.external.managedRoles: true
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_MANAGED_DATABASE")].value
+          value: "true"
+
+  - it: only checks for the database on an external server without managedRoles
+    template: mlflow-deployment.yaml
+    set:
+      postgresql.enabled: false
+      postgresql.external.host: pg.example.com
+      postgresql.external.managedRoles: false
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_MANAGED_DATABASE")].value
+          value: "false"
+
+  - it: runs one non-root replica with a writable artifact volume
+    template: mlflow-deployment.yaml
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 1
+      - equal:
+          path: spec.strategy.type
+          value: Recreate
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.securityContext.runAsUser
+          value: 10001
+      - equal:
+          path: spec.template.spec.securityContext.fsGroup
+          value: 10001
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: artifacts
+            mountPath: /mlartifacts
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: artifacts
+            persistentVolumeClaim:
+              claimName: rf-rainforest-mlflow
+
+  - it: probes /mlflow/health
+    template: mlflow-deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /mlflow/health
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          value: /mlflow/health
+
+  - it: passes resources through
+    template: mlflow-deployment.yaml
+    set:
+      mlflow.resources.requests.memory: 1Gi
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].resources.requests.memory
+          value: 1Gi
+
+  - it: sizes the artifact volume at 20Gi by default, in the default storage class
+    template: mlflow-pvc.yaml
+    asserts:
+      - equal:
+          path: spec.resources.requests.storage
+          value: 20Gi
+      - notExists:
+          path: spec.storageClassName
+      - equal:
+          path: metadata.name
+          value: rf-rainforest-mlflow
+
+  - it: takes the artifact volume size and storage class from values
+    template: mlflow-pvc.yaml
+    set:
+      mlflow.persistence.size: 100Gi
+      mlflow.persistence.storageClass: fast
+    asserts:
+      - equal:
+          path: spec.resources.requests.storage
+          value: 100Gi
+      - equal:
+          path: spec.storageClassName
+          value: fast
+
+  - it: selects its own pods from the Service
+    template: mlflow-service.yaml
+    asserts:
+      - equal:
+          path: spec.selector["app.kubernetes.io/component"]
+          value: mlflow
+
+  # external
+
+  - it: external renders no MLflow resources
+    set:
+      mlflow.mode: external
+      mlflow.externalUrl: https://mlflow.example.com
+    asserts:
+      - hasDocuments:
+          count: 0
+        template: mlflow-deployment.yaml
+      - hasDocuments:
+          count: 0
+        template: mlflow-service.yaml
+      - hasDocuments:
+          count: 0
+        template: mlflow-pvc.yaml
+
+  - it: external logs to externalUrl when no trackingUri is set
+    template: configmap.yaml
+    set:
+      mlflow.mode: external
+      mlflow.externalUrl: https://mlflow.example.com
+    asserts:
+      - equal:
+          path: data.MLFLOW_TRACKING_URI
+          value: https://mlflow.example.com
+      - equal:
+          path: data.MLFLOW_BROWSE_URL
+          value: https://mlflow.example.com
+
+  - it: external logs to trackingUri when set, and browsers still open externalUrl
+    template: configmap.yaml
+    set:
+      mlflow.mode: external
+      mlflow.externalUrl: https://mlflow.example.com
+      mlflow.trackingUri: http://mlflow.infra.svc.cluster.local:5000
+    asserts:
+      - equal:
+          path: data.MLFLOW_TRACKING_URI
+          value: http://mlflow.infra.svc.cluster.local:5000
+      - equal:
+          path: data.MLFLOW_BROWSE_URL
+          value: https://mlflow.example.com
+
+  - it: external leaves the UI's /mlflow/ proxy off
+    template: ui-deployment.yaml
+    set:
+      mlflow.mode: external
+      mlflow.externalUrl: https://mlflow.example.com
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_ENABLED")].value
+          value: "0"
+
+  - it: external references the three optional credentials
+    template: api-deployment.yaml
+    set:
+      mlflow.mode: external
+      mlflow.externalUrl: https://mlflow.example.com
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_TRACKING_USERNAME")].valueFrom.secretKeyRef
+          value:
+            name: rf-rainforest
+            key: mlflowTrackingUsername
+            optional: true
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_TRACKING_PASSWORD")].valueFrom.secretKeyRef
+          value:
+            name: rf-rainforest
+            key: mlflowTrackingPassword
+            optional: true
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_TRACKING_TOKEN")].valueFrom.secretKeyRef
+          value:
+            name: rf-rainforest
+            key: mlflowTrackingToken
+            optional: true
+
+  - it: external without externalUrl fails
+    template: configmap.yaml
+    set:
+      mlflow.mode: external
+    asserts:
+      - failedTemplate:
+          errorPattern: mlflow.externalUrl is required
+
+  # off
+
+  - it: off renders no MLflow resources
+    set:
+      mlflow.mode: "off"
+    asserts:
+      - hasDocuments:
+          count: 0
+        template: mlflow-deployment.yaml
+      - hasDocuments:
+          count: 0
+        template: mlflow-service.yaml
+      - hasDocuments:
+          count: 0
+        template: mlflow-pvc.yaml
+
+  - it: off turns experiment logging off and offers no MLflow link
+    template: configmap.yaml
+    set:
+      mlflow.mode: "off"
+    asserts:
+      - equal:
+          path: data.MLFLOW_TRACKING_URI
+          value: ""
+      - equal:
+          path: data.MLFLOW_BROWSE_URL
+          value: ""
+
+  - it: off leaves the UI's /mlflow/ proxy off
+    template: ui-deployment.yaml
+    set:
+      mlflow.mode: "off"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_ENABLED")].value
+          value: "0"
+
+  - it: off references no MLflow credentials
+    template: api-deployment.yaml
+    set:
+      mlflow.mode: "off"
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_TRACKING_USERNAME")]
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_TRACKING_PASSWORD")]
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_TRACKING_TOKEN")]
+
+  # all modes
+
+  - it: in-chart names experiments rainforest/... by default
+    template: configmap.yaml
+    set:
+      mlflow.mode: in-chart
+    asserts:
+      - equal:
+          path: data.MLFLOW_EXPERIMENT_PREFIX
+          value: rainforest
+
+  - it: external names experiments rainforest/... by default
+    template: configmap.yaml
+    set:
+      mlflow.mode: external
+      mlflow.externalUrl: https://mlflow.example.com
+    asserts:
+      - equal:
+          path: data.MLFLOW_EXPERIMENT_PREFIX
+          value: rainforest
+
+  - it: off names experiments rainforest/... by default
+    template: configmap.yaml
+    set:
+      mlflow.mode: "off"
+    asserts:
+      - equal:
+          path: data.MLFLOW_EXPERIMENT_PREFIX
+          value: rainforest
+
+  - it: in-chart takes the experiment prefix from values
+    template: configmap.yaml
+    set:
+      mlflow.mode: in-chart
+      mlflow.experimentPrefix: vehicles
+    asserts:
+      - equal:
+          path: data.MLFLOW_EXPERIMENT_PREFIX
+          value: vehicles
+
+  - it: external takes the experiment prefix from values
+    template: configmap.yaml
+    set:
+      mlflow.mode: external
+      mlflow.externalUrl: https://mlflow.example.com
+      mlflow.experimentPrefix: vehicles
+    asserts:
+      - equal:
+          path: data.MLFLOW_EXPERIMENT_PREFIX
+          value: vehicles
+
+  - it: off takes the experiment prefix from values
+    template: configmap.yaml
+    set:
+      mlflow.mode: "off"
+      mlflow.experimentPrefix: vehicles
+    asserts:
+      - equal:
+          path: data.MLFLOW_EXPERIMENT_PREFIX
+          value: vehicles
+
+  # notes
+
+  - it: tells the operator to create the mlflow database when the chart does not manage the server's roles
+    template: NOTES.txt
+    set:
+      postgresql.enabled: false
+      postgresql.external.host: pg.example.com
+      postgresql.external.database: rf_vehicles
+      postgresql.external.managedRoles: false
+    asserts:
+      - matchRegexRaw:
+          pattern: 'database "rf_vehicles_mlflow" on pg.example.com'
+
+  - it: says nothing about the mlflow database when the chart creates it
+    template: NOTES.txt
+    asserts:
+      - notMatchRegexRaw:
+          pattern: _mlflow

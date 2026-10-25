@@ -1,0 +1,17 @@
+{{- if eq .Values.mlflow.mode "in-chart" }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "rainforest.fullname" . }}-mlflow
+  labels:
+    {{- include "rainforest.labels" (dict "root" . "component" "mlflow") | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.mlflow.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.mlflow.persistence.size }}
+{{- end }}

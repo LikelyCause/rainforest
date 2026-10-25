@@ -1,0 +1,15 @@
+{{- if eq .Values.mlflow.mode "in-chart" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "rainforest.fullname" . }}-mlflow
+  labels:
+    {{- include "rainforest.labels" (dict "root" . "component" "mlflow") | nindent 4 }}
+spec:
+  selector:
+    {{- include "rainforest.selectorLabels" (dict "root" . "component" "mlflow") | nindent 4 }}
+  ports:
+    - name: http
+      port: 5000
+      targetPort: http
+{{- end }}
