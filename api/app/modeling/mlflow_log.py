@@ -45,8 +45,12 @@ def enabled() -> bool:
     return bool(get_settings().mlflow_tracking_uri)
 
 
+def experiment_prefix() -> str:
+    return get_settings().mlflow_experiment_prefix.strip().strip("/") or "rainforest"
+
+
 def experiment_name(dataset_id: int, dataset_name: str) -> str:
-    return f"{get_settings().mlflow_experiment_prefix}/{dataset_id}-{dataset_name}"
+    return f"{experiment_prefix()}/{dataset_id}-{dataset_name}"
 
 
 def browse_base() -> str:
@@ -131,27 +135,43 @@ def run_tags(run: dict, dataset_name: str, report: dict, user: str | None) -> di
     return {k: str(v) for k, v in tags.items() if v is not None}
 
 
+def _adopt(client, exp, tags: dict[str, str]) -> str:
+    if exp.lifecycle_stage == "deleted":
+        client.restore_experiment(exp.experiment_id)
+    for k, v in tags.items():
+        client.set_experiment_tag(exp.experiment_id, k, v)
+    return exp.experiment_id
+
+
 def _experiment(client, dataset_id: int, dataset_name: str) -> str:
     from mlflow.exceptions import MlflowException
 
-    found = client.search_experiments(filter_string=f"tags.`rainforest.dataset_id` = '{dataset_id}'", max_results=1)
+    prefix = experiment_prefix()
+    found = client.search_experiments(
+        filter_string=f"tags.`rainforest.dataset_id` = '{dataset_id}' AND tags.`rainforest.prefix` = '{prefix}'",
+        max_results=1,
+    )
     if found:
         return found[0].experiment_id
     name = experiment_name(dataset_id, dataset_name)
     # The kind makes the MLflow UI open these as model training, not GenAI, experiments.
-    tags = {"rainforest.dataset_id": str(dataset_id), "mlflow.experimentKind": "custom_model_development"}
+    tags = {
+        "rainforest.dataset_id": str(dataset_id),
+        "rainforest.prefix": prefix,
+        "mlflow.experimentKind": "custom_model_development",
+    }
+    # An experiment made before the prefix tag existed, by this name.
+    exp = client.get_experiment_by_name(name)
+    if exp is not None:
+        return _adopt(client, exp, tags)
     try:
         return client.create_experiment(name, tags=tags)
     except MlflowException:
-        # Another worker created it first, or one by this name exists (untagged, or deleted in the MLflow UI).
+        # Another worker created it first, or one by this name was deleted in the MLflow UI.
         exp = client.get_experiment_by_name(name)
         if exp is None:
             raise
-        if exp.lifecycle_stage == "deleted":
-            client.restore_experiment(exp.experiment_id)
-        for k, v in tags.items():
-            client.set_experiment_tag(exp.experiment_id, k, v)
-        return exp.experiment_id
+        return _adopt(client, exp, tags)
 
 
 def log_run(

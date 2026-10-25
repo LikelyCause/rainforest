@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     mlflow_tracking_uri: str = ""
     # Where browsers open MLflow; empty is the same-origin /mlflow/ the bundled nginx proxies.
     mlflow_browse_url: str = ""
-    # Starts each experiment name; releases sharing one MLflow server each need their own.
+    # Experiment name prefix; releases sharing one MLflow server each set their own (see experiment_prefix()).
     mlflow_experiment_prefix: str = "rainforest"
     git_sha: str = ""
 

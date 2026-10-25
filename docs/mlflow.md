@@ -22,10 +22,12 @@ empty means the bundled `/mlflow/`).
 
 ## Layout
 
-- One MLflow experiment per dataset, named `<prefix>/<dataset id>-<dataset name>`, where the prefix is
-  `MLFLOW_EXPERIMENT_PREFIX` (`rainforest` by default). Rainforest finds it again by its `rainforest.dataset_id` tag, so
-  renaming a dataset keeps its experiment. Changing the prefix affects new datasets only: a dataset that already has an
-  experiment keeps it.
+- One MLflow experiment per dataset and prefix, named `<prefix>/<dataset id>-<dataset name>`, where the prefix is
+  `MLFLOW_EXPERIMENT_PREFIX` (`rainforest` by default). Each experiment is tagged with its dataset id and prefix, and
+  Rainforest finds it again by both, so renaming a dataset keeps its experiment, and releases sharing one MLflow server
+  each keep their own. Changing the prefix starts a new experiment for each dataset; the old experiments stay in MLflow
+  under their old names. An experiment from before the prefix tag, named `rainforest/<id>-<name>`, is adopted when the
+  prefix is `rainforest` and the dataset's name hasn't changed.
 - One MLflow run per model run, named `run <id> · <model label>`, such as `run 12 · LightGBM` (or `run 13 · Ridge
   regression` for the linear model on number targets).
 

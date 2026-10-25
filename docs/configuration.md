@@ -35,7 +35,7 @@ The defaults below are the ones `docker-compose.yml` applies when `.env` leaves 
 | `RAINFOREST_ALLOWED_HOSTS` | `*` | comma-separated hostnames / IPs the API answers to (`*.example.com` allowed). Set this to the names and addresses you use, e.g. `rainforest.lan,192.168.1.20`; `localhost`, `127.0.0.1` and `::1` are always accepted |
 | `MLFLOW_TRACKING_URI` | `http://mlflow:5000/mlflow` | where the API logs model runs; empty turns MLflow logging off (see [MLflow](mlflow.md#turning-it-off)) |
 | `MLFLOW_BROWSE_URL` | – (same-origin `/mlflow`) | the address browsers open MLflow at, such as `https://mlflow.example.com`; every MLflow link in the app is built on it. Set it when `MLFLOW_TRACKING_URI` points at a server other than the bundled one |
-| `MLFLOW_EXPERIMENT_PREFIX` | `rainforest` | the first part of each dataset's MLflow experiment name, `<prefix>/<dataset id>-<name>`; releases sharing one MLflow server each set their own. Changing it affects new datasets only (see [MLflow](mlflow.md#layout)) |
+| `MLFLOW_EXPERIMENT_PREFIX` | `rainforest` | the first part of each dataset's MLflow experiment name, `<prefix>/<dataset id>-<name>`. Releases sharing one MLflow server each set their own, since each finds its experiments by dataset id and prefix. Changing it starts new experiments (see [MLflow](mlflow.md#layout)) |
 | `GIT_SHA` | – | commit tagged on MLflow runs, baked into the API image; `make up` sets it from the checkout |
 | `API_EXTRA_PIP` | – | extra packages baked into the API image (e.g. `catboost`) |
 | `XGBOOST_GPU_PKG` | `xgboost==3.4.1` | the CUDA XGBoost package for the GPU image (`xgboost-cu12==3.4.1` for 570–579 drivers) |

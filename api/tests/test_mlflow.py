@@ -65,15 +65,46 @@ def test_browse_base_strips_a_trailing_slash(monkeypatch):
 
 
 @pytest.fixture
-def experiment_prefix(monkeypatch):
-    monkeypatch.setenv("MLFLOW_EXPERIMENT_PREFIX", "vehicles")
-    get_settings.cache_clear()
-    yield
+def set_prefix(monkeypatch):
+    def set_to(value):
+        monkeypatch.setenv("MLFLOW_EXPERIMENT_PREFIX", value)
+        get_settings.cache_clear()
+
+    yield set_to
     get_settings.cache_clear()
 
 
-def test_experiment_name_takes_the_prefix(experiment_prefix):
+def test_experiment_name_takes_the_prefix(set_prefix):
+    set_prefix("vehicles")
     assert mlflow_log.experiment_name(3, "curated") == "vehicles/3-curated"
+
+
+@pytest.mark.parametrize("raw, expected", [("", "rainforest"), (" /x/ ", "x"), ("/", "rainforest")])
+def test_experiment_prefix_is_cleaned_and_defaults_when_empty(set_prefix, raw, expected):
+    set_prefix(raw)
+    assert mlflow_log.experiment_prefix() == expected
+
+
+def test_two_prefixes_on_one_server_get_separate_experiments(file_store, tmp_path, set_prefix):
+    d = _model_dir(tmp_path)
+    set_prefix("a")
+    first, _ = mlflow_log.log_run(_run_row(1, dataset_id=3), "curated", REPORT, d)
+    set_prefix("b")
+    second, _ = mlflow_log.log_run(_run_row(2, dataset_id=3), "curated", REPORT, d)
+    assert first != second
+    assert file_store.get_experiment(first).name == "a/3-curated"
+    assert file_store.get_experiment(first).tags["rainforest.prefix"] == "a"
+    assert file_store.get_experiment(second).name == "b/3-curated"
+    assert file_store.get_experiment(second).tags["rainforest.prefix"] == "b"
+
+
+def test_an_experiment_from_before_the_prefix_tag_is_reused(file_store, tmp_path, set_prefix):
+    made = file_store.create_experiment("rainforest/3-Churn", tags={"rainforest.dataset_id": "3"})
+    set_prefix("rainforest")
+    exp_id, _ = mlflow_log.log_run(_run_row(dataset_id=3), "Churn", REPORT, _model_dir(tmp_path))
+    assert exp_id == made
+    assert file_store.get_experiment(made).tags["rainforest.prefix"] == "rainforest"
+    assert [e.name for e in file_store.search_experiments()].count("rainforest/3-Churn") == 1
 
 
 def _model_dir(tmp_path):
