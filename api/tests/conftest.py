@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,29 @@ def set_phase(dataset_id: int, phase: str) -> dict:
         if phase == "finalized":
             return recipes.finalize(conn, r, r["created_by"])
         return conn.execute("UPDATE meta.recipes SET phase = %s WHERE id = %s RETURNING *", (phase, r["id"])).fetchone()
+
+
+@pytest.fixture(scope="session")
+def mongo_url() -> str:
+    url = os.environ.get("RAINFOREST_TEST_MONGO_URL")
+    if not url:
+        pytest.skip("set RAINFOREST_TEST_MONGO_URL to run the MongoDB tests")
+    return url
+
+
+@pytest.fixture(scope="session")
+def mongo(mongo_url):
+    """A throwaway database on the test MongoDB, seeded with the `curated` and `massive` collections."""
+    import pymongo
+
+    from .mongo_helpers import seed
+
+    client = pymongo.MongoClient(mongo_url, serverSelectionTimeoutMS=5000)
+    db = client[f"rf_test_{os.getpid()}"]
+    seed(db)
+    yield db
+    client.drop_database(db.name)
+    client.close()
 
 
 @pytest.fixture(scope="session")

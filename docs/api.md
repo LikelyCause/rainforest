@@ -22,7 +22,7 @@ batches.
 
 **Viewers.** A user with the `viewer` role (elsewhere on this page "the viewer" is whoever is asking) gets `403`
 (`"Viewers can look but not change anything."`) on every `POST`, `PUT`, `PATCH` and `DELETE` except
-`POST …/analyses` (never recomputed), `POST …/fields/query`, their own name (`PATCH /api/auth/me`) and their own picture (`PUT` / `DELETE
+`POST …/analyses` (never recomputed), `POST …/fields/query`, `POST /api/sources/{name}/preview`, their own name (`PATCH /api/auth/me`) and their own picture (`PUT` / `DELETE
 /api/users/{id}/avatar`); sign-in and sign-out are open. The SQL console (`POST /api/sql`) is refused too: it reads
 every table, assessors' work in progress included. On `/api/auth/check` (MLflow) only MLflow's search requests may be
 `POST`s (`X-Original-URI`). While the current baseline version is `assessing`, the field
@@ -105,6 +105,20 @@ The session cookie is `HttpOnly`, `SameSite=Strict`, lasts 7 days and is `Secure
 | PATCH | `/api/datasets/{dataset_id}` | Rename or set the targets. `model_family` is the current baseline's: sending another is `422`. Setting targets needs a `ready` dataset (`409` otherwise) and may start a job for targets with no associations yet. While assessing, targets change only before any assessor is assigned (`409` after); in review only a lead changes them; a finalized version refuses (`409`), and so does a change to a carried-over field's role. A target must be typed binary, categorical or numeric, and binary or categorical with at most 100 distinct values (`422` naming each field otherwise). A new target gets its type's default task (see `PUT /api/fields/{id}/decision`); an existing one keeps its own. | `name`, `target_columns` (exact list in chain order; `[]` for none) |
 | DELETE | `/api/datasets/{dataset_id}` | *Lead.* Delete the dataset, its fields, exports, runs, analyses and files. `409` while it, or one of its exports or runs, is still running. Returns counts removed. | |
 | GET | `/api/datasets/{dataset_id}/fields` | Lightweight field rows for the *Fields* list (type, confidence, missing, uniques, target association, leakage, decision, reviewed, `locked`: carried over into the current version, always false once it is finalized), with the viewer's decisions. | `view` |
+
+## Sources (`routers/sources.py`)
+
+Named external connections (`RAINFOREST_MONGO_SOURCES`). Responses never carry a connection string: a failure talking
+to a server is `502` with a message that names the connection and has credentials and host names removed. All routes
+need a signed-in user of any role, Viewers included; they only read. An unknown connection is `404` (`No source named
+<name>`).
+
+| Method | Path | Purpose | Key params |
+|---|---|---|---|
+| GET | `/api/sources` | The configured connections, `[{name, kind}]` (`kind` is `mongodb`); empty when none. | |
+| GET | `/api/sources/{name}/databases` | `{databases, listable}`: the database names (system databases left out), or `databases: null` and `listable: false` when the account isn't allowed to list them (the dialog then asks for a name). | |
+| GET | `/api/sources/{name}/databases/{database}/collections` | `[{name, documents}]` by name, with estimated document counts (system collections left out). | |
+| POST | `/api/sources/{name}/preview` | Sample up to 200 documents per collection and flatten them. Returns `columns` (`name`, `kind`: `number`, `text`, `datetime`, `boolean`, `json`, `identifier` or `mixed`; `present_share`: the share of sampled documents, across the collections, that have a value), `per_source` (`name`, `label`, `documents`, `sampled`, `columns`), `estimated_rows`, `estimated_cells` (documents × columns, summed over the collections) and `budget` (`max_cells` = `SOURCE_MAX_CELLS`, `fits`). `422` (`<collection>: filter is not a JSON document`, likewise `projection`) when a filter or projection isn't a JSON object, checked for every collection before the server is contacted. A Viewer may call it. | body: `database`, `collections` (1–50 of `{name, filter, projection}`; `filter` and `projection` are JSON text, MongoDB extended JSON accepted for ObjectId and dates) |
 
 ## Fields and decisions (`routers/fields.py`)
 

@@ -280,3 +280,14 @@ class UserPatch(BaseModel):
     email: str | None = Field(None, max_length=320)
     role: Literal["lead", "member", "viewer"] | None = None
     active: bool | None = None
+
+
+class SourceCollectionIn(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    filter: str | None = Field(None, max_length=100_000, description="A JSON document (MongoDB extended JSON)")
+    projection: str | None = Field(None, max_length=100_000, description="A JSON document (MongoDB extended JSON)")
+
+
+class SourcePreviewIn(BaseModel):
+    database: str = Field(min_length=1, max_length=255)
+    collections: list[SourceCollectionIn] = Field(min_length=1, max_length=50)

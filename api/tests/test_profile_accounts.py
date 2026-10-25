@@ -137,6 +137,7 @@ from .team_helpers import fields, finalized_trees, review_all, save, start, uplo
 VIEWER_MAY = [
     ("POST", r"/api/datasets/\{dataset_id\}/analyses"),
     ("POST", r"/api/datasets/\{dataset_id\}/fields/query"),
+    ("POST", r"/api/sources/\{name\}/preview"),
     ("POST", r"/api/auth/pick"),
     ("POST", r"/api/auth/logout"),
     ("PUT", r"/api/users/\{user_id\}/avatar"),

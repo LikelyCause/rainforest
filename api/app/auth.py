@@ -51,13 +51,14 @@ AVATAR_PREFIX = "/api/auth/avatars/"  # open to GET: the picker shows pictures b
 DEV_ORIGINS = {"http://localhost:5173", "http://127.0.0.1:5173"}
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-# A viewer reads only. These writes are reads in disguise (Explore, the field finder) or their own profile; every
+# A viewer reads only. These writes are reads in disguise (Explore, the field finder, a source preview) or their own profile; every
 # other write is refused, the SQL console included (it reads every table) and any route added later.
 VIEWER_ALLOWED = [
     (m, re.compile(p))
     for m, p in (
         ("POST", r"/api/datasets/\d+/analyses"),
         ("POST", r"/api/datasets/\d+/fields/query"),
+        ("POST", r"/api/sources/[a-z0-9-]+/preview"),
         ("PUT", r"/api/users/\d+/avatar"),
         ("DELETE", r"/api/users/\d+/avatar"),
         ("PATCH", r"/api/auth/me"),

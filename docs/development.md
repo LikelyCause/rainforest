@@ -45,6 +45,14 @@ The API tests that need a database run against an empty Postgres. They skip unle
 set. Many use the fixtures in `tests/team_helpers.py`. They include the OIDC sign-in flows in `test_oidc.py` and
 the job tests in `test_jobs.py`. They sign in with the `login_as(client, role)` fixture in `conftest.py`.
 
+The tests for connected datasets also need a MongoDB: they skip unless `RAINFOREST_TEST_MONGO_URL` is set (for
+example `mongodb://127.0.0.1:27017`). Each run seeds a database named `rf_test_<pid>` with the `curated` and `massive`
+collections from `app/sample_mongo.py` and drops it afterwards, so any MongoDB you don't mind a temporary database on
+will do. Most of them also call the API, so they need Postgres too. `make test-mongo` starts a `mongo:7` container and
+sets only the Mongo variable, so whatever also needs Postgres skips; to run everything, export
+`RAINFOREST_TEST_MONGO_URL` (to a MongoDB of your own, for example one started with
+`docker run -d --rm -p 127.0.0.1:27017:27017 mongo:7`) before `make test-db`, which passes it on. CI provides both services in both pipelines.
+
 `test_mlflow.py` logs to a temporary file store, so it needs no MLflow server. Its database-backed tests follow the
 same rule. One more test runs against a real tracking server when `MLFLOW_TEST_URI` is set. CI runs one.
 
@@ -52,6 +60,7 @@ same rule. One more test runs against a real tracking server when `MLFLOW_TEST_U
 |---|---|
 | `make test` | the API suite locally; database-backed tests skip. Needs `pip install -r api/requirements-dev.txt`. |
 | `make test-db` | the full API suite against a throwaway `postgres:16` container. Needs a local Docker daemon. |
+| `make test-mongo` | the API suite against a throwaway `mongo:7` container, without Postgres (tests that need it skip). Needs a local Docker daemon. |
 | `RAINFOREST_TEST_DATABASE_URL=postgresql://user:pw@host:5432/db pytest` (from `api/`) | the full suite against your own empty database |
 | `cd ui && npm test` | the UI tests (Vitest, no browser needed) |
 

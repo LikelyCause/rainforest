@@ -10,7 +10,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 
 from . import auth, db, experiments, gpu, jobs, processing
 from .config import get_settings
-from .routers import baselines, datasets, explore, exports, fields, query, recipes, runs, team, users
+from .routers import baselines, datasets, explore, exports, fields, query, recipes, runs, sources, team, users
 from .routers import derived as derived_router
 from .routers import experiments as experiments_router
 from .semantics import option_catalog
@@ -66,6 +66,7 @@ app.add_middleware(auth.SecurityMiddleware)
 
 app.include_router(auth.router)
 app.include_router(datasets.router)
+app.include_router(sources.router)
 app.include_router(fields.router)
 app.include_router(query.router)
 app.include_router(exports.router)

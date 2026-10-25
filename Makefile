@@ -1,4 +1,4 @@
-.PHONY: up up-gpu up-keycloak gpu-check down logs ps train models mlflow-backfill test test-db lint format psql sample-csv clean
+.PHONY: up up-gpu up-keycloak gpu-check down logs ps train models mlflow-backfill test test-db test-mongo lint format psql sample-csv clean
 
 # Tagged on MLflow runs (baked into the API image).
 GIT_SHA ?= $(shell git rev-parse HEAD 2>/dev/null)
@@ -78,6 +78,14 @@ test-db:       ## run the full API suite against a throwaway Postgres container
 	trap 'docker rm -f rainforest-testpg >/dev/null' EXIT; \
 	  for i in $$(seq 60); do docker exec rainforest-testpg pg_isready -q && break; sleep 1; done; \
 	  cd api && RAINFOREST_TEST_DATABASE_URL=postgresql://postgres:test@127.0.0.1:$(TEST_PG_PORT)/postgres pytest -q
+
+TEST_MONGO_PORT ?= 27017
+test-mongo:    ## run the API suite against a throwaway MongoDB container (tests that need Postgres skip)
+	@docker rm -f rainforest-testmongo >/dev/null 2>&1 || true
+	docker run -d --rm --name rainforest-testmongo -p 127.0.0.1:$(TEST_MONGO_PORT):27017 mongo:7 >/dev/null
+	trap 'docker rm -f rainforest-testmongo >/dev/null' EXIT; \
+	  for i in $$(seq 60); do docker exec rainforest-testmongo mongosh --quiet --eval "db.adminCommand('ping')" >/dev/null 2>&1 && break; sleep 1; done; \
+	  cd api && RAINFOREST_TEST_MONGO_URL=mongodb://127.0.0.1:$(TEST_MONGO_PORT) pytest -q
 
 # Pinned once, in requirements-dev.txt; CI reads the same line.
 RUFF_VERSION := $(shell sed -n 's/^ruff==//p' api/requirements-dev.txt)
