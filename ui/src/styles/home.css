@@ -142,3 +142,23 @@ a.home-item-main:hover { text-decoration: none; background: var(--surface-hover)
 .home-sample-fields { width: 96px; }
 .home-library { gap: 8px; max-height: 420px; overflow-y: auto; }
 .home-first-side { justify-content: center; gap: 12px; }
+
+/* Connect dialog and the connected badge. */
+.connect-body { max-height: calc(100vh - 200px); overflow-y: auto; padding-right: 4px; gap: var(--space-3); }
+.connect-row { gap: 8px; flex-wrap: nowrap; }
+.connect-collections { border: 0; margin: 0; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.connect-list { display: flex; flex-direction: column; max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.connect-item { padding: 5px var(--space-2); min-width: 0; }
+.connect-item:hover { background: var(--surface-hover); }
+.connect-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connect-pick { padding: var(--space-2) var(--space-3); gap: var(--space-2); display: flex; flex-direction: column; }
+.connect-pick-head { justify-content: space-between; flex-wrap: nowrap; }
+.connect-pick-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 2fr); gap: var(--space-2); }
+.connect-columns { max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.connect-bad { color: var(--bad); font-weight: 400; }
+.connect-match { padding-left: 24px; }
+.home-name > span.home-source, .home-source { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; white-space: normal; }
+.connect-body { padding-bottom: 2px; }
+@media (max-width: 759px) {
+  .connect-pick-fields { grid-template-columns: minmax(0, 1fr); }
+}

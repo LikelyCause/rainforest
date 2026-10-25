@@ -1,11 +1,11 @@
-export type DatasetStatus = "pending" | "ingesting" | "profiling" | "correlating" | "ready" | "failed";
+export type DatasetStatus = "pending" | "ingesting" | "profiling" | "correlating" | "ready" | "refreshing" | "failed";
 export type Phase = "assessing" | "review" | "finalized";
 
 export interface Dataset {
   id: number;
   name: string;
   source_filename: string | null;
-  file_format: "csv" | "parquet" | "generated";
+  file_format: "csv" | "parquet" | "generated" | "mongodb";
   target_columns: string[];
   model_family: string;
   row_count: number | null;
@@ -19,6 +19,10 @@ export interface Dataset {
   updated_at: string;
   profiled_at: string | null;
   raw_table: string | null;
+  /** Where a connected dataset's rows come from (never a connection string); null for an upload or a sample. */
+  source: DatasetSource | null;
+  /** The newest pull of a connected dataset; null without one. */
+  last_pull: PullSummary | null;
   /** The current baseline version (the one being worked, else the latest started) and the phase it is in. */
   baseline: BaselineRef | null;
   /** Per model type with a baseline (Trees first): its latest version and latest finalized version. */
@@ -71,6 +75,92 @@ export interface Dataset {
     metric: string | null;
     value: number | null;
   } | null;
+}
+
+export interface DatasetSource {
+  kind: "mongodb";
+  connection: string;
+  database: string;
+  collections: { name: string; label: string; filter?: string | null; projection?: string | null }[];
+  add_source: boolean;
+  dedupe: boolean;
+  match_on: string[] | null;
+}
+
+export interface PullSummary {
+  id: number;
+  status: "running" | "done" | "failed";
+  started_at: string;
+  finished_at: string | null;
+  rows: number | null;
+  has_drift: boolean;
+}
+
+export interface SourceInfo {
+  name: string;
+  kind: "mongodb";
+}
+
+export interface SourceDatabases {
+  databases: string[] | null;
+  listable: boolean;
+}
+
+export interface SourceCollection {
+  name: string;
+  documents: number;
+}
+
+/** How a flattened column is read: "mixed" becomes text, "json" is an array kept as JSON text. */
+export type FlattenKind = "number" | "text" | "datetime" | "json" | "identifier" | "mixed" | "boolean";
+
+export interface PreviewColumn {
+  name: string;
+  kind: FlattenKind;
+  present_share: number;
+}
+
+export interface PreviewResult {
+  columns: PreviewColumn[];
+  per_source: { name: string; label: string; documents: number; sampled: number; columns: number }[];
+  estimated_rows: number;
+  estimated_cells: number;
+  budget: { max_cells: number; fits: boolean };
+  /** The columns duplicates are compared on, when the server names them. */
+  compared_on?: string[];
+}
+
+export interface CollectionSpec {
+  name: string;
+  label?: string;
+  filter?: string;
+  projection?: string;
+}
+
+export interface ConnectRequest {
+  name: string;
+  source: {
+    connection: string;
+    database: string;
+    collections: CollectionSpec[];
+    add_source: boolean;
+    dedupe: boolean;
+    match_on?: string[];
+  };
+  targets?: string[];
+}
+
+export interface Pull extends PullSummary {
+  per_source: { label: string; documents: number; removed_duplicates: number }[] | null;
+  flatten_notes: {
+    arrays?: string[];
+    mixed?: string[];
+    renamed?: Record<string, string>;
+    compared_on?: string[];
+  } | null;
+  drift: Record<string, unknown> | null;
+  error: string | null;
+  created_by_name: string | null;
 }
 
 /** How the datasets list names a target's task: one of its values, a number, or bands of numbers. */
