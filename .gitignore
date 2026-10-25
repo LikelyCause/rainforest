@@ -11,3 +11,6 @@ ui/dist/
 docs/superpowers/
 # The sample library ships its datasets.
 !api/app/sample_library/data/
+# Core dumps, e.g. from a crashed amd64 container under emulation.
+/core
+/deploy/chart/core
