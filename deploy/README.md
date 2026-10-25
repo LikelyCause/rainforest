@@ -150,6 +150,7 @@ file, with the passwords in `secrets.values` (the chart creates the Secret from 
 | `auth.oidc.issuer`, `clientId`, `leadGroup`, `memberGroup` | your provider, the client registered there for this release (default `rainforest`; teams sharing one provider usually register one each), and this team's groups |
 | `mlflow.experimentPrefix` | nothing, usually: empty, it is the release's namespace, which already differs per team. Set it only to choose another name unique among the releases that share an MLflow server |
 | `secrets.existingSecret` | the Secret you created for this release |
+| `sources.mongodb` | one entry per MongoDB the team's datasets come from (see [MongoDB sources](#mongodb-sources)); empty if none |
 | `ingress.className`, `ingress.tls.secretName` | your controller's class and the TLS Secret (see [Uploads and the ingress controller](#uploads-and-the-ingress-controller)) |
 
 `ingress.tls.secretName` names a Secret the chart does not create: make it yourself or have cert-manager issue it
@@ -313,6 +314,51 @@ upload larger than the controller's limit fails with `413`, and one that outlast
 
 The controller must also set `X-Forwarded-Proto`, which the API reads to mark its session cookie `Secure`; every
 common controller does.
+
+## MongoDB sources
+
+A team whose data lives in MongoDB can create datasets from its collections (*Datasets → Connect*; see
+[Connected datasets](../docs/data-preparation.md#connected-datasets)). The connections are named in the release's
+values, and each connection string lives in a Secret you create, so nobody types one into Rainforest and none sits in
+a values file.
+
+1. **Create a read-only account** on the MongoDB for Rainforest. It needs `read` on the databases it pulls from (and
+   `listDatabases` if you want the dialog to list them; without it people type the database name). Rainforest only
+   reads, but filters and projections are passed to the server as written, so the account's privileges are the limit
+   on what they can do.
+2. **Create one Secret per connection** in the release's namespace, with the connection string under the key `uri`:
+
+   ```bash
+   kubectl -n rainforest-vehicles create secret generic rainforest-vehicles-mongo \
+     --from-literal=uri='mongodb+srv://rainforest_ro:PASSWORD@cluster.example.com/?authSource=admin'
+   ```
+
+   The string is used as given, so TLS, the auth source and replica-set options all go in it. A `;` or `@` in the
+   password, or any other reserved character, must be percent-encoded (`;` as `%3B`, `@` as `%40`, `:` as `%3A`,
+   `/` as `%2F`); `;` also separates connections in `RAINFOREST_MONGO_SOURCES`, so an unencoded one splits the entry.
+3. **List the connections** in the release's values, one entry each:
+
+   ```yaml
+   sources:
+     mongodb:
+       - name: vehicles
+         existingSecret: rainforest-vehicles-mongo
+       - name: archive
+         existingSecret: rainforest-archive-mongo
+   ```
+
+   A name is lowercase letters, digits and dashes, and is what people choose in the dialog. A different key than `uri`
+   goes in `key`. The chart adds `MONGO_URI_VEHICLES` and `MONGO_URI_ARCHIVE` to the API container from the Secrets
+   and sets `RAINFOREST_MONGO_SOURCES` to `vehicles=$(MONGO_URI_VEHICLES);archive=$(MONGO_URI_ARCHIVE)`, so the
+   connection strings never reach the ConfigMap.
+
+The API pod must be able to reach the MongoDB (a NetworkPolicy or firewall rule on your side if the cluster restricts
+egress). A malformed entry stops the API at startup, with a message naming the entry and never the string. A Secret
+you manage is not checksummed into the pod, so after rotating a connection string restart the API:
+`kubectl -n rainforest-vehicles rollout restart deploy/rainforest-api`.
+
+A pull holds the dataset in memory while it assembles it, at roughly 2–3 times its size in memory (about 8 GiB
+for 1.5 million rows of 300 columns); size `api.resources` for the largest dataset the team connects ([Sizing](../docs/deployment.md#sizing)).
 
 ## Upgrading
 

@@ -166,9 +166,51 @@ MLFLOW_BROWSE_URL: {{ include "rainforest.mlflowBrowseUrl" . | quote }}
 MLFLOW_EXPERIMENT_PREFIX: {{ include "rainforest.experimentPrefix" . | quote }}
 {{- end }}
 
-{{/* The variables api-deployment.yaml sets under env:, space-separated. */}}
+{{/*
+The variables api-deployment.yaml sets under env:, space-separated: the fixed ones, RAINFOREST_MONGO_SOURCES and one
+MONGO_URI_<NAME> per source.
+*/}}
 {{- define "rainforest.podEnvNames" -}}
-PGPASSWORD DATABASE_URL READONLY_PASSWORD DATA_DIR RAINFOREST_SESSION_SECRET NVIDIA_DRIVER_CAPABILITIES RAINFOREST_OIDC_CLIENT_SECRET MLFLOW_TRACKING_USERNAME MLFLOW_TRACKING_PASSWORD MLFLOW_TRACKING_TOKEN
+PGPASSWORD DATABASE_URL READONLY_PASSWORD DATA_DIR RAINFOREST_SESSION_SECRET NVIDIA_DRIVER_CAPABILITIES RAINFOREST_OIDC_CLIENT_SECRET MLFLOW_TRACKING_USERNAME MLFLOW_TRACKING_PASSWORD MLFLOW_TRACKING_TOKEN RAINFOREST_MONGO_SOURCES
+{{- range .Values.sources.mongodb }} {{ include "rainforest.mongoUriVar" . }}{{ end }}
+{{- end }}
+
+{{/* The environment variable that holds a source's URI; fails the render for a name the API would not accept. */}}
+{{- define "rainforest.mongoUriVar" -}}
+{{- $name := toString (default "" .name) }}
+{{- if not (regexMatch "^[a-z0-9-]+$" $name) }}
+{{- fail (printf "sources.mongodb: the name %q is not a slug; use lowercase letters, digits and dashes" $name) }}
+{{- end }}
+{{- printf "MONGO_URI_%s" (upper (replace "-" "_" $name)) }}
+{{- end }}
+
+{{/*
+The api container's env entries for the MongoDB sources. Kubernetes expands $(VAR) in a later entry's value from the
+earlier ones, so RAINFOREST_MONGO_SOURCES composes the URIs without them landing in the ConfigMap or the manifest.
+*/}}
+{{- define "rainforest.mongoEnv" -}}
+{{- $seen := dict }}
+{{- $parts := list }}
+{{- range .Values.sources.mongodb }}
+{{- $var := include "rainforest.mongoUriVar" . }}
+{{- if hasKey $seen .name }}
+{{- fail (printf "sources.mongodb: the name %q appears twice" .name) }}
+{{- end }}
+{{- $_ := set $seen .name true }}
+{{- if not .existingSecret }}
+{{- fail (printf "sources.mongodb: %q needs existingSecret, the Secret holding its URI" .name) }}
+{{- end }}
+{{- $parts = append $parts (printf "%s=$(%s)" .name $var) }}
+- name: {{ $var }}
+  valueFrom:
+    secretKeyRef:
+      name: {{ .existingSecret | quote }}
+      key: {{ default "uri" .key | quote }}
+{{- end }}
+{{- if $parts }}
+- name: RAINFOREST_MONGO_SOURCES
+  value: {{ join ";" $parts | quote }}
+{{- end }}
 {{- end }}
 
 {{/*

@@ -177,7 +177,37 @@ services:
       retries: 30
       start_period: 30s
 
+  # A MongoDB with two sample collections to try Datasets > Connect, in the mongo profile (COMPOSE_PROFILES=mongo or
+  # make up-mongo). The api reaches it as the connection "dev" once RAINFOREST_MONGO_SOURCES names it.
+  mongo:
+    image: mongo:7
+    profiles: [mongo]
+    restart: unless-stopped
+    volumes:
+      - mongodata:/data/db
+    ports:
+      - "127.0.0.1:${MONGO_PORT:-27017}:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Writes rf_dev.curated and rf_dev.massive once; a later start leaves the database as it is.
+  mongo-seed:
+    build:
+      context: ./api
+      args:
+        EXTRA_PIP: ${API_EXTRA_PIP:-}
+        GIT_SHA: ${GIT_SHA:-}
+    profiles: [mongo]
+    depends_on:
+      mongo:
+        condition: service_healthy
+    command: ["python", "-m", "app.sample_mongo", "mongodb://mongo:27017", "rf_dev", "--if-empty"]
+
 volumes:
   pgdata:
   appdata:
   mlartifacts:
+  mongodata:

@@ -54,6 +54,13 @@ ui:
   image:
     repository: registry.gitlab.example.com/platform/rainforest/ui
 
+# Datasets can be created from MongoDB collections. Each URI sits under the key `uri` of a Secret in this namespace, so
+# none is in this file (deploy/README.md, MongoDB sources). The name is lowercase letters, digits and dashes.
+# sources:
+#   mongodb:
+#     - name: vehicles
+#       existingSecret: rainforest-vehicles-mongo
+
 persistence:
   data:
     size: 500Gi

@@ -48,7 +48,8 @@ The screenshots below use the real datasets that ship with Rainforest.
 
 Upload a CSV or Parquet file, or add one of the sample datasets. Rainforest loads it into Postgres, profiles every
 column and suggests a decision for each field. The *Datasets* page shows where each dataset stands and what is waiting
-on you.
+on you. A team whose data is in MongoDB can instead create a dataset from its collections with *Connect ▾* and pull
+again later (see [Connected datasets](docs/data-preparation.md#connected-datasets)).
 
 ![The Datasets page: cards for the work waiting on you, then every dataset with its stage, targets, assessment progress and best model](docs/images/datasets.png)
 

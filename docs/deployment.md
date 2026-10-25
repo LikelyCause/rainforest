@@ -21,13 +21,15 @@ has every setting below, most in its commented *team deployment* block.
 6. **Optional: the reference Keycloak**, for trying OIDC. Add `COMPOSE_PROFILES=keycloak`, set `KEYCLOAK_URL` and
    `RAINFOREST_URL` to the URLs browsers use, and point the OIDC settings at it. See
    [Reference Keycloak](#reference-keycloak-development-only).
-7. Run `make up`.
+7. **Optional: MongoDB sources.** Set `RAINFOREST_MONGO_SOURCES` to the connections people create datasets from
+   (`name=uri;name=uri`), with a read-only account. See [MongoDB sources](#mongodb-sources).
+8. Run `make up`.
 
 Any combination works, Keycloak with the GPU image included. Every later `make up` keeps it.
 
 ### Trying an option for one run
 
-`make up-keycloak` and `make up-gpu` try an option without editing `.env`. Each starts the stack as `.env` describes,
+`make up-keycloak`, `make up-gpu` and `make up-mongo` try an option without editing `.env`. Each starts the stack as `.env` describes,
 plus one option, for that run only. Each prints what to add to `.env` to keep it. The next `make up` starts the stack
 as `.env` describes.
 
@@ -35,6 +37,7 @@ as `.env` describes.
 |---|---|
 | `make up-gpu` | the GPU image |
 | `make up-keycloak` | the Keycloak profile, plus the reference Keycloak's sign-in settings for each one `.env` leaves empty (none when `.env` names its own issuer) |
+| `make up-mongo` | the mongo profile: a `mongo:7` with the sample database `rf_dev`, and the connection `dev=mongodb://mongo:27017` added to `RAINFOREST_MONGO_SOURCES` (the sources `.env` already names stay) |
 
 `make up-keycloak` stops with an error when `.env` sets `RAINFOREST_AUTH_MODE` to something other than `oidc`.
 
@@ -45,6 +48,26 @@ Helm chart in `deploy/chart/rainforest`: one release per team, each with its own
 sign-in groups. It sets the same settings as `.env`, listed in [Configuration](configuration.md), from chart values.
 The operator's guide, [deploy/README.md](../deploy/README.md), covers installing, MLflow, an external Postgres, GPU
 nodes, upgrades and backups on Kubernetes.
+
+## MongoDB sources
+
+Datasets can be created from MongoDB collections ([Connected datasets](data-preparation.md#connected-datasets)). The
+connections are named in `RAINFOREST_MONGO_SOURCES`, `name=uri;name=uri` with names of lowercase letters, digits and
+dashes; the *Connect* menu appears when it is set. The URI is used as given, so TLS, the auth source and replica-set
+options go in it, and a `;` or `@` in a password must be percent-encoded (`%3B`, `%40`). Use an account that can only
+read: filters and projections reach the server as written. The API container must be able to reach the server.
+
+The `mongo` profile (`COMPOSE_PROFILES=mongo`, or `make up-mongo` for one run) runs a `mongo:7` that keeps its data in
+the `mongodata` volume and is published on `127.0.0.1:${MONGO_PORT:-27017}`, and a one-shot `mongo-seed` that writes the
+sample collections `curated` (300 documents) and `massive` (500, with a deeper key some documents have, a column of
+mixed types and 50 rows that repeat `curated` ones) into the database `rf_dev` the first time. A later start leaves the
+database as it is. Point `RAINFOREST_MONGO_SOURCES` at it as `dev=mongodb://mongo:27017`; `make up-mongo` does that
+for its run and prints what to add to `.env` to keep it. `make down` stops it with the rest and `make clean` deletes the
+volume.
+
+A pull holds the combined dataset in memory, roughly 2–3 times its in-memory size ([Size](data-preparation.md#size)),
+so give the API enough RAM for the largest dataset you connect. On Kubernetes the connections are chart values, each
+with its own Secret ([deploy/README.md](../deploy/README.md#mongodb-sources)).
 
 ## Sign-in
 
@@ -229,6 +252,7 @@ These figures come from the code's defaults and limits. Measure your own data be
 | RAM | Postgres, as data grows | up to `shared_buffers=512MB` (set in `docker-compose.yml`) plus working memory |
 | RAM | an export | peaks at a few times `EXPORT_CHUNK_MB` (256 MB) and `EXPORT_FIT_MB` (512 MB). A 300k-row export peaks at about 1.3–2 GB. |
 | RAM | a generated sample at the `SAMPLE_MAX_CELLS` cap (60M cells) | about 2 GB peak |
+| RAM | a pull from MongoDB, while it assembles the dataset | roughly 2–3× the dataset's in-memory size; about 8 GiB for 1.5M rows × 300 columns |
 | CPU | a background job | `cpu_count // JOB_SLOTS` threads. With the default `JOB_SLOTS=1`, one job uses every core. |
 
 So plan for at least 6 GB of RAM free for the stack: about 2.3 GB at rest, plus one job peaking at about 2 GB, plus

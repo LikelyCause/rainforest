@@ -86,6 +86,9 @@ spec:
                   name: {{ include "rainforest.secretName" . }}
                   key: sessionSecret
                   optional: true
+            {{- with include "rainforest.mongoEnv" . | trim }}
+            {{- . | nindent 12 }}
+            {{- end }}
             {{- if .Values.api.gpu.enabled }}
             - name: NVIDIA_DRIVER_CAPABILITIES
               value: compute,utility

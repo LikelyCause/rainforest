@@ -46,6 +46,22 @@
         }
       }
     },
+    "sources": {
+      "type": "object",
+      "properties": {
+        "mongodb": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+              "existingSecret": { "type": "string" },
+              "key": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
     "networkPolicy": {
       "type": "object",
       "properties": {

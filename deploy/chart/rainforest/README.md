@@ -134,7 +134,7 @@ GPU training on the CUDA build of the API. Which driver each tag needs is in
 Settings by their `.env.example` names; the defaults match `api/app/config.py`. Each key becomes an environment
 variable of the same name, and any `.env.example` setting the chart doesn't already set from another value can be
 added here. A key the chart sets itself, such as `LOG_LEVEL` (`api.logLevel`), `READONLY_ROLE`
-(`postgresql.readonlyRole`) or `DATABASE_URL`, fails the render with a message naming it.
+(`postgresql.readonlyRole`), `DATABASE_URL` or `RAINFOREST_MONGO_SOURCES` (`sources.mongodb`), fails the render with a message naming it.
 
 | Key | Default |
 |---|---|
@@ -145,12 +145,30 @@ added here. A key the chart sets itself, such as `LOG_LEVEL` (`api.logLevel`), `
 | `api.tuning.EXPORT_CHUNK_MB` | `256` |
 | `api.tuning.EXPORT_FIT_MB` | `512` |
 | `api.tuning.SAMPLE_MAX_CELLS` | `60000000` |
+| `api.tuning.SOURCE_MAX_CELLS` | `600000000` |
+| `api.tuning.SOURCE_PULL_TIMEOUT_S` | `3600` |
 | `api.tuning.DB_POOL_MAX` | `10` |
 | `api.tuning.SQL_TIMEOUT_MS` | `15000` |
 | `api.tuning.SQL_MAX_ROWS` | `2000` |
 | `api.tuning.SQL_POOL_MAX` | `4` |
 
 [Configuration](../../../docs/configuration.md) says what each one does.
+
+## sources
+
+Named MongoDB connections for datasets created from collections (*Datasets → Connect*). Empty, the *Connect* menu is
+hidden. [Connected datasets](../../../docs/data-preparation.md#connected-datasets) explains the feature and
+[MongoDB sources](../../README.md#mongodb-sources) how to set up the Secrets.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `sources.mongodb` | `[]` | A list of connections, each `{name, existingSecret, key}`. `name` is a slug of lowercase letters, digits and dashes (`vehicles`, `archive-2`); a name that isn't one, or is listed twice, fails the render. `existingSecret` is a Secret you manage in the release's namespace; it is required. `key` is the key of that Secret that holds the connection string; default `uri`. |
+
+Each source adds the API container an environment variable `MONGO_URI_<NAME>` (the name in capitals, dashes as
+underscores) read from its Secret, and `RAINFOREST_MONGO_SOURCES` is composed from them as
+`vehicles=$(MONGO_URI_VEHICLES);archive=$(MONGO_URI_ARCHIVE)`, which Kubernetes expands when it starts the container.
+The connection string therefore never appears in the ConfigMap, the manifest or a values file. The chart cannot see a
+Secret you manage, so after changing one, restart the API Deployment (`<fullname>-api`).
 
 ## ui
 
