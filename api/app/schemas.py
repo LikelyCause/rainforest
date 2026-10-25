@@ -291,3 +291,23 @@ class SourceCollectionIn(BaseModel):
 class SourcePreviewIn(BaseModel):
     database: str = Field(min_length=1, max_length=255)
     collections: list[SourceCollectionIn] = Field(min_length=1, max_length=50)
+
+
+class ConnectCollectionIn(SourceCollectionIn):
+    label: str | None = Field(None, max_length=255, description="The `source` column's value; default the name")
+
+
+class ConnectSourceIn(BaseModel):
+    connection: str = Field(min_length=1, max_length=100)
+    database: str = Field(min_length=1, max_length=255)
+    collections: list[ConnectCollectionIn] = Field(min_length=1, max_length=50)
+    add_source: bool | None = Field(None, description="Default: on with several collections, else off")
+    dedupe: bool | None = Field(None, description="Default: on with several collections, else off")
+    match_on: list[str] | None = Field(None, max_length=500, description="Columns that decide what a duplicate is")
+
+
+class ConnectRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    source: ConnectSourceIn
+    targets: list[str] = Field(default_factory=list, max_length=50)
+    recipe_id: int | None = Field(None, description="Start from this finalized recipe once processed (leads only)")

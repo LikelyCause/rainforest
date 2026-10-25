@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import uuid
@@ -16,16 +17,19 @@ from ..assessment import source_for
 from ..auth import CurrentUser, LeadUser
 from ..config import get_settings
 from ..correlations import target_associations
-from ..db import connection, execute, fetch_all, fetch_one
+from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..modeling.registry import MODELS
 from ..processing import _Status, delete_dataset_files, process_dataset, upsert_correlations
 from ..profiling import corr_vector, sample_indices
 from ..sample_data import generate
 from ..sample_library import LIBRARY
 from ..sample_library import path_of as library_path
-from ..schemas import DatasetPatch, SampleRequest
+from ..schemas import ConnectRequest, DatasetPatch, SampleRequest
 from ..semantics import NUMERIC
+from ..sources import SourceError
+from ..sources.pull import RANK, run_connect
 from .fields import _sync_targets, has_screen_fields, screen_pairs, screen_targets, set_targets
+from .sources import _source, collection_specs
 
 log = logging.getLogger(__name__)
 CORRELATED_TYPES = NUMERIC | {"datetime", "categorical", "binary"}
@@ -37,6 +41,11 @@ DATASET_COLS = """id, name, source_filename, file_format, target_columns, model_
 SELECT_DATASET = (
     ", ".join("d." + c.strip() for c in DATASET_COLS.split(","))
     + ", rc.id AS recipe_id, rc.version AS recipe_version, rc.phase"
+    # A connected dataset's source and newest pull, as JSON for `_with_source` to shape; both null for an upload.
+    + """, (SELECT to_jsonb(s) FROM meta.dataset_sources s WHERE s.dataset_id = d.id) AS source,
+       (SELECT jsonb_build_object('id', p.id, 'status', p.status, 'started_at', p.started_at,
+                                  'finished_at', p.finished_at, 'rows', p.rows, 'has_drift', p.drift IS NOT NULL)
+          FROM meta.dataset_pulls p WHERE p.dataset_id = d.id ORDER BY p.id DESC LIMIT 1) AS last_pull"""
 )
 
 
@@ -45,6 +54,35 @@ def _targets(raw: str | None) -> list[str]:
     if raw is None:
         return []
     return list(dict.fromkeys(t.strip() for t in raw.split(",") if t.strip()))
+
+
+def _with_source(row: dict) -> dict:
+    """`source` as the API shows it: the stored row without who made it, and each collection's filter and projection as
+    the JSON text the dialog edits."""
+    src = row.get("source")
+    if src is not None:
+
+        def text(doc: dict | None) -> str | None:
+            return None if doc is None else json.dumps(doc)
+
+        row["source"] = {
+            "kind": src["kind"],
+            "connection": src["connection"],
+            "database": src["database"],
+            "collections": [
+                {
+                    "name": c["name"],
+                    "label": c.get("label") or c["name"],
+                    "filter": text(c.get("filter")),
+                    "projection": text(c.get("projection")),
+                }
+                for c in src["collections"]
+            ],
+            "add_source": src["add_source"],
+            "dedupe": src["dedupe"],
+            "match_on": src["match_on"],
+        }
+    return row
 
 
 def _create(
@@ -202,6 +240,7 @@ def best_by_dataset(ids: list[int], visible: str) -> dict[int, dict]:
 
 def _with_latest(row: dict) -> dict:
     out = {k: v for k, v in row.items() if not k.startswith(("e_", "r_", "my_")) and k != "assigned"}
+    _with_source(out)
     # Who assesses the current version and how many have submitted (counts only; the team sees these anyway).
     out["assessors"] = (
         None
@@ -289,6 +328,65 @@ def upload(
     return ds
 
 
+@router.post("/connect", status_code=202)
+def connect(body: ConnectRequest, user: CurrentUser) -> dict:
+    """Create a dataset from collections of a configured MongoDB connection. Everything that can be checked without
+    a pull is checked before a dataset exists: a refused request leaves nothing behind."""
+    src = body.source
+    source = _source(src.connection)
+    labels = [c.label.strip() if c.label and c.label.strip() else c.name for c in src.collections]
+    for label in labels:
+        if label == RANK:
+            raise HTTPException(422, f"Collection label is reserved: {label}")
+        if labels.count(label) > 1:
+            raise HTTPException(422, f"Collection labels must be unique: {label}")
+    specs = collection_specs(src.collections)
+    # A label is how the pull files its chunks and what the `source` column holds.
+    for spec, label in zip(specs, labels):
+        spec.label = label
+    several = len(specs) > 1
+    if several and src.add_source is False:
+        raise HTTPException(422, "Several collections need the source column to tell their rows apart")
+    add_source = several if src.add_source is None else src.add_source
+    dedupe = several if src.dedupe is None else src.dedupe
+    if body.recipe_id is not None:
+        if user["role"] != "lead":
+            raise HTTPException(403, "Only a lead can start a dataset from a recipe.")
+        with connection() as conn:
+            reuse.check_source(conn, body.recipe_id)
+    try:
+        estimate = source.preview(src.database, specs)
+    except SourceError as exc:
+        raise HTTPException(502, str(exc)) from None
+    max_cells = get_settings().source_max_cells
+    if estimate.estimated_cells > max_cells:
+        raise HTTPException(422, {"message": "Too large", "estimated": estimate.estimated_cells, "max": max_cells})
+
+    def stored(text: str | None) -> dict | None:
+        # Already validated as a document; kept as the extended JSON the client sent, which `specs_from` re-parses.
+        return json.loads(text) if text and text.strip() else None
+
+    collections = [
+        {"name": c.name, "label": label, "filter": stored(c.filter), "projection": stored(c.projection)}
+        for c, label in zip(src.collections, labels)
+    ]
+    match_on = list(dict.fromkeys(m.strip() for m in src.match_on or [] if m.strip())) or None
+    targets = list(dict.fromkeys(t.strip() for t in body.targets if t.strip()))
+    ds = _create(body.name, None, "mongodb", targets, user["id"], None, body.recipe_id)
+    try:
+        execute(
+            """INSERT INTO meta.dataset_sources
+                   (dataset_id, kind, connection, database, collections, add_source, dedupe, match_on, created_by)
+               VALUES (%s, 'mongodb', %s, %s, %s, %s, %s, %s, %s)""",
+            (ds["id"], src.connection, src.database, jsonb(collections), add_source, dedupe, match_on, user["id"]),
+        )
+    except Exception:
+        execute("DELETE FROM meta.datasets WHERE id = %s", (ds["id"],))  # a dataset with no source never pulls
+        raise
+    jobs.submit(run_connect, ds["id"])
+    return get_dataset(ds["id"])
+
+
 @router.get("/sample/limits")
 def sample_limits() -> dict:
     return {"max_cells": get_settings().sample_max_cells}
@@ -374,7 +472,20 @@ def get_dataset(dataset_id: int) -> dict:
     )
     if ds is None:
         raise HTTPException(404, "Dataset not found")
-    return with_baselines([ds])[0]
+    return with_baselines([_with_source(ds)])[0]
+
+
+@router.get("/{dataset_id}/pulls")
+def list_pulls(dataset_id: int, user: CurrentUser) -> list[dict]:
+    if fetch_one("SELECT 1 FROM meta.datasets WHERE id = %s", (dataset_id,)) is None:
+        raise HTTPException(404, "Dataset not found")
+    return fetch_all(
+        """SELECT p.id, p.status, p.started_at, p.finished_at, p.rows, p.per_source, p.flatten_notes, p.drift,
+                  p.error, u.name AS created_by_name
+             FROM meta.dataset_pulls p LEFT JOIN meta.users u ON u.id = p.created_by
+            WHERE p.dataset_id = %s ORDER BY p.id DESC""",
+        (dataset_id,),
+    )
 
 
 def with_baselines(rows: list[dict]) -> list[dict]:
