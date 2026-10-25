@@ -65,7 +65,8 @@ Secret in each team's namespace and list it under `imagePullSecrets` in that tea
 1. Copy a team directory, `cp -r teams/vehicles teams/<name>`, and edit both files. In `config.yaml`, set the chart
    version. In `values.yaml`, set `hostname`, the identity provider and groups, the database, MLflow, resources and
    `secrets.existingSecret` (the convention is `rainforest-<name>`). When `api.gpu.enabled` is true, `api.gpu.imageTag`
-   is `<version>-cuda13` (or `-cu12`) for the version in `config.yaml`.
+   is the release tag as pushed plus `-cuda13` (or `-cu12`): `v0.1.0-cuda13` for the tag `v0.1.0`. It includes the `v`
+   when the tag has one, whereas the chart version in `config.yaml` never does.
 2. Create the namespace and the Secret named in `secrets.existingSecret`, before the first sync. The keys are the ones
    `NOTES.txt` lists for the team's settings; for the OIDC and external-MLflow team above:
 
@@ -86,12 +87,22 @@ Secret in each team's namespace and list it under `imagePullSecrets` in that tea
 ## Rolling a team forward
 
 Change `chart.version` in that team's `config.yaml` (and `api.gpu.imageTag` in its `values.yaml`, which carries the
-version itself), commit, push and sync the team's Application. The chart's default image tags are its `appVersion`,
+release tag as pushed, `v` included), commit, push and sync the team's Application. The chart's default image tags are its `appVersion`,
 the release tag, so the images move with the chart. The other teams stay where they are, so the first team can run a
 release before the rest.
 
 To roll every team forward, make the same change in each team's `config.yaml` and `values.yaml` in one commit.
 Review the diff Argo shows before syncing: a chart upgrade can include template changes as well as new images.
+
+## Removing a team
+
+Deleting `teams/<name>/` deletes the Application but not the workload: the template sets no resources finalizer, so
+the release keeps running in its namespace. To remove the workload as well, delete the directory and push, then
+delete the namespace (`kubectl delete namespace rainforest-<name>`) or the leftover objects by hand. The data and
+MLflow volumes go with them (see below), so take the backups first. Deleting the Application with
+`argocd app delete rainforest-<name> --cascade` also removes the resources, but the ApplicationSet recreates the
+Application while the directory exists, so remove the directory first. The Secret created by hand and an external
+database are not touched.
 
 ## Automated sync and pruning
 

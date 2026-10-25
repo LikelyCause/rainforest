@@ -1,5 +1,6 @@
 # Read by the ApplicationSet's Git file generator. `chart.version` is the Rainforest release this team runs: the
-# release tag without its leading "v". Change it to roll this team forward or back.
+# release tag without its leading "v" (tag v0.1.0 is chart version 0.1.0). The image tags are the tag as pushed, "v"
+# included; see api.gpu.imageTag in values.yaml. Change this to roll this team forward or back.
 chart:
   # The project's Helm package registry. A Helm repository URL (not OCI); no trailing slash.
   repo: https://gitlab.example.com/api/v4/projects/42/packages/helm/stable

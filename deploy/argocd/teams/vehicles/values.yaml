@@ -42,8 +42,9 @@ api:
       memory: 16Gi
   gpu:
     enabled: true
-    # The CUDA build of the version in config.yaml: <version>-cuda13 (or -cu12). Change it together with config.yaml.
-    imageTag: 0.1.0-cuda13
+    # The CUDA build of the release: the tag as pushed plus -cuda13 (or -cu12), so v0.1.0-cuda13 for the tag v0.1.0.
+    # Unlike config.yaml's chart version, it keeps the leading "v". Change it together with config.yaml.
+    imageTag: v0.1.0-cuda13
     tolerations:
       - key: nvidia.com/gpu
         operator: Exists
