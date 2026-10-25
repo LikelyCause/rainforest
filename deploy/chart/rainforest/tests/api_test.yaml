@@ -185,6 +185,24 @@ tests:
       - notExists:
           path: spec.storageClassName
 
+  - it: keeps the data PVC through helm uninstall and Argo CD prune by default
+    template: api-pvc.yaml
+    asserts:
+      - equal:
+          path: metadata.annotations["helm.sh/resource-policy"]
+          value: keep
+      - equal:
+          path: metadata.annotations["argocd.argoproj.io/sync-options"]
+          value: Delete=false,Prune=false
+
+  - it: lets the data PVC go with the release when persistence.keep is false
+    template: api-pvc.yaml
+    set:
+      persistence.keep: false
+    asserts:
+      - notExists:
+          path: metadata.annotations
+
   - it: exposes port 8000
     template: api-service.yaml
     asserts:

@@ -38,9 +38,8 @@ spec:
         namespace: "rainforest-{{.path.basename}}"
       syncPolicy:
         # Manual sync by default: a sync shows a diff and an operator applies it. Uncomment `automated` to let a
-        # team's commits apply themselves. `prune: true` also deletes whatever a commit removes, and deleting the
-        # release deletes the data and MLflow volumes (the Rainforest deploy/README.md, "Uninstalling"); enable it
-        # deliberately.
+        # team's commits apply themselves. `prune: true` also deletes whatever a commit removes; the data and MLflow
+        # volumes are exempt by the chart's persistence.keep (the Rainforest deploy/README.md, "Uninstalling").
         # automated:
         #   prune: true
         #   selfHeal: true

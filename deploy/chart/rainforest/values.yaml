@@ -148,9 +148,16 @@ ui:
   resources: {}
   nodeSelector: {}
   tolerations: []
-  # Unset, the image uses the first nameserver in resolv.conf (the cluster DNS).
+
+networkPolicy:
+  # NetworkPolicies that admit only the api and ui pods to the in-chart MLflow, and only the api and mlflow pods to the
+  # in-chart Postgres. They take effect only on a CNI that enforces NetworkPolicy.
+  enabled: true
 
 persistence:
+  # Annotates the data and MLflow claims so helm uninstall and an Argo CD delete or prune leave them in place; delete
+  # them by hand to reclaim the space. The in-chart Postgres volume is kept either way (a StatefulSet's claims are).
+  keep: true
   data:
     # Datasets, exports and models; one ReadWriteOnce volume owned by the API pod.
     size: 50Gi
@@ -176,9 +183,10 @@ secrets:
     mlflowTrackingToken: ""
 
 ingress:
-  # Set to your controller's class. "nginx" also lifts the request-body limit that blocks large uploads; for other
-  # controllers set the equivalent under annotations.
+  # Set to your controller's class. "nginx" also sets the ingress-nginx annotations large uploads need (no body limit,
+  # no request buffering, 600 s read and send timeouts); for other controllers set the equivalents under annotations.
   className: ""
+  # An annotation of the same name as one the chart sets wins.
   annotations: {}
   #  cert-manager.io/cluster-issuer: letsencrypt
   tls:

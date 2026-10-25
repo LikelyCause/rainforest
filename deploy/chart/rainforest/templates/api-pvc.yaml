@@ -4,6 +4,10 @@ metadata:
   name: {{ include "rainforest.fullname" . }}-data
   labels:
     {{- include "rainforest.labels" (dict "root" . "component" "api") | nindent 4 }}
+  {{- if .Values.persistence.keep }}
+  annotations:
+    {{- include "rainforest.keepAnnotations" . | nindent 4 }}
+  {{- end }}
 spec:
   accessModes:
     - ReadWriteOnce

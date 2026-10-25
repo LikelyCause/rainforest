@@ -106,16 +106,16 @@ If the workload should go too, delete its namespace:
 kubectl delete namespace rainforest-<name>
 ```
 
-That deletes the release's objects, the Secret created by hand and every PersistentVolumeClaim in the namespace (the
-in-chart Postgres volume's included, which `helm uninstall` would keep). What happens to the data behind a claim
+That deletes the release's objects, the Secret created by hand and every PersistentVolumeClaim in the namespace,
+including the ones the chart's annotations keep through `helm uninstall` and an Argo CD prune. What happens to the data behind a claim
 follows the storage class's reclaim policy (see "Uninstalling" in the Rainforest repository's `deploy/README.md`), so
 take the backups first. An external database is not touched.
 
 ## Automated sync and pruning
 
 The Applications sync by hand. `applicationset.yaml` carries the `automated` policy (`prune: true`, `selfHeal: true`)
-commented out, and a team that wants commits applied without a click enables it there. Enable `prune` knowingly:
-deleting an Application with its resources, or pruning the release's objects, deletes the data and MLflow volumes with
-them, and the data behind a volume follows the storage class's reclaim policy. The Rainforest repository's
-`deploy/README.md`, section "Uninstalling", lists which volumes survive. Take backups or set `Retain` on the volumes
-before enabling it for a team that holds data.
+commented out, and a team that wants commits applied without a click enables it there. The data and MLflow claims
+carry `argocd.argoproj.io/sync-options: Delete=false,Prune=false` (the chart's `persistence.keep`, on by default), so
+neither a prune nor deleting an Application with its resources removes them, and the in-chart Postgres volume belongs
+to its StatefulSet, which never deletes it. Every other object of the release is pruned as usual. The Rainforest
+repository's `deploy/README.md`, section "Uninstalling", lists the volumes and how to delete them by hand.

@@ -30,6 +30,18 @@
         }
       }
     },
+    "networkPolicy": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "properties": {
+        "keep": { "type": "boolean" }
+      }
+    },
     "secrets": {
       "type": "object",
       "properties": {

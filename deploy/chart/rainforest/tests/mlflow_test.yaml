@@ -328,6 +328,24 @@ tests:
           path: spec.selector["app.kubernetes.io/component"]
           value: mlflow
 
+  - it: keeps the artifact PVC through helm uninstall and Argo CD prune by default
+    template: mlflow-pvc.yaml
+    asserts:
+      - equal:
+          path: metadata.annotations["helm.sh/resource-policy"]
+          value: keep
+      - equal:
+          path: metadata.annotations["argocd.argoproj.io/sync-options"]
+          value: Delete=false,Prune=false
+
+  - it: lets the artifact PVC go with the release when persistence.keep is false
+    template: mlflow-pvc.yaml
+    set:
+      persistence.keep: false
+    asserts:
+      - notExists:
+          path: metadata.annotations
+
   # external
 
   - it: external renders no MLflow resources

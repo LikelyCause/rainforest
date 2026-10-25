@@ -160,10 +160,17 @@ variable of the same name, and any other `.env.example` setting can be added her
 | `ui.nodeSelector` | `{}` | |
 | `ui.tolerations` | `[]` | |
 
+## networkPolicy
+
+| Key | Default | Meaning |
+|---|---|---|
+| `networkPolicy.enabled` | `true` | NetworkPolicies that admit only the `api` and `ui` pods to the in-chart MLflow (port 5000) and only the `api` and `mlflow` pods to the in-chart Postgres (port 5432). Each renders only when its component is in the release, and takes effect only on a CNI that enforces NetworkPolicy. |
+
 ## persistence
 
 | Key | Default | Meaning |
 |---|---|---|
+| `persistence.keep` | `true` | Annotates the data and MLflow claims with `helm.sh/resource-policy: keep` and `argocd.argoproj.io/sync-options: Delete=false,Prune=false`, so `helm uninstall` and an Argo CD delete or prune leave them in place. `false`: they go with the release. The in-chart Postgres volume is kept either way. |
 | `persistence.data.size` | `50Gi` | Datasets, exports and models; one ReadWriteOnce volume owned by the API pod, mounted at `/data`. |
 | `persistence.data.storageClass` | `""` | Empty: the cluster's default class. |
 
@@ -189,6 +196,6 @@ Nothing is generated, so every render of the chart is identical. The Postgres pa
 
 | Key | Default | Meaning |
 |---|---|---|
-| `ingress.className` | `""` | Your controller's class. `nginx` also sets the ingress-nginx annotation that lifts the request-body limit, which large uploads need. For any other controller, raise the limit with `ingress.annotations` or the controller's own setting, or uploads over its default size fail with `413`. |
-| `ingress.annotations` | `{}` | Annotations on the Ingress, such as `cert-manager.io/cluster-issuer: letsencrypt`. |
+| `ingress.className` | `""` | Your controller's class. `nginx` also sets the ingress-nginx annotations large uploads need: no request-body limit, no request buffering, and 600-second read and send timeouts. For any other controller, set the equivalents with `ingress.annotations` or the controller's own settings, or uploads over its default size fail with `413`. |
+| `ingress.annotations` | `{}` | Annotations on the Ingress, such as `cert-manager.io/cluster-issuer: letsencrypt`. One with the same name as an annotation the chart sets wins. |
 | `ingress.tls.secretName` | `""` | The name of the TLS Secret. Empty: plain HTTP. Set, it also makes the OIDC redirect URL `https`. The chart doesn't create this Secret. |

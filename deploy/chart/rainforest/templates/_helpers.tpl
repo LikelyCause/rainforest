@@ -131,3 +131,9 @@ is what the API's client sends, and the short Service name covers anything else 
 {{- define "rainforest.scheme" -}}
 {{- if .Values.ingress.tls.secretName }}https{{ else }}http{{ end }}
 {{- end }}
+
+{{/* On the data and MLflow claims: helm uninstall and an Argo CD delete or prune leave them in place. */}}
+{{- define "rainforest.keepAnnotations" -}}
+helm.sh/resource-policy: keep
+argocd.argoproj.io/sync-options: Delete=false,Prune=false
+{{- end }}

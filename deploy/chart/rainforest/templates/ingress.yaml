@@ -1,7 +1,10 @@
 {{- $annotations := dict }}
 {{- if eq .Values.ingress.className "nginx" }}
-{{- /* Uploads of up to 20 GB stream through to the API. */}}
+{{- /* Uploads of up to 20 GB stream through to the API unbuffered, with the UI nginx's own 600 s timeouts. */}}
 {{- $_ := set $annotations "nginx.ingress.kubernetes.io/proxy-body-size" "0" }}
+{{- $_ = set $annotations "nginx.ingress.kubernetes.io/proxy-request-buffering" "off" }}
+{{- $_ = set $annotations "nginx.ingress.kubernetes.io/proxy-read-timeout" "600" }}
+{{- $_ = set $annotations "nginx.ingress.kubernetes.io/proxy-send-timeout" "600" }}
 {{- end }}
 {{- $annotations = merge (deepCopy .Values.ingress.annotations) $annotations }}
 apiVersion: networking.k8s.io/v1

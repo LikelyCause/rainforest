@@ -41,7 +41,7 @@ tests:
       - notExists:
           path: spec.tls
       - notExists:
-          path: metadata.annotations["nginx.ingress.kubernetes.io/proxy-body-size"]
+          path: metadata.annotations
 
   - it: lifts the body-size limit for ingress-nginx
     template: ingress.yaml
@@ -55,7 +55,22 @@ tests:
           path: metadata.annotations["nginx.ingress.kubernetes.io/proxy-body-size"]
           value: "0"
 
-  - it: leaves the body-size limit to the operator for other controllers
+  - it: streams uploads unbuffered with the UI's 600 s timeouts under ingress-nginx
+    template: ingress.yaml
+    set:
+      ingress.className: nginx
+    asserts:
+      - equal:
+          path: metadata.annotations["nginx.ingress.kubernetes.io/proxy-request-buffering"]
+          value: "off"
+      - equal:
+          path: metadata.annotations["nginx.ingress.kubernetes.io/proxy-read-timeout"]
+          value: "600"
+      - equal:
+          path: metadata.annotations["nginx.ingress.kubernetes.io/proxy-send-timeout"]
+          value: "600"
+
+  - it: leaves the body limit, buffering and timeouts to the operator for other controllers
     template: ingress.yaml
     set:
       ingress.className: traefik
@@ -64,7 +79,7 @@ tests:
           path: spec.ingressClassName
           value: traefik
       - notExists:
-          path: metadata.annotations["nginx.ingress.kubernetes.io/proxy-body-size"]
+          path: metadata.annotations
 
   - it: merges ingress.annotations
     template: ingress.yaml
@@ -80,16 +95,23 @@ tests:
           path: metadata.annotations["nginx.ingress.kubernetes.io/proxy-body-size"]
           value: "0"
 
-  - it: lets ingress.annotations override the body-size default
+  - it: lets ingress.annotations override the ingress-nginx defaults
     template: ingress.yaml
     set:
       ingress.className: nginx
       ingress.annotations:
         nginx.ingress.kubernetes.io/proxy-body-size: 30g
+        nginx.ingress.kubernetes.io/proxy-read-timeout: "1800"
     asserts:
       - equal:
           path: metadata.annotations["nginx.ingress.kubernetes.io/proxy-body-size"]
           value: 30g
+      - equal:
+          path: metadata.annotations["nginx.ingress.kubernetes.io/proxy-read-timeout"]
+          value: "1800"
+      - equal:
+          path: metadata.annotations["nginx.ingress.kubernetes.io/proxy-send-timeout"]
+          value: "600"
 
   - it: renders a TLS block when a secret name is set
     template: ingress.yaml

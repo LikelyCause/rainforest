@@ -195,6 +195,11 @@ install that has runs starts a new experiment per dataset; the old experiments s
 With `in-chart`, MLflow keeps its runs in a database on the same Postgres server as Rainforest, named
 `<postgresql database>_mlflow` unless `mlflow.database` says otherwise, and its artifacts on the `mlflow` volume.
 
+The in-chart server has no sign-in of its own, so the chart adds a NetworkPolicy that admits only the release's `api`
+and `ui` pods to it, on port 5000. That isolation holds only on a CNI that enforces NetworkPolicy (Calico and Cilium do;
+flannel alone does not, and some managed clusters need network policy turned on). `networkPolicy.enabled: false` leaves it out,
+together with the Postgres one below.
+
 ## External Postgres
 
 Set `postgresql.enabled: false` and describe the server:
@@ -247,7 +252,9 @@ changing the Secret.
 file's tuning (`postgresql.tuning`). The image reads `POSTGRES_PASSWORD` only when it first initialises an empty
 volume. Changing `postgresPassword` later does not change it in the database: run `ALTER ROLE` there too, or the API can no
 longer connect. When the chart created the Secret, changing it restarts the API and MLflow; with `existingSecret`,
-restart them yourself (see [Upgrading](#upgrading)).
+restart them yourself (see [Upgrading](#upgrading)). A NetworkPolicy admits only the release's `api` and `mlflow` pods
+to the server, on port 5432; like the MLflow one, it holds only on a CNI that enforces NetworkPolicy, and
+`networkPolicy.enabled: false` leaves it out.
 
 ## GPU
 
@@ -283,10 +290,20 @@ is in [GPU](../docs/deployment.md#gpu).
 ## Uploads and the ingress controller
 
 Uploads stream through the controller to the API and can reach 20 GB, which is far above most controllers' default
-request-body limit. With `ingress.className: nginx` the chart sets the ingress-nginx annotation
-`nginx.ingress.kubernetes.io/proxy-body-size: "0"` for you. For any other class it sets nothing: raise the body limit
-yourself, with the annotation or the controller-level setting your controller uses, and put the annotation under
-`ingress.annotations`. Until you do, an upload larger than the controller's limit fails with `413`.
+request-body limit. A controller that buffers the request body first also writes the whole upload to its own disk
+before the API sees a byte, and a slow upload or a long request can outlast its default timeouts. With
+`ingress.className: nginx` the chart sets the ingress-nginx annotations for all three:
+
+| Annotation | Value |
+|---|---|
+| `nginx.ingress.kubernetes.io/proxy-body-size` | `"0"` (no limit) |
+| `nginx.ingress.kubernetes.io/proxy-request-buffering` | `"off"` |
+| `nginx.ingress.kubernetes.io/proxy-read-timeout`, `proxy-send-timeout` | `"600"`, the UI's own nginx timeouts |
+
+An annotation of the same name under `ingress.annotations` wins. For any other class the chart sets nothing: raise the
+body limit, turn off request buffering and allow 600-second reads and writes yourself, with the annotations or the
+controller-level settings your controller uses, and put the annotations under `ingress.annotations`. Until you do, an
+upload larger than the controller's limit fails with `413`, and one that outlasts a timeout fails with `504`.
 
 The controller must also set `X-Forwarded-Proto`, which the API reads to mark its session cookie `Secure`; every
 common controller does.
@@ -341,13 +358,15 @@ both where you keep other secrets.
 
 | Volume | After `helm uninstall` |
 |---|---|
-| `rainforest-data` and `rainforest-mlflow` | **Deleted** with the release. The chart sets no `helm.sh/resource-policy: keep`. Whether the data behind them survives then follows the storage class's reclaim policy: `Delete` (the usual default for dynamically provisioned volumes) removes it, `Retain` keeps the volume for you to reclaim. |
+| `rainforest-data` and `rainforest-mlflow` | **Kept** by default. With `persistence.keep: true` the chart annotates both claims with `helm.sh/resource-policy: keep` and `argocd.argoproj.io/sync-options: Delete=false,Prune=false`. A later install under the same release name and namespace uses them again. |
 | The in-chart Postgres volume (`data-rainforest-postgresql-0`) | **Kept.** StatefulSet volumes are not removed with the StatefulSet. A later install under the same release name and namespace reuses it, with the password it was first created with. |
 
-An Argo CD Application that is deleted with its resources behaves the same way. So before removing a release you want
-the data from, take the [backups](#backups), or check the storage class's reclaim policy and change a volume's with
-`kubectl patch pv <name> -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'`. The Secret you created, the TLS
-Secret and an external database are not touched.
+An Argo CD Application that is deleted with its resources, or a sync that prunes, leaves the same claims in place. To
+reclaim the space, delete the claims by hand once the backups are taken (`kubectl -n rainforest-vehicles delete pvc
+rainforest-data rainforest-mlflow data-rainforest-postgresql-0`); what happens to the data behind them then follows the
+storage class's reclaim policy, `Delete` (the usual default) or `Retain`. With `persistence.keep: false` the data and
+MLflow claims are deleted with the release instead. The Secret you created, the TLS Secret and an external database are
+not touched.
 
 ## Troubleshooting
 
