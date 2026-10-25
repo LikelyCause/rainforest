@@ -7,6 +7,12 @@ templates:
   - api-pvc.yaml
   - api-service.yaml
   - configmap.yaml
+  - secret.yaml
+set:
+  hostname: vehicles.example.com
+  secrets.values.postgresPassword: pg-pass
+  secrets.values.readonlyPassword: ro-pass
+  secrets.values.oidcClientSecret: oidc-secret
 tests:
   - it: runs one replica, recreated on upgrade, as the image's user
     template: api-deployment.yaml
@@ -405,3 +411,35 @@ tests:
       - equal:
           path: data.LOG_LEVEL
           value: info
+
+  - it: refuses an external server without a host
+    template: api-deployment.yaml
+    set:
+      postgresql.enabled: false
+    asserts:
+      - failedTemplate:
+          errorPattern: postgresql.external.host
+
+  - it: refuses external MLflow without an externalUrl
+    template: configmap.yaml
+    set:
+      mlflow.mode: external
+    asserts:
+      - failedTemplate:
+          errorPattern: mlflow.externalUrl
+
+  - it: refuses external MLflow with only a trackingUri
+    template: configmap.yaml
+    set:
+      mlflow.mode: external
+      mlflow.trackingUri: http://mlflow.infra:5000
+    asserts:
+      - failedTemplate:
+          errorPattern: mlflow.externalUrl
+
+  - it: requires a hostname
+    template: configmap.yaml
+    set:
+      hostname: ""
+    asserts:
+      - failedTemplate: {}

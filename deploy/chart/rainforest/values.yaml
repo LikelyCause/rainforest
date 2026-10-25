@@ -1,8 +1,9 @@
 # The defaults are a dev install: pick-mode sign-in (no authentication), Postgres and MLflow inside the release, no
-# TLS. Team installs: see ci/team-values.yaml.
+# TLS; set hostname and the passwords under secrets.values (see ci/dev-values.yaml). Team installs: see
+# ci/team-values.yaml.
 
-# The host name people open Rainforest at. Feeds the Ingress and RAINFOREST_ALLOWED_HOSTS.
-hostname: rainforest.example.com
+# Required: the host name people open Rainforest at. Feeds the Ingress and RAINFOREST_ALLOWED_HOSTS.
+hostname: ""
 
 # Registry credentials for the images below, as for any pod spec: [{name: regcred}].
 imagePullSecrets: []
@@ -112,13 +113,14 @@ persistence:
     storageClass: ""
 
 secrets:
-  # Name of a Secret you manage (keys below); empty: the chart creates one from `values`.
+  # Name of a Secret you manage (keys below). Real installs use this: the Secret is created by your secret tooling,
+  # so no credential sits in a values file. Empty: the chart creates one from `values`, which is for dev and CI only.
   # Keys: sessionSecret (optional), oidcClientSecret (oidc), readonlyPassword, postgresPassword,
   # mlflowTrackingUsername / mlflowTrackingPassword / mlflowTrackingToken (optional, external MLflow).
   existingSecret: ""
-  # Used only when existingSecret is empty. Passwords go into a URL, so keep them URL-safe (letters and digits).
-  # In-chart Postgres: empty passwords are generated on first install and kept on upgrade. External Postgres: required.
-  # An empty sessionSecret makes the API generate one into the data volume.
+  # Used only when existingSecret is empty. postgresPassword and readonlyPassword are required (nothing is generated,
+  # so every render is identical); oidcClientSecret is required under auth.mode oidc. Passwords go into a URL, so
+  # keep them URL-safe (letters and digits). An empty sessionSecret makes the API generate one into the data volume.
   values:
     sessionSecret: ""
     oidcClientSecret: ""

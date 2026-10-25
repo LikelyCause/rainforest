@@ -8,6 +8,11 @@ WARNING: Pick mode lets anyone choose any profile and does not authenticate; swi
 {{- else }}
 Redirect URL to register with the identity provider: {{ include "rainforest.scheme" . }}://{{ .Values.hostname }}/api/auth/oidc/callback
 {{- end }}
+{{- if not .Values.secrets.existingSecret }}
+
+Credentials come from secrets.values in your values file. That is for dev and CI; for a real install create a Secret
+with the keys listed under secrets in values.yaml and set secrets.existingSecret to its name.
+{{- end }}
 {{- if .Values.secrets.existingSecret }}
 
 Credentials come from the Secret "{{ .Values.secrets.existingSecret }}", which must exist in namespace "{{ .Release.Namespace }}" with these keys:

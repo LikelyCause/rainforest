@@ -1,5 +1,5 @@
 # A team install: OIDC sign-in, an external Postgres server and MLflow server, a GPU build of the API.
-# Credentials here are placeholders so the chart renders in CI; real installs use secrets.existingSecret.
+# Credentials live in a Secret the team manages; see the keys in NOTES.txt.
 hostname: vehicles.rainforest.example.com
 
 auth:
@@ -45,10 +45,7 @@ persistence:
     size: 500Gi
 
 secrets:
-  values:
-    oidcClientSecret: ci-placeholder
-    postgresPassword: ci-placeholder
-    readonlyPassword: ci-placeholder
+  existingSecret: rainforest-vehicles
 
 ingress:
   className: nginx

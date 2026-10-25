@@ -12,3 +12,9 @@ mlflow:
 
 ingress:
   className: nginx
+
+# Dev placeholders; real installs set secrets.existingSecret instead (see team-values.yaml).
+secrets:
+  values:
+    postgresPassword: dev-postgres
+    readonlyPassword: dev-readonly

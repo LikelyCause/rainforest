@@ -64,7 +64,7 @@ app.kubernetes.io/managed-by: {{ .root.Release.Service }}
 
 {{/* Database coordinates, shared by the API and (later) the in-chart MLflow server. */}}
 {{- define "rainforest.databaseHost" -}}
-{{- if .Values.postgresql.enabled }}{{ include "rainforest.fullname" . }}-postgresql{{ else }}{{ .Values.postgresql.external.host }}{{ end }}
+{{- if .Values.postgresql.enabled }}{{ include "rainforest.fullname" . }}-postgresql{{ else }}{{ required "postgresql.external.host is required when postgresql.enabled is false" .Values.postgresql.external.host }}{{ end }}
 {{- end }}
 
 {{- define "rainforest.databasePort" -}}
@@ -92,13 +92,17 @@ app.kubernetes.io/managed-by: {{ .root.Release.Service }}
 {{/* Where the API logs experiments. Empty turns logging off. */}}
 {{- define "rainforest.mlflowTrackingUri" -}}
 {{- if eq .Values.mlflow.mode "in-chart" }}{{ include "rainforest.mlflowUpstream" . }}/mlflow
-{{- else if eq .Values.mlflow.mode "external" }}{{ default .Values.mlflow.externalUrl .Values.mlflow.trackingUri }}
+{{- else if eq .Values.mlflow.mode "external" }}{{ default (include "rainforest.mlflowExternalUrl" .) .Values.mlflow.trackingUri }}
 {{- end }}
+{{- end }}
+
+{{- define "rainforest.mlflowExternalUrl" -}}
+{{- required "mlflow.externalUrl is required when mlflow.mode is external" .Values.mlflow.externalUrl }}
 {{- end }}
 
 {{/* Where browsers open MLflow. Empty is the same-origin /mlflow/ the UI proxies. */}}
 {{- define "rainforest.mlflowBrowseUrl" -}}
-{{- if eq .Values.mlflow.mode "external" }}{{ .Values.mlflow.externalUrl }}{{ end }}
+{{- if eq .Values.mlflow.mode "external" }}{{ include "rainforest.mlflowExternalUrl" . }}{{ end }}
 {{- end }}
 
 {{- define "rainforest.scheme" -}}
