@@ -12,7 +12,7 @@ from typing import Any, Literal, Protocol
 from ..config import get_settings
 
 NAME_RE = re.compile(r"[a-z0-9-]+")
-ColumnKind = Literal["number", "text", "datetime", "json", "identifier", "mixed"]
+ColumnKind = Literal["number", "text", "datetime", "boolean", "json", "identifier", "mixed"]
 
 
 class SourceError(Exception):

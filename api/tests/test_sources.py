@@ -10,7 +10,7 @@ from bson.binary import UUID_SUBTYPE, Binary
 from bson.decimal128 import Decimal128
 from bson.int64 import Int64
 from bson.objectid import ObjectId
-from pymongo.errors import OperationFailure, ServerSelectionTimeoutError
+from pymongo.errors import ExecutionTimeout, OperationFailure, ServerSelectionTimeoutError
 
 from app import db
 from app.config import get_settings
@@ -110,8 +110,26 @@ def test_flatten_array_elements_become_json_safe():
 def test_flatten_key_collisions_are_suffixed_and_recorded():
     notes: dict = {}
     out = flatten_document({"a": {"c.d": 1, "c_d": 2, "c@d": 3}, "x.y": 4, "x_y": 5}, notes)
-    assert out == {"a.c_d": 1, "a.c_d_2": 2, "a.c@d": 3, "x_y": 4, "x_y_2": 5}
+    assert out == {"a.c_d_2": 1, "a.c_d": 2, "a.c@d": 3, "x_y_2": 4, "x_y": 5}
     assert notes["collisions"] == ["a.c_d_2", "x_y_2"]
+
+
+def test_flatten_collision_precedence_does_not_depend_on_key_order():
+    dotted_first = flatten_document({"c.d": 1, "c_d": 2})
+    literal_first = flatten_document({"c_d": 2, "c.d": 1})
+    assert dotted_first == literal_first == {"c_d": 2, "c_d_2": 1}
+    # A renamed key never takes a name a literal key later claims.
+    assert flatten_document({"c.d": 1, "c_d": 2, "c_d_2": 3}) == {"c_d_3": 1, "c_d": 2, "c_d_2": 3}
+
+
+def test_flatten_signalling_nan_and_non_finite_arrays():
+    snan = Decimal128("sNaN")
+    out = flatten_document(
+        {"d": snan, "arr": [float("nan"), float("inf"), -float("inf"), snan, Decimal128("NaN"), 1.5]}
+    )
+    assert out["d"] != out["d"]
+    assert out["arr"] == "[null, null, null, null, null, 1.5]"
+    assert json.loads(out["arr"]) == [None, None, None, None, None, 1.5]
 
 
 def test_flatten_notes_flag_arrays_and_identifiers():
@@ -180,8 +198,10 @@ class _Cursor:
 
 
 class _FakeCollection:
-    def __init__(self, docs):
+    def __init__(self, docs, view=False, count_times_out=False):
         self.docs = docs
+        self.view = view
+        self.count_times_out = count_times_out
         self.last_find = None
 
     def find(self, flt=None, projection=None, **kw):
@@ -189,9 +209,13 @@ class _FakeCollection:
         return _Cursor(self.docs)
 
     def estimated_document_count(self):
+        if self.view:
+            raise OperationFailure("Namespace is a view, not a collection", code=166)
         return len(self.docs)
 
     def count_documents(self, flt, **kw):
+        if self.count_times_out and flt:
+            raise ExecutionTimeout("operation exceeded time limit", code=50)
         return len(self.docs)
 
 
@@ -232,7 +256,14 @@ def test_list_databases_and_collections():
 
 
 def test_list_databases_none_when_the_account_cannot_list():
-    assert _source(_FakeClient(list_error=OperationFailure("not authorized"))).list_databases() is None
+    assert _source(_FakeClient(list_error=OperationFailure("not authorized", code=13))).list_databases() is None
+
+
+def test_list_databases_bad_credentials_is_an_error_not_none():
+    err = OperationFailure("Authentication failed for u:pw@db1.example.com", code=18)
+    with pytest.raises(SourceError) as e:
+        _source(_FakeClient(list_error=err)).list_databases()
+    assert str(e.value).startswith("vehicles: ") and "example.com" not in str(e.value)
 
 
 def test_connection_errors_are_redacted_and_named():
@@ -267,6 +298,32 @@ def test_preview_columns_kinds_and_estimates():
     assert res.per_source[0]["name"] == "models" and res.per_source[0]["documents"] == 4
 
 
+def test_preview_counts_a_view_and_survives_a_count_timeout():
+    docs = [{"a": 1}, {"a": 2}]
+    db = _FakeDb({"v": _FakeCollection(docs, view=True), "slow": _FakeCollection(docs, count_times_out=True)})
+    src = _source(_FakeClient({"cars": db}))
+    assert src.list_collections("cars") == [{"name": "slow", "documents": 2}, {"name": "v", "documents": 2}]
+    res = src.preview("cars", [CollectionSpec("v"), CollectionSpec("slow", filter={"a": 1})])
+    assert [s["documents"] for s in res.per_source] == [2, 2]
+    assert res.estimated_rows == 4
+
+
+def test_preview_share_counts_collections_without_the_column():
+    a = _FakeCollection([{"x": 1, "only_a": 1}] * 4)
+    b = _FakeCollection([{"x": 1}] * 4)
+    src = _source(_FakeClient({"d": _FakeDb({"a": a, "b": b})}))
+    res = src.preview("d", [CollectionSpec("a"), CollectionSpec("b")])
+    shares = {c.name: c.present_share for c in res.columns}
+    assert shares == {"x": 1.0, "only_a": 0.5}
+
+
+def test_preview_booleans_are_their_own_kind_never_identifiers():
+    coll = _FakeCollection([{"is_id": True, "active": False, "key": 7}, {"is_id": False, "active": True, "key": 8}])
+    src = _source(_FakeClient({"d": _FakeDb({"c": coll})}))
+    kinds = {c.name: c.kind for c in src.preview("d", [CollectionSpec("c")]).columns}
+    assert kinds == {"is_id": "boolean", "active": "boolean", "key": "identifier"}
+
+
 def test_registry_is_lazy_and_cached(monkeypatch):
     monkeypatch.setenv("RAINFOREST_MONGO_SOURCES", "vehicles=mongodb://u:p@127.0.0.1:1/;archive=mongodb://127.0.0.1:1/")
     get_settings.cache_clear()
@@ -276,6 +333,7 @@ def test_registry_is_lazy_and_cached(monkeypatch):
         assert list(reg) == ["vehicles", "archive"]
         assert reg["vehicles"].name == "vehicles" and reg["vehicles"].kind == "mongodb"
         assert registry() is reg and get("archive") is reg["archive"]
+        assert reg["vehicles"]._client is None and reg["archive"]._client is None
         with pytest.raises(KeyError):
             get("nope")
     finally:
