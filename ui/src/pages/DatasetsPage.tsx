@@ -19,6 +19,8 @@ import { can } from "../can";
 import { metricLabel } from "../experiments";
 import { defaultTask, taskLabel } from "../decision";
 import { fmtAgo, fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
+import { sourceSummary } from "../sources";
+import { ConnectDialog } from "../components/ConnectDialog";
 import { ErrorAlert, Empty, InfoTip } from "../components/ui";
 import {
   Banner,
@@ -345,6 +347,60 @@ function RowMenu({
         </div>
       )}
     </div>
+  );
+}
+
+/** Shown only when the deployment configures at least one connection. */
+function ConnectMenu({ onCreated }: { onCreated: (ds: Dataset) => void }) {
+  const [open, setOpen] = useState(false);
+  const [dialog, setDialog] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(ref, open, close);
+  const style = useAnchored(button, open, "left");
+  const sources = useQuery({ queryKey: ["sources"], queryFn: api.sources, staleTime: 60_000 });
+  if (!sources.data?.length) return null;
+  return (
+    <div ref={ref} className="home-menu">
+      <button ref={button} type="button" aria-expanded={open} aria-haspopup="menu" onClick={() => setOpen(!open)}>
+        Connect
+        <Icon name="chevron-down" />
+      </button>
+      {open && (
+        <div className="popover" role="menu" style={style}>
+          <button
+            type="button"
+            role="menuitem"
+            className="ghost menu-item"
+            onClick={() => {
+              setOpen(false);
+              setDialog(true);
+            }}
+          >
+            MongoDB collection…
+          </button>
+        </div>
+      )}
+      {dialog && <ConnectDialog sources={sources.data} onClose={() => setDialog(false)} onCreated={onCreated} />}
+    </div>
+  );
+}
+
+/** "vehicles · curated, mining" and when the newest pull finished; nothing for an upload or a sample. */
+function SourceBadge({ ds }: { ds: Dataset }) {
+  if (!ds.source) return null;
+  const pulled = ds.last_pull?.finished_at;
+  return (
+    <span className="home-source small-text">
+      <Chip tone="accent" title={`${ds.source.database} on ${ds.source.connection}`}>
+        connected
+      </Chip>
+      <span className="secondary">
+        {sourceSummary(ds.source)}
+        {pulled && ` · pulled ${fmtAgo(pulled)}`}
+      </span>
+    </span>
   );
 }
 
@@ -1204,6 +1260,7 @@ export function DatasetsPage() {
         {editor && (
           <div className="row home-actions">
             <SampleMenu onCreated={(ds) => highlight(ds.id)} />
+            <ConnectMenu onCreated={(ds) => highlight(ds.id)} />
             <button type="button" className="primary" onClick={browse} disabled={upload.progress !== null}>
               <Icon name="upload" />
               Upload CSV or Parquet
@@ -1312,6 +1369,7 @@ export function DatasetsPage() {
                         {warnings(ds)}
                       </span>
                     )}
+                    <SourceBadge ds={ds} />
                     {PROCESSING.has(ds.status) && <Processing ds={ds} compact />}
                     {ds.status === "failed" && (
                       <Failed
@@ -1420,6 +1478,7 @@ export function DatasetsPage() {
                                 ? `${fmtInt(ds.row_count)} rows · ${fmtInt(ds.column_count)} fields`
                                 : (ds.source_filename ?? "")}
                             </span>
+                            <SourceBadge ds={ds} />
                           </td>
                           {busy || ds.status === "failed" ? (
                             <td colSpan={4}>
