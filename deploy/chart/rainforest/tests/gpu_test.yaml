@@ -1,0 +1,175 @@
+suite: gpu
+release:
+  name: rf
+  namespace: team
+templates:
+  - api-deployment.yaml
+  - configmap.yaml
+  - secret.yaml
+set:
+  hostname: vehicles.example.com
+  secrets.values.postgresPassword: pg-pass
+  secrets.values.readonlyPassword: ro-pass
+tests:
+  - it: adds the GPU limit, scheduling, env and CUDA image when enabled
+    template: api-deployment.yaml
+    set:
+      api.image.repository: reg.example.com/rf/api
+      api.gpu.enabled: true
+      api.gpu.imageTag: 0.1.0-cuda13
+      api.gpu.count: 2
+      api.gpu.nodeSelector:
+        nvidia.com/gpu.present: "true"
+      api.gpu.tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: reg.example.com/rf/api:0.1.0-cuda13
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits["nvidia.com/gpu"]
+          value: 2
+      - equal:
+          path: spec.template.spec.nodeSelector["nvidia.com/gpu.present"]
+          value: "true"
+      - equal:
+          path: spec.template.spec.tolerations
+          value:
+            - key: nvidia.com/gpu
+              operator: Exists
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: NVIDIA_DRIVER_CAPABILITIES
+            value: compute,utility
+
+  - it: requests one GPU by default
+    template: api-deployment.yaml
+    set:
+      api.gpu.enabled: true
+      api.gpu.imageTag: 0.1.0-cu12
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits["nvidia.com/gpu"]
+          value: 1
+      - matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: ':0\.1\.0-cu12$'
+
+  - it: adds nothing GPU-related when disabled, even with the gpu values filled in
+    template: api-deployment.yaml
+    set:
+      api.gpu.imageTag: 0.1.0-cuda13
+      api.gpu.count: 4
+      api.gpu.nodeSelector:
+        nvidia.com/gpu.present: "true"
+      api.gpu.tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: ':0\.1\.0$'
+      - notExists:
+          path: spec.template.spec.containers[0].resources
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name=="NVIDIA_DRIVER_CAPABILITIES")]
+      - notExists:
+          path: spec.template.spec.nodeSelector
+      - notExists:
+          path: spec.template.spec.tolerations
+
+  - it: uses api.image.tag, not the GPU tag, when disabled
+    template: api-deployment.yaml
+    set:
+      api.image.tag: abc123
+      api.gpu.imageTag: 0.1.0-cuda13
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: ':abc123$'
+
+  - it: refuses to enable the GPU build without an imageTag
+    template: api-deployment.yaml
+    set:
+      api.gpu.enabled: true
+    asserts:
+      - failedTemplate:
+          errorPattern: api.gpu.imageTag
+
+  - it: keeps the operator's resources next to the GPU limit
+    template: api-deployment.yaml
+    set:
+      api.gpu.enabled: true
+      api.gpu.imageTag: 0.1.0-cuda13
+      api.resources:
+        requests:
+          cpu: "4"
+          memory: 16Gi
+        limits:
+          memory: 32Gi
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits.memory
+          value: 32Gi
+      - equal:
+          path: spec.template.spec.containers[0].resources.limits["nvidia.com/gpu"]
+          value: 1
+      - equal:
+          path: spec.template.spec.containers[0].resources.requests.memory
+          value: 16Gi
+      - equal:
+          path: spec.template.spec.containers[0].resources.requests.cpu
+          value: "4"
+
+  - it: puts the GPU selector over api.nodeSelector and appends GPU tolerations after api.tolerations
+    template: api-deployment.yaml
+    set:
+      api.gpu.enabled: true
+      api.gpu.imageTag: 0.1.0-cuda13
+      api.nodeSelector:
+        disk: ssd
+        pool: general
+      api.gpu.nodeSelector:
+        pool: gpu
+      api.tolerations:
+        - key: dedicated
+          operator: Exists
+      api.gpu.tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value:
+            disk: ssd
+            pool: gpu
+      - equal:
+          path: spec.template.spec.tolerations
+          value:
+            - key: dedicated
+              operator: Exists
+            - key: nvidia.com/gpu
+              operator: Exists
+
+  - it: leaves api.nodeSelector and api.tolerations alone when enabled without gpu scheduling values
+    template: api-deployment.yaml
+    set:
+      api.gpu.enabled: true
+      api.gpu.imageTag: 0.1.0-cuda13
+      api.nodeSelector:
+        disk: ssd
+      api.tolerations:
+        - key: dedicated
+          operator: Exists
+    asserts:
+      - equal:
+          path: spec.template.spec.nodeSelector
+          value:
+            disk: ssd
+      - equal:
+          path: spec.template.spec.tolerations
+          value:
+            - key: dedicated
+              operator: Exists

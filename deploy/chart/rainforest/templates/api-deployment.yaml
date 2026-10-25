@@ -1,3 +1,23 @@
+{{- /*
+  api.gpu.enabled layers the GPU settings over the plain api.* ones: the CUDA image tag replaces api.image.tag, the
+  nvidia.com/gpu limit is added to api.resources.limits, api.gpu.nodeSelector wins over api.nodeSelector on a shared key,
+  and api.gpu.tolerations come after api.tolerations.
+*/ -}}
+{{- $image := .Values.api.image }}
+{{- $resources := deepCopy .Values.api.resources }}
+{{- $nodeSelector := .Values.api.nodeSelector }}
+{{- $tolerations := .Values.api.tolerations }}
+{{- if .Values.api.gpu.enabled }}
+{{- if not .Values.api.gpu.imageTag }}
+{{- fail "api.gpu.imageTag is required when api.gpu.enabled is true: set it to the CUDA build's full tag, e.g. 0.1.0-cuda13" }}
+{{- end }}
+{{- $image = merge (dict "tag" .Values.api.gpu.imageTag) .Values.api.image }}
+{{- $limits := default dict $resources.limits }}
+{{- $_ := set $limits "nvidia.com/gpu" (int .Values.api.gpu.count) }}
+{{- $_ = set $resources "limits" $limits }}
+{{- $nodeSelector = merge (deepCopy .Values.api.gpu.nodeSelector) .Values.api.nodeSelector }}
+{{- $tolerations = concat .Values.api.tolerations .Values.api.gpu.tolerations }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -33,7 +53,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: api
-          image: {{ include "rainforest.image" (dict "image" .Values.api.image "root" .) | quote }}
+          image: {{ include "rainforest.image" (dict "image" $image "root" .) | quote }}
           imagePullPolicy: {{ .Values.api.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
@@ -67,6 +87,10 @@ spec:
                   name: {{ include "rainforest.secretName" . }}
                   key: sessionSecret
                   optional: true
+            {{- if .Values.api.gpu.enabled }}
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: compute,utility
+            {{- end }}
             {{- if eq .Values.auth.mode "oidc" }}
             - name: RAINFOREST_OIDC_CLIENT_SECRET
               valueFrom:
@@ -112,7 +136,7 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 6
-          {{- with .Values.api.resources }}
+          {{- with $resources }}
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
@@ -123,11 +147,11 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "rainforest.fullname" . }}-data
-      {{- with .Values.api.nodeSelector }}
+      {{- with $nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.api.tolerations }}
+      {{- with $tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}

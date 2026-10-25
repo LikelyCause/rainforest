@@ -113,12 +113,16 @@ api:
     workers: 2
     # Background jobs running at once across all workers; each gets cpu_count // slots threads.
     slots: 1
-  # Takes effect with the GPU template.
+  # GPU training on the CUDA build of the API (which driver each tag needs: deploy/README.md). Needs the NVIDIA device
+  # plugin on the cluster. Enabled, the pod runs api.gpu.imageTag instead of api.image.tag, limits nvidia.com/gpu to
+  # count (added to api.resources.limits), and sets NVIDIA_DRIVER_CAPABILITIES=compute,utility.
   gpu:
     enabled: false
-    # The CUDA build of the same version, e.g. 0.1.0-cuda13.
+    # Required when enabled: the full tag of the CUDA build of the same version, e.g. 0.1.0-cuda13 or 0.1.0-cu12.
     imageTag: ""
+    # GPUs the pod claims.
     count: 1
+    # Added to api.nodeSelector (this wins on a shared key) and after api.tolerations, only when enabled.
     nodeSelector: {}
     tolerations: []
   # Settings by their .env.example names; the defaults match api/app/config.py.
