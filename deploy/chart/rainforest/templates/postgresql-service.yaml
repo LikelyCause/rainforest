@@ -1,0 +1,16 @@
+{{- if .Values.postgresql.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "rainforest.fullname" . }}-postgresql
+  labels:
+    {{- include "rainforest.labels" (dict "root" . "component" "postgresql") | nindent 4 }}
+spec:
+  # ClusterIP, not headless: one replica, so a stable virtual IP is all the clients need.
+  selector:
+    {{- include "rainforest.selectorLabels" (dict "root" . "component" "postgresql") | nindent 4 }}
+  ports:
+    - name: postgresql
+      port: 5432
+      targetPort: postgresql
+{{- end }}

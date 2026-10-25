@@ -30,11 +30,28 @@ auth:
     discoveryUrl: ""
 
 postgresql:
-  # true: a Postgres StatefulSet in this release. false: the server under external.
+  # true: a Postgres StatefulSet in this release. false: the server under external. The postgres image reads
+  # POSTGRES_PASSWORD only when it initialises an empty volume, so changing the password later rolls the API (via
+  # checksum/secret) but not the database; rotating it also means ALTER ROLE in the database.
   enabled: true
   # The database and user the in-chart server is created with.
   database: rainforest
   user: rainforest
+  image:
+    repository: postgres
+    tag: 16-alpine
+    pullPolicy: IfNotPresent
+  persistence:
+    size: 20Gi
+    # Empty: the cluster's default class.
+    storageClass: ""
+  resources: {}
+  # Server settings passed as `postgres -c key=value`; the defaults are the Compose file's.
+  tuning:
+    shared_buffers: 512MB
+    work_mem: 32MB
+    maintenance_work_mem: 256MB
+    max_wal_size: 4GB
   # The SQL console's SELECT-only role. Empty: <database>_ro.
   readonlyRole: ""
   external:
