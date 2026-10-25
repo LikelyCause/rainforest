@@ -6,6 +6,7 @@ import base64
 import json
 import math
 import re
+import time
 import uuid
 from collections.abc import Mapping
 from contextlib import contextmanager
@@ -13,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
 
+import polars as pl
 from bson.binary import UUID_SUBTYPE, Binary
 from bson.decimal128 import Decimal128
 from bson.objectid import ObjectId
@@ -20,12 +22,25 @@ from pymongo import MongoClient, uri_parser
 from pymongo.errors import ConfigurationError, ExecutionTimeout, OperationFailure, PyMongoError
 
 from ..profiling import ID_NAME_RE
-from . import CollectionSpec, ColumnInfo, PreviewResult, SourceError
+from . import (
+    BudgetExceeded,
+    CollectionSpec,
+    ColumnInfo,
+    PreviewResult,
+    Progress,
+    PullResult,
+    PullTimeout,
+    SourceError,
+    as_text,
+    chunk_path,
+)
 
 SYSTEM_DATABASES = {"admin", "config", "local"}
 CONNECT_TIMEOUT_MS = 10_000
 QUERY_TIMEOUT_MS = 30_000
 UNAUTHORIZED = 13  # AuthenticationFailed (18) and the rest are real errors, not "this account can't list"
+PULL_BATCH = 5_000
+CHUNK_DOCS = 50_000  # flat rows per chunk file; bounds the pull's memory
 CREDENTIALS_RE = re.compile(r"mongodb(\+srv)?://[^@\s]+@", re.IGNORECASE)
 
 
@@ -68,14 +83,15 @@ def _jsonable(value: Any) -> Any:
     return _text(value) or str(value)
 
 
-def flatten_document(doc: Mapping, notes: dict | None = None) -> dict[str, Any]:
+def flatten_document(doc: Mapping, notes: dict | None = None, paths: dict | None = None) -> dict[str, Any]:
     """One document as a flat row, by the table in docs/data-preparation.md. Nested documents become dotted paths,
     with dots inside a key replaced by `_` first (as `mongoexport --type=csv` names them); a key that then collides
     with a sibling gets a `_2` (`_3`, …) suffix. A key that had no dots keeps its name over one that was renamed,
     whichever comes first. Arrays become a JSON string.
 
     `notes`, when given, is filled for the caller: `arrays` (columns that hold an array), `ids` (columns that held an
-    ObjectId, UUID or binary value) and `collisions` (the renamed columns, in order). Missing keys are simply absent."""
+    ObjectId, UUID or binary value) and `collisions` (the renamed columns, in order). `paths`, when given, maps each
+    column to the tuple of original keys it came from. Missing keys are simply absent."""
     out: dict[str, Any] = {}
 
     def note(kind: str, path: str) -> None:
@@ -101,7 +117,7 @@ def flatten_document(doc: Mapping, notes: dict | None = None) -> dict[str, Any]:
             names[key] = seg
         return names
 
-    def walk(prefix: str, mapping: Mapping) -> None:
+    def walk(prefix: str, keys: tuple[str, ...], mapping: Mapping) -> None:
         segs = segments(mapping)
         for key, value in mapping.items():
             seg = segs[key]
@@ -109,8 +125,11 @@ def flatten_document(doc: Mapping, notes: dict | None = None) -> dict[str, Any]:
             if "." in str(key) and seg != str(key).replace(".", "_"):
                 note("collisions", path)
             if isinstance(value, Mapping):
-                walk(path, value)
-            elif isinstance(value, (list, tuple)):
+                walk(path, (*keys, str(key)), value)
+                continue
+            if paths is not None:
+                paths[path] = (*keys, str(key))
+            if isinstance(value, (list, tuple)):
                 out[path] = json.dumps(_jsonable(value), default=str)
                 note("arrays", path)
             elif value is None:
@@ -127,7 +146,7 @@ def flatten_document(doc: Mapping, notes: dict | None = None) -> dict[str, Any]:
                     note("ids", path)
                 out[path] = text if text is not None else str(value)
 
-    walk("", doc)
+    walk("", (), doc)
     return out
 
 
@@ -282,9 +301,148 @@ class MongoSource:
         out_dir: Path,
         budget_cells: int,
         timeout_s: int,
-        progress: Any,
-    ) -> Any:
-        raise NotImplementedError
+        progress: Progress,
+    ) -> PullResult:
+        """Every document of `collections` as flat rows in `out_dir/chunk_<label>_<n>.parquet`. The budget is the
+        preview's estimate (documents x the columns a sample of them flattens to, the figure the dialog showed), so
+        a pull over it is refused before any document is read in full."""
+        deadline = time.monotonic() + timeout_s
+        estimated = self.preview(database, collections).estimated_cells
+        if estimated > budget_cells:
+            raise BudgetExceeded(estimated, budget_cells)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        chunks = _Chunks(out_dir)
+        per_source = []
+        with self._guard():
+            db = self.client[database]
+            for spec in collections:
+                label = spec.label or spec.name
+                remaining_ms = int((deadline - time.monotonic()) * 1000)
+                if remaining_ms <= 0:
+                    raise PullTimeout(timeout_s)
+                # The server stops the query at the deadline too, so a stalled getMore can't outlive it.
+                cursor = db[spec.name].find(
+                    spec.filter,
+                    spec.projection,
+                    batch_size=PULL_BATCH,
+                    no_cursor_timeout=False,
+                    max_time_ms=remaining_ms,
+                )
+                documents = 0
+                try:
+                    for doc in cursor:
+                        chunks.add(label, doc)
+                        documents += 1
+                        if documents % PULL_BATCH == 0:
+                            if time.monotonic() > deadline:
+                                raise PullTimeout(timeout_s)
+                            if progress:
+                                progress(label, documents)
+                except ExecutionTimeout:
+                    raise PullTimeout(timeout_s) from None
+                finally:
+                    cursor.close()
+                chunks.flush(label)
+                per_source.append({"label": label, "documents": documents})
+                if progress:
+                    progress(label, documents)
+        return PullResult(per_source, chunks.notes())
+
+
+_KINDS = {bool: "boolean", int: "number", float: "number", str: "text", datetime: "datetime"}
+
+
+def _kind(t: type) -> str:
+    kind = _KINDS.get(t)
+    if kind is None:
+        kind = next((k for base, k in _KINDS.items() if issubclass(t, base)), "text")
+    return kind
+
+
+class _Chunks:
+    """Flat rows buffered and written CHUNK_DOCS at a time, with column names and types kept consistent across the
+    whole pull.
+
+    `flatten_document` names a document's columns from that document's keys alone, so two documents can give one
+    key path different names (a dotted key renamed `_2` only when its literal twin is present). Here each original
+    key path keeps the name it got first, and a later path that would take a name already in use gets the next free
+    suffix. A column whose values span more than one kind (number, text, boolean, datetime) across the pull is
+    mixed: written as text from then on, and earlier chunks are converted when they are assembled."""
+
+    def __init__(self, out_dir: Path):
+        self.out_dir = out_dir
+        self.by_path: dict[tuple[str, ...], str] = {}
+        self.taken: set[str] = set()
+        self.order: dict[str, None] = {}
+        self.kinds: dict[str, set[str]] = {}
+        self.mixed: dict[str, None] = {}
+        self.arrays: dict[str, None] = {}
+        self.renamed: dict[str, str] = {}
+        self.rows: list[dict] = []
+        self.written: dict[str, int] = {}
+
+    def _name(self, proposed: str, path: tuple[str, ...]) -> str:
+        name = proposed
+        if name in self.taken:
+            name = base = ".".join(k.replace(".", "_") for k in path)
+            n = 2
+            while name in self.taken:
+                name = f"{base}_{n}"
+                n += 1
+        self.by_path[path] = name
+        self.taken.add(name)
+        self.order[name] = None
+        if name != ".".join(path):
+            self.renamed[".".join(path)] = name
+        return name
+
+    def add(self, label: str, doc: Mapping) -> None:
+        notes: dict = {}
+        paths: dict = {}
+        flat = flatten_document(doc, notes, paths)
+        row = {}
+        for col, value in flat.items():
+            path = paths[col]
+            name = self.by_path.get(path)
+            row[self._name(col, path) if name is None else name] = value
+        for col in notes.get("arrays", ()):
+            self.arrays[self.by_path[paths[col]]] = None
+        self.rows.append(row)
+        if len(self.rows) >= CHUNK_DOCS:
+            self.flush(label)
+
+    def flush(self, label: str) -> None:
+        if not self.rows:
+            return
+        rows, self.rows = self.rows, []
+        present: set[str] = set()
+        for row in rows:
+            present.update(row)
+        columns = []
+        for name in (c for c in self.order if c in present):
+            values = [row.get(name) for row in rows]
+            kinds = self.kinds.setdefault(name, set())
+            kinds.update(_kind(t) for t in set(map(type, values)) - {type(None)})
+            if len(kinds) > 1:
+                self.mixed[name] = None
+            columns.append(_series(name, values, name in self.mixed, kinds))
+        n = self.written.get(label, 0)
+        pl.DataFrame(columns).write_parquet(chunk_path(self.out_dir, label, n))
+        self.written[label] = n + 1
+
+    def notes(self) -> dict:
+        return {"arrays": list(self.arrays), "mixed": list(self.mixed), "renamed": self.renamed}
+
+
+def _series(name: str, values: list, mixed: bool, kinds: set[str]) -> pl.Series:
+    if mixed:
+        return pl.Series(name, [as_text(v) for v in values], dtype=pl.String)
+    if kinds == {"datetime"}:
+        # The driver returns naive datetimes in UTC.
+        s = pl.Series(name, values)
+        s = s.dt.replace_time_zone("UTC") if s.dtype.time_zone is None else s.dt.convert_time_zone("UTC")
+        return s.cast(pl.Datetime("us", "UTC"))
+    return pl.Series(name, values, strict=False)
 
 
 def _estimated(coll) -> int:

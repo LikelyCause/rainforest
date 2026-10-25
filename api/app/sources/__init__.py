@@ -3,11 +3,15 @@ connections configured in RAINFOREST_MONGO_SOURCES."""
 
 from __future__ import annotations
 
+import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, Protocol
+from urllib.parse import quote
 
 from ..config import get_settings
 
@@ -17,6 +21,20 @@ ColumnKind = Literal["number", "text", "datetime", "boolean", "json", "identifie
 
 class SourceError(Exception):
     """A failure talking to a source. The message is already redacted: it names the connection, never the URI."""
+
+
+class BudgetExceeded(SourceError):
+    def __init__(self, estimated: int, max_cells: int):
+        super().__init__(
+            f"The pull would read about {estimated:,} cells, more than the limit of {max_cells:,} (SOURCE_MAX_CELLS)"
+        )
+        self.estimated = estimated
+        self.max = max_cells
+
+
+class PullTimeout(SourceError):
+    def __init__(self, timeout_s: int):
+        super().__init__(f"The pull took longer than {timeout_s:,} seconds (SOURCE_PULL_TIMEOUT_S)")
 
 
 @dataclass
@@ -42,6 +60,44 @@ class PreviewResult:
     estimated_cells: int = 0
 
 
+@dataclass
+class PullResult:
+    per_source: list[dict]  # {label, documents} per collection, in the order pulled
+    flatten_notes: dict  # arrays (columns), mixed (columns), renamed ({original key path: column})
+
+
+# Called with (label, documents pulled so far) between batches.
+Progress = Callable[[str, int], None] | None
+
+
+def chunk_path(out_dir: Path, label: str, n: int) -> Path:
+    # Labels are typed by people; quoting keeps one a single file name.
+    return out_dir / f"chunk_{quote(label, safe='')}_{n}.parquet"
+
+
+def chunk_paths(out_dir: Path, label: str) -> list[Path]:
+    out = []
+    while (p := chunk_path(out_dir, label, len(out))).exists():
+        out.append(p)
+    return out
+
+
+def as_text(value: Any) -> str | None:
+    """How a value of a mixed-type column reads as text. Chunks written before a column turned out mixed are
+    converted with this too, from what Parquet gives back (floats for every number, UTC datetimes), so one value reads
+    the same whichever chunk it landed in."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        return str(int(value)) if math.isfinite(value) and value.is_integer() and abs(value) < 2**53 else repr(value)
+    if isinstance(value, datetime):
+        # The driver's datetimes are naive UTC; Parquet gives them back with the zone.
+        return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).isoformat()
+    return str(value)
+
+
 class Source(Protocol):
     name: str
     kind: str
@@ -61,8 +117,8 @@ class Source(Protocol):
         out_dir: Path,
         budget_cells: int,
         timeout_s: int,
-        progress: Any,
-    ) -> Any: ...
+        progress: Progress,
+    ) -> PullResult: ...
 
 
 def parse_sources(text: str) -> dict[str, str]:

@@ -122,6 +122,12 @@ def test_flatten_collision_precedence_does_not_depend_on_key_order():
     assert flatten_document({"c.d": 1, "c_d": 2, "c_d_2": 3}) == {"c_d_3": 1, "c_d": 2, "c_d_2": 3}
 
 
+def test_flatten_paths_name_the_original_keys():
+    paths: dict = {}
+    flatten_document({"a": {"c.d": 1, "c_d": 2}, "t": [1], "e": {}}, None, paths)
+    assert paths == {"a.c_d_2": ("a", "c.d"), "a.c_d": ("a", "c_d"), "t": ("t",)}
+
+
 def test_flatten_signalling_nan_and_non_finite_arrays():
     snan = Decimal128("sNaN")
     out = flatten_document(

@@ -74,7 +74,7 @@ def process_dataset(dataset_id: int, upload_path: str | None, fmt: str) -> None:
         parquet_path = s.datasets_dir / str(dataset_id) / "raw.parquet"
         # ---- 1. ingest ------------------------------------------------------------
         st.set("ingesting", 0.01, "Converting to Parquet", force=True)
-        warnings: list[str] = []
+        warnings: list[str] = list(ds["warnings"] or [])  # a pull's notes come before processing's
         if upload_path is not None:
             warnings = ingest.to_parquet(Path(upload_path), fmt, parquet_path)
         schema = pl.read_parquet_schema(parquet_path)
