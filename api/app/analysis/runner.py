@@ -56,6 +56,16 @@ def public(row: dict, current_version: str | None) -> dict:
     return out
 
 
+def mark_stale(conn, dataset_id: int) -> None:
+    """After the data itself changed (a refresh): every result reads out of date, whatever decisions it was computed
+    from. Rows still computing too, since they read the data that was replaced."""
+    conn.execute(
+        """UPDATE meta.analyses SET data_version = 'stale', updated_at = now()
+            WHERE dataset_id = %s AND status <> 'failed'""",
+        (dataset_id,),
+    )
+
+
 def find_or_create(
     conn, dataset_id: int, kind: str, params: dict, recompute: bool, user_id: int | None = None
 ) -> tuple[dict, bool]:

@@ -172,13 +172,14 @@ def load_raw_table(
     db_columns: list[str],
     batch_rows: int,
     progress: Callable[[int, int], None] | None = None,
+    table_suffix: str = "",
 ) -> tuple[str, list[str]]:
-    """COPY the Parquet data into raw.ds_<id>. Returns the qualified table name and any warnings.
+    """COPY the Parquet data into raw.ds_<id><table_suffix>. Returns the qualified table name and any warnings.
 
     Strings are quoted, so only an unquoted \\N (a real null) reads as NULL; text can't hold NUL bytes in
     Postgres, so they are removed from the raw table (the Parquet copy keeps them).
     """
-    table = f"ds_{dataset_id}"
+    table = f"ds_{dataset_id}{table_suffix}"
     schema = pl.read_parquet_schema(parquet_path)
     src_names = list(schema.keys())
     text_cols = [c for c, dt in schema.items() if dt == pl.String]
@@ -212,7 +213,8 @@ def load_raw_table(
         conn.execute(sql.SQL("ALTER TABLE {} ADD PRIMARY KEY ({})").format(ident, sql.Identifier(ROW_ID)))
         conn.execute(sql.SQL("ANALYZE {}").format(ident))
     warnings = [
-        f"Removed NUL characters from {n:,} value(s) of {c!r} in raw.{table} (Postgres text can't hold "
+        # Named without the suffix: a refresh renames the table it loads to the dataset's own.
+        f"Removed NUL characters from {n:,} value(s) of {c!r} in raw.ds_{dataset_id} (Postgres text can't hold "
         f"them; profiling and exports read the file as uploaded)."
         for c, n in nul_counts.items()
     ]

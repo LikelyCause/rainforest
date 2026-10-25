@@ -135,13 +135,14 @@ def _bson(doc: dict | None) -> dict | None:
     return None if doc is None else json_util.loads(json.dumps(doc))
 
 
+def names(items: list[str]) -> str:
+    """Names for a warning, the first few of a long list."""
+    more = len(items) - NAMES_IN_WARNING
+    return ", ".join(items[:NAMES_IN_WARNING]) + (f" and {more} more" if more > 0 else "")
+
+
 def warnings_for(notes: dict, removed: dict[str, int], dedupe: bool) -> list[str]:
     """One readable sentence per kind of thing the pull changed, or asked for and couldn't do."""
-
-    def names(items: list[str]) -> str:
-        more = len(items) - NAMES_IN_WARNING
-        return ", ".join(items[:NAMES_IN_WARNING]) + (f" and {more} more" if more > 0 else "")
-
     out = []
     if notes.get("arrays"):
         out.append(f"Arrays stored as JSON text: {names(notes['arrays'])}")
@@ -156,9 +157,10 @@ def warnings_for(notes: dict, removed: dict[str, int], dedupe: bool) -> list[str
     return out
 
 
-def pull_into(dataset_id: int, src: dict, dest: Path) -> dict:
-    """Pull a dataset's collections into `dest`. Returns what the pull row stores: rows, per_source (with each
-    collection's removed duplicates) and flatten_notes. The chunk directory is gone afterwards, whatever happens."""
+def pull_into(dataset_id: int, src: dict, dest: Path, status: str = "ingesting") -> dict:
+    """Pull a dataset's collections into `dest`, reporting progress under `status`. Returns what the pull row stores:
+    rows, per_source (with each collection's removed duplicates) and flatten_notes. The chunk directory is gone
+    afterwards, whatever happens."""
     s = get_settings()
     st = _Status(dataset_id)
     pull_dir = s.datasets_dir / str(dataset_id) / "pull"
@@ -176,11 +178,11 @@ def pull_into(dataset_id: int, src: dict, dest: Path) -> dict:
                 pull_dir,
                 s.source_max_cells,
                 s.source_pull_timeout_s,
-                lambda label, n: st.set("ingesting", 0.0, f"Pulling {label}: {n:,} documents"),
+                lambda label, n: st.set(status, 0.0, f"Pulling {label}: {n:,} documents"),
             )
         except PyMongoError as exc:  # a source's pull wraps its own; this keeps any other path redacted
             raise SourceError(source.redact(str(exc))) from None
-        st.set("ingesting", 0.0, "Combining collections", force=True)
+        st.set(status, 0.0, "Combining collections", force=True)
         summary = assemble(pull_dir, specs, src["add_source"], src["dedupe"], src.get("match_on"), dest)
     finally:
         shutil.rmtree(pull_dir, ignore_errors=True)

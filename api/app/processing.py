@@ -236,6 +236,54 @@ def insert_field(conn, dataset_id: int, p: profiling.FieldProfile, db_col: str, 
     return fid
 
 
+def update_field(conn, field_id: int, p: profiling.FieldProfile, db_col: str) -> None:
+    """A field's new profile after a refresh, keeping its id, name and whatever anyone decided about it. A decision
+    or settings nobody chose (still the suggestion) follow the new suggestion, as a new field's would, except a
+    target's type, which is part of its role; actions and target state are re-derived by refresh_target_state
+    afterwards."""
+    by_family = suggest_all(p.inferred_type, p.summary, p.is_target)
+    values = {
+        "ordinal": p.ordinal,
+        "db_column": db_col,
+        "physical_dtype": p.physical_dtype,
+        "inferred_type": p.inferred_type,
+        "inference_confidence": p.confidence,
+        "inference_reasons": p.reasons,
+        **{c: json_safe(p.summary.get(c)) for c in SUMMARY_COLS},
+        "stats": jsonb(p.stats),
+        "charts": jsonb(p.charts),
+        "suggestion": jsonb(by_family),
+    }
+    conn.execute(
+        sql.SQL("UPDATE meta.fields SET {} WHERE id = %s").format(
+            sql.SQL(", ").join(sql.SQL("{} = %s").format(sql.Identifier(c)) for c in values)
+        ),
+        [*values.values(), field_id],
+    )
+    first = next(iter(by_family.values()))
+    decided = conn.execute(
+        """UPDATE meta.field_decisions
+              SET semantic_type = CASE WHEN source = 'suggested' AND NOT reviewed AND action <> 'target' THEN %s
+                                       ELSE semantic_type END
+            WHERE field_id = %s RETURNING dataset_id, semantic_type""",
+        (first["semantic_type"], field_id),
+    ).fetchone()
+    if decided is None:
+        return
+    t = decided["semantic_type"]
+    if t != first["semantic_type"]:
+        by_family = suggest_all(t, p.summary, p.is_target)
+    chosen = {
+        r["family"]
+        for r in conn.execute(
+            "SELECT family FROM meta.field_settings WHERE field_id = %s AND source = 'user'", (field_id,)
+        ).fetchall()
+    }
+    for family, sugg in by_family.items():
+        if family not in chosen:
+            upsert_settings(conn, decided["dataset_id"], field_id, family, sugg, "suggested")
+
+
 def _persist_profiles(dataset_id: int, profiles: list[profiling.FieldProfile], db_cols: list[str]) -> list[int]:
     with connection() as conn:
         conn.execute("DELETE FROM meta.fields WHERE dataset_id = %s", (dataset_id,))
@@ -285,18 +333,23 @@ def upsert_settings(conn, dataset_id: int, field_id: int, family: str, d: dict, 
 
 def _persist_correlations(dataset_id: int, field_ids: list[int], assocs) -> None:
     with connection() as conn:
-        conn.execute("DELETE FROM meta.field_correlations WHERE dataset_id = %s", (dataset_id,))
-        with (
-            conn.cursor() as cur,
-            cur.copy(
-                "COPY meta.field_correlations (dataset_id, field_a, field_b, method, value, strength, n_obs) FROM STDIN"
-            ) as copy,
-        ):
-            for a in assocs:
-                fa, fb = field_ids[a.i], field_ids[a.j]
-                if fa > fb:
-                    fa, fb = fb, fa
-                copy.write_row((dataset_id, fa, fb, a.method, a.value, abs(a.value), a.n_obs))
+        replace_correlations(conn, dataset_id, field_ids, assocs)
+
+
+def replace_correlations(conn, dataset_id: int, field_ids: list[int], assocs) -> None:
+    """The dataset's associations, all of them, from `compute_associations` output indexed like `field_ids`."""
+    conn.execute("DELETE FROM meta.field_correlations WHERE dataset_id = %s", (dataset_id,))
+    with (
+        conn.cursor() as cur,
+        cur.copy(
+            "COPY meta.field_correlations (dataset_id, field_a, field_b, method, value, strength, n_obs) FROM STDIN"
+        ) as copy,
+    ):
+        for a in assocs:
+            fa, fb = field_ids[a.i], field_ids[a.j]
+            if fa > fb:
+                fa, fb = fb, fa
+            copy.write_row((dataset_id, fa, fb, a.method, a.value, abs(a.value), a.n_obs))
 
 
 def upsert_correlations(conn, dataset_id: int, pairs: list[tuple[int, int, Assoc]]) -> None:
@@ -419,4 +472,5 @@ def sweep_uploads(min_age_s: float = 600) -> list[Path]:
 def delete_dataset_files(dataset_id: int) -> None:
     s = get_settings()
     shutil.rmtree(s.datasets_dir / str(dataset_id), ignore_errors=True)
-    execute(sql.SQL("DROP TABLE IF EXISTS {}").format(sql.Identifier("raw", f"ds_{dataset_id}")))
+    for table in (f"ds_{dataset_id}", f"ds_{dataset_id}_new"):  # _new: a refresh interrupted mid-load
+        execute(sql.SQL("DROP TABLE IF EXISTS {}").format(sql.Identifier("raw", table)))
