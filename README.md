@@ -145,8 +145,9 @@ The empty *Datasets* page also offers a generated *50k × 150 demo*, and you can
 | Team with OIDC | Several people, real sign-in | `RAINFOREST_AUTH_MODE=oidc` and your provider's settings in `.env`; see the [checklist](docs/deployment.md#team-deployment-checklist) |
 | Reference Keycloak | Trying OIDC (development only) | `make up-keycloak`; see [Reference Keycloak](docs/deployment.md#reference-keycloak-development-only) |
 | GPU | XGBoost on an NVIDIA GPU | `make up-gpu`; see [GPU](docs/deployment.md#gpu) |
+| Kubernetes | One release per team on a cluster, with Postgres and MLflow in the release or external | the Helm chart in `deploy/chart/rainforest`; see [deploy/README.md](deploy/README.md) |
 
-Everything is configured in `.env`; [Configuration](docs/configuration.md) lists every setting. The stack runs four
+On Compose everything is configured in `.env`; on Kubernetes, in the chart's values. [Configuration](docs/configuration.md) lists every setting. The stack runs four
 containers:
 
 | Service | What it does |
@@ -175,7 +176,7 @@ The [Makefile](Makefile) has the rest.
 - **Using it:** [Concepts](docs/concepts.md) · [User guide](docs/user-guide.md) ·
   [Team workflow](docs/team-workflow.md) · [Data preparation](docs/data-preparation.md) · [Explore](docs/explore.md) ·
   [Experiments and training](docs/experiments-and-training.md) · [MLflow](docs/mlflow.md) · [SQL](docs/sql.md)
-- **Running it:** [Deployment](docs/deployment.md) · [Configuration](docs/configuration.md) ·
+- **Running it:** [Deployment](docs/deployment.md) · [Kubernetes](deploy/README.md) · [Configuration](docs/configuration.md) ·
   [Security](docs/security.md)
 - **Developing it:** [Development](docs/development.md) · [Architecture](docs/architecture.md) · [API](docs/api.md)
 

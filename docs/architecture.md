@@ -18,6 +18,16 @@ Compose reads `.env` for every setting, including `COMPOSE_FILE` (`docker-compos
 API and the host's GPUs) and `COMPOSE_PROFILES` (`keycloak`); the Makefile's `up-gpu` and `up-keycloak` add those
 for one run.
 
+### Deployment
+
+Compose is the development and single-machine setup. A team deployment is the Helm chart `deploy/chart/rainforest`:
+one release per team, running the same `api`, `ui` and `mlflow` images, with Postgres and MLflow inside the release
+or external. The chart sets the API's environment under the same names as `.env.example`. The UI image renders its nginx
+configuration from environment at start (`ui/nginx/*.template`), so one image serves Compose and the chart. The API
+runs as one pod, because jobs run in its process and share `/data`. `deploy/smoke.sh` installs the chart on a `kind`
+cluster and trains a run; `.gitlab-ci.yml` builds and publishes the images and the chart, and `deploy/argocd/` holds the
+Argo CD layout, one Application per team. See [deploy/README.md](../deploy/README.md).
+
 ### API modules
 
 | Module | Responsibility |
