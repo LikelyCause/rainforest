@@ -1,0 +1,8 @@
+apiVersion: v2
+name: rainforest
+description: "Rainforest, a tabular-data workbench: API, UI, optional MLflow and Postgres."
+type: application
+version: 0.1.0
+# Placeholder; CI sets both from the release tag.
+appVersion: "0.1.0"
+kubeVersion: ">=1.28.0-0"

@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rainforest.fullname" . }}-ui
+  labels:
+    {{- include "rainforest.labels" (dict "root" . "component" "ui") | nindent 4 }}
+spec:
+  replicas: {{ .Values.ui.replicas }}
+  selector:
+    matchLabels:
+      {{- include "rainforest.selectorLabels" (dict "root" . "component" "ui") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rainforest.selectorLabels" (dict "root" . "component" "ui") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: ui
+          image: {{ include "rainforest.image" (dict "image" .Values.ui.image "root" .) | quote }}
+          imagePullPolicy: {{ .Values.ui.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+          # The image renders its nginx config into /etc/nginx/conf.d at start, so the root filesystem stays writable.
+          # DNS_RESOLVER is left to the image, which takes the cluster DNS from resolv.conf.
+          env:
+            - name: API_UPSTREAM
+              value: {{ include "rainforest.apiUpstream" . | quote }}
+            - name: MLFLOW_UPSTREAM
+              value: {{ include "rainforest.mlflowUpstream" . | quote }}
+            - name: MLFLOW_ENABLED
+              value: {{ if eq .Values.mlflow.mode "in-chart" }}"1"{{ else }}"0"{{ end }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 20
+          {{- with .Values.ui.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.ui.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ui.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

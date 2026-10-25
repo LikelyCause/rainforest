@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["hostname"],
+  "properties": {
+    "hostname": { "type": "string", "minLength": 1 },
+    "clusterDomain": { "type": "string", "minLength": 1 },
+    "imagePullSecrets": { "type": "array" },
+    "auth": {
+      "type": "object",
+      "properties": {
+        "mode": { "type": "string", "enum": ["pick", "oidc"] }
+      }
+    },
+    "mlflow": {
+      "type": "object",
+      "properties": {
+        "mode": { "type": "string", "enum": ["in-chart", "external", "off"] }
+      }
+    },
+    "postgresql": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "external": {
+          "type": "object",
+          "properties": {
+            "managedRoles": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "properties": {
+        "existingSecret": { "type": "string" }
+      }
+    }
+  }
+}

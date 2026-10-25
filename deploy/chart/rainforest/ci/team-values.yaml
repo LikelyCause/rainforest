@@ -1,0 +1,58 @@
+# A team install: OIDC sign-in, an external Postgres server and MLflow server, a GPU build of the API.
+# Credentials here are placeholders so the chart renders in CI; real installs use secrets.existingSecret.
+hostname: vehicles.rainforest.example.com
+
+auth:
+  mode: oidc
+  oidc:
+    issuer: https://sso.example.com/realms/rainforest
+    clientId: rainforest
+    providerName: Company SSO
+    leadGroup: rainforest-vehicles-lead
+    memberGroup: rainforest-vehicles-member
+
+postgresql:
+  enabled: false
+  external:
+    host: pg.example.com
+    port: 5432
+    database: rainforest_vehicles
+    user: rainforest_vehicles
+    managedRoles: false
+
+mlflow:
+  mode: external
+  externalUrl: https://mlflow.example.com
+  trackingUri: http://mlflow.infra.svc.cluster.local:5000
+  experimentPrefix: vehicles
+
+api:
+  image:
+    repository: registry.example.com/rainforest/api
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+  gpu:
+    enabled: true
+    imageTag: 0.1.0-cuda13
+    tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+
+persistence:
+  data:
+    size: 500Gi
+
+secrets:
+  values:
+    oidcClientSecret: ci-placeholder
+    postgresPassword: ci-placeholder
+    readonlyPassword: ci-placeholder
+
+ingress:
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+  tls:
+    secretName: vehicles-rainforest-tls

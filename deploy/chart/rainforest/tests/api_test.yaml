@@ -1,0 +1,407 @@
+suite: api
+release:
+  name: rf
+  namespace: team
+templates:
+  - api-deployment.yaml
+  - api-pvc.yaml
+  - api-service.yaml
+  - configmap.yaml
+tests:
+  - it: runs one replica, recreated on upgrade, as the image's user
+    template: api-deployment.yaml
+    asserts:
+      - isKind:
+          of: Deployment
+      - equal:
+          path: spec.replicas
+          value: 1
+      - equal:
+          path: spec.strategy.type
+          value: Recreate
+      - equal:
+          path: spec.template.spec.securityContext.runAsUser
+          value: 10001
+      - equal:
+          path: spec.template.spec.securityContext.runAsGroup
+          value: 10001
+      - equal:
+          path: spec.template.spec.securityContext.fsGroup
+          value: 10001
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+
+  - it: mounts the data PVC at /data and points DATA_DIR there
+    template: api-deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: data
+            mountPath: /data
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: data
+            persistentVolumeClaim:
+              claimName: rf-rainforest-data
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DATA_DIR
+            value: /data
+
+  - it: reads its settings from the ConfigMap
+    template: api-deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].envFrom
+          content:
+            configMapRef:
+              name: rf-rainforest
+
+  - it: probes /health, with a startup probe that allows migrations to run
+    template: api-deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.httpGet.path
+          value: /health
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.failureThreshold
+          value: 60
+      - equal:
+          path: spec.template.spec.containers[0].startupProbe.periodSeconds
+          value: 5
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /health
+      - equal:
+          path: spec.template.spec.containers[0].livenessProbe.httpGet.path
+          value: /health
+
+  - it: uses the app version as the default image tag
+    template: api-deployment.yaml
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].image
+          pattern: ':0\.1\.0$'
+
+  - it: takes image, resources, nodeSelector, tolerations and pull secrets from values
+    template: api-deployment.yaml
+    set:
+      api.image.repository: reg.example.com/rf/api
+      api.image.tag: abc123
+      api.resources:
+        requests:
+          memory: 4Gi
+      api.nodeSelector:
+        disk: ssd
+      api.tolerations:
+        - key: dedicated
+          operator: Exists
+      imagePullSecrets:
+        - name: regcred
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].image
+          value: reg.example.com/rf/api:abc123
+      - equal:
+          path: spec.template.spec.containers[0].resources.requests.memory
+          value: 4Gi
+      - equal:
+          path: spec.template.spec.nodeSelector.disk
+          value: ssd
+      - equal:
+          path: spec.template.spec.tolerations[0].key
+          value: dedicated
+      - equal:
+          path: spec.template.spec.imagePullSecrets[0].name
+          value: regcred
+
+  - it: assembles DATABASE_URL from the Secret-backed password, never the ConfigMap
+    template: api-deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="DATABASE_URL")].value
+          value: postgresql://rainforest:$(POSTGRES_PASSWORD)@rf-rainforest-postgresql:5432/rainforest
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="POSTGRES_PASSWORD")].valueFrom.secretKeyRef.key
+          value: postgresPassword
+
+  - it: uses the external server in DATABASE_URL
+    template: api-deployment.yaml
+    set:
+      postgresql.enabled: false
+      postgresql.external.host: pg.example.com
+      postgresql.external.port: 6432
+      postgresql.external.database: rainforest_vehicles
+      postgresql.external.user: rainforest_vehicles
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="DATABASE_URL")].value
+          value: postgresql://rainforest_vehicles:$(POSTGRES_PASSWORD)@pg.example.com:6432/rainforest_vehicles
+
+  - it: orders POSTGRES_PASSWORD before DATABASE_URL so Kubernetes expands it
+    template: api-deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[0].name
+          value: POSTGRES_PASSWORD
+      - equal:
+          path: spec.template.spec.containers[0].env[1].name
+          value: DATABASE_URL
+
+  - it: has a PVC with the configured size and storage class
+    template: api-pvc.yaml
+    set:
+      persistence.data.size: 200Gi
+      persistence.data.storageClass: fast
+    asserts:
+      - isKind:
+          of: PersistentVolumeClaim
+      - equal:
+          path: metadata.name
+          value: rf-rainforest-data
+      - equal:
+          path: spec.accessModes
+          value: [ReadWriteOnce]
+      - equal:
+          path: spec.resources.requests.storage
+          value: 200Gi
+      - equal:
+          path: spec.storageClassName
+          value: fast
+
+  - it: leaves the storage class unset by default
+    template: api-pvc.yaml
+    asserts:
+      - equal:
+          path: spec.resources.requests.storage
+          value: 50Gi
+      - notExists:
+          path: spec.storageClassName
+
+  - it: exposes port 8000
+    template: api-service.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: rf-rainforest-api
+      - equal:
+          path: spec.ports[0].port
+          value: 8000
+
+  - it: allows only the ingress hostname
+    template: configmap.yaml
+    set:
+      hostname: vehicles.example.com
+    asserts:
+      - equal:
+          path: data.RAINFOREST_ALLOWED_HOSTS
+          value: vehicles.example.com
+
+  - it: builds an https OIDC redirect URL when the Ingress has TLS
+    template: configmap.yaml
+    set:
+      hostname: vehicles.example.com
+      ingress.tls.secretName: vehicles-tls
+    asserts:
+      - equal:
+          path: data.RAINFOREST_OIDC_REDIRECT_URL
+          value: https://vehicles.example.com/api/auth/oidc/callback
+
+  - it: builds an http OIDC redirect URL without TLS
+    template: configmap.yaml
+    set:
+      hostname: vehicles.example.com
+    asserts:
+      - equal:
+          path: data.RAINFOREST_OIDC_REDIRECT_URL
+          value: http://vehicles.example.com/api/auth/oidc/callback
+
+  - it: carries the auth settings
+    template: configmap.yaml
+    set:
+      auth.mode: oidc
+      auth.oidc.issuer: https://sso.example.com/realms/rf
+      auth.oidc.clientId: rf-client
+      auth.oidc.providerName: Corp SSO
+      auth.oidc.leadGroup: leads
+      auth.oidc.memberGroup: members
+      auth.oidc.discoveryUrl: http://keycloak:8080/.well-known/openid-configuration
+    asserts:
+      - equal:
+          path: data.RAINFOREST_AUTH_MODE
+          value: oidc
+      - equal:
+          path: data.RAINFOREST_OIDC_ISSUER
+          value: https://sso.example.com/realms/rf
+      - equal:
+          path: data.RAINFOREST_OIDC_CLIENT_ID
+          value: rf-client
+      - equal:
+          path: data.RAINFOREST_OIDC_PROVIDER_NAME
+          value: Corp SSO
+      - equal:
+          path: data.RAINFOREST_LEAD_GROUP
+          value: leads
+      - equal:
+          path: data.RAINFOREST_MEMBER_GROUP
+          value: members
+      - equal:
+          path: data.RAINFOREST_OIDC_DISCOVERY_URL
+          value: http://keycloak:8080/.well-known/openid-configuration
+
+  - it: carries pick mode's user list
+    template: configmap.yaml
+    set:
+      auth.users: "tanner:Tanner:lead"
+    asserts:
+      - equal:
+          path: data.RAINFOREST_AUTH_MODE
+          value: pick
+      - equal:
+          path: data.RAINFOREST_USERS
+          value: "tanner:Tanner:lead"
+
+  - it: names the console role after the in-chart database
+    template: configmap.yaml
+    asserts:
+      - equal:
+          path: data.READONLY_ROLE
+          value: rainforest_ro
+      - equal:
+          path: data.RAINFOREST_MANAGED_ROLES
+          value: "true"
+
+  - it: names the console role after the external database
+    template: configmap.yaml
+    set:
+      postgresql.enabled: false
+      postgresql.external.host: pg.example.com
+      postgresql.external.database: rainforest_vehicles
+      postgresql.external.user: rainforest_vehicles
+    asserts:
+      - equal:
+          path: data.READONLY_ROLE
+          value: rainforest_vehicles_ro
+      - equal:
+          path: data.RAINFOREST_MANAGED_ROLES
+          value: "true"
+
+  - it: follows postgresql.external.managedRoles on an external server
+    template: configmap.yaml
+    set:
+      postgresql.enabled: false
+      postgresql.external.host: pg.example.com
+      postgresql.external.managedRoles: false
+    asserts:
+      - equal:
+          path: data.RAINFOREST_MANAGED_ROLES
+          value: "false"
+
+  - it: keeps managed roles on for the in-chart server whatever the external setting says
+    template: configmap.yaml
+    set:
+      postgresql.external.managedRoles: false
+    asserts:
+      - equal:
+          path: data.RAINFOREST_MANAGED_ROLES
+          value: "true"
+
+  - it: lets the console role name be set
+    template: configmap.yaml
+    set:
+      postgresql.readonlyRole: console_ro
+    asserts:
+      - equal:
+          path: data.READONLY_ROLE
+          value: console_ro
+
+  - it: points MLflow logging at the in-chart server with the FQDN
+    template: configmap.yaml
+    set:
+      mlflow.mode: in-chart
+    asserts:
+      - equal:
+          path: data.MLFLOW_TRACKING_URI
+          value: http://rf-rainforest-mlflow.team.svc.cluster.local:5000/mlflow
+      - equal:
+          path: data.MLFLOW_BROWSE_URL
+          value: ""
+
+  - it: points MLflow logging at the external server and links browsers to it
+    template: configmap.yaml
+    set:
+      mlflow.mode: external
+      mlflow.externalUrl: https://mlflow.example.com
+      mlflow.experimentPrefix: vehicles
+    asserts:
+      - equal:
+          path: data.MLFLOW_TRACKING_URI
+          value: https://mlflow.example.com
+      - equal:
+          path: data.MLFLOW_BROWSE_URL
+          value: https://mlflow.example.com
+      - equal:
+          path: data.MLFLOW_EXPERIMENT_PREFIX
+          value: vehicles
+
+  - it: logs over trackingUri when it differs from the browser URL
+    template: configmap.yaml
+    set:
+      mlflow.mode: external
+      mlflow.externalUrl: https://mlflow.example.com
+      mlflow.trackingUri: http://mlflow.infra.svc:5000
+    asserts:
+      - equal:
+          path: data.MLFLOW_TRACKING_URI
+          value: http://mlflow.infra.svc:5000
+      - equal:
+          path: data.MLFLOW_BROWSE_URL
+          value: https://mlflow.example.com
+
+  - it: turns MLflow logging off
+    template: configmap.yaml
+    set:
+      mlflow.mode: "off"
+    asserts:
+      - equal:
+          path: data.MLFLOW_TRACKING_URI
+          value: ""
+      - equal:
+          path: data.MLFLOW_BROWSE_URL
+          value: ""
+
+  - it: carries job, logging and tuning settings by their .env.example names
+    template: configmap.yaml
+    set:
+      api.jobs.workers: 3
+      api.jobs.slots: 2
+      api.tuning.PROFILE_SAMPLE_ROWS: 1000
+    asserts:
+      - equal:
+          path: data.JOB_WORKERS
+          value: "3"
+      - equal:
+          path: data.JOB_SLOTS
+          value: "2"
+      - equal:
+          path: data.PROFILE_SAMPLE_ROWS
+          value: "1000"
+      - equal:
+          path: data.EXPORT_CHUNK_MB
+          value: "256"
+      - equal:
+          path: data.SQL_POOL_MAX
+          value: "4"
+      - equal:
+          path: data.SAMPLE_MAX_CELLS
+          value: "60000000"
+      - equal:
+          path: data.WEB_CONCURRENCY
+          value: "2"
+      - equal:
+          path: data.LOG_LEVEL
+          value: info

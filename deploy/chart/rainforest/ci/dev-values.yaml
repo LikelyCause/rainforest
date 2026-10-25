@@ -1,0 +1,14 @@
+# A dev install: the chart's defaults, spelled out. Pick-mode sign-in does not authenticate; nothing here is for a team.
+hostname: rainforest.localtest.me
+
+auth:
+  mode: pick
+
+postgresql:
+  enabled: true
+
+mlflow:
+  mode: in-chart
+
+ingress:
+  className: nginx

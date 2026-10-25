@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "rainforest.fullname" . }}
+  labels:
+    {{- include "rainforest.labels" (dict "root" . "component" "api") | nindent 4 }}
+data:
+  RAINFOREST_AUTH_MODE: {{ .Values.auth.mode | quote }}
+  RAINFOREST_USERS: {{ .Values.auth.users | quote }}
+  RAINFOREST_OIDC_ISSUER: {{ .Values.auth.oidc.issuer | quote }}
+  RAINFOREST_OIDC_DISCOVERY_URL: {{ .Values.auth.oidc.discoveryUrl | quote }}
+  RAINFOREST_OIDC_CLIENT_ID: {{ .Values.auth.oidc.clientId | quote }}
+  RAINFOREST_OIDC_REDIRECT_URL: {{ printf "%s://%s/api/auth/oidc/callback" (include "rainforest.scheme" .) .Values.hostname | quote }}
+  RAINFOREST_OIDC_SCOPES: {{ .Values.auth.oidc.scopes | quote }}
+  RAINFOREST_OIDC_GROUPS_CLAIM: {{ .Values.auth.oidc.groupsClaim | quote }}
+  RAINFOREST_OIDC_PROVIDER_NAME: {{ .Values.auth.oidc.providerName | quote }}
+  RAINFOREST_LEAD_GROUP: {{ .Values.auth.oidc.leadGroup | quote }}
+  RAINFOREST_MEMBER_GROUP: {{ .Values.auth.oidc.memberGroup | quote }}
+  RAINFOREST_ALLOWED_HOSTS: {{ .Values.hostname | quote }}
+  RAINFOREST_MANAGED_ROLES: {{ include "rainforest.managedRoles" . | quote }}
+  READONLY_ROLE: {{ include "rainforest.readonlyRole" . | quote }}
+  WEB_CONCURRENCY: {{ include "rainforest.num" .Values.api.workers | quote }}
+  JOB_WORKERS: {{ include "rainforest.num" .Values.api.jobs.workers | quote }}
+  JOB_SLOTS: {{ include "rainforest.num" .Values.api.jobs.slots | quote }}
+  LOG_LEVEL: {{ .Values.api.logLevel | quote }}
+  MLFLOW_TRACKING_URI: {{ include "rainforest.mlflowTrackingUri" . | quote }}
+  MLFLOW_BROWSE_URL: {{ include "rainforest.mlflowBrowseUrl" . | quote }}
+  MLFLOW_EXPERIMENT_PREFIX: {{ .Values.mlflow.experimentPrefix | quote }}
+  {{- range $key, $value := .Values.api.tuning }}
+  {{ $key }}: {{ include "rainforest.num" $value | quote }}
+  {{- end }}

@@ -1,0 +1,139 @@
+# The defaults are a dev install: pick-mode sign-in (no authentication), Postgres and MLflow inside the release, no
+# TLS. Team installs: see ci/team-values.yaml.
+
+# The host name people open Rainforest at. Feeds the Ingress and RAINFOREST_ALLOWED_HOSTS.
+hostname: rainforest.example.com
+
+# Registry credentials for the images below, as for any pod spec: [{name: regcred}].
+imagePullSecrets: []
+# Used to build the in-cluster FQDNs nginx proxies to (its resolver ignores search domains).
+clusterDomain: cluster.local
+
+nameOverride: ""
+fullnameOverride: ""
+
+auth:
+  # pick: the sign-in page lists users to choose from and does NOT authenticate. oidc: single sign-on.
+  mode: pick
+  # Pick mode's RAINFOREST_USERS, "key[#id]:Name:role;..." with roles lead, member or viewer. Ignored under oidc.
+  users: ""
+  oidc:
+    issuer: ""
+    clientId: rainforest
+    providerName: SSO
+    scopes: openid profile email
+    groupsClaim: groups
+    leadGroup: rainforest-lead
+    memberGroup: rainforest-member
+    # Only when the pod can't reach the issuer URL itself.
+    discoveryUrl: ""
+
+postgresql:
+  # true: a Postgres StatefulSet in this release. false: the server under external.
+  enabled: true
+  # The database and user the in-chart server is created with.
+  database: rainforest
+  user: rainforest
+  # The SQL console's SELECT-only role. Empty: <database>_ro.
+  readonlyRole: ""
+  external:
+    host: ""
+    port: 5432
+    database: rainforest
+    user: rainforest
+    # false: the ops team created the console role (and, with in-chart MLflow, the MLflow database).
+    managedRoles: true
+
+mlflow:
+  # in-chart: an MLflow server in this release behind the UI's /mlflow/. external: an existing server at externalUrl.
+  # off: no experiment logging.
+  mode: in-chart
+  # Where browsers open an external server.
+  externalUrl: ""
+  # Where the API logs to when that differs from externalUrl (often an internal address without the SSO in front).
+  trackingUri: ""
+  # Experiments are named <prefix>/<dataset id>-<dataset name>; releases sharing one server each set their own.
+  experimentPrefix: rainforest
+
+api:
+  image:
+    # Set to your registry.
+    repository: registry.example.com/rainforest/api
+    # Empty: the chart's appVersion.
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  # Worker processes per API pod (WEB_CONCURRENCY) and log level.
+  workers: 2
+  logLevel: info
+  jobs:
+    workers: 2
+    # Background jobs running at once across all workers; each gets cpu_count // slots threads.
+    slots: 1
+  # Takes effect with the GPU template.
+  gpu:
+    enabled: false
+    # The CUDA build of the same version, e.g. 0.1.0-cuda13.
+    imageTag: ""
+    count: 1
+    nodeSelector: {}
+    tolerations: []
+  # Settings by their .env.example names; the defaults match api/app/config.py.
+  tuning:
+    PROFILE_SAMPLE_ROWS: 500000
+    CORR_SAMPLE_ROWS: 100000
+    CORR_MAX_LEVELS: 50
+    COPY_BATCH_ROWS: 100000
+    EXPORT_CHUNK_MB: 256
+    EXPORT_FIT_MB: 512
+    SAMPLE_MAX_CELLS: 60000000
+    DB_POOL_MAX: 10
+    SQL_TIMEOUT_MS: 15000
+    SQL_MAX_ROWS: 2000
+    SQL_POOL_MAX: 4
+
+ui:
+  replicas: 1
+  image:
+    repository: registry.example.com/rainforest/ui
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  # Unset, the image uses the first nameserver in resolv.conf (the cluster DNS).
+
+persistence:
+  data:
+    # Datasets, exports and models; one ReadWriteOnce volume owned by the API pod.
+    size: 50Gi
+    storageClass: ""
+
+secrets:
+  # Name of a Secret you manage (keys below); empty: the chart creates one from `values`.
+  # Keys: sessionSecret (optional), oidcClientSecret (oidc), readonlyPassword, postgresPassword,
+  # mlflowTrackingUsername / mlflowTrackingPassword / mlflowTrackingToken (optional, external MLflow).
+  existingSecret: ""
+  # Used only when existingSecret is empty. Passwords go into a URL, so keep them URL-safe (letters and digits).
+  # In-chart Postgres: empty passwords are generated on first install and kept on upgrade. External Postgres: required.
+  # An empty sessionSecret makes the API generate one into the data volume.
+  values:
+    sessionSecret: ""
+    oidcClientSecret: ""
+    readonlyPassword: ""
+    postgresPassword: ""
+    mlflowTrackingUsername: ""
+    mlflowTrackingPassword: ""
+    mlflowTrackingToken: ""
+
+ingress:
+  # Set to your controller's class. "nginx" also lifts the request-body limit that blocks large uploads; for other
+  # controllers set the equivalent under annotations.
+  className: ""
+  annotations: {}
+  #  cert-manager.io/cluster-issuer: letsencrypt
+  tls:
+    # Name of the TLS Secret; empty: plain HTTP.
+    secretName: ""

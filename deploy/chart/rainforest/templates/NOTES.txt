@@ -1,0 +1,24 @@
+Rainforest {{ .Chart.AppVersion }} is installed as release "{{ .Release.Name }}".
+
+URL: {{ include "rainforest.scheme" . }}://{{ .Values.hostname }}/
+
+Sign-in: {{ .Values.auth.mode }} mode.
+{{- if eq .Values.auth.mode "pick" }}
+WARNING: Pick mode lets anyone choose any profile and does not authenticate; switch auth.mode to oidc for a team.
+{{- else }}
+Redirect URL to register with the identity provider: {{ include "rainforest.scheme" . }}://{{ .Values.hostname }}/api/auth/oidc/callback
+{{- end }}
+{{- if .Values.secrets.existingSecret }}
+
+Credentials come from the Secret "{{ .Values.secrets.existingSecret }}", which must exist in namespace "{{ .Release.Namespace }}" with these keys:
+  postgresPassword    password of the database user
+  readonlyPassword    password of the SQL console's read-only role
+{{- if eq .Values.auth.mode "oidc" }}
+  oidcClientSecret    the OIDC client secret
+{{- end }}
+  sessionSecret       optional; signs session cookies (generated into the data volume when absent)
+{{- if eq .Values.mlflow.mode "external" }}
+  mlflowTrackingUsername, mlflowTrackingPassword, mlflowTrackingToken
+                      optional; credentials for the external MLflow server
+{{- end }}
+{{- end }}

@@ -1,0 +1,37 @@
+{{- $annotations := dict }}
+{{- if eq .Values.ingress.className "nginx" }}
+{{- /* Uploads of up to 20 GB stream through to the API. */}}
+{{- $_ := set $annotations "nginx.ingress.kubernetes.io/proxy-body-size" "0" }}
+{{- end }}
+{{- $annotations = merge (deepCopy .Values.ingress.annotations) $annotations }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "rainforest.fullname" . }}
+  labels:
+    {{- include "rainforest.labels" (dict "root" . "component" "ui") | nindent 4 }}
+  {{- with $annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.tls.secretName }}
+  tls:
+    - hosts:
+        - {{ $.Values.hostname | quote }}
+      secretName: {{ . }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.hostname | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "rainforest.fullname" . }}-ui
+                port:
+                  number: 80

@@ -1,0 +1,193 @@
+suite: ingress and ui
+release:
+  name: rf
+  namespace: team
+templates:
+  - ingress.yaml
+  - ui-deployment.yaml
+  - ui-service.yaml
+set:
+  hostname: vehicles.example.com
+tests:
+  - it: routes the host's / to the ui Service
+    template: ingress.yaml
+    asserts:
+      - isKind:
+          of: Ingress
+      - equal:
+          path: apiVersion
+          value: networking.k8s.io/v1
+      - equal:
+          path: spec.rules[0].host
+          value: vehicles.example.com
+      - equal:
+          path: spec.rules[0].http.paths[0].path
+          value: /
+      - equal:
+          path: spec.rules[0].http.paths[0].pathType
+          value: Prefix
+      - equal:
+          path: spec.rules[0].http.paths[0].backend.service.name
+          value: rf-rainforest-ui
+      - equal:
+          path: spec.rules[0].http.paths[0].backend.service.port.number
+          value: 80
+
+  - it: sets no class and no TLS by default
+    template: ingress.yaml
+    asserts:
+      - notExists:
+          path: spec.ingressClassName
+      - notExists:
+          path: spec.tls
+      - notExists:
+          path: metadata.annotations["nginx.ingress.kubernetes.io/proxy-body-size"]
+
+  - it: lifts the body-size limit for ingress-nginx
+    template: ingress.yaml
+    set:
+      ingress.className: nginx
+    asserts:
+      - equal:
+          path: spec.ingressClassName
+          value: nginx
+      - equal:
+          path: metadata.annotations["nginx.ingress.kubernetes.io/proxy-body-size"]
+          value: "0"
+
+  - it: leaves the body-size limit to the operator for other controllers
+    template: ingress.yaml
+    set:
+      ingress.className: traefik
+    asserts:
+      - equal:
+          path: spec.ingressClassName
+          value: traefik
+      - notExists:
+          path: metadata.annotations["nginx.ingress.kubernetes.io/proxy-body-size"]
+
+  - it: merges ingress.annotations
+    template: ingress.yaml
+    set:
+      ingress.className: nginx
+      ingress.annotations:
+        cert-manager.io/cluster-issuer: letsencrypt
+    asserts:
+      - equal:
+          path: metadata.annotations["cert-manager.io/cluster-issuer"]
+          value: letsencrypt
+      - equal:
+          path: metadata.annotations["nginx.ingress.kubernetes.io/proxy-body-size"]
+          value: "0"
+
+  - it: lets ingress.annotations override the body-size default
+    template: ingress.yaml
+    set:
+      ingress.className: nginx
+      ingress.annotations:
+        nginx.ingress.kubernetes.io/proxy-body-size: 30g
+    asserts:
+      - equal:
+          path: metadata.annotations["nginx.ingress.kubernetes.io/proxy-body-size"]
+          value: 30g
+
+  - it: renders a TLS block when a secret name is set
+    template: ingress.yaml
+    set:
+      ingress.tls.secretName: vehicles-tls
+    asserts:
+      - equal:
+          path: spec.tls[0].secretName
+          value: vehicles-tls
+      - equal:
+          path: spec.tls[0].hosts[0]
+          value: vehicles.example.com
+
+  - it: points the ui at the API by FQDN, so nginx resolves it without search domains
+    template: ui-deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: API_UPSTREAM
+            value: http://rf-rainforest-api.team.svc.cluster.local:8000
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MLFLOW_UPSTREAM
+            value: http://rf-rainforest-mlflow.team.svc.cluster.local:5000
+
+  - it: uses a custom cluster domain
+    template: ui-deployment.yaml
+    set:
+      clusterDomain: k8s.corp
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: API_UPSTREAM
+            value: http://rf-rainforest-api.team.svc.k8s.corp:8000
+
+  - it: proxies /mlflow/ only for the in-chart server
+    template: ui-deployment.yaml
+    set:
+      mlflow.mode: in-chart
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MLFLOW_ENABLED
+            value: "1"
+
+  - it: renders no /mlflow/ proxy for external or off
+    template: ui-deployment.yaml
+    set:
+      mlflow.mode: external
+      mlflow.externalUrl: https://mlflow.example.com
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: MLFLOW_ENABLED
+            value: "0"
+
+  - it: leaves the DNS resolver to the image
+    template: ui-deployment.yaml
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name=="DNS_RESOLVER")]
+
+  - it: needs a writable root filesystem for its rendered config
+    template: ui-deployment.yaml
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+
+  - it: runs one replica by default and probes /
+    template: ui-deployment.yaml
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 1
+      - equal:
+          path: spec.template.spec.containers[0].readinessProbe.httpGet.path
+          value: /
+
+  - it: scales with ui.replicas
+    template: ui-deployment.yaml
+    set:
+      ui.replicas: 3
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 3
+
+  - it: exposes port 80
+    template: ui-service.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: rf-rainforest-ui
+      - equal:
+          path: spec.ports[0].port
+          value: 80
