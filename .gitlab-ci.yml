@@ -1,0 +1,311 @@
+# Rainforest on GitLab CI. Merge requests and the default branch run the tests; the default branch also pushes
+# images tagged with the commit; a release tag (1.2.3 or v1.2.3) runs everything: tests, images, the packaged chart
+# in the project's Helm registry, and a smoke test on kind.
+#
+# Needs a runner with the Docker executor in privileged mode (the `docker:27-dind` service), tagged however your
+# group tags its Docker runners (add `tags:` to `.build-image` and `smoke` if it needs one). `.github/workflows/ci.yml`
+# runs the same test commands; change both together.
+
+stages: [test, build, chart, smoke]
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+variables:
+  PIP_CACHE_DIR: $CI_PROJECT_DIR/.cache/pip
+  npm_config_cache: $CI_PROJECT_DIR/.cache/npm
+  # The Helm the `alpine/helm` and `helm-unittest` images below carry; the smoke job installs the same one.
+  HELM_VERSION: 3.17.3
+
+# ------------------------------------------------------------------------------------------------ test
+
+# interruptible: a newer pipeline on the same ref cancels the tests (never a build or a release).
+.test:
+  stage: test
+  interruptible: true
+  timeout: 20m
+
+api-tests:
+  extends: .test
+  image: python:3.12-slim
+  services:
+    - name: postgres:16
+      alias: postgres
+      variables:
+        POSTGRES_PASSWORD: test
+    # The GitHub job's server and flags, plus --allowed-hosts: here it is reached as `mlflow:5000` rather than
+    # localhost, and MLflow rejects any other Host header (403 "Invalid Host header").
+    - name: ghcr.io/mlflow/mlflow:v3.17.0
+      alias: mlflow
+      command:
+        - mlflow
+        - server
+        - --host=0.0.0.0
+        - --port=5000
+        - --backend-store-uri=sqlite:////tmp/mlflow.db
+        - --serve-artifacts
+        - --artifacts-destination=/tmp/mlartifacts
+        - --static-prefix=/mlflow
+        - --allowed-hosts=mlflow,mlflow:5000
+  variables:
+    RAINFOREST_TEST_DATABASE_URL: postgresql://postgres:test@postgres:5432/postgres
+    MLFLOW_TEST_URI: http://mlflow:5000/mlflow
+  cache:
+    key:
+      files: [api/requirements.txt, api/requirements-dev.txt]
+    paths: [.cache/pip]
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends libgomp1
+    - pip install -r api/requirements-dev.txt
+    # Service containers start asynchronously; the tests need both reachable.
+    - |
+      python - <<'PY'
+      import socket, sys, time, urllib.request
+      deadline = time.time() + 120
+      def up(check):
+          while time.time() < deadline:
+              try:
+                  check()
+                  return True
+              except OSError:
+                  time.sleep(2)
+          return False
+      def postgres():
+          socket.create_connection(("postgres", 5432), timeout=3).close()
+      def mlflow():
+          urllib.request.urlopen("http://mlflow:5000/mlflow/health", timeout=3).read()
+      for name, check in (("postgres", postgres), ("mlflow", mlflow)):
+          if not up(check):
+              sys.exit(f"{name} did not come up within 120 s")
+      PY
+  script:
+    - cd api && pytest -q -rs
+    - cd ../mlflow && pytest -q
+
+ui-tests:
+  extends: .test
+  image: node:20
+  timeout: 10m
+  cache:
+    key:
+      files: [ui/package-lock.json]
+    paths: [.cache/npm]
+  before_script:
+    - cd ui
+    - npm ci
+  script:
+    - npm run typecheck
+    - npm test
+    - npm run build
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends gettext-base
+    - bash nginx/test.sh
+
+# Split from one GitHub job into two because ruff needs Python and Prettier needs Node; the checks are the same.
+lint-api:
+  extends: .test
+  image: python:3.12-slim
+  timeout: 10m
+  before_script:
+    # The version in requirements-dev.txt, so a ruff release never fails an unrelated change.
+    - pip install "$(grep '^ruff==' api/requirements-dev.txt)"
+  script:
+    - cd api
+    - ruff check .
+    - ruff format --check .
+
+lint-ui:
+  extends: .test
+  image: node:20
+  timeout: 10m
+  cache:
+    key:
+      files: [ui/package-lock.json]
+    paths: [.cache/npm]
+  before_script:
+    - cd ui
+    - npm ci
+  script:
+    - npm run lint
+    - npm run format:check
+
+# default values leave `hostname` empty on purpose (the chart refuses to render without one), so lint with the CI values.
+chart-lint:
+  extends: .test
+  image:
+    name: alpine/helm:3.17.3
+    entrypoint: [""]
+  timeout: 10m
+  before_script:
+    - apk add --no-cache bash
+  script:
+    - helm lint deploy/chart/rainforest -f deploy/chart/rainforest/ci/dev-values.yaml
+    - helm lint deploy/chart/rainforest -f deploy/chart/rainforest/ci/team-values.yaml
+    - bash -n deploy/smoke.sh
+
+# The unit-test image is the job image, so CI runs exactly what `bash deploy/chart/test.sh` runs locally.
+chart-unittest:
+  extends: .test
+  image:
+    name: helmunittest/helm-unittest:3.17.3-0.8.2
+    entrypoint: [""]
+  timeout: 10m
+  script:
+    - cd deploy/chart
+    - helm unittest rainforest
+
+# ------------------------------------------------------------------------------------------------ build
+
+# One image per job so a failed CUDA build is visible on its own. Each is tagged with the commit SHA (+ suffix) on
+# the default branch, and also with the release tag (+ suffix) on a tag. The chart's default image tag is its
+# appVersion, which the `chart` job sets to the release tag, so the tag here must be the same string.
+# Variables: IMAGE_NAME (also the build context directory), TAG_SUFFIX, BUILD_ARGS (word-split on purpose).
+.build-image:
+  stage: build
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    TAG_SUFFIX: ""
+    BUILD_ARGS: ""
+  timeout: 30m
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  script:
+    - |
+      image="$CI_REGISTRY_IMAGE/$IMAGE_NAME"
+      tags="$CI_COMMIT_SHA$TAG_SUFFIX"
+      if [ -n "${CI_COMMIT_TAG:-}" ]; then tags="$tags $CI_COMMIT_TAG$TAG_SUFFIX"; fi
+      args=""
+      for t in $tags; do args="$args -t $image:$t"; done
+      # The API tags its MLflow runs with the commit it was built from; the other images have no such argument.
+      if [ "$IMAGE_NAME" = api ]; then args="$args --build-arg GIT_SHA=$CI_COMMIT_SHA"; fi
+      # shellcheck disable=SC2086
+      docker build $BUILD_ARGS $args "$IMAGE_NAME"
+      for t in $tags; do docker push "$image:$t"; done
+
+api-cpu:
+  extends: .build-image
+  variables:
+    IMAGE_NAME: api
+
+# Which of the two a team uses depends on its nodes' driver (deploy/README.md, GPU): 580+ takes cuda13, 570-579 cu12.
+api-cuda13:
+  extends: .build-image
+  timeout: 45m
+  variables:
+    IMAGE_NAME: api
+    TAG_SUFFIX: -cuda13
+    BUILD_ARGS: --build-arg GPU=1
+
+api-cu12:
+  extends: .build-image
+  timeout: 45m
+  variables:
+    IMAGE_NAME: api
+    TAG_SUFFIX: -cu12
+    BUILD_ARGS: --build-arg GPU=1 --build-arg XGBOOST_GPU_PKG=xgboost-cu12==3.4.1
+
+ui:
+  extends: .build-image
+  variables:
+    IMAGE_NAME: ui
+
+mlflow:
+  extends: .build-image
+  variables:
+    IMAGE_NAME: mlflow
+
+# ------------------------------------------------------------------------------------------------ chart
+
+# Packages the chart at the release version and uploads it to this project's Helm package registry.
+# `helm package --version/--app-version` writes the two fields into the packaged Chart.yaml, so the checked-in
+# placeholders (0.1.0) stay untouched and no sed/yq step can leave them half-edited.
+#   version     the tag without a leading `v` (a chart version must be semver; helm package rejects anything else)
+#   appVersion  the tag as pushed, so the chart's default image tag (appVersion) is the tag the build jobs pushed
+# Waits for all five images so a chart never lands in the registry without the images it points at.
+chart:
+  stage: chart
+  image:
+    name: alpine/helm:3.17.3
+    entrypoint: [""]
+  needs: [api-cpu, api-cuda13, api-cu12, ui, mlflow]
+  rules:
+    - if: $CI_COMMIT_TAG
+  timeout: 10m
+  before_script:
+    - apk add --no-cache curl
+  script:
+    - |
+      version="${CI_COMMIT_TAG#v}"
+      helm package deploy/chart/rainforest --version "$version" --app-version "$CI_COMMIT_TAG" --destination dist
+      curl --fail-with-body --request POST --user "gitlab-ci-token:$CI_JOB_TOKEN" \
+        --form "chart=@dist/rainforest-$version.tgz" \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/helm/api/stable/charts"
+  artifacts:
+    paths: [dist/*.tgz]
+    expire_in: 30 days
+
+# ------------------------------------------------------------------------------------------------ smoke
+
+# The release gate: installs the chart on kind and trains a run (deploy/smoke.sh). It runs after `chart`, so a
+# failure here marks the release bad but does not unpublish the chart; fix forward with a new tag.
+#
+# Registry credentials: smoke.sh with BUILD=0 pulls any missing image with the Docker daemon's own login (the
+# `docker login` below), then `kind load`s it into the cluster and installs the chart with pullPolicy Never. The
+# kind nodes therefore never contact the private registry and the chart needs no imagePullSecrets here.
+#
+# kind inside a dind *service*: the daemon is another container, so the API server that kind publishes on the
+# daemon's 127.0.0.1 is not the job's 127.0.0.1. The cluster is created ahead of the script, listening on all
+# interfaces with `docker` as a certificate name, and the kubeconfig is pointed at that host. smoke.sh reuses a
+# cluster that already exists. (On a Kubernetes executor the service shares the pod's network and this is moot.)
+smoke:
+  stage: smoke
+  image: docker:27
+  services:
+    - docker:27-dind
+  needs: [chart, api-cpu, ui, mlflow]
+  rules:
+    - if: $CI_COMMIT_TAG
+  timeout: 45m
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    KIND_VERSION: v0.27.0
+    KUBECTL_VERSION: v1.32.2
+    CLUSTER: rf-smoke
+  before_script:
+    - apk add --no-cache bash curl git jq
+    - |
+      case "$(uname -m)" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; *) echo "unsupported architecture" >&2; exit 1 ;; esac
+      curl -fsSLo /usr/local/bin/kind "https://kind.sigs.k8s.io/dl/$KIND_VERSION/kind-linux-$arch"
+      curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/$arch/kubectl"
+      curl -fsSL "https://get.helm.sh/helm-v$HELM_VERSION-linux-$arch.tar.gz" | tar -xz -C /usr/local/bin --strip-components=1 "linux-$arch/helm"
+      chmod +x /usr/local/bin/kind /usr/local/bin/kubectl
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    # smoke.sh loads this one into the cluster only when the daemon already has it; otherwise the nodes would pull
+    # it from Docker Hub.
+    - docker pull postgres:16-alpine
+    - |
+      cat > kind.yaml <<'EOF'
+      kind: Cluster
+      apiVersion: kind.x-k8s.io/v1alpha4
+      networking:
+        apiServerAddress: "0.0.0.0"
+      kubeadmConfigPatches:
+        - |
+          kind: ClusterConfiguration
+          apiServer:
+            certSANs: ["docker"]
+      EOF
+    - kind create cluster --name "$CLUSTER" --config kind.yaml --wait 120s
+    - sed -i 's#https://0.0.0.0:#https://docker:#' "$HOME/.kube/config"
+  script:
+    - BUILD=0 REGISTRY="$CI_REGISTRY_IMAGE" IMAGE_TAG="$CI_COMMIT_TAG" CLUSTER="$CLUSTER" bash deploy/smoke.sh

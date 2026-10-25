@@ -25,8 +25,9 @@ one release per team, running the same `api`, `ui` and `mlflow` images, with Pos
 or external. The chart sets the same settings in the API's environment, mostly under the `.env.example` names. The UI image renders its nginx
 configuration from environment at start (`ui/nginx/*.template`), so one image serves Compose and the chart. The API
 runs as one pod, because jobs run in its process and share `/data`. `deploy/smoke.sh` installs the chart on a `kind`
-cluster and trains a run; `.gitlab-ci.yml` builds and publishes the images and the chart, and `deploy/argocd/` holds the
-Argo CD layout, one Application per team. See [deploy/README.md](../deploy/README.md).
+cluster and trains a run. `.gitlab-ci.yml` tests the code, publishes the images (CPU and two CUDA builds) and the
+packaged chart, and runs that smoke test on a release tag. `deploy/argocd/` holds the Argo CD layout, one Application
+per team. See [deploy/README.md](../deploy/README.md).
 
 ### API modules
 
@@ -547,5 +548,7 @@ retype rules, the *Fields · Table* and Explore URL state, error parsing, run ra
 helpers (including a field's differences from its baseline), the start form's defaults and target rule, the view
 URL helpers, `can` for every role and action, initials, and the reuse summary, diff formatting and reopen picker. Tests sit next to the code as
 `*.test.ts`. CI (`.github/workflows/ci.yml`, on pushes to `main` and pull requests) runs the API tests with a
-Postgres service and an MLflow server container, the UI typecheck, tests and build, and `docker compose --profile
-keycloak build`.
+Postgres service and an MLflow server container, the MLflow sidecar's tests, the UI typecheck, tests, build and nginx
+configuration test, ruff, ESLint and Prettier, `helm lint` and the chart's helm-unittest suites, and `docker compose
+--profile keycloak build`. `.gitlab-ci.yml` runs the same test commands, then builds and publishes on the default
+branch and on release tags (see [deploy/README.md](../deploy/README.md#delivery)).

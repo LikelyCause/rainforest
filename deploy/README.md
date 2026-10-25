@@ -111,6 +111,10 @@ anything the team can't afford to lose.
      --namespace rainforest-vehicles -f vehicles.yaml --wait --timeout 10m
    ```
 
+   From a checkout that is the chart as it stands. To install a release instead, use the packaged chart from the
+   project's Helm registry (see [Delivery](#delivery)): replace `deploy/chart/rainforest` with `rainforest/rainforest
+   --version 1.2.3`.
+
    The images default to the chart's `appVersion`, so a chart version and the images it runs move together. Set
    `api.image.tag`, `ui.image.tag` and `mlflow.image.tag` to override that. The MLflow image's tag is Rainforest's
    version, not MLflow's.
@@ -400,8 +404,55 @@ The chart's own unit tests run with `bash deploy/chart/test.sh` (they need Docke
 
 ## Delivery
 
-`.gitlab-ci.yml` at the repository root tests the code, builds and publishes the API (CPU and the two GPU builds), UI
-and MLflow images and the packaged chart to the project's registries, and runs the smoke test on a release tag.
+`.gitlab-ci.yml` at the repository root has four stages. `.github/workflows/ci.yml` runs the same test commands, so
+the two stay in step.
+
+| Stage | Runs | When |
+|---|---|---|
+| `test` | `api-tests` (Postgres and MLflow as services; the API tests, then `mlflow/`), `ui-tests` (typecheck, Vitest, build, `ui/nginx/test.sh`), `lint-api` (ruff), `lint-ui` (ESLint, Prettier), `chart-lint` (`helm lint` with both `ci/` values files, `bash -n deploy/smoke.sh`), `chart-unittest` (helm-unittest from the same image as `deploy/chart/test.sh`) | merge requests, the default branch and tags |
+| `build` | five images, built in Docker-in-Docker and pushed to the project's container registry: `api-cpu`, `api-cuda13` (`GPU=1`), `api-cu12` (`GPU=1`, `xgboost-cu12==3.4.1`), `ui`, `mlflow` | the default branch and tags |
+| `chart` | `helm package` and an upload to the project's Helm registry | tags |
+| `smoke` | `deploy/smoke.sh` on a `kind` cluster, against the pushed images | tags |
+
+**What a push to the default branch produces:** images at `$CI_REGISTRY_IMAGE/{api,ui,mlflow}:<commit SHA>`, and the
+two GPU builds as `api:<commit SHA>-cuda13` and `-cu12`.
+
+**What a release tag produces:** the same images again, tagged with the release tag (`1.2.3`, or `v1.2.3`, with the
+`-cuda13` and `-cu12` suffixes on the GPU builds); then the chart `rainforest-1.2.3.tgz`, whose `version` is the tag
+without a leading `v` and whose `appVersion` is the tag as written. The chart's default image tag is its `appVersion`,
+so the chart installs exactly the images that tag built. The tag must be a semantic version, or `helm package`
+fails. The smoke test is the release gate: it runs after the chart is uploaded, so a failure marks the release bad but
+does not remove the chart; fix forward with a new tag.
+
+**Installing from the registry.** The chart is in the project's Helm package registry, in the `stable` channel. Create
+a [deploy token](https://docs.gitlab.com/user/project/deploy_tokens/) with the `read_package_registry` scope, and a
+second one with `read_registry` for the cluster to pull the images (a pull Secret listed in `imagePullSecrets`), then:
+
+```bash
+helm repo add rainforest https://gitlab.example.com/api/v4/projects/<project id>/packages/helm/stable \
+  --username <deploy token user> --password <deploy token>
+helm repo update
+helm search repo rainforest --versions
+helm upgrade --install rainforest rainforest/rainforest --version 1.2.3 \
+  --namespace rainforest-vehicles -f vehicles.yaml --wait --timeout 10m
+```
+
+Set `api.image.repository`, `ui.image.repository` and `mlflow.image.repository` to
+`registry.gitlab.example.com/<group>/<project>/{api,ui,mlflow}`. With `api.gpu.enabled`, `api.gpu.imageTag` is the
+release tag plus `-cuda13` or `-cu12`, as in [GPU](#gpu).
+
+**The smoke job.** It needs a runner with the Docker executor in privileged mode, for the `docker:27-dind` service.
+`deploy/smoke.sh` runs with `BUILD=0`: it pulls the three images with the job's `docker login`, loads them into the
+kind cluster, and installs the chart with `pullPolicy: Never`, so the cluster never talks to the private registry and
+needs no `imagePullSecrets`. Because kind runs inside the Docker-in-Docker service, the job creates the cluster first,
+with the API server listening on all interfaces and `docker` as a certificate name, and points the kubeconfig at
+`docker`; `smoke.sh` reuses a cluster that exists. It installs the chart from the checked-out source, not from the
+package it just uploaded.
+
+To check the pipeline file without a GitLab project, [`gitlab-ci-local`](https://github.com/firecow/gitlab-ci-local)
+runs the test jobs on a laptop (`gitlab-ci-local api-tests`, `chart-lint`, and so on). Everything that pushes
+(`build`, `chart`) or needs the Docker-in-Docker service (`smoke`) only runs on a real runner.
+
 `deploy/argocd/` holds the Argo CD layout: one Argo Application per team, generated from the `teams/<name>/`
 directory that holds that team's chart version and values file. Adding a team is adding a directory, and each team
-pins its own chart version. The files themselves are the reference for either.
+pins its own chart version. The files themselves are the reference for the pipeline and for the layout.

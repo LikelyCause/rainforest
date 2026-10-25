@@ -107,6 +107,25 @@ jobs:
         working-directory: ui
         run: npm run format:check
 
+  chart:
+    name: Helm chart
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      # The default values leave `hostname` empty on purpose, so lint with the CI values files.
+      - name: helm lint
+        run: |
+          helm lint deploy/chart/rainforest -f deploy/chart/rainforest/ci/dev-values.yaml
+          helm lint deploy/chart/rainforest -f deploy/chart/rainforest/ci/team-values.yaml
+      - name: helm-unittest
+        run: bash deploy/chart/test.sh
+      - name: smoke.sh syntax
+        run: bash -n deploy/smoke.sh
+
   images:
     name: Docker images build
     runs-on: ubuntu-24.04

@@ -14,3 +14,5 @@ docs/superpowers/
 # Core dumps, e.g. from a crashed amd64 container under emulation.
 /core
 /deploy/chart/core
+# gitlab-ci-local working directory
+.gitlab-ci-local/
