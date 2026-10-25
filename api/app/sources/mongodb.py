@@ -434,15 +434,21 @@ class _Chunks:
         return {"arrays": list(self.arrays), "mixed": list(self.mixed), "renamed": self.renamed}
 
 
+_DTYPES = {"boolean": pl.Boolean, "number": pl.Int64, "text": pl.String, "datetime": pl.Datetime("us", "UTC")}
+
+
 def _series(name: str, values: list, mixed: bool, kinds: set[str]) -> pl.Series:
     if mixed:
         return pl.Series(name, [as_text(v) for v in values], dtype=pl.String)
+    s = pl.Series(name, values, strict=False)
+    if s.dtype == pl.Null:
+        # Every value in this chunk is null: give the column the type the rest of the pull has.
+        return s.cast(_DTYPES[next(iter(kinds))]) if kinds else s
     if kinds == {"datetime"}:
         # The driver returns naive datetimes in UTC.
-        s = pl.Series(name, values)
         s = s.dt.replace_time_zone("UTC") if s.dtype.time_zone is None else s.dt.convert_time_zone("UTC")
         return s.cast(pl.Datetime("us", "UTC"))
-    return pl.Series(name, values, strict=False)
+    return s
 
 
 def _estimated(coll) -> int:

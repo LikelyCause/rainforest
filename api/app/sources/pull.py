@@ -135,8 +135,8 @@ def _bson(doc: dict | None) -> dict | None:
     return None if doc is None else json_util.loads(json.dumps(doc))
 
 
-def warnings_for(notes: dict, removed: dict[str, int]) -> list[str]:
-    """One readable sentence per kind of thing the pull changed."""
+def warnings_for(notes: dict, removed: dict[str, int], dedupe: bool) -> list[str]:
+    """One readable sentence per kind of thing the pull changed, or asked for and couldn't do."""
 
     def names(items: list[str]) -> str:
         more = len(items) - NAMES_IN_WARNING
@@ -151,6 +151,8 @@ def warnings_for(notes: dict, removed: dict[str, int]) -> list[str]:
         out.append(f"Keys renamed: {names([f'{k} → {v}' for k, v in notes['renamed'].items()])}")
     if removed:
         out.append(f"Duplicates removed: {names([f'{k} {v:,}' for k, v in removed.items()])}")
+    if dedupe and not notes.get("compared_on"):
+        out.append("Duplicates were not removed: no shared columns to compare on")
     return out
 
 
@@ -208,6 +210,15 @@ def run_connect(dataset_id: int) -> None:
     dest = get_settings().datasets_dir / str(dataset_id) / "raw.parquet"
     try:
         pulled = pull_into(dataset_id, src, dest)
+        execute(
+            """UPDATE meta.dataset_pulls SET status = 'done', rows = %s, per_source = %s, flatten_notes = %s,
+                      finished_at = now() WHERE id = %s""",
+            (pulled["rows"], jsonb(pulled["per_source"]), jsonb(pulled["flatten_notes"]), pull_id),
+        )
+        execute(
+            "UPDATE meta.datasets SET warnings = warnings || %s::text[], updated_at = now() WHERE id = %s",
+            (warnings_for(pulled["flatten_notes"], pulled["removed_duplicates"], src["dedupe"]), dataset_id),
+        )
     except Exception as exc:  # noqa: BLE001
         log.exception("pulling dataset %s failed", dataset_id)
         # A SourceError is redacted already; nothing else carries a connection string.
@@ -222,13 +233,4 @@ def run_connect(dataset_id: int) -> None:
             (message, dataset_id),
         )
         return
-    execute(
-        """UPDATE meta.dataset_pulls SET status = 'done', rows = %s, per_source = %s, flatten_notes = %s,
-                  finished_at = now() WHERE id = %s""",
-        (pulled["rows"], jsonb(pulled["per_source"]), jsonb(pulled["flatten_notes"]), pull_id),
-    )
-    execute(
-        "UPDATE meta.datasets SET warnings = warnings || %s::text[], updated_at = now() WHERE id = %s",
-        (warnings_for(pulled["flatten_notes"], pulled["removed_duplicates"]), dataset_id),
-    )
     process_dataset(dataset_id, None, "parquet")

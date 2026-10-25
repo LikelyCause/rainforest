@@ -13,7 +13,7 @@ from pymongo.errors import PyMongoError
 
 from app import db
 from app.config import get_settings
-from app.sources import BudgetExceeded, CollectionSpec, PullTimeout, as_text, mongodb
+from app.sources import BudgetExceeded, CollectionSpec, PullTimeout, as_text, mongodb, pull
 from app.sources.mongodb import MongoSource
 from app.sources.pull import assemble, run_connect
 
@@ -122,6 +122,20 @@ def test_pull_keeps_utc_datetimes_and_booleans(tmp_path):
     df = pl.read_parquet(tmp_path / "raw.parquet")
     assert df.schema == {"when": pl.Datetime("us", "UTC"), "ok": pl.Boolean}
     assert df["when"][0] == when.replace(tzinfo=timezone.utc)
+
+
+def test_a_chunk_of_only_nulls_keeps_the_columns_type(tmp_path, monkeypatch):
+    monkeypatch.setattr(mongodb, "CHUNK_DOCS", 2)
+    when = datetime(2025, 3, 1, 12, 30)
+    typed = {"w": when, "ok": True, "n": 3, "t": "x"}
+    nulls = dict.fromkeys(typed)
+    src = _fake(c=[typed, typed, nulls, nulls])
+    src.pull("d", [CollectionSpec("c")], tmp_path, 10**9, 60, None)
+    expected = {"w": pl.Datetime("us", "UTC"), "ok": pl.Boolean, "n": pl.Int64, "t": pl.String}
+    assert pl.read_parquet_schema(tmp_path / "chunk_c_1.parquet") == expected
+    assemble(tmp_path, [CollectionSpec("c")], False, False, None, tmp_path / "raw.parquet")
+    df = pl.read_parquet(tmp_path / "raw.parquet")
+    assert df.schema == expected and df["w"].to_list()[2:] == [None, None]
 
 
 def test_pull_timeout(tmp_path):
@@ -325,6 +339,40 @@ def test_run_connect_over_budget_fails_and_leaves_no_files(database, mongo, mong
     assert row["status"] == "failed" and "SOURCE_MAX_CELLS" in row["error"]
     assert _pulls(ds)[0]["status"] == "failed"
     assert not list((get_settings().datasets_dir / str(ds)).rglob("*.parquet"))
+
+
+def test_run_connect_failure_after_the_pull_still_fails_both_rows(database, mongo, mongo_url, monkeypatch):
+    def broken(*a, **kw):
+        raise RuntimeError("warnings broke")
+
+    monkeypatch.setattr(pull, "warnings_for", broken)
+    ds = _connected(mongo.name, [{"name": "curated"}])
+    with use_sources(f"test={mongo_url}"):
+        run_connect(ds)
+    row = db.fetch_one("SELECT * FROM meta.datasets WHERE id = %s", (ds,))
+    assert row["status"] == "failed" and row["error"] == "warnings broke"
+    assert _pulls(ds)[0]["status"] == "failed" and _pulls(ds)[0]["error"] == "warnings broke"
+
+
+def test_run_connect_says_when_nothing_was_left_to_compare(database, mongo, mongo_url):
+    collections = [
+        {"name": "curated", "projection": {"vehicle": 1}},
+        {"name": "massive", "projection": {"engine": 1}},
+    ]
+    ds = _connected(mongo.name, collections)
+    with use_sources(f"test={mongo_url}"):
+        run_connect(ds)
+    row = db.fetch_one("SELECT * FROM meta.datasets WHERE id = %s", (ds,))
+    assert row["status"] == "ready", row["error"]
+    assert "Duplicates were not removed: no shared columns to compare on" in row["warnings"]
+    assert row["row_count"] == 800 and _pulls(ds)[0]["flatten_notes"]["compared_on"] == []
+
+
+def test_warnings_for_dedupe_without_columns_only_when_asked():
+    notes = {"arrays": [], "mixed": [], "renamed": {}, "compared_on": []}
+    assert pull.warnings_for(notes, {}, dedupe=True) == ["Duplicates were not removed: no shared columns to compare on"]
+    assert pull.warnings_for(notes, {}, dedupe=False) == []
+    assert pull.warnings_for({**notes, "compared_on": ["x"]}, {}, dedupe=True) == []
 
 
 def test_run_connect_unknown_connection_fails_with_its_name(database):
