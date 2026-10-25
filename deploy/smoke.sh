@@ -49,6 +49,7 @@ WORK=$(mktemp -d)
 COOKIES=$WORK/cookies
 BASE=http://localhost:$LOCAL_PORT
 FORWARD_PID=
+CREATED=0   # 1 once this run has created the kind cluster; only then does cleanup delete it
 
 log() { printf 'smoke: [%4ss] %s\n' "$SECONDS" "$*"; }
 
@@ -81,9 +82,14 @@ fail() {
 
 cleanup() {
   local code=$?
-  [ -n "$FORWARD_PID" ] && kill "$FORWARD_PID" 2>/dev/null || true
+  if [ -n "$FORWARD_PID" ]; then
+    kill "$FORWARD_PID" 2>/dev/null || true
+    wait "$FORWARD_PID" 2>/dev/null || true
+  fi
   rm -rf "$WORK"
-  if [ "$KEEP" = 1 ]; then
+  if [ "$CREATED" != 1 ]; then
+    log "cluster $CLUSTER was not created by this run; it is left as it is"
+  elif [ "$KEEP" = 1 ]; then
     log "cluster $CLUSTER kept. Reach the UI with:"
     echo "  kubectl --context $CTX port-forward svc/$RELEASE-ui $LOCAL_PORT:80   # then open $BASE"
     echo "  kind delete cluster --name $CLUSTER   # when done"
@@ -99,15 +105,16 @@ trap cleanup EXIT
 
 # ---------------------------------------------------------------- helpers
 
-# api METHOD PATH [JSON-BODY]: prints the response body; fails on an HTTP status of 400 or more, showing the body.
+# api METHOD PATH [JSON-BODY [EXPECTED-STATUS]]: prints the response body. Fails on any status of 400 or more and,
+# when EXPECTED-STATUS is given (the one docs/api.md names), on any other status; the message shows status and body.
 api() {
-  local method=$1 path=$2 body=${3:-} out status
+  local method=$1 path=$2 body=${3:-} expected=${4:-} out status
   local args=(-sS -o "$WORK/body" -w '%{http_code}' -X "$method" -b "$COOKIES" -c "$COOKIES" "$BASE$path")
   [ -n "$body" ] && args+=(-H 'Content-Type: application/json' --data "$body")
   status=$(curl --max-time 60 "${args[@]}") || fail "curl $method $path did not complete"
   out=$(cat "$WORK/body")
-  if [ "$status" -ge 400 ]; then
-    fail "$method $path -> HTTP $status: $out"
+  if [ "$status" -ge 400 ] || { [ -n "$expected" ] && [ "$status" != "$expected" ]; }; then
+    fail "$method $path -> HTTP $status${expected:+ (expected $expected)}: $out"
   fi
   printf '%s' "$out"
 }
@@ -136,13 +143,14 @@ check_tools() {
 
 create_cluster() {
   if kind get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
-    log "cluster $CLUSTER exists, reusing it"
+    log "cluster $CLUSTER already exists: reusing it and keeping it when the run ends"
     # A leftover release would carry over old volumes (and an old Postgres password); start clean.
     helm --kube-context "$CTX" -n "$NAMESPACE" uninstall "$RELEASE" --wait >/dev/null 2>&1 || true
     k delete pvc --all --wait >/dev/null 2>&1 || true
   else
     log "creating kind cluster $CLUSTER"
     kind create cluster --name "$CLUSTER" --wait 120s
+    CREATED=1
   fi
 }
 
@@ -249,7 +257,7 @@ check_readonly_console() {
 
 generate_dataset() {
   log "generating the 50k x 150 demo (timeout ${DATASET_TIMEOUT}s)"
-  DATASET_ID=$(api POST /api/datasets/sample '{"rows": 50000, "fields": 150, "name": "smoke demo"}' | jq -r '.id')
+  DATASET_ID=$(api POST /api/datasets/sample '{"rows": 50000, "fields": 150, "name": "smoke demo"}' 202 | jq -r '.id')
   [ -n "$DATASET_ID" ] && [ "$DATASET_ID" != null ] || fail "sample generation returned no dataset id"
   poll "dataset $DATASET_ID" "$DATASET_TIMEOUT" "/api/datasets/$DATASET_ID" ready
   log "dataset $DATASET_ID is ready"
@@ -257,7 +265,8 @@ generate_dataset() {
 
 finalize_baseline() {
   local targets fields
-  targets=$(api GET "/api/datasets/$DATASET_ID" | jq -c '.targets // ["column_a", "column_b"]')
+  targets=$(api GET "/api/datasets/$DATASET_ID" | jq -c '.target_columns // []')
+  [ "$targets" != "[]" ] || fail "dataset $DATASET_ID has no target_columns; the generated sample should set them"
   log "setting up the Trees baseline, targets $targets, Admin as the only assessor"
   api POST "/api/datasets/$DATASET_ID/baselines" \
     "{\"family\": \"tree\", \"start\": \"scratch\", \"targets\": $targets, \"assessors\": [$ADMIN_ID]}" >/dev/null
@@ -276,13 +285,13 @@ finalize_baseline() {
 
 export_and_train() {
   EXPERIMENT_ID=$(api POST "/api/datasets/$DATASET_ID/experiments" \
-    "{\"name\": \"smoke\", \"source\": \"recipe:$RECIPE_ID\"}" | jq -r '.id')
+    "{\"name\": \"smoke\", \"source\": \"recipe:$RECIPE_ID\"}" 201 | jq -r '.id')
   log "experiment $EXPERIMENT_ID; exporting (timeout ${EXPORT_TIMEOUT}s)"
-  EXPORT_ID=$(api POST "/api/datasets/$DATASET_ID/exports" "{\"experiment_id\": $EXPERIMENT_ID}" | jq -r '.id')
+  EXPORT_ID=$(api POST "/api/datasets/$DATASET_ID/exports" "{\"experiment_id\": $EXPERIMENT_ID}" 202 | jq -r '.id')
   poll "export $EXPORT_ID" "$EXPORT_TIMEOUT" "/api/exports/$EXPORT_ID" done
 
   log "export $EXPORT_ID done; training lightgbm (timeout ${RUN_TIMEOUT}s)"
-  RUN_ID=$(api POST "/api/exports/$EXPORT_ID/runs" '{"model": "lightgbm", "cv_folds": 0}' | jq -r '.id')
+  RUN_ID=$(api POST "/api/exports/$EXPORT_ID/runs" '{"model": "lightgbm", "cv_folds": 0}' 202 | jq -r '.id')
   poll "run $RUN_ID" "$RUN_TIMEOUT" "/api/runs/$RUN_ID" done
   log "run $RUN_ID done"
 }
