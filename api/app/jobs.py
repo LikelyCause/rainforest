@@ -136,6 +136,14 @@ def sweep(owner: int | None = None) -> None:
                 WHERE status = 'correlating' AND profiled_at IS NOT NULL AND {}"""
             ).format(dead)
         )
+        # An interrupted refresh swapped nothing in (the swap is one transaction), so the old data is all there; its
+        # leftover _new file and table are cleared by the next refresh.
+        conn.execute(
+            sql.SQL(
+                """UPDATE meta.datasets SET status = 'ready', progress = 1, status_message = 'Ready', updated_at = now()
+                WHERE status = 'refreshing' AND {}"""
+            ).format(dead)
+        )
         conn.execute(
             sql.SQL(
                 """UPDATE meta.datasets
