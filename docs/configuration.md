@@ -14,7 +14,9 @@ The defaults below are the ones `docker-compose.yml` applies when `.env` leaves 
 | `COMPOSE_FILE` | `docker-compose.yml` | `docker-compose.yml:docker-compose.gpu.yml` for the GPU image (see [GPU](deployment.md#gpu)) |
 | `COMPOSE_PROFILES` | – | `keycloak` to run the reference Keycloak (see [Reference Keycloak](deployment.md#reference-keycloak-development-only)) |
 | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | rainforest | database name and owner; Postgres applies them when it creates the `pgdata` volume, so set them before the first start |
-| `READONLY_PASSWORD` | rainforest_ro | password for the SQL console's `rainforest_ro` role |
+| `READONLY_ROLE`, `READONLY_PASSWORD` | rainforest_ro | name and password of the SQL console's role |
+| `RAINFOREST_MANAGED_ROLES` | `true` | `false` when an operator creates the console role instead (see [SQL console](sql.md#when-the-api-cant-create-roles)); the API then only grants to it |
+| `MLFLOW_MANAGED_DATABASE` | `true` | `false` when the `mlflow` database already exists and its user has no `CREATEDB`; the MLflow container then exits if the database is missing |
 | `UI_PORT`, `API_PORT`, `DB_PORT` | 8080, 8000, 5432 | published ports (`API_PORT` and `DB_PORT` bind to 127.0.0.1) |
 | `API_WORKERS` / `JOB_WORKERS` | 2 / 2 | uvicorn workers / background job threads per worker |
 | `JOB_SLOTS` | 1 | background jobs running at once across all workers; each uses `cpu_count // JOB_SLOTS` threads, so the default gives one job every core |

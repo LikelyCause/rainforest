@@ -49,6 +49,9 @@ jobs:
       - run: pytest -q -rs
         env:
           MLFLOW_TEST_URI: http://localhost:5000/mlflow
+      - name: MLflow sidecar tests
+        run: pytest -q
+        working-directory: mlflow
 
   ui:
     name: UI typecheck, tests and build

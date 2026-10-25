@@ -81,6 +81,21 @@ The console can't see work that is private to one person.
   their rows in `meta.exports`, `meta.model_runs`, `meta.v_model_metrics` and `meta.analyses`. The console doesn't
   know who is asking, so this hides them from their owner too.
 
+## When the API can't create roles
+
+By default the API creates the `rainforest_ro` role on every start, sets its password from `READONLY_PASSWORD`
+and makes it read-only, which needs `CREATEROLE`. On a shared Postgres server whose administrator won't grant that,
+set `RAINFOREST_MANAGED_ROLES=false` and have them run once:
+
+```sql
+CREATE ROLE rainforest_ro LOGIN PASSWORD '…';
+```
+
+Use the name in `READONLY_ROLE` and the password in `READONLY_PASSWORD`. The API refuses to start while the role
+is missing. It does not alter the role. Its `GRANT`s, default privileges and the `REVOKE` on the private tables
+above still run on every start. The console sets a read-only transaction and the statement timeout on each query
+itself, so the role needs neither setting.
+
 ## Migrations and views
 
 Schema changes go in `api/app/migrations/NNN_name.sql`. The API applies new migrations once on startup, under an

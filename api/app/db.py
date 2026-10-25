@@ -16,7 +16,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
-from .config import get_settings
+from .config import Settings, get_settings
 
 log = logging.getLogger(__name__)
 
@@ -143,6 +143,34 @@ def apply_migrations(conn: psycopg.Connection) -> list[str]:
     return done
 
 
+def role_exists(conn: psycopg.Connection, name: str) -> bool:
+    return conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (name,)).fetchone() is not None
+
+
+def ensure_readonly_role(conn: psycopg.Connection, s: Settings) -> None:
+    """Create the SQL console's role and set its password and read-only limits. Needs CREATEROLE."""
+    role = sql.Identifier(s.readonly_role)
+    if not role_exists(conn, s.readonly_role):
+        conn.execute(sql.SQL("CREATE ROLE {} LOGIN").format(role))
+    conn.execute(sql.SQL("ALTER ROLE {} WITH LOGIN PASSWORD {}").format(role, sql.Literal(s.readonly_password)))
+    conn.execute(sql.SQL("ALTER ROLE {} SET default_transaction_read_only = on").format(role))
+    conn.execute(sql.SQL("ALTER ROLE {} SET statement_timeout = {}").format(role, sql.Literal(f"{s.sql_timeout_ms}ms")))
+
+
+def grant_readonly(conn: psycopg.Connection, s: Settings) -> None:
+    """What the console's role may read. Runs whoever created the role: these tables are the app's to protect."""
+    role = sql.Identifier(s.readonly_role)
+    conn.execute(sql.SQL("GRANT USAGE ON SCHEMA meta, raw TO {}").format(role))
+    conn.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA meta, raw TO {}").format(role))
+    conn.execute(sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA meta, raw GRANT SELECT ON TABLES TO {}").format(role))
+    # The two grants above cover these too (raw tables appear at runtime, so the default stays).
+    conn.execute(
+        sql.SQL("REVOKE ALL ON {} FROM {}").format(
+            sql.SQL(", ").join(sql.Identifier("meta", t) for t in PRIVATE_TABLES), role
+        )
+    )
+
+
 def bootstrap() -> None:
     """Migrate the schema and (re)configure the read-only role. Safe to run from several workers."""
     from . import experiments, recipes, users
@@ -174,26 +202,14 @@ def bootstrap() -> None:
                     "INSERT INTO meta.users (name, role) SELECT 'Admin', 'lead' "
                     "WHERE NOT EXISTS (SELECT 1 FROM meta.users)"
                 )
-            role = sql.Identifier(s.readonly_role)
-            exists = conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (s.readonly_role,)).fetchone()
-            if not exists:
-                conn.execute(sql.SQL("CREATE ROLE {} LOGIN").format(role))
-            conn.execute(sql.SQL("ALTER ROLE {} WITH LOGIN PASSWORD {}").format(role, sql.Literal(s.readonly_password)))
-            conn.execute(sql.SQL("ALTER ROLE {} SET default_transaction_read_only = on").format(role))
-            conn.execute(
-                sql.SQL("ALTER ROLE {} SET statement_timeout = {}").format(role, sql.Literal(f"{s.sql_timeout_ms}ms"))
-            )
-            conn.execute(sql.SQL("GRANT USAGE ON SCHEMA meta, raw TO {}").format(role))
-            conn.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA meta, raw TO {}").format(role))
-            conn.execute(
-                sql.SQL("ALTER DEFAULT PRIVILEGES IN SCHEMA meta, raw GRANT SELECT ON TABLES TO {}").format(role)
-            )
-            # The two grants above cover these too (raw tables appear at runtime, so the default stays).
-            conn.execute(
-                sql.SQL("REVOKE ALL ON {} FROM {}").format(
-                    sql.SQL(", ").join(sql.Identifier("meta", t) for t in PRIVATE_TABLES), role
+            if s.managed_roles:
+                ensure_readonly_role(conn, s)
+            elif not role_exists(conn, s.readonly_role):
+                raise SystemExit(
+                    f"READONLY_ROLE {s.readonly_role} does not exist and RAINFOREST_MANAGED_ROLES is false; "
+                    f"create it: CREATE ROLE {s.readonly_role} LOGIN PASSWORD '…'"
                 )
-            )
+            grant_readonly(conn, s)
             conn.commit()
         except BaseException:
             conn.rollback()  # an aborted transaction can't run the unlock below

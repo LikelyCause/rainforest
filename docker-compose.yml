@@ -37,6 +37,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-rainforest}:${POSTGRES_PASSWORD:-rainforest}@db:5432/${POSTGRES_DB:-rainforest}
+      READONLY_ROLE: ${READONLY_ROLE:-rainforest_ro}
       READONLY_PASSWORD: ${READONLY_PASSWORD:-rainforest_ro}
       DATA_DIR: /data
       WEB_CONCURRENCY: ${API_WORKERS:-2}
@@ -58,6 +59,8 @@ services:
       RAINFOREST_MEMBER_GROUP: ${RAINFOREST_MEMBER_GROUP:-rainforest-member}
       RAINFOREST_SESSION_SECRET: ${RAINFOREST_SESSION_SECRET:-}
       RAINFOREST_ALLOWED_HOSTS: ${RAINFOREST_ALLOWED_HOSTS:-*}
+      # false: an operator creates the SQL console's role (docs/sql.md); the API only grants to it.
+      RAINFOREST_MANAGED_ROLES: ${RAINFOREST_MANAGED_ROLES:-true}
       # Empty turns MLflow logging off. The server serves everything, its REST API too, under /mlflow.
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI-http://mlflow:5000/mlflow}
       MLFLOW_BROWSE_URL: ${MLFLOW_BROWSE_URL:-}
@@ -94,6 +97,8 @@ services:
     environment:
       # Its own database in the db service, created on start if missing.
       MLFLOW_BACKEND_STORE_URI: postgresql://${POSTGRES_USER:-rainforest}:${POSTGRES_PASSWORD:-rainforest}@db:5432/mlflow
+      # false: the database must already exist, and the user needs no CREATEDB.
+      MLFLOW_MANAGED_DATABASE: ${MLFLOW_MANAGED_DATABASE:-true}
     # No host port: the API logs to it directly, browsers reach it through the UI's nginx at /mlflow/.
     command: >
       --host 0.0.0.0 --port 5000 --workers 2

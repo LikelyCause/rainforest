@@ -9,7 +9,7 @@ import yaml
 from app.config import Settings
 
 COMPOSE = Path(__file__).resolve().parents[2] / "docker-compose.yml"
-NOT_PASSED = {"readonly_role", "git_sha"}  # fixed by design; baked into the image at build time
+NOT_PASSED = {"git_sha"}  # fixed by design; baked into the image at build time
 # Compose computes these differently from the API's local-development defaults.
 OWN_DEFAULTS = {"database_url", "data_dir", "readonly_password", "session_secret", "mlflow_tracking_uri"}
 
@@ -39,5 +39,7 @@ def test_compose_defaults_match_config(api_env):
         if name in NOT_PASSED | OWN_DEFAULTS:
             continue
         m = re.fullmatch(r"\$\{(\w+):-(.*)\}", str(api_env[_env_name(name, field)]))
-        if m and m.group(2) and isinstance(field.default, int):
+        if m and m.group(2) and isinstance(field.default, bool):
+            assert m.group(2) == str(field.default).lower(), name
+        elif m and m.group(2) and isinstance(field.default, int):
             assert int(m.group(2)) == field.default, name

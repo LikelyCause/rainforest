@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     member_group: str = Field("rainforest-member", validation_alias="RAINFOREST_MEMBER_GROUP")
     session_secret: str = Field("", validation_alias="RAINFOREST_SESSION_SECRET")
     allowed_hosts: str = Field("*", validation_alias="RAINFOREST_ALLOWED_HOSTS")
+    # False when an operator pre-creates the console role (the app's database user has no CREATEROLE).
+    managed_roles: bool = Field(True, validation_alias="RAINFOREST_MANAGED_ROLES")
 
     # Empty: training runs are not logged to MLflow.
     mlflow_tracking_uri: str = ""
