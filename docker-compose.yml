@@ -120,6 +120,9 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    environment:
+      # 0 serves no /mlflow/ proxy (for MLFLOW_TRACKING_URI= setups without the bundled MLflow)
+      MLFLOW_ENABLED: ${MLFLOW_ENABLED:-1}
     ports:
       # All interfaces, so the UI is reachable over the LAN; sign-in protects it.
       - "${UI_PORT:-8080}:80"

@@ -1,0 +1,50 @@
+# Rendered at container start from the environment (the API upstream and the DNS resolver); nginx's own
+# variables are left alone.
+
+# Keep the scheme a TLS proxy in front of nginx reports, so the API marks its cookie Secure.
+map $http_x_forwarded_proto $forwarded_proto {
+    default $http_x_forwarded_proto;
+    ""      $scheme;
+}
+
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+
+    # Large uploads go straight through to the API (which streams them to disk).
+    client_max_body_size 20g;
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+
+    # Upstreams are resolved per request, so nginx starts without them and follows a recreated container
+    # or pod to its new address.
+    resolver ${DNS_RESOLVER} valid=10s ipv6=off;
+
+    location /api/ {
+        set $api ${API_UPSTREAM};
+        # No URI part, so the request URI and query string pass through unchanged.
+        proxy_pass $api;
+        proxy_http_version 1.1;
+        # Host with its port: the API compares it with the browser's Origin.
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $forwarded_proto;
+        proxy_request_buffering off;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+    }
+
+    include /etc/nginx/conf.d/mlflow.inc;
+
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    location / {
+        add_header Cache-Control "no-cache";
+        try_files $uri /index.html;
+    }
+}

@@ -7,7 +7,7 @@ add things. For endpoints see [api.md](api.md); for usage see the [README](../RE
 
 | Service | Code | Role |
 |---|---|---|
-| `ui` | `ui/` | React 18 + TypeScript, Vite, TanStack Query, ECharts. Built to static files and served by nginx (`ui/nginx.conf`), which proxies `/api/` to the API and `/mlflow/` to MLflow (behind `auth_request`). |
+| `ui` | `ui/` | React 18 + TypeScript, Vite, TanStack Query, ECharts. Built to static files and served by nginx, which proxies `/api/` to the API and `/mlflow/` to MLflow (behind `auth_request`). The nginx config is rendered at container start from `ui/nginx/*.template` by `ui/nginx/40-mlflow.sh`, from `API_UPSTREAM`, `MLFLOW_UPSTREAM`, `MLFLOW_ENABLED` and `DNS_RESOLVER`. |
 | `mlflow` | `mlflow/` | MLflow 3.17 tracking server (the official image plus psycopg). Backend store: database `mlflow` in `db`, created by `mlflow/start.py` on every start if missing. Artifacts on the `mlartifacts` volume, served through the server (`--serve-artifacts`). Everything, REST API included, is under `--static-prefix /mlflow`. No published port. |
 | `api` | `api/app/` | FastAPI on uvicorn (`API_WORKERS` processes). Owns the schema, runs every background job in-process. |
 | `db` | Postgres 16 | `meta.*` holds metadata, decisions, jobs and results; `raw.ds_<id>` holds each dataset as a typed table. |
@@ -207,8 +207,11 @@ the UI polls (`pending → running → done | failed`, with `progress` and `stat
    `GET`, without the body, and with `X-Original-Method`), which the middleware answers `401` without a valid
    session, `403` for a Viewer's unsafe method, and the route `204`. A `401`
    becomes a relative redirect to `/login?next=/mlflow/`, and the login page does a full page load for that path
-   (`isServerPath` in `api.ts`) since it is outside the single-page app. nginx resolves `api` and `mlflow` per request
-   through Docker's DNS (`resolver 127.0.0.11`), so it starts without them and follows a recreated container. Toward MLflow, nginx sends `Host: mlflow`
+   (`isServerPath` in `api.ts`) since it is outside the single-page app. nginx resolves its upstreams (`API_UPSTREAM`,
+   `MLFLOW_UPSTREAM`; `http://api:8000` and `http://mlflow:5000` by default) per request through the first nameserver
+   in the container's `/etc/resolv.conf` (Docker's `127.0.0.11`, or the cluster DNS in Kubernetes; `DNS_RESOLVER`
+   overrides it), so it starts without them and follows a recreated container. With `MLFLOW_ENABLED` anything but `1`,
+   the `/mlflow/` locations are not rendered at all and nginx still starts. Toward MLflow, nginx sends `Host: mlflow`
    (its `--allowed-hosts`) and drops `Origin`, as MLflow's own cross-origin check only knows localhost; cross-site
    requests can't get through anyway, because the `SameSite=Strict` cookie is what `auth_request` checks.
 10. **Explore.** See [Analyses](#analyses-explore-jobs).
