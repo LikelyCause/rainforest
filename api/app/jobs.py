@@ -116,6 +116,16 @@ def sweep(owner: int | None = None) -> None:
     """Fail jobs whose owning process is gone, or with `owner`, every active job stamped with that id."""
     dead = sql.SQL(_DEAD) if owner is None else sql.SQL("owner = {}").format(sql.Literal(owner))
     with connection() as conn:
+        # Before the datasets below change status: a pull is interrupted with the dataset job it belongs to.
+        conn.execute(
+            sql.SQL(
+                """UPDATE meta.dataset_pulls SET status = 'failed', error = 'Interrupted by an API restart.',
+                          finished_at = now()
+                WHERE status = 'running' AND dataset_id IN (
+                      SELECT id FROM meta.datasets
+                       WHERE status IN ('pending', 'ingesting', 'profiling', 'correlating', 'refreshing') AND {})"""
+            ).format(dead)
+        )
         # A profiled dataset only loses the associations of targets chosen later; it stays usable.
         conn.execute(
             sql.SQL(
