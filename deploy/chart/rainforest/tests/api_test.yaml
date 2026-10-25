@@ -125,15 +125,22 @@ tests:
           path: spec.template.spec.imagePullSecrets[0].name
           value: regcred
 
-  - it: assembles DATABASE_URL from the Secret-backed password, never the ConfigMap
+  - it: passes the password as PGPASSWORD from the Secret, never in the URL or the ConfigMap
     template: api-deployment.yaml
     asserts:
       - equal:
           path: spec.template.spec.containers[0].env[?(@.name=="DATABASE_URL")].value
-          value: postgresql://rainforest:$(POSTGRES_PASSWORD)@rf-rainforest-postgresql:5432/rainforest
+          value: postgresql://rainforest@rf-rainforest-postgresql:5432/rainforest
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].env[?(@.name=="DATABASE_URL")].value
+          pattern: '^postgresql://[^@]*:'
       - equal:
-          path: spec.template.spec.containers[0].env[?(@.name=="POSTGRES_PASSWORD")].valueFrom.secretKeyRef.key
-          value: postgresPassword
+          path: spec.template.spec.containers[0].env[?(@.name=="PGPASSWORD")].valueFrom.secretKeyRef
+          value:
+            name: rf-rainforest
+            key: postgresPassword
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name=="POSTGRES_PASSWORD")]
 
   - it: uses the external server in DATABASE_URL
     template: api-deployment.yaml
@@ -146,17 +153,7 @@ tests:
     asserts:
       - equal:
           path: spec.template.spec.containers[0].env[?(@.name=="DATABASE_URL")].value
-          value: postgresql://rainforest_vehicles:$(POSTGRES_PASSWORD)@pg.example.com:6432/rainforest_vehicles
-
-  - it: orders POSTGRES_PASSWORD before DATABASE_URL so Kubernetes expands it
-    template: api-deployment.yaml
-    asserts:
-      - equal:
-          path: spec.template.spec.containers[0].env[0].name
-          value: POSTGRES_PASSWORD
-      - equal:
-          path: spec.template.spec.containers[0].env[1].name
-          value: DATABASE_URL
+          value: postgresql://rainforest_vehicles@pg.example.com:6432/rainforest_vehicles
 
   - it: has a PVC with the configured size and storage class
     template: api-pvc.yaml

@@ -139,20 +139,26 @@ tests:
           path: spec.template.spec.containers[0].args[12]
           pattern: rf-rainforest-mlflow\.team\.svc\.k8s\.corp:5000$
 
-  - it: builds the backend URI from the shared database coordinates, with the mlflow database
+  - it: builds the backend URI from the shared database coordinates, with the mlflow database and no password
     template: mlflow-deployment.yaml
     asserts:
       - equal:
-          path: spec.template.spec.containers[0].env[0]
-          value:
-            name: POSTGRES_PASSWORD
-            valueFrom:
-              secretKeyRef:
-                name: rf-rainforest
-                key: postgresPassword
-      - equal:
           path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_BACKEND_STORE_URI")].value
-          value: postgresql://rainforest:$(POSTGRES_PASSWORD)@rf-rainforest-postgresql:5432/rainforest_mlflow
+          value: postgresql://rainforest@rf-rainforest-postgresql:5432/rainforest_mlflow
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_BACKEND_STORE_URI")].value
+          pattern: '^postgresql://[^@]*:'
+      - notExists:
+          path: spec.template.spec.containers[0].env[?(@.name=="POSTGRES_PASSWORD")]
+
+  - it: passes the password as PGPASSWORD from the chart's Secret
+    template: mlflow-deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[?(@.name=="PGPASSWORD")].valueFrom.secretKeyRef
+          value:
+            name: rf-rainforest
+            key: postgresPassword
 
   - it: reads the password from a Secret the operator manages
     template: mlflow-deployment.yaml
@@ -160,8 +166,23 @@ tests:
       secrets.existingSecret: team-secret
     asserts:
       - equal:
-          path: spec.template.spec.containers[0].env[0].valueFrom.secretKeyRef.name
+          path: spec.template.spec.containers[0].env[?(@.name=="PGPASSWORD")].valueFrom.secretKeyRef.name
           value: team-secret
+
+  - it: rolls the pod when the chart-owned Secret changes
+    template: mlflow-deployment.yaml
+    asserts:
+      - matchRegex:
+          path: spec.template.metadata.annotations["checksum/secret"]
+          pattern: '^[0-9a-f]{64}$'
+
+  - it: has no secret checksum when the Secret is managed elsewhere
+    template: mlflow-deployment.yaml
+    set:
+      secrets.existingSecret: team-secret
+    asserts:
+      - notExists:
+          path: spec.template.metadata.annotations["checksum/secret"]
 
   - it: uses the external server's coordinates
     template: mlflow-deployment.yaml
@@ -174,7 +195,7 @@ tests:
     asserts:
       - equal:
           path: spec.template.spec.containers[0].env[?(@.name=="MLFLOW_BACKEND_STORE_URI")].value
-          value: postgresql://rf_user:$(POSTGRES_PASSWORD)@pg.example.com:6432/rf_vehicles_mlflow
+          value: postgresql://rf_user@pg.example.com:6432/rf_vehicles_mlflow
 
   - it: names the mlflow database <database>_mlflow by default
     template: mlflow-deployment.yaml

@@ -190,10 +190,7 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: DATABASE_URL
-            value: postgresql://rainforest:$(POSTGRES_PASSWORD)@rf-rainforest-postgresql:5432/rainforest
-      - equal:
-          path: spec.template.spec.containers[0].env[0].name
-          value: POSTGRES_PASSWORD
+            value: postgresql://rainforest@rf-rainforest-postgresql:5432/rainforest
 
   - it: manages roles on the in-chart server whatever external.managedRoles says
     template: configmap.yaml
@@ -235,7 +232,7 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: DATABASE_URL
-            value: postgresql://vehicle_app:$(POSTGRES_PASSWORD)@db.example.com:6432/vehicles
+            value: postgresql://vehicle_app@db.example.com:6432/vehicles
 
   - it: leaves role management to the ops team when external.managedRoles is false
     template: configmap.yaml

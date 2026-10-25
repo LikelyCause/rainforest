@@ -79,6 +79,14 @@ app.kubernetes.io/managed-by: {{ .root.Release.Service }}
 {{- if .Values.postgresql.enabled }}{{ .Values.postgresql.user }}{{ else }}{{ .Values.postgresql.external.user }}{{ end }}
 {{- end }}
 
+{{/*
+Connection URI without the password, which reaches libpq clients as PGPASSWORD instead.
+Usage: include "rainforest.postgresUri" (dict "root" . "database" (include "rainforest.databaseName" .))
+*/}}
+{{- define "rainforest.postgresUri" -}}
+{{- printf "postgresql://%s@%s:%s/%s" (include "rainforest.databaseUser" .root) (include "rainforest.databaseHost" .root) (include "rainforest.databasePort" .root) .database }}
+{{- end }}
+
 {{/* The SQL console's SELECT-only role; each release on a shared server needs its own. */}}
 {{- define "rainforest.readonlyRole" -}}
 {{- default (printf "%s_ro" (include "rainforest.databaseName" .)) .Values.postgresql.readonlyRole }}

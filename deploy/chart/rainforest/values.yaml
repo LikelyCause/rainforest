@@ -31,8 +31,8 @@ auth:
 
 postgresql:
   # true: a Postgres StatefulSet in this release. false: the server under external. The postgres image reads
-  # POSTGRES_PASSWORD only when it initialises an empty volume, so changing the password later rolls the API (via
-  # checksum/secret) but not the database; rotating it also means ALTER ROLE in the database.
+  # POSTGRES_PASSWORD only when it initialises an empty volume, so changing the password later rolls the API and
+  # MLflow (via checksum/secret) but not the database; rotating it also means ALTER ROLE in the database.
   enabled: true
   # The database and user the in-chart server is created with.
   database: rainforest
@@ -159,8 +159,9 @@ secrets:
   # mlflowTrackingUsername / mlflowTrackingPassword / mlflowTrackingToken (optional, external MLflow).
   existingSecret: ""
   # Used only when existingSecret is empty. postgresPassword and readonlyPassword are required (nothing is generated,
-  # so every render is identical); oidcClientSecret is required under auth.mode oidc. Passwords go into a URL, so
-  # keep them URL-safe (letters and digits). An empty sessionSecret makes the API generate one into the data volume.
+  # so every render is identical); oidcClientSecret is required under auth.mode oidc. The Postgres password reaches the
+  # API and MLflow as PGPASSWORD, not inside a URL, so it may contain any character. An empty sessionSecret makes the
+  # API generate one into the data volume.
   values:
     sessionSecret: ""
     oidcClientSecret: ""

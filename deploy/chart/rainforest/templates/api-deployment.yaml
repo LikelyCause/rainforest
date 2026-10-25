@@ -46,14 +46,14 @@ spec:
             - configMapRef:
                 name: {{ include "rainforest.fullname" . }}
           env:
-            # Kubernetes expands $(VAR) from earlier entries, so the password stays out of the ConfigMap.
-            - name: POSTGRES_PASSWORD
+            # libpq reads PGPASSWORD when the URL has no password, so a password with /, # or ? never has to be URL-encoded.
+            - name: PGPASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "rainforest.secretName" . }}
                   key: postgresPassword
             - name: DATABASE_URL
-              value: {{ printf "postgresql://%s:$(POSTGRES_PASSWORD)@%s:%s/%s" (include "rainforest.databaseUser" .) (include "rainforest.databaseHost" .) (include "rainforest.databasePort" .) (include "rainforest.databaseName" .) | quote }}
+              value: {{ include "rainforest.postgresUri" (dict "root" . "database" (include "rainforest.databaseName" .)) | quote }}
             - name: READONLY_PASSWORD
               valueFrom:
                 secretKeyRef:
