@@ -79,10 +79,21 @@ def test_experiment_name_takes_the_prefix(set_prefix):
     assert mlflow_log.experiment_name(3, "curated") == "vehicles/3-curated"
 
 
-@pytest.mark.parametrize("raw, expected", [("", "rainforest"), (" /x/ ", "x"), ("/", "rainforest")])
+@pytest.mark.parametrize(
+    "raw, expected",
+    [("", "rainforest"), (" /x/ ", "x"), ("/", "rainforest"), ("fleet/vehicles-2_x.y", "fleet/vehicles-2_x.y")],
+)
 def test_experiment_prefix_is_cleaned_and_defaults_when_empty(set_prefix, raw, expected):
     set_prefix(raw)
     assert mlflow_log.experiment_prefix() == expected
+
+
+@pytest.mark.parametrize("raw", ["team's", "my team", 'a"b', "a\\b"])
+def test_an_experiment_prefix_that_would_break_the_search_filter_is_refused(set_prefix, raw):
+    # The prefix goes inside a quoted MLflow filter string; the chart's schema allows the same characters.
+    with pytest.raises(ValueError, match="MLFLOW_EXPERIMENT_PREFIX"):
+        set_prefix(raw)
+        get_settings()
 
 
 def test_two_prefixes_on_one_server_get_separate_experiments(file_store, tmp_path, set_prefix):
@@ -105,6 +116,32 @@ def test_an_experiment_from_before_the_prefix_tag_is_reused(file_store, tmp_path
     assert exp_id == made
     assert file_store.get_experiment(made).tags["rainforest.prefix"] == "rainforest"
     assert [e.name for e in file_store.search_experiments()].count("rainforest/3-Churn") == 1
+
+
+def test_an_experiment_from_before_the_prefix_tag_is_reused_after_a_rename(file_store, tmp_path, set_prefix):
+    made = file_store.create_experiment("rainforest/3-old-name", tags={"rainforest.dataset_id": "3"})
+    set_prefix("")
+    exp_id, _ = mlflow_log.log_run(_run_row(dataset_id=3), "new-name", REPORT, _model_dir(tmp_path))
+    assert exp_id == made
+    assert file_store.get_experiment(made).tags["rainforest.prefix"] == "rainforest"
+    assert [e.name for e in file_store.search_experiments() if e.name != "Default"] == ["rainforest/3-old-name"]
+
+
+def test_an_experiment_from_before_the_prefix_tag_stays_with_the_default_prefix(file_store, tmp_path, set_prefix):
+    made = file_store.create_experiment("rainforest/3-old-name", tags={"rainforest.dataset_id": "3"})
+    set_prefix("b")
+    exp_id, _ = mlflow_log.log_run(_run_row(dataset_id=3), "new-name", REPORT, _model_dir(tmp_path))
+    assert exp_id != made
+    assert file_store.get_experiment(exp_id).name == "b/3-new-name"
+    assert "rainforest.prefix" not in file_store.get_experiment(made).tags
+
+
+def test_an_untagged_experiment_under_another_prefix_is_not_adopted(file_store, tmp_path, set_prefix):
+    other = file_store.create_experiment("vehicles/3-old-name", tags={"rainforest.dataset_id": "3"})
+    set_prefix("")
+    exp_id, _ = mlflow_log.log_run(_run_row(dataset_id=3), "new-name", REPORT, _model_dir(tmp_path))
+    assert exp_id != other
+    assert file_store.get_experiment(exp_id).name == "rainforest/3-new-name"
 
 
 def _model_dir(tmp_path):

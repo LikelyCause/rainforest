@@ -38,12 +38,14 @@ def _unmanaged(monkeypatch, role: str, password: str = "y"):
     get_settings.cache_clear()
 
 
-def test_unmanaged_roles_requires_the_role_to_exist(database, monkeypatch):
-    _unmanaged(monkeypatch, "nobody_ro")
-    with pytest.raises(SystemExit, match=r"nobody_ro does not exist.*CREATE ROLE nobody_ro LOGIN PASSWORD"):
+@pytest.mark.parametrize("role", ["nobody_ro", "rainforest-vehicles_ro"])
+def test_unmanaged_roles_requires_the_role_to_exist(database, monkeypatch, role):
+    _unmanaged(monkeypatch, role)
+    # The statement in the message quotes the name, so it runs as given even for a name with a dash.
+    with pytest.raises(SystemExit, match=rf'{role} does not exist.*CREATE ROLE "{role}" LOGIN PASSWORD'):
         db.bootstrap()
     with psycopg.connect(DB_URL, autocommit=True) as conn:
-        assert conn.execute("SELECT 1 FROM pg_roles WHERE rolname = 'nobody_ro'").fetchone() is None
+        assert conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone() is None
 
 
 def test_unmanaged_roles_grants_to_an_existing_role_and_leaves_it_alone(database, monkeypatch):

@@ -205,9 +205,10 @@ def bootstrap() -> None:
             if s.managed_roles:
                 ensure_readonly_role(conn, s)
             elif not role_exists(conn, s.readonly_role):
+                quoted = sql.Identifier(s.readonly_role).as_string(conn)
                 raise SystemExit(
                     f"READONLY_ROLE {s.readonly_role} does not exist and RAINFOREST_MANAGED_ROLES is false; "
-                    f"create it: CREATE ROLE {s.readonly_role} LOGIN PASSWORD '…'"
+                    f"create it: CREATE ROLE {quoted} LOGIN PASSWORD '…'"
                 )
             grant_readonly(conn, s)
             conn.commit()

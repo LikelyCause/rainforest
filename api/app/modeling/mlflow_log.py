@@ -46,7 +46,7 @@ def enabled() -> bool:
 
 
 def experiment_prefix() -> str:
-    return get_settings().mlflow_experiment_prefix.strip().strip("/") or "rainforest"
+    return get_settings().mlflow_experiment_prefix or "rainforest"
 
 
 def experiment_name(dataset_id: int, dataset_name: str) -> str:
@@ -160,7 +160,14 @@ def _experiment(client, dataset_id: int, dataset_name: str) -> str:
         "rainforest.prefix": prefix,
         "mlflow.experimentKind": "custom_model_development",
     }
-    # An experiment made before the prefix tag existed, by this name.
+    if prefix == "rainforest":
+        # Experiments made before the prefix tag existed carry only the dataset id, under the name the dataset had
+        # then; any other prefix is newer than the tag, so its experiments always have it.
+        legacy = client.search_experiments(filter_string=f"tags.`rainforest.dataset_id` = '{dataset_id}'")
+        for exp in legacy:
+            if "rainforest.prefix" not in exp.tags and exp.name.startswith("rainforest/"):
+                return _adopt(client, exp, tags)
+    # One made by hand, or before the prefix tag, under this name.
     exp = client.get_experiment_by_name(name)
     if exp is not None:
         return _adopt(client, exp, tags)

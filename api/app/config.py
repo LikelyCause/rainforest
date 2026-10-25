@@ -1,8 +1,9 @@
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -66,6 +67,15 @@ class Settings(BaseSettings):
     # Experiment name prefix; releases sharing one MLflow server each set their own (see experiment_prefix()).
     mlflow_experiment_prefix: str = "rainforest"
     git_sha: str = ""
+
+    @field_validator("mlflow_experiment_prefix")
+    @classmethod
+    def _clean_prefix(cls, v: str) -> str:
+        # It is quoted inside MLflow search filters; the chart's values schema allows the same characters.
+        v = v.strip().strip("/")
+        if not re.fullmatch(r"[A-Za-z0-9._/-]*", v):
+            raise ValueError(f"MLFLOW_EXPERIMENT_PREFIX {v!r}: use only letters, digits and . _ / -")
+        return v
 
     @property
     def uploads_dir(self) -> Path:

@@ -83,16 +83,18 @@ The console can't see work that is private to one person.
 
 ## When the API can't create roles
 
-By default the API creates the `rainforest_ro` role on every start, sets its password from `READONLY_PASSWORD`
-and makes it read-only, which needs `CREATEROLE`. On a shared Postgres server whose administrator won't grant that,
-set `RAINFOREST_MANAGED_ROLES=false` and have them run once:
+By default the API manages the console's role, named by `READONLY_ROLE` (`rainforest_ro` unless set): it creates
+the role on start when it is missing, and on every start sets its password from `READONLY_PASSWORD` and makes it
+read-only, which needs `CREATEROLE`. On a shared Postgres server whose administrator won't grant that, set
+`RAINFOREST_MANAGED_ROLES=false` and have them run this once, with the name in `READONLY_ROLE` and the password in
+`READONLY_PASSWORD`:
 
 ```sql
-CREATE ROLE rainforest_ro LOGIN PASSWORD '…';
+CREATE ROLE "<READONLY_ROLE>" LOGIN PASSWORD '…';
 ```
 
-Use the name in `READONLY_ROLE` and the password in `READONLY_PASSWORD`. The API refuses to start while the role
-is missing. It does not alter the role. Its `GRANT`s, default privileges and the `REVOKE` on the private tables
+The double quotes keep the name exactly as written, so one with a dash (`rainforest-vehicles_ro`) works too. The API
+refuses to start while the role is missing, with a message that gives this statement with the name filled in. It does not alter the role. Its `GRANT`s, default privileges and the `REVOKE` on the private tables
 above still run on every start. The console sets a read-only transaction and the statement timeout on each query
 itself, so the role needs neither setting.
 
