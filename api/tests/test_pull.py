@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 import polars as pl
 import pytest
+from bson.objectid import ObjectId
 from pymongo.errors import PyMongoError
 
 from app import db
@@ -102,7 +103,7 @@ def test_pull_detects_mixed_types_across_chunks(tmp_path, monkeypatch):
     assert r.flatten_notes["mixed"] == ["v", "when", "flag"] and r.flatten_notes["arrays"] == ["tags"]
     assert progress[-1] == ("cars", 5)
     dest = tmp_path / "raw.parquet"
-    out = assemble(tmp_path, [CollectionSpec("c", "cars")], False, False, None, dest)
+    out = assemble(tmp_path, [CollectionSpec("c", "cars")], False, False, None, dest, identifiers=r.identifiers)
     df = pl.read_parquet(dest)
     assert out["rows"] == 5 and _chunks(tmp_path) == []
     assert df["v"].dtype == pl.String and df["v"].to_list() == ["1.5", "2", "n/a", None, None]
@@ -118,7 +119,7 @@ def test_pull_keeps_utc_datetimes_and_booleans(tmp_path):
     when = datetime(2025, 3, 1, 12, 30)
     src = _fake(c=[{"when": when, "ok": True}, {"when": None, "ok": False}])
     src.pull("d", [CollectionSpec("c")], tmp_path, 10**9, 60, None)
-    assemble(tmp_path, [CollectionSpec("c")], False, False, None, tmp_path / "raw.parquet")
+    assemble(tmp_path, [CollectionSpec("c")], False, False, None, tmp_path / "raw.parquet", identifiers=[])
     df = pl.read_parquet(tmp_path / "raw.parquet")
     assert df.schema == {"when": pl.Datetime("us", "UTC"), "ok": pl.Boolean}
     assert df["when"][0] == when.replace(tzinfo=timezone.utc)
@@ -133,7 +134,7 @@ def test_a_chunk_of_only_nulls_keeps_the_columns_type(tmp_path, monkeypatch):
     src.pull("d", [CollectionSpec("c")], tmp_path, 10**9, 60, None)
     expected = {"w": pl.Datetime("us", "UTC"), "ok": pl.Boolean, "n": pl.Int64, "t": pl.String}
     assert pl.read_parquet_schema(tmp_path / "chunk_c_1.parquet") == expected
-    assemble(tmp_path, [CollectionSpec("c")], False, False, None, tmp_path / "raw.parquet")
+    assemble(tmp_path, [CollectionSpec("c")], False, False, None, tmp_path / "raw.parquet", identifiers=[])
     df = pl.read_parquet(tmp_path / "raw.parquet")
     assert df.schema == expected and df["w"].to_list()[2:] == [None, None]
 
@@ -156,29 +157,50 @@ def test_assemble_dedupe_keeps_the_first_collections_row_and_skips_identifiers(t
     b = [{"_id": "b0", "code_id": "z", "x": 0, "y": "s", "only_b": 1}, {"_id": "b1", "code_id": "q", "x": 9, "y": "t"}]
     src = _fake(a=a, b=b)
     specs = [CollectionSpec("a"), CollectionSpec("b", "second")]
-    src.pull("d", specs, tmp_path, 10**9, 60, None)
-    out = assemble(tmp_path, specs, True, True, None, tmp_path / "raw.parquet")
+    r = src.pull("d", specs, tmp_path, 10**9, 60, None)
+    out = assemble(tmp_path, specs, True, True, None, tmp_path / "raw.parquet", identifiers=r.identifiers)
     df = pl.read_parquet(tmp_path / "raw.parquet")
-    # code_id is unique-looking, so rows match on x and y alone: three in a, and b's (9, "t").
+    # code_id has an identifier's name, so rows match on x and y alone: three in a, and b's (9, "t").
     assert out["compared_on"] == ["x", "y"] == src.preview("d", specs).compared_on
     assert out["removed_duplicates"] == {"a": 597, "second": 1}
     assert df.columns[0] == "source" and df["source"].to_list() == ["a", "a", "a", "second"]
     assert df["_id"].to_list() == ["a0", "a1", "a2", "b1"]
 
 
+def test_the_pull_flags_identifiers_by_the_previews_rule(tmp_path):
+    # Too few values for profiling to call either one an identifier; the preview decides by name and by BSON type.
+    docs = [{"_id": ObjectId(), "serial": {"key": "abcd"[i % 4]}, "owner": ObjectId(), "x": i % 2} for i in range(40)]
+    src = _fake(c=docs)
+    specs = [CollectionSpec("c")]
+    assert src.preview("d", specs).compared_on == ["x"]
+    r = src.pull("d", specs, tmp_path, 10**9, 60, None)
+    assert r.identifiers == ["_id", "serial.key", "owner"]
+    out = assemble(tmp_path, specs, False, True, None, tmp_path / "raw.parquet", identifiers=r.identifiers)
+    assert out["compared_on"] == ["x"] and out["rows"] == 2
+
+
+def test_an_identifier_with_other_values_too_is_compared_as_the_preview_does(tmp_path, monkeypatch):
+    monkeypatch.setattr(mongodb, "CHUNK_DOCS", 2)
+    docs = [{"ref": ObjectId(), "x": 1}, {"ref": ObjectId(), "x": 1}, {"ref": "legacy", "x": 2}]
+    src = _fake(c=docs)
+    assert src.preview("d", [CollectionSpec("c")]).compared_on == ["ref", "x"]
+    assert src.pull("d", [CollectionSpec("c")], tmp_path, 10**9, 60, None).identifiers == []
+
+
 def test_a_collection_without_documents_does_not_empty_the_comparison(tmp_path):
     src = _fake(a=[{"_id": f"a{i}", "x": i % 2, "y": "s"} for i in range(6)], empty=[])
     specs = [CollectionSpec("a"), CollectionSpec("empty")]
     assert src.preview("d", specs).compared_on == ["x", "y"]
-    src.pull("d", specs, tmp_path, 10**9, 60, None)
-    assert assemble(tmp_path, specs, True, True, None, tmp_path / "raw.parquet")["compared_on"] == ["x", "y"]
+    r = src.pull("d", specs, tmp_path, 10**9, 60, None)
+    out = assemble(tmp_path, specs, True, True, None, tmp_path / "raw.parquet", identifiers=r.identifiers)
+    assert out["compared_on"] == ["x", "y"]
 
 
 def test_assemble_match_on_must_name_columns(tmp_path):
     src = _fake(a=[{"x": 1}])
     src.pull("d", [CollectionSpec("a")], tmp_path, 10**9, 60, None)
     with pytest.raises(ValueError, match="nope"):
-        assemble(tmp_path, [CollectionSpec("a")], False, True, ["x", "nope"], tmp_path / "raw.parquet")
+        assemble(tmp_path, [CollectionSpec("a")], False, True, ["x", "nope"], tmp_path / "raw.parquet", identifiers=[])
 
 
 # ---- against a real MongoDB -------------------------------------------------------------------------------
@@ -199,9 +221,9 @@ def test_pull_writes_chunks_and_notes_mixed_and_arrays(mongo, mongo_url, tmp_pat
 
 
 def test_assemble_adds_source_and_dedupes_on_shared_columns(mongo, mongo_url, tmp_path):
-    _source(mongo_url).pull(mongo.name, SPECS, tmp_path, 10**9, 60, None)
+    r = _source(mongo_url).pull(mongo.name, SPECS, tmp_path, 10**9, 60, None)
     dest = tmp_path / "raw.parquet"
-    out = assemble(tmp_path, SPECS, True, True, None, dest)
+    out = assemble(tmp_path, SPECS, True, True, None, dest, identifiers=r.identifiers)
     df = pl.read_parquet(dest)
     assert df["source"].unique(maintain_order=True).to_list() == ["curated", "massive"]
     assert out["removed_duplicates"] == {"massive": 50} and out["rows"] == 750 == df.height
@@ -212,8 +234,9 @@ def test_assemble_adds_source_and_dedupes_on_shared_columns(mongo, mongo_url, tm
 
 
 def test_assemble_match_on_overrides(mongo, mongo_url, tmp_path):
-    _source(mongo_url).pull(mongo.name, SPECS, tmp_path, 10**9, 60, None)
-    out = assemble(tmp_path, SPECS, True, True, ["vehicle", "engine"], tmp_path / "raw.parquet")
+    r = _source(mongo_url).pull(mongo.name, SPECS, tmp_path, 10**9, 60, None)
+    dest = tmp_path / "raw.parquet"
+    out = assemble(tmp_path, SPECS, True, True, ["vehicle", "engine"], dest, identifiers=r.identifiers)
     assert out["compared_on"] == ["vehicle", "engine"]
     assert out["rows"] == 25  # five vehicles by five engines, every pair seen in curated first
     assert sum(out["removed_duplicates"].values()) == 800 - 25
@@ -375,6 +398,19 @@ def test_run_connect_says_when_nothing_was_left_to_compare(database, mongo, mong
     assert row["status"] == "ready", row["error"]
     assert "Duplicates were not removed: no shared columns to compare on" in row["warnings"]
     assert row["row_count"] == 800 and _pulls(ds)[0]["flatten_notes"]["compared_on"] == []
+
+
+@pytest.mark.parametrize("names", [["curated", "massive"], ["massive"]])
+def test_the_previews_compared_on_is_what_the_pull_compares(database, mongo, mongo_url, names):
+    # Alone, massive's sparse extra.depth.key has an ID-like name but too few values for profiling to call it one.
+    ds = _connected(mongo.name, [{"name": n} for n in names])
+    with use_sources(f"test={mongo_url}"):
+        run_connect(ds)
+    pulled = _pulls(ds)[0]
+    assert pulled["status"] == "done", pulled["error"]
+    previewed = _source(mongo_url).preview(mongo.name, [CollectionSpec(n) for n in names]).compared_on
+    assert "extra.depth.key" not in previewed
+    assert pulled["flatten_notes"]["compared_on"] == previewed
 
 
 def test_warnings_for_dedupe_without_columns_only_when_asked():

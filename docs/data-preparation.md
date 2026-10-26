@@ -87,10 +87,13 @@ than one collection is chosen, and optional for one. If the documents have a fie
 
 Leaving out exact duplicates removes rows that are equal on the **comparison columns**:
 
-- By default these are the columns every chosen collection has, less `_id`, the `source` column and any column that
-  profiles as an identifier (unique-looking keys such as `…_id` and UUIDs), because each collection's own keys would
-  make every row distinct. Columns that only some collections have never take part, so a row of a collection with
-  extra fields can still match a row without them. The preview lists these columns.
+- By default these are the columns every chosen collection has, less `_id`, the `source` column and any column of
+  kind identifier: every value an `ObjectId`, `UUID` or `Binary`, or every value text, or every value a number, under
+  an identifier-like name (ending in `id`, `uuid`, `key`, `code` and the like, as in `vehicle_id` or `extra.key`),
+  because each collection's own keys would make every row distinct. Columns that only some collections have never
+  take part, so a row of a collection with extra fields can still match a row without them. The preview lists these
+  columns from its sample; the pull applies the same rule to every document it reads, so the two differ only when
+  documents beyond the sample bring a column or a kind of value the sample didn't have.
 - A **Match on** list in the dialog replaces them, for example the record's natural key. Each column in it must appear
   in the preview's sample (up to 200 documents per collection), or Connect refuses it, so a key that only turns up
   further down a collection can't be named there.

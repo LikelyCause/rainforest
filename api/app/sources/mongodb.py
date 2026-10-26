@@ -27,6 +27,7 @@ from . import (
     BudgetExceeded,
     CollectionSpec,
     ColumnInfo,
+    ColumnKind,
     PreviewResult,
     Progress,
     PullResult,
@@ -353,7 +354,7 @@ class MongoSource:
                 per_source.append({"label": label, "documents": documents})
                 if progress:
                     progress(label, documents)
-        return PullResult(per_source, chunks.notes())
+        return PullResult(per_source, chunks.notes(), chunks.identifiers())
 
 
 _KINDS = {bool: "boolean", int: "number", float: "number", str: "text", datetime: "datetime"}
@@ -374,7 +375,11 @@ class _Chunks:
     key path different names (a dotted key renamed `_2` only when its literal twin is present). Here each original
     key path keeps the name it got first, and a later path that would take a name already in use gets the next free
     suffix. A column whose values span more than one kind (number, text, boolean, datetime) across the pull is
-    mixed: written as text from then on, and earlier chunks are converted when they are assembled."""
+    mixed: written as text from then on, and earlier chunks are converted when they are assembled.
+
+    Each column's `_category` set over every value is kept too, for `identifiers`. Arrays and BSON identifiers are
+    written as strings, so those are noted per document; every other category follows from the value types a chunk
+    already gathers."""
 
     def __init__(self, out_dir: Path):
         self.out_dir = out_dir
@@ -385,6 +390,8 @@ class _Chunks:
         self.mixed: dict[str, None] = {}
         self.arrays: dict[str, None] = {}
         self.renamed: dict[str, str] = {}
+        self.categories: dict[str, set[str]] = {}
+        self.special: dict[str, int] = {}  # buffered values that were an array or a BSON identifier
         self.rows: list[dict] = []
         self.written: dict[str, int] = {}
 
@@ -413,25 +420,38 @@ class _Chunks:
             name = self.by_path.get(path)
             row[self._name(col, path) if name is None else name] = value
         for col in notes.get("arrays", ()):
-            self.arrays[self.by_path[paths[col]]] = None
+            self.arrays[self._special(paths[col], "json")] = None
+        for col in notes.get("ids", ()):
+            self._special(paths[col], "identifier")
         self.rows.append(row)
         if len(self.rows) >= CHUNK_DOCS:
             self.flush(label)
+
+    def _special(self, path: tuple[str, ...], category: str) -> str:
+        name = self.by_path[path]
+        self.categories.setdefault(name, set()).add(category)
+        self.special[name] = self.special.get(name, 0) + 1
+        return name
 
     def flush(self, label: str) -> None:
         if not self.rows:
             return
         rows, self.rows = self.rows, []
+        special, self.special = self.special, {}
         present: set[str] = set()
         for row in rows:
             present.update(row)
         columns = []
         for name in (c for c in self.order if c in present):
             values = [row.get(name) for row in rows]
+            found = {_kind(t) for t in set(map(type, values)) - {type(None)}}
             kinds = self.kinds.setdefault(name, set())
-            kinds.update(_kind(t) for t in set(map(type, values)) - {type(None)})
+            kinds.update(found)
             if len(kinds) > 1:
                 self.mixed[name] = None
+            if special.get(name) and sum(isinstance(v, str) for v in values) == special[name]:
+                found.discard("text")  # every string was an array or an identifier, categorised in `add`
+            self.categories.setdefault(name, set()).update(found)
             columns.append(_series(name, values, name in self.mixed, kinds))
         n = self.written.get(label, 0)
         pl.DataFrame(columns).write_parquet(chunk_path(self.out_dir, label, n))
@@ -439,6 +459,9 @@ class _Chunks:
 
     def notes(self) -> dict:
         return {"arrays": list(self.arrays), "mixed": list(self.mixed), "renamed": self.renamed}
+
+    def identifiers(self) -> list[str]:
+        return [c for c in self.order if column_kind(c, self.categories.get(c, set())) == "identifier"]
 
 
 _DTYPES = {"boolean": pl.Boolean, "number": pl.Int64, "text": pl.String, "datetime": pl.Datetime("us", "UTC")}
@@ -470,24 +493,21 @@ def _category(col: str, value: Any, notes: dict) -> str:
         return "json"
     if col in notes.get("ids", ()):
         return "identifier"
-    if isinstance(value, bool):
-        return "bool"
-    if isinstance(value, (int, float)):
-        return "number"
-    if isinstance(value, datetime):
-        return "datetime"
-    return "text"
+    return _kind(type(value))
 
 
-def _column(name: str, kinds: set[str], share: float) -> ColumnInfo:
-    if len(kinds) > 1:
-        kind = "mixed"
-    elif not kinds:
-        kind = "text"
-    else:
-        (kind,) = kinds
-        if kind == "bool":
-            kind = "boolean"
-        if kind in ("text", "number") and ID_NAME_RE.search(name):
-            kind = "identifier"
-    return ColumnInfo(name, kind, share)  # type: ignore[arg-type]
+def column_kind(name: str, categories: set[str]) -> ColumnKind:
+    """A column's kind from the `_category` of each of its values. The preview and the pull's deduplication both
+    decide identifiers by it, so the comparison columns the dialog lists are the ones the pull compares."""
+    if len(categories) > 1:
+        return "mixed"
+    if not categories:
+        return "text"
+    (kind,) = categories
+    if kind in ("text", "number") and ID_NAME_RE.search(name):
+        return "identifier"
+    return kind  # type: ignore[return-value]
+
+
+def _column(name: str, categories: set[str], share: float) -> ColumnInfo:
+    return ColumnInfo(name, column_kind(name, categories), share)

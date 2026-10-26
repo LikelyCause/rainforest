@@ -13,7 +13,7 @@ import polars as pl
 from bson import json_util
 from pymongo.errors import PyMongoError
 
-from .. import profiling, sources
+from .. import sources
 from ..config import get_settings
 from ..db import execute, fetch_one, jsonb
 from ..processing import _Status, process_dataset
@@ -23,7 +23,6 @@ log = logging.getLogger(__name__)
 
 SOURCE = "source"
 RANK = "__source_rank"
-IDENTIFIER_SAMPLE = 100_000
 NAMES_IN_WARNING = 20
 
 
@@ -34,12 +33,14 @@ def assemble(
     dedupe: bool,
     match_on: list[str] | None,
     dest: Path,
+    *,
+    identifiers: list[str],
 ) -> dict:
     """The chunks `pull` wrote, one frame in collection order, written to `dest`; the chunks are deleted.
 
-    Deduplication compares `compared_columns` (identifiers by profiling's inference on the data), or exactly
-    `match_on`. Rows are in collection order, so keeping the first of each group keeps the row of the collection
-    listed first."""
+    Deduplication compares `compared_columns` less the pull's `identifiers` (the rule the preview applies to its
+    sample), or exactly `match_on`. Rows are in collection order, so keeping the first of each group keeps the row
+    of the collection listed first."""
     labels = [s.label or s.name for s in specs]
     chunks = {label: chunk_paths(out_dir, label) for label in labels}
     schemas = {p: pl.read_parquet_schema(p) for paths in chunks.values() for p in paths}
@@ -75,7 +76,7 @@ def assemble(
             compared = list(match_on)
         else:
             per_collection = [set().union(*(schemas[p] for p in chunks[lb])) for lb in labels if chunks[lb]]
-            compared = compared_columns(data_cols, per_collection, lambda c: _identifier_like(df[c], c))
+            compared = compared_columns(data_cols, per_collection, set(identifiers).__contains__)
     before = _per_rank(df)
     if compared:
         df = df.unique(subset=compared, keep="first", maintain_order=True)
@@ -109,13 +110,6 @@ def assemble(
 
 def _per_rank(df: pl.DataFrame) -> dict[int, int]:
     return dict(df.group_by(RANK).len().iter_rows())
-
-
-def _identifier_like(s: pl.Series, name: str) -> bool:
-    if s.len() > IDENTIFIER_SAMPLE:
-        s = s.sample(IDENTIFIER_SAMPLE, seed=17)
-    nn = s.drop_nulls()
-    return profiling.infer_type(s, name, nn.n_unique(), nn.len())[0] == "identifier"
 
 
 def specs_from(collections: list[dict]) -> list[CollectionSpec]:
@@ -183,7 +177,15 @@ def pull_into(dataset_id: int, src: dict, dest: Path, status: str = "ingesting")
         except PyMongoError as exc:  # a source's pull wraps its own; this keeps any other path redacted
             raise SourceError(source.redact(str(exc))) from None
         st.set(status, 0.0, "Combining collections", force=True)
-        summary = assemble(pull_dir, specs, src["add_source"], src["dedupe"], src.get("match_on"), dest)
+        summary = assemble(
+            pull_dir,
+            specs,
+            src["add_source"],
+            src["dedupe"],
+            src.get("match_on"),
+            dest,
+            identifiers=result.identifiers,
+        )
     finally:
         shutil.rmtree(pull_dir, ignore_errors=True)
     removed = summary["removed_duplicates"]

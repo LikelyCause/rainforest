@@ -66,6 +66,7 @@ class PreviewResult:
 class PullResult:
     per_source: list[dict]  # {label, documents} per collection, in the order pulled
     flatten_notes: dict  # arrays (columns), mixed (columns), renamed ({original key path: column})
+    identifiers: list[str]  # columns of kind `identifier` by the preview's rule, over every pulled value
 
 
 # Called with (label, documents pulled so far) between batches.
