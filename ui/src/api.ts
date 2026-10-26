@@ -89,6 +89,18 @@ function signedOut() {
   unauthorizedHandler(window.location.pathname + window.location.search);
 }
 
+/** What the API answers, with a 409, to a write on a dataset a refresh holds (api/app/routers/_lock.py). */
+export const REFRESH_LOCKED = "A refresh of this dataset is running; try again once it finishes.";
+
+export const isRefreshLock = (e: unknown) => e instanceof ApiError && e.status === 409 && e.message === REFRESH_LOCKED;
+
+let refreshLockHandler = () => {};
+
+/** main.tsx refetches the datasets on a lock refusal: a page opened before the refresh began learns of it then. */
+export function setRefreshLockHandler(fn: () => void) {
+  refreshLockHandler = fn;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -97,7 +109,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (res.status === 401) signedOut();
   if (res.status === 204) return undefined as T;
   const body = await res.json().catch(() => null);
-  if (!res.ok) throw errorFromBody(res.status, body);
+  if (!res.ok) {
+    const error = errorFromBody(res.status, body);
+    if (isRefreshLock(error)) refreshLockHandler();
+    throw error;
+  }
   return body as T;
 }
 

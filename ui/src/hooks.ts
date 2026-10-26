@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { accessOf, type Access } from "./team";
 import type { Dataset } from "./types";
@@ -20,6 +20,13 @@ export function pollInterval(statuses: string[]): number | false {
   if (statuses.some((s) => PROCESSING.has(s))) return 1000;
   return statuses.includes("refreshing") ? REFRESH_POLL_MS : false;
 }
+
+/** The handler for a refresh lock refusal: the refused call doesn't say which dataset, so every dataset and the list
+ * are fetched again, and the one refreshing comes back `refreshing`, with its banner and read-only pages. */
+export const refetchDatasetsOnLock = (qc: QueryClient) => () => {
+  void qc.invalidateQueries({ queryKey: ["dataset"] });
+  void qc.invalidateQueries({ queryKey: ["datasets"] });
+};
 
 /** The datasets whose refresh `seen` watched and that are refreshing no more; `seen` is updated in place. */
 export function refreshesDone(seen: Set<number>, rows: { id: number; status: string }[]): number[] {

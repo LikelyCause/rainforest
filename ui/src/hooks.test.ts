@@ -1,5 +1,17 @@
+import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
-import { REFRESH_POLL_MS, pollInterval, refreshesDone } from "./hooks";
+import { REFRESH_POLL_MS, pollInterval, refetchDatasetsOnLock, refreshesDone } from "./hooks";
+
+describe("refetchDatasetsOnLock", () => {
+  it("marks every dataset and the list out of date, so a page learns of the lock, and nothing else", () => {
+    const qc = new QueryClient();
+    for (const key of [["dataset", 1], ["dataset", 2], ["datasets"], ["fields", 1]]) qc.setQueryData(key, {});
+    refetchDatasetsOnLock(qc)();
+    const stale = (key: unknown[]) => qc.getQueryState(key)?.isInvalidated;
+    expect([stale(["dataset", 1]), stale(["dataset", 2]), stale(["datasets"])]).toEqual([true, true, true]);
+    expect(stale(["fields", 1])).toBe(false);
+  });
+});
 
 describe("refreshesDone", () => {
   it("names each dataset once, when a refresh seen running is over", () => {

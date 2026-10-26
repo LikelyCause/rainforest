@@ -1,5 +1,14 @@
-import { describe, expect, it } from "vitest";
-import { ApiError, errorFromBody, isServerPath, safeNext } from "./api";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  ApiError,
+  REFRESH_LOCKED,
+  api,
+  errorFromBody,
+  isRefreshLock,
+  isServerPath,
+  safeNext,
+  setRefreshLockHandler,
+} from "./api";
 
 describe("errorFromBody", () => {
   it("keeps the message and the details of every error shape", () => {
@@ -27,6 +36,41 @@ describe("errorFromBody", () => {
   it("falls back for bodies that aren't API errors", () => {
     expect(errorFromBody(502, null).message).toBe("Request failed (502)");
     expect(errorFromBody(413, "<html>", "Upload failed (413)").message).toBe("Upload failed (413)");
+  });
+});
+
+describe("the refresh lock", () => {
+  const answer = (status: number, detail: string) =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ detail }), { status })),
+    );
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setRefreshLockHandler(() => {});
+  });
+
+  it("is the 409 with the lock's message and nothing else", () => {
+    expect(isRefreshLock(errorFromBody(409, { detail: REFRESH_LOCKED }))).toBe(true);
+    expect(isRefreshLock(errorFromBody(409, { detail: "A pull of this dataset is already running" }))).toBe(false);
+    expect(isRefreshLock(errorFromBody(422, { detail: REFRESH_LOCKED }))).toBe(false);
+    expect(isRefreshLock(new Error(REFRESH_LOCKED))).toBe(false);
+  });
+
+  it("tells the handler when a call is refused by it, and still fails the call", async () => {
+    const told = vi.fn();
+    setRefreshLockHandler(told);
+    answer(409, REFRESH_LOCKED);
+    await expect(api.dataset(1)).rejects.toMatchObject({ status: 409, message: REFRESH_LOCKED });
+    expect(told).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves other refusals alone", async () => {
+    const told = vi.fn();
+    setRefreshLockHandler(told);
+    answer(409, "Only a finished run can be chosen");
+    await expect(api.dataset(1)).rejects.toMatchObject({ status: 409 });
+    expect(told).not.toHaveBeenCalled();
   });
 });
 

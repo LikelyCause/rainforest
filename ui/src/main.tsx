@@ -8,6 +8,8 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
+import { setRefreshLockHandler } from "./api";
+import { refetchDatasetsOnLock } from "./hooks";
 import { initSaveQueue } from "./saveQueue";
 import { applyThemePref } from "./theme";
 import "./styles.css";
@@ -24,6 +26,7 @@ const queryClient = new QueryClient({
 });
 
 initSaveQueue(queryClient);
+setRefreshLockHandler(refetchDatasetsOnLock(queryClient));
 applyThemePref();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
