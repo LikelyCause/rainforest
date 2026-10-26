@@ -145,12 +145,14 @@ export function AnalysisState<R>({
     }
     return (
       <ErrorAlert error={{ message: row.error?.split("\n")[0] ?? "The analysis failed." }} title="Analysis failed.">
-        <div className="row tools-retry">
-          <button type="button" className="small" disabled={a.recomputing} onClick={a.recompute}>
-            Retry
-          </button>
-          {a.recomputeError != null && <span>{(a.recomputeError as Error).message}</span>}
-        </div>
+        {mayRecompute && (
+          <div className="row tools-retry">
+            <button type="button" className="small" disabled={a.recomputing} onClick={a.recompute}>
+              Retry
+            </button>
+            {a.recomputeError != null && <span>{(a.recomputeError as Error).message}</span>}
+          </div>
+        )}
       </ErrorAlert>
     );
   }
