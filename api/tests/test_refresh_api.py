@@ -182,6 +182,8 @@ LOCKED_ROUTES = {
         f"/api/datasets/{i['ds']}/experiments", json={"name": "Try", "source": f"recipe:{i['recipe']}"}
     ),
     "revert adjustments": lambda c, i: c.post(f"/api/experiments/{i['experiment']}/adjustments/revert", json={}),
+    "experiment details": lambda c, i: c.patch(f"/api/experiments/{i['experiment']}", json={"name": "Renamed"}),
+    "run note": lambda c, i: c.patch(f"/api/runs/{i['run']}", json={"note": "Promising"}),
     "start baseline": lambda c, i: c.post(
         f"/api/datasets/{i['ds']}/baselines", json={"family": "tree", "assessors": [i["user"]], "targets": ["vehicle"]}
     ),
@@ -209,13 +211,18 @@ LOCKED_ROUTES = {
 @pytest.fixture(scope="module")
 def ids(clients, ds) -> dict:
     """What the locked routes' requests name: a field, the finalized baseline, and a finished export with its
-    experiment."""
+    experiment and a finished run."""
     lead = clients["lead"]
     r = lead.post(f"/api/datasets/{ds}/exports", json={})
     assert r.status_code == 202, r.text
     export = _wait_export(lead, r.json()["id"])
     assert export["status"] == "done", export["error"]
     engine = _field(ds, "engine")
+    run = db.fetch_one(
+        """INSERT INTO meta.model_runs (export_id, dataset_id, model, family, status, created_by, experiment_id)
+           VALUES (%s, %s, 'lightgbm', 'tree', 'done', %s, %s) RETURNING id""",
+        (export["id"], ds, lead.user["id"], export["experiment_id"]),
+    )["id"]
     return {
         "ds": ds,
         "field": engine["id"],
@@ -223,6 +230,7 @@ def ids(clients, ds) -> dict:
         "recipe": lead.get(f"/api/datasets/{ds}").json()["baseline"]["id"],
         "export": export["id"],
         "experiment": export["experiment_id"],
+        "run": run,
         "user": lead.user["id"],
     }
 

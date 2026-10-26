@@ -205,6 +205,7 @@ def update_run(run_id: int, body: RunPatch, user: CurrentUser) -> dict:
         if body.chosen and run["status"] != "done":
             raise HTTPException(409, "Only a finished run can be chosen")
     with connection() as conn:
+        refuse_while_refreshing(conn, run["dataset_id"])
         if "note" in fields:
             conn.execute(
                 "UPDATE meta.model_runs SET note = %s WHERE id = %s", ((body.note or "").strip() or None, run_id)

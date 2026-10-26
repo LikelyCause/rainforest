@@ -72,6 +72,7 @@ def patch_experiment(experiment_id: int, body: ExperimentPatch, user: CurrentUse
     with connection() as conn:
         x = experiments.get_visible(conn, experiment_id, user)
         experiments.require_editable(x, user)
+        refuse_while_refreshing(conn, x["dataset_id"])
         sets = body.model_dump(exclude_unset=True)
         if "name" in sets and sets["name"] is not None:
             conn.execute("UPDATE meta.experiments SET name = %s WHERE id = %s", (sets["name"].strip(), x["id"]))
