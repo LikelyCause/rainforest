@@ -5,6 +5,7 @@ an export records. Needs RAINFOREST_TEST_MONGO_URL and RAINFOREST_TEST_DATABASE_
 import json
 import os
 import time
+import uuid
 from contextlib import contextmanager
 
 import pytest
@@ -155,40 +156,83 @@ def test_a_dataset_that_is_not_connected_is_404(lead):
         db.execute("DELETE FROM meta.datasets WHERE id = %s", (up,))
 
 
-def test_writes_exports_and_explore_are_409_while_refreshing(lead, ds):
-    engine = _field(ds, "engine")
-    recipe = lead.get(f"/api/datasets/{ds}").json()["baseline"]
+def test_a_second_refresh_is_409_while_one_runs(lead, ds):
     with _held(lead, ds):
-        refused = {
-            "decision": lead.put(
-                f"/api/fields/{engine['id']}/decision",
-                json={"action": "drop", "semantic_type": engine["inferred_type"]},
-            ),
-            "bulk": lead.post(
-                f"/api/datasets/{ds}/decisions/bulk", json={"field_ids": [engine["id"]], "action": "drop"}
-            ),
-            "rename": lead.patch(f"/api/datasets/{ds}", json={"name": "Renamed"}),
-            "export": lead.post(f"/api/datasets/{ds}/exports", json={}),
-            "explore": lead.post(f"/api/datasets/{ds}/analyses", json={"kind": "map"}),
-            "delete": lead.delete(f"/api/datasets/{ds}"),
-            "derived": lead.post(
-                f"/api/datasets/{ds}/derived", json={"name": "x2", "kind": "formula", "spec": {"expr": "1"}}
-            ),
-            "export rows": lead.post(f"/api/datasets/{ds}/export-rows", json={}),
-            "new version": lead.post(f"/api/datasets/{ds}/recipes", json={}),
-            "assessor": lead.post(f"/api/datasets/{ds}/assessors", json={"user_id": lead.user["id"]}),
-            "finalize": lead.post(f"/api/datasets/{ds}/finalize", json={}),
-            "baseline name": lead.patch(f"/api/datasets/{ds}/baselines/tree", json={"name": "Fleet"}),
-            "experiment": lead.post(
-                f"/api/datasets/{ds}/experiments", json={"name": "Try", "source": f"recipe:{recipe['id']}"}
-            ),
-        }
         again = lead.post(f"/api/datasets/{ds}/refresh")
-        assert {k: (r.status_code, r.json()["detail"]) for k, r in refused.items()} == {
-            k: (409, LOCKED) for k in refused
-        }
         assert again.status_code == 409 and again.json()["detail"] == "A pull of this dataset is already running"
-    assert lead.get(f"/api/datasets/{ds}").json()["name"] == "Refreshed"
+
+
+# Every route behind a check from routers/_lock (grep for `refuse_` and `REFRESHING`), each with a request that gets
+# past whatever the route checks before the lock.
+LOCKED_ROUTES = {
+    "decision": lambda c, i: c.put(
+        f"/api/fields/{i['field']}/decision", json={"action": "drop", "semantic_type": i["type"]}
+    ),
+    "bulk": lambda c, i: c.post(
+        f"/api/datasets/{i['ds']}/decisions/bulk", json={"field_ids": [i["field"]], "action": "drop"}
+    ),
+    "bulk undo": lambda c, i: c.post(f"/api/datasets/{i['ds']}/decisions/bulk/{uuid.uuid4()}/undo"),
+    "assign": lambda c, i: c.post(f"/api/datasets/{i['ds']}/assessors", json={"user_id": i["user"]}),
+    "unassign": lambda c, i: c.delete(f"/api/datasets/{i['ds']}/assessors/{i['user']}"),
+    "submit": lambda c, i: c.post(f"/api/datasets/{i['ds']}/assessment/submit"),
+    "unsubmit": lambda c, i: c.post(f"/api/datasets/{i['ds']}/assessment/unsubmit"),
+    "comment": lambda c, i: c.post(f"/api/fields/{i['field']}/comments", json={"body": "Looks right"}),
+    "finalize": lambda c, i: c.post(f"/api/datasets/{i['ds']}/finalize", json={}),
+    "experiment": lambda c, i: c.post(
+        f"/api/datasets/{i['ds']}/experiments", json={"name": "Try", "source": f"recipe:{i['recipe']}"}
+    ),
+    "revert adjustments": lambda c, i: c.post(f"/api/experiments/{i['experiment']}/adjustments/revert", json={}),
+    "start baseline": lambda c, i: c.post(
+        f"/api/datasets/{i['ds']}/baselines", json={"family": "tree", "assessors": [i["user"]], "targets": ["vehicle"]}
+    ),
+    "baseline name": lambda c, i: c.patch(f"/api/datasets/{i['ds']}/baselines/tree", json={"name": "Fleet"}),
+    "new version": lambda c, i: c.post(f"/api/datasets/{i['ds']}/recipes", json={}),
+    "apply recipe": lambda c, i: c.post(f"/api/datasets/{i['ds']}/recipes/apply", json={"recipe_id": i["recipe"]}),
+    "derived preview": lambda c, i: c.post(
+        f"/api/datasets/{i['ds']}/derived/preview", json={"name": "x2", "kind": "formula", "spec": {"expr": "1"}}
+    ),
+    "add derived": lambda c, i: c.post(
+        f"/api/datasets/{i['ds']}/derived", json={"name": "x2", "kind": "formula", "spec": {"expr": "1"}}
+    ),
+    "remove derived": lambda c, i: c.delete(f"/api/datasets/{i['ds']}/derived/{i['field']}"),
+    "explore": lambda c, i: c.post(f"/api/datasets/{i['ds']}/analyses", json={"kind": "map"}),
+    "correlations": lambda c, i: c.get(f"/api/datasets/{i['ds']}/explore/correlations"),
+    "export rows": lambda c, i: c.post(f"/api/datasets/{i['ds']}/export-rows", json={}),
+    "export": lambda c, i: c.post(f"/api/datasets/{i['ds']}/exports", json={}),
+    "run": lambda c, i: c.post(f"/api/exports/{i['export']}/runs", json={"model": "lightgbm", "cv": 0, "cv_folds": 0}),
+    "rename": lambda c, i: c.patch(f"/api/datasets/{i['ds']}", json={"name": "Renamed"}),
+    "targets": lambda c, i: c.patch(f"/api/datasets/{i['ds']}", json={"target_columns": ["vehicle"]}),
+    "delete": lambda c, i: c.delete(f"/api/datasets/{i['ds']}"),
+}
+
+
+@pytest.fixture(scope="module")
+def ids(clients, ds) -> dict:
+    """What the locked routes' requests name: a field, the finalized baseline, and a finished export with its
+    experiment."""
+    lead = clients["lead"]
+    r = lead.post(f"/api/datasets/{ds}/exports", json={})
+    assert r.status_code == 202, r.text
+    export = _wait_export(lead, r.json()["id"])
+    assert export["status"] == "done", export["error"]
+    engine = _field(ds, "engine")
+    return {
+        "ds": ds,
+        "field": engine["id"],
+        "type": engine["inferred_type"],
+        "recipe": lead.get(f"/api/datasets/{ds}").json()["baseline"]["id"],
+        "export": export["id"],
+        "experiment": export["experiment_id"],
+        "user": lead.user["id"],
+    }
+
+
+@pytest.mark.parametrize("route", LOCKED_ROUTES)
+def test_every_locked_route_is_409_while_refreshing(lead, ids, route):
+    with _held(lead, ids["ds"]):
+        r = LOCKED_ROUTES[route](lead, ids)
+        assert (r.status_code, r.json()["detail"]) == (409, LOCKED)
+    assert lead.get(f"/api/datasets/{ids['ds']}").json()["name"] == "Refreshed"
 
 
 def test_refresh_is_409_while_a_version_is_assessed(lead, ds):

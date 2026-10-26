@@ -29,7 +29,7 @@ from ..schemas import ConnectRequest, DatasetPatch, SampleRequest
 from ..semantics import NUMERIC
 from ..sources import SourceError
 from ..sources.pull import RANK, run_connect
-from ._lock import REFRESHING, refuse_while_refreshing
+from ._lock import refuse_refreshing, refuse_while_refreshing
 from .exports import PHASE_WAIT
 from .fields import _sync_targets, has_screen_fields, screen_pairs, screen_targets, set_targets
 from .sources import _source, collection_specs
@@ -603,6 +603,7 @@ def update_dataset(dataset_id: int, body: DatasetPatch, user: CurrentUser) -> di
         raise HTTPException(
             422, "The model type comes from the baseline. Start a baseline for another type on the Baselines page."
         )
+    refuse_refreshing(ds["status"])
     if body.target_columns is not None and ds["status"] != "ready":
         raise HTTPException(409, "Targets can be changed once the dataset is ready")
     start = _nothing
@@ -759,8 +760,7 @@ def delete_dataset(dataset_id: int, _: LeadUser) -> dict:
         ds = conn.execute("SELECT status FROM meta.datasets WHERE id = %s FOR UPDATE", (dataset_id,)).fetchone()
         if ds is None:
             raise HTTPException(404, "Dataset not found")
-        if ds["status"] == "refreshing":
-            raise HTTPException(409, REFRESHING)
+        refuse_refreshing(ds["status"])
         if ds["status"] in ("pending", "ingesting", "profiling", "correlating"):
             raise HTTPException(409, "Dataset is still processing")
         busy = conn.execute(
