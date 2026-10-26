@@ -126,8 +126,8 @@ export interface PreviewResult {
   estimated_rows: number;
   estimated_cells: number;
   budget: { max_cells: number; fits: boolean };
-  /** The columns duplicates are compared on, when the server names them. */
-  compared_on?: string[];
+  /** The columns duplicates are compared on unless Match on replaces them. */
+  compared_on: string[];
 }
 
 export interface CollectionSpec {

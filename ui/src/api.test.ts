@@ -18,6 +18,12 @@ describe("errorFromBody", () => {
     expect(e).toMatchObject({ message: "Invalid request", status: 422, details: ["body.rows: too big"] });
   });
 
+  it("states a refused pull's estimate against the limit", () => {
+    expect(
+      errorFromBody(422, { detail: { message: "Too large", estimated: 700_000_000, max: 600_000_000 } }),
+    ).toMatchObject({ message: "Too large", details: ["700,000,000 cells exceeds the limit of 600,000,000"] });
+  });
+
   it("falls back for bodies that aren't API errors", () => {
     expect(errorFromBody(502, null).message).toBe("Request failed (502)");
     expect(errorFromBody(413, "<html>", "Upload failed (413)").message).toBe("Upload failed (413)");
