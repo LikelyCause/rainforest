@@ -126,8 +126,8 @@ export interface PreviewResult {
   estimated_rows: number;
   estimated_cells: number;
   budget: { max_cells: number; fits: boolean };
-  /** The columns duplicates are compared on, when the server names them. */
-  compared_on?: string[];
+  /** The columns duplicates are compared on unless Match on replaces them. */
+  compared_on: string[];
 }
 
 export interface CollectionSpec {
@@ -523,6 +523,8 @@ export interface ExportJob {
   recipe_name?: string | null;
   experiment_id: number;
   experiment_name: string | null;
+  /** The pull of a connected dataset the export read; null for any other dataset. */
+  pull_id: number | null;
   n_rows: number | null;
   n_features: number | null;
   summary: Record<string, any>;

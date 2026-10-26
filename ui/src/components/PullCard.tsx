@@ -5,7 +5,7 @@ import { Banner } from "./kit";
 import { ErrorAlert } from "./ui";
 import { familyShort, fmtAgo, fmtInt } from "../format";
 import { usePulls } from "../hooks";
-import { flattenLines, pullHeadline, reopenPath, reopenedNames } from "../pulls";
+import { flattenLines, pullHeadline, reopenPath, reopenedNames, uncomparedNote } from "../pulls";
 import { reuseGroups } from "../recipes";
 import type { Dataset, FamilyDrift, Pull } from "../types";
 
@@ -52,6 +52,7 @@ function FamilyBlock({ ds, family, drift }: { ds: Dataset; family: string; drift
 function Summary({ ds, pull }: { ds: Dataset; pull: Pull }) {
   const lines = flattenLines(pull.flatten_notes);
   const families = Object.entries(pull.drift ?? {});
+  const note = uncomparedNote(pull, ds.baselines);
   return (
     <section className="card stack pull-card" aria-label="Latest pull">
       <div className="card-head">
@@ -88,14 +89,14 @@ function Summary({ ds, pull }: { ds: Dataset; pull: Pull }) {
           ))}
         </ul>
       )}
-      {pull.status === "done" &&
-        (pull.drift === null ? (
-          <span className="muted">No finalized baseline to compare with yet.</span>
-        ) : families.length === 0 ? (
-          <span className="muted">No finalized baseline to compare with yet.</span>
-        ) : (
-          families.map(([family, d]) => <FamilyBlock key={family} ds={ds} family={family} drift={d} />)
-        ))}
+      {pull.status === "done" && (
+        <>
+          {families.map(([family, d]) => (
+            <FamilyBlock key={family} ds={ds} family={family} drift={d} />
+          ))}
+          {note && <span className="muted">{note}</span>}
+        </>
+      )}
     </section>
   );
 }
@@ -103,7 +104,7 @@ function Summary({ ds, pull }: { ds: Dataset; pull: Pull }) {
 /** The latest pull of a connected dataset: what came in, what flattening did, and how it compares with each
  * finalized baseline. Nothing for a dataset that isn't connected or hasn't pulled. */
 export function PullCard({ ds }: { ds: Dataset }) {
-  const pulls = usePulls(ds.id, ds.source !== null);
+  const pulls = usePulls(ds.id, ds.source !== null, ds.status === "refreshing");
   const pull = pulls.data?.[0];
   if (!ds.source || !pull) return <ErrorAlert error={pulls.error} />;
   return <Summary ds={ds} pull={pull} />;

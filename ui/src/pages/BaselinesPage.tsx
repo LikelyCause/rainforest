@@ -442,12 +442,13 @@ function NewVersion({
   const [attention, setAttention] = useState(false);
   const [chosen, setChosen] = useState<Set<number>>(new Set());
   const seeded = useRef(false);
+  // Seeded once, from a list that isn't being fetched again: a cached one from before a refresh lacks its new fields.
   useEffect(() => {
-    if (seeded.current || !reopen?.length || !fields.data) return;
+    if (seeded.current || !reopen?.length || !fields.data || fields.isFetching) return;
     seeded.current = true;
     const want = new Set(reopen);
     setChosen(new Set(fields.data.filter((f) => want.has(f.name)).map((f) => f.id)));
-  }, [fields.data, reopen]);
+  }, [fields.data, fields.isFetching, reopen]);
   const all = fields.data ?? [];
   const visible = useMemo(() => pickable(all, { search, types, attention }), [all, search, types, attention]);
   const typeCounts = useMemo(() => {

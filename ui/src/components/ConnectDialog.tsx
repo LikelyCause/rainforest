@@ -1,9 +1,25 @@
-import { useState } from "react";
+import { useId, useReducer, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { fmtInt, fmtPct } from "../format";
-import { budgetMessage, flattenKindLabel, parseJsonDocument } from "../sources";
-import type { CollectionSpec, Dataset, FlattenKind, PreviewResult, SourceInfo } from "../types";
+import {
+  BLANK_PICK,
+  budgetMessage,
+  comparedOnText,
+  connectBlocker,
+  editDraft,
+  flattenKindLabel,
+  labelOf,
+  matchColumns,
+  newDraft,
+  parseJsonDocument,
+  previewKey,
+  previewRequest,
+  specOf,
+  unknownColumns,
+  type ConnectEdit,
+} from "../sources";
+import type { Dataset, FlattenKind, PreviewResult, SourceInfo } from "../types";
 import { Banner, Dialog } from "./kit";
 import { ErrorAlert } from "./ui";
 
@@ -11,23 +27,9 @@ const RESERVED_LABEL = "__source_rank";
 /** Kinds the preview flags: the pull reads them differently from what the source holds. */
 const FLAGGED = new Set<FlattenKind>(["mixed", "json"]);
 
-interface Pick {
-  label: string;
-  filter: string;
-  projection: string;
-}
-const BLANK: Pick = { label: "", filter: "", projection: "" };
-
-/** What the preview and the pull send for a collection: blank filters and projections are left out. */
-function specOf(name: string, pick: Pick, withLabel: boolean): CollectionSpec {
-  const spec: CollectionSpec = { name };
-  if (withLabel && pick.label.trim()) spec.label = pick.label.trim();
-  if (pick.filter.trim()) spec.filter = pick.filter.trim();
-  if (pick.projection.trim()) spec.projection = pick.projection.trim();
-  return spec;
-}
-
-const labelOf = (name: string, pick: Pick | undefined) => pick?.label.trim() || name;
+/** An input's validation message, tied to it for assistive tech. */
+const invalidProps = (message: string | undefined, id: string) =>
+  message ? { "aria-invalid": true, "aria-describedby": id } : {};
 
 export function ConnectDialog({
   sources,
@@ -39,17 +41,11 @@ export function ConnectDialog({
   onCreated: (ds: Dataset) => void;
 }) {
   const qc = useQueryClient();
-  const [connection, setConnection] = useState(sources[0]?.name ?? "");
-  const [database, setDatabase] = useState("");
-  const [typedDatabase, setTypedDatabase] = useState("");
-  // The order collections are ticked in is the order they are pulled and the order ties are broken in.
-  const [chosen, setChosen] = useState<string[]>([]);
-  const [picks, setPicks] = useState<Record<string, Pick>>({});
-  const [nameEdit, setNameEdit] = useState<string | null>(null);
-  const [addSourceEdit, setAddSourceEdit] = useState(false);
-  const [dedupeEdit, setDedupeEdit] = useState<boolean | null>(null);
-  const [matchOn, setMatchOn] = useState("");
-  const [preview, setPreview] = useState<PreviewResult | null>(null);
+  const uid = useId();
+  const [d, dispatch] = useReducer(editDraft, sources[0]?.name ?? "", newDraft);
+  // Kept with the request it answered: an edit that changes the request hides it, one that doesn't (a label) keeps it.
+  const [sampled, setSampled] = useState<{ key: string; result: PreviewResult } | null>(null);
+  const { connection, database, chosen, picks } = d;
 
   const databases = useQuery({
     queryKey: ["source-databases", connection],
@@ -65,16 +61,18 @@ export function ConnectDialog({
     staleTime: 60_000,
   });
 
+  const key = previewKey(d);
+  const preview = sampled?.key === key ? sampled.result : null;
   const several = chosen.length > 1;
-  const addSource = several || addSourceEdit;
-  const dedupe = dedupeEdit ?? several;
+  const addSource = several || d.addSource;
+  const dedupe = d.dedupe ?? several;
   const labels = chosen.map((n) => labelOf(n, picks[n]));
-  const name = nameEdit ?? labels.join(" + ");
+  const name = d.name ?? labels.join(" + ");
 
   const problems = (() => {
     const out: Record<string, string> = {};
     for (const n of chosen) {
-      const p = picks[n] ?? BLANK;
+      const p = picks[n] ?? BLANK_PICK;
       const f = parseJsonDocument(p.filter);
       const pr = parseJsonDocument(p.projection);
       if (f) out[`${n}:filter`] = f;
@@ -87,44 +85,13 @@ export function ConnectDialog({
   })();
   const invalid = Object.keys(problems).length > 0;
 
-  const stale = () => setPreview(null);
-  const pick = (n: string, patch: Partial<Pick>) => {
-    setPicks({ ...picks, [n]: { ...(picks[n] ?? BLANK), ...patch } });
-    stale();
-  };
-  const pickConnection = (c: string) => {
-    setConnection(c);
-    setDatabase("");
-    setTypedDatabase("");
-    setChosen([]);
-    stale();
-  };
-  const pickDatabase = (d: string) => {
-    setDatabase(d);
-    setChosen([]);
-    stale();
-  };
-  const toggle = (n: string) => {
-    setChosen(chosen.includes(n) ? chosen.filter((c) => c !== n) : [...chosen, n]);
-    stale();
-  };
-  const moveUp = (i: number) => {
-    const next = [...chosen];
-    [next[i - 1], next[i]] = [next[i], next[i - 1]];
-    setChosen(next);
-    stale();
-  };
-
   const run = useMutation({
-    mutationFn: () =>
-      api.sourcePreview(connection, { database, collections: chosen.map((n) => specOf(n, picks[n] ?? BLANK, false)) }),
-    onSuccess: setPreview,
+    mutationFn: (req: { key: string; body: ReturnType<typeof previewRequest> }) =>
+      api.sourcePreview(connection, req.body).then((result) => ({ key: req.key, result })),
+    onSuccess: setSampled,
   });
-  const matchColumns = matchOn
-    .split(",")
-    .map((c) => c.trim())
-    .filter(Boolean);
-  const unknownMatch = preview ? matchColumns.filter((c) => !preview.columns.some((col) => col.name === c)) : [];
+  const matchOn = matchColumns(d.matchOn);
+  const unknownMatch = unknownColumns(matchOn, preview);
   const connect = useMutation({
     mutationFn: () =>
       api.connectDataset({
@@ -132,10 +99,10 @@ export function ConnectDialog({
         source: {
           connection,
           database,
-          collections: chosen.map((n) => specOf(n, picks[n] ?? BLANK, true)),
+          collections: chosen.map((n) => specOf(n, picks[n] ?? BLANK_PICK, true)),
           add_source: addSource,
           dedupe,
-          ...(dedupe && matchColumns.length > 0 ? { match_on: matchColumns } : {}),
+          ...(dedupe && matchOn.length > 0 ? { match_on: matchOn } : {}),
         },
       }),
     onSuccess: (ds) => {
@@ -144,11 +111,28 @@ export function ConnectDialog({
       onClose();
     },
   });
+  const edit = (e: ConnectEdit) => {
+    // An error about the collections of another database would read as one about these.
+    if (e.type === "connection" || e.type === "database") {
+      run.reset();
+      connect.reset();
+    }
+    dispatch(e);
+  };
 
   const flagged = preview?.columns.filter((c) => FLAGGED.has(c.kind)) ?? [];
   const fits = preview?.budget.fits ?? false;
   const canPreview = chosen.length > 0 && !invalid && !run.isPending;
-  const canConnect = !!preview && fits && !invalid && name.trim() !== "" && !connect.isPending;
+  const blocker = connectBlocker({ chosen: chosen.length, invalid, preview, name, dedupe, unknownMatch });
+  const comparedOn = comparedOnText(preview);
+  const ids = {
+    why: `${uid}-why`,
+    name: `${uid}-name`,
+    match: `${uid}-match`,
+    pick: (i: number, part: string) => `${uid}-${i}-${part}`,
+  };
+  const nameProblem = chosen.length > 0 && !name.trim() ? "Name the dataset" : undefined;
+  const matchProblem = unknownMatch.length > 0 ? `Not in the preview: ${unknownMatch.join(", ")}` : undefined;
 
   return (
     <Dialog
@@ -158,10 +142,21 @@ export function ConnectDialog({
       labelledBy="connect-title"
       actions={
         <>
+          {blocker && (
+            <span id={ids.why} className="muted small-text connect-why">
+              {blocker}
+            </span>
+          )}
           <button type="button" onClick={onClose}>
             Cancel
           </button>
-          <button type="button" className="primary" disabled={!canConnect} onClick={() => connect.mutate()}>
+          <button
+            type="button"
+            className="primary"
+            disabled={blocker !== null || connect.isPending}
+            aria-describedby={blocker ? ids.why : undefined}
+            onClick={() => connect.mutate()}
+          >
             Connect
           </button>
         </>
@@ -170,7 +165,7 @@ export function ConnectDialog({
       <div className="connect-body stack">
         <label className="field">
           Connection
-          <select value={connection} onChange={(e) => pickConnection(e.target.value)}>
+          <select value={connection} onChange={(e) => edit({ type: "connection", value: e.target.value })}>
             {sources.map((s) => (
               <option key={s.name} value={s.name}>
                 {s.name}
@@ -184,11 +179,11 @@ export function ConnectDialog({
         ) : listable ? (
           <label className="field">
             Database
-            <select value={database} onChange={(e) => pickDatabase(e.target.value)}>
+            <select value={database} onChange={(e) => edit({ type: "database", value: e.target.value })}>
               <option value="">Choose a database</option>
-              {(databases.data?.databases ?? []).map((d) => (
-                <option key={d} value={d}>
-                  {d}
+              {(databases.data?.databases ?? []).map((db) => (
+                <option key={db} value={db}>
+                  {db}
                 </option>
               ))}
             </select>
@@ -200,14 +195,19 @@ export function ConnectDialog({
               <input
                 id="connect-db"
                 className="home-grow"
-                value={typedDatabase}
-                onChange={(e) => setTypedDatabase(e.target.value)}
+                value={d.typedDatabase}
+                onChange={(e) => edit({ type: "typedDatabase", value: e.target.value })}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && typedDatabase.trim()) pickDatabase(typedDatabase.trim());
+                  if (e.key === "Enter" && d.typedDatabase.trim())
+                    edit({ type: "database", value: d.typedDatabase.trim() });
                 }}
                 placeholder="This account can't list databases; type the name"
               />
-              <button type="button" disabled={!typedDatabase.trim()} onClick={() => pickDatabase(typedDatabase.trim())}>
+              <button
+                type="button"
+                disabled={!d.typedDatabase.trim()}
+                onClick={() => edit({ type: "database", value: d.typedDatabase.trim() })}
+              >
                 Load collections
               </button>
             </div>
@@ -223,7 +223,11 @@ export function ConnectDialog({
             <div className="connect-list">
               {(collections.data ?? []).map((c) => (
                 <label key={c.name} className="check connect-item">
-                  <input type="checkbox" checked={chosen.includes(c.name)} onChange={() => toggle(c.name)} />
+                  <input
+                    type="checkbox"
+                    checked={chosen.includes(c.name)}
+                    onChange={() => edit({ type: "toggle", name: c.name })}
+                  />
                   <span className="mono connect-name">{c.name}</span>
                   <span className="muted small-text num">{fmtInt(c.documents)} documents</span>
                 </label>
@@ -242,7 +246,14 @@ export function ConnectDialog({
               </span>
             )}
             {chosen.map((n, i) => {
-              const p = picks[n] ?? BLANK;
+              const p = picks[n] ?? BLANK_PICK;
+              const bad = (part: string) => problems[`${n}:${part}`];
+              const message = (part: string) =>
+                bad(part) && (
+                  <span id={ids.pick(i, part)} className="connect-bad">
+                    {bad(part)}
+                  </span>
+                );
               return (
                 <div key={n} className="card connect-pick">
                   <div className="row connect-pick-head">
@@ -253,7 +264,7 @@ export function ConnectDialog({
                         className="ghost small"
                         aria-label={`Move ${n} up`}
                         disabled={i === 0}
-                        onClick={() => moveUp(i)}
+                        onClick={() => edit({ type: "moveUp", index: i })}
                       >
                         Move up
                       </button>
@@ -262,8 +273,13 @@ export function ConnectDialog({
                   <div className="connect-pick-fields">
                     <label className="field">
                       Label
-                      <input value={p.label} placeholder={n} onChange={(e) => pick(n, { label: e.target.value })} />
-                      {problems[`${n}:label`] && <span className="connect-bad">{problems[`${n}:label`]}</span>}
+                      <input
+                        value={p.label}
+                        placeholder={n}
+                        onChange={(e) => edit({ type: "pick", name: n, patch: { label: e.target.value } })}
+                        {...invalidProps(bad("label"), ids.pick(i, "label"))}
+                      />
+                      {message("label")}
                     </label>
                     <label className="field">
                       Filter (JSON)
@@ -271,9 +287,10 @@ export function ConnectDialog({
                         className="mono"
                         value={p.filter}
                         placeholder='{"year": {"$gte": 2020}}'
-                        onChange={(e) => pick(n, { filter: e.target.value })}
+                        onChange={(e) => edit({ type: "pick", name: n, patch: { filter: e.target.value } })}
+                        {...invalidProps(bad("filter"), ids.pick(i, "filter"))}
                       />
-                      {problems[`${n}:filter`] && <span className="connect-bad">{problems[`${n}:filter`]}</span>}
+                      {message("filter")}
                     </label>
                     <label className="field">
                       Projection (JSON)
@@ -281,18 +298,17 @@ export function ConnectDialog({
                         className="mono"
                         value={p.projection}
                         placeholder='{"notes": 0}'
-                        onChange={(e) => pick(n, { projection: e.target.value })}
+                        onChange={(e) => edit({ type: "pick", name: n, patch: { projection: e.target.value } })}
+                        {...invalidProps(bad("projection"), ids.pick(i, "projection"))}
                       />
-                      {problems[`${n}:projection`] && (
-                        <span className="connect-bad">{problems[`${n}:projection`]}</span>
-                      )}
+                      {message("projection")}
                     </label>
                   </div>
                 </div>
               );
             })}
             <div className="row connect-row">
-              <button type="button" disabled={!canPreview} onClick={() => run.mutate()}>
+              <button type="button" disabled={!canPreview} onClick={() => run.mutate({ key, body: previewRequest(d) })}>
                 {run.isPending ? "Sampling…" : preview ? "Preview again" : "Preview"}
               </button>
               <span className="muted small-text">Samples 200 documents per collection.</span>
@@ -349,26 +365,39 @@ export function ConnectDialog({
           <div className="stack connect-options">
             <label className="field">
               Dataset name
-              <input value={name} onChange={(e) => setNameEdit(e.target.value)} />
+              <input
+                value={name}
+                onChange={(e) => edit({ type: "name", value: e.target.value })}
+                {...invalidProps(nameProblem, ids.name)}
+              />
+              {nameProblem && (
+                <span id={ids.name} className="connect-bad">
+                  {nameProblem}
+                </span>
+              )}
             </label>
             <label className="check">
               <input
                 type="checkbox"
                 checked={addSource}
                 disabled={several}
-                onChange={(e) => setAddSourceEdit(e.target.checked)}
+                onChange={(e) => edit({ type: "addSource", value: e.target.checked })}
               />
               Add a <span className="mono">source</span> column naming each row's collection
             </label>
             <label className="check">
-              <input type="checkbox" checked={dedupe} onChange={(e) => setDedupeEdit(e.target.checked)} />
+              <input
+                type="checkbox"
+                checked={dedupe}
+                onChange={(e) => edit({ type: "dedupe", value: e.target.checked })}
+              />
               Leave out exact duplicate rows{several ? " across collections" : ""}
             </label>
             {dedupe && (
               <div className="stack connect-match">
-                {preview?.compared_on ? (
+                {comparedOn !== null ? (
                   <span className="secondary small-text">
-                    Compared on: <span className="mono">{preview.compared_on.join(", ") || "no shared columns"}</span>
+                    Compared on: <span className="mono">{comparedOn}</span>
                   </span>
                 ) : (
                   <span className="secondary small-text">
@@ -377,22 +406,25 @@ export function ConnectDialog({
                   </span>
                 )}
                 <label className="field">
-                  Match on (optional)
+                  Match on (optional, replaces those columns)
                   <input
                     className="mono"
-                    value={matchOn}
+                    value={d.matchOn}
                     placeholder="Comma-separated columns, e.g. vin, model_year"
-                    onChange={(e) => setMatchOn(e.target.value)}
+                    onChange={(e) => edit({ type: "matchOn", value: e.target.value })}
+                    {...invalidProps(matchProblem, ids.match)}
                   />
-                  {unknownMatch.length > 0 && (
-                    <span className="connect-bad">Not in the preview: {unknownMatch.join(", ")}</span>
+                  {matchProblem && (
+                    <span id={ids.match} className="connect-bad">
+                      {matchProblem}
+                    </span>
                   )}
                 </label>
               </div>
             )}
           </div>
         )}
-        <ErrorAlert error={connect.error} />
+        <ErrorAlert error={connect.error} title="Couldn't connect." />
       </div>
     </Dialog>
   );

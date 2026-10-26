@@ -144,7 +144,7 @@ a.home-item-main:hover { text-decoration: none; background: var(--surface-hover)
 .home-first-side { justify-content: center; gap: 12px; }
 
 /* Connect dialog and the connected badge. */
-.connect-body { max-height: calc(100vh - 200px); overflow-y: auto; padding-right: 4px; gap: var(--space-3); }
+.connect-body { max-height: calc(100vh - 200px); overflow-y: auto; padding: 0 4px 2px 0; gap: var(--space-3); }
 .connect-row { gap: 8px; flex-wrap: nowrap; }
 .connect-collections { border: 0; margin: 0; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: var(--space-1); }
 .connect-list { display: flex; flex-direction: column; max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
@@ -157,8 +157,8 @@ a.home-item-main:hover { text-decoration: none; background: var(--surface-hover)
 .connect-columns { max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .connect-bad { color: var(--bad); font-weight: 400; }
 .connect-match { padding-left: 24px; }
+.connect-why { margin-right: auto; align-self: center; }
 .home-name > span.home-source, .home-source { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; white-space: normal; }
-.connect-body { padding-bottom: 2px; }
 @media (max-width: 759px) {
   .connect-pick-fields { grid-template-columns: minmax(0, 1fr); }
 }

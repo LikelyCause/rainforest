@@ -95,6 +95,15 @@ describe("who may do what", () => {
     expect(addBlocked(x(1, { assessor_id: 3, owner_name: "Bo" }), lead)).toMatch(/Only Bo/);
     expect(addBlocked(x(1, { archived_at: "t" }), me)).toMatch(/Archived/);
   });
+
+  it("lets nobody change an experiment or add to it while a refresh holds its dataset", () => {
+    expect(canEdit(x(1), lead, true)).toBe(false);
+    expect(canEdit(x(1, { owner: 2 }), me, true)).toBe(false);
+    expect(addBlocked(x(1), lead, true)).toBe(
+      "A refresh is running on this dataset: exports and runs wait until it finishes.",
+    );
+    expect(addBlocked(x(1), me, false)).toBeNull();
+  });
 });
 
 describe("sourceOptions", () => {

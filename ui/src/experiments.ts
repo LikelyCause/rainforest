@@ -37,16 +37,19 @@ export function privacyNote(
   return null;
 }
 
-/** Renaming, notes, archiving: the owner (for a personal one, its assessor) or a lead. */
-export const canEdit = (x: Pick<Experiment, "owner" | "assessor_id">, me: Viewer) =>
-  me.role !== "viewer" && (me.role === "lead" || me.id === x.owner || me.id === x.assessor_id);
+/** Renaming, notes, archiving: the owner (for a personal one, its assessor) or a lead, unless `locked` (a refresh
+ * holds the dataset). */
+export const canEdit = (x: Pick<Experiment, "owner" | "assessor_id">, me: Viewer, locked = false) =>
+  !locked && me.role !== "viewer" && (me.role === "lead" || me.id === x.owner || me.id === x.assessor_id);
 
-/** Why the viewer can't add exports or runs, or null when they can. */
+/** Why the viewer can't add exports or runs, or null when they can. `locked`: a refresh holds the dataset. */
 export function addBlocked(
   x: Pick<Experiment, "archived_at" | "assessor_id" | "owner_name">,
   me: Viewer,
+  locked = false,
 ): string | null {
   if (me.role === "viewer") return "Viewers can look but not change anything.";
+  if (locked) return "A refresh is running on this dataset: exports and runs wait until it finishes.";
   if (x.archived_at) return "Archived. Unarchive it to add exports and runs.";
   if (x.assessor_id !== null && x.assessor_id !== me.id) {
     return `Only ${x.owner_name ?? "its assessor"} adds to this experiment; it is built from their assessment.`;

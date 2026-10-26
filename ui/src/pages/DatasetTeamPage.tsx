@@ -15,6 +15,7 @@ import { ReuseCard } from "../components/ReuseCard";
 import { Empty, ErrorAlert, StatusGlyph } from "../components/ui";
 import { bandsText } from "../decision";
 import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtInt } from "../format";
+import { pullState, showsPull } from "../pulls";
 import { comparedValues, nextOpen, shortNames, oddOnes, PHASE_LABEL, splitAgreement, spread, voteLine } from "../team";
 import { toast } from "../toast";
 import type {
@@ -106,7 +107,12 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
   const show: Show =
     (params.get("show") as Show | null) ?? (open.length ? "open" : settled.length ? "settled" : "agreed");
   const list = show === "open" ? open : show === "settled" ? settled : [];
-  const selected = Number(params.get("field")) || (list[0] ?? open[0] ?? items[0])?.field_id || null;
+  const pullView = showsPull(
+    { pull: params.has("pull"), field: params.has("field") },
+    ds,
+    finalized ? team.recipe.finalized_at : null,
+  );
+  const selected = pullView ? null : Number(params.get("field")) || (list[0] ?? open[0] ?? items[0])?.field_id || null;
   const item = items.find((q) => q.field_id === selected) ?? null;
   const setParam = (patch: Record<string, string | null>) => {
     const next = new URLSearchParams(params);
@@ -115,9 +121,9 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
       else next.set(k, v);
     setParams(next, { replace: true });
   };
-  const select = (id: number | null) => id !== null && setParam({ field: String(id) });
+  const select = (id: number | null) => id !== null && setParam({ field: String(id), pull: null });
   // On a phone the queue and a field are two screens: a field shows once one is picked, and back returns to the queue.
-  const fieldOpen = params.has("field");
+  const fieldOpen = params.has("field") || params.has("pull");
   const phone = () => window.matchMedia("(max-width: 759px)").matches;
   const at = list.findIndex((q) => q.field_id === selected);
   const step = (d: 1 | -1) => {
@@ -186,6 +192,7 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
             onChange={(v) =>
               setParam({
                 show: v,
+                pull: null,
                 field: phone()
                   ? null
                   : v === "open"
@@ -244,6 +251,22 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
             )
           )}
         </div>
+        {ds.source && ds.last_pull && (
+          <div className="tr-list">
+            <button
+              type="button"
+              className={`ghost queue-item tr-pull${pullView ? " active" : ""}`}
+              aria-pressed={pullView}
+              onClick={() => setParam({ pull: "1", field: null })}
+            >
+              <span className="grow">
+                <span className="name">Latest pull #{ds.last_pull.id}</span>
+                <span className="muted small-text">{pullState(ds.last_pull)}</span>
+              </span>
+              <Icon name="chevron-right" />
+            </button>
+          </div>
+        )}
         {show === "agreed" ? (
           <nav className="field-list tr-list" aria-label="Agreed fields">
             {agreed.map((f) => (
@@ -316,6 +339,21 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
 
       <section className="detail tr-main">
         <ErrorAlert error={queue.error ?? fields.error} />
+        {pullView && (
+          <div className="tr-phone-back">
+            <button
+              type="button"
+              className="ghost"
+              aria-label="Back to the queue"
+              onClick={() => setParam({ pull: null })}
+            >
+              <Icon name="chevron-left" />
+            </button>
+            <span className="tr-phone-title">
+              <b>Latest pull</b>
+            </span>
+          </div>
+        )}
         {!item && <PullCard ds={ds} />}
         {item && catalog ? (
           <>

@@ -72,7 +72,7 @@ export function ExperimentBar({ ds, experimentId }: { ds: Dataset; experimentId:
   const d = x.data;
   const chip = d ? sourceChip(d, me) : null;
   const adjusted = d?.adjustments.count ?? 0;
-  const canTrain = Boolean(d && me && !addBlocked(d, me));
+  const canTrain = Boolean(d && me && !addBlocked(d, me, ds.status === "refreshing"));
   // The same queries the tabs poll, so the counts move as jobs start.
   const runList = useQuery({
     queryKey: ["runs", ds.id, experimentId],

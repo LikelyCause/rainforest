@@ -21,6 +21,15 @@ export function pollInterval(statuses: string[]): number | false {
   return statuses.includes("refreshing") ? REFRESH_POLL_MS : false;
 }
 
+/** The datasets whose refresh `seen` watched and that are refreshing no more; `seen` is updated in place. */
+export function refreshesDone(seen: Set<number>, rows: { id: number; status: string }[]): number[] {
+  const now = new Set(rows.filter((d) => d.status === "refreshing").map((d) => d.id));
+  const done = [...seen].filter((id) => !now.has(id));
+  done.forEach((id) => seen.delete(id));
+  now.forEach((id) => seen.add(id));
+  return done;
+}
+
 export const useDataset = (id: number, enabled = true) =>
   useQuery({
     queryKey: ["dataset", id],
@@ -29,9 +38,14 @@ export const useDataset = (id: number, enabled = true) =>
     refetchInterval: (q) => pollInterval(q.state.data ? [(q.state.data as Dataset).status] : []),
   });
 
-/** A connected dataset's pulls, newest first. */
-export const usePulls = (id: number, enabled = true) =>
-  useQuery({ queryKey: ["pulls", id], queryFn: () => api.datasetPulls(id), enabled });
+/** A connected dataset's pulls, newest first; `poll` while a refresh runs, so the running pull shows up. */
+export const usePulls = (id: number, enabled = true, poll = false) =>
+  useQuery({
+    queryKey: ["pulls", id],
+    queryFn: () => api.datasetPulls(id),
+    enabled,
+    refetchInterval: poll ? REFRESH_POLL_MS : false,
+  });
 
 export const useTeam = (id: number, enabled = true) =>
   useQuery({ queryKey: ["team", id], queryFn: () => api.team(id), enabled });

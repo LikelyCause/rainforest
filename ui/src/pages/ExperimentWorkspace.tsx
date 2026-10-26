@@ -643,6 +643,7 @@ function ExportRow({ e, canAdd, onTrain }: { e: ExportJob; canAdd: boolean; onTr
               {baselineLabel(e.recipe_family ?? e.model_family, e.recipe_version, true, e.recipe_name)}
             </Chip>
           )}
+          {e.pull_id != null && <Chip title="Built from this pull of the connected dataset">pull #{e.pull_id}</Chip>}
           <StatusBadge status={e.status} />
           <span className="muted small-text num" title={fmtDate(e.created_at)}>
             {fmtAgo(e.created_at)}

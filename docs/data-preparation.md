@@ -31,11 +31,16 @@ Members and leads can create a connected dataset. In the dialog:
 4. Name the dataset and choose whether to add a **source column** and to **leave out exact duplicate rows**
    ([below](#the-source-column-and-duplicates)).
 
+*Connect* stays off until the collections as chosen have been previewed, the dataset has a name and every **Match on**
+column is one the preview found; the dialog says what is missing. A label change keeps the preview; another filter,
+projection or collection order needs a new one. Choosing another connection or database starts the collections and
+options over.
+
 The pull runs as a background job. The dataset is *Pending* while it waits, then *Ingesting* while the documents are
 pulled and combined, and then goes through the same profiling, associations and baseline set-up as an upload. The
-*Datasets* page marks it as connected and shows when it was last pulled. A pull that fails (the server is unreachable,
-the account is refused, the size budget is exceeded, the time limit passes) leaves the dataset *Failed* with the
-reason. Error messages name the connection, never its address or credentials.
+*Datasets* page marks it as connected and shows when it was last pulled, or that the last pull failed. A pull that
+fails (the server is unreachable, the account is refused, the size budget is exceeded, the time limit passes) leaves
+the dataset *Failed* with the reason. Error messages name the connection, never its address or credentials.
 
 ### How documents become columns
 
@@ -130,20 +135,23 @@ family's latest finalized baseline by the rules for [reusing a baseline](team-wo
 a field is *carried* when its type is unchanged and its statistics haven't drifted (the missing share within 10 points,
 the distinct values within half to double), and *reopened* when it is new, has a new type or has drifted, with the
 numbers. Fields of the baseline that are gone are listed. The result is that pull's **drift summary**, shown for each
-family on the *Team* page and on the baseline's card, where a lead can start a new version with the reopened fields
-selected. A dataset with no finalized baseline gets no drift summary; its decisions that are still at their suggestion
-follow the new suggestions.
+family above the baselines on *Versions* and under *Latest pull* in the *Team* page's queue, where a lead can start a
+new version with the reopened fields selected. The *Team* page opens on it when the pull came after the version was
+finalized. A dataset with no finalized baseline gets no drift summary; its decisions that are still at their
+suggestion follow the new suggestions. A pull from before a baseline was finalized, such as the first pull, has no
+comparison with it and says so; the next refresh compares them.
 
-**While it runs** the dataset is locked. Its pages open read-only with a banner, and the API refuses writes to the
-dataset and new exports, runs and Explore computations on it with `409`. A refresh is refused with `409` while a
-baseline version is being assessed or is in team review, and while an export or a run of the dataset is running. If
-the pull fails, the dataset, its fields and its data stay as they were and the failed pull is recorded with its error.
+**While it runs** the dataset is locked. Its pages open read-only with a banner naming who started the refresh, and
+experiments take no exports, runs, notes or adjustments until it ends. The API refuses writes to the dataset and new
+exports, runs and Explore computations on it with `409`. A refresh is refused with `409` while a baseline version is
+being assessed or is in team review, and while an export or a run of the dataset is running. If the pull fails, the
+dataset, its fields and its data stay as they were and the failed pull is recorded with its error.
 
 **Exports after a refresh** are built from the new data. Each export of a connected dataset records the pull it was made
 from in its manifest and MLflow parameters, and the exports list shows it on the export's row as *pull #<n>*, where n is
 the pull's id, so it stays clear which data a run was trained on; an export made earlier keeps its own Parquet file.
-The export preview blocks when a field of the baseline is no longer in the data, and warns when the baseline was
-finalized before the latest pull.
+The export preview blocks when a field the baseline keeps, or one of its targets, is no longer in the data (a field the
+baseline drops may go), and warns when the baseline was finalized before the latest pull.
 
 ## Type inference
 

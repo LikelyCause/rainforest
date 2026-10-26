@@ -1,4 +1,5 @@
 import type { StartBaselineForm } from "./baselines";
+import { budgetMessage } from "./sources";
 import { type View, viewQuery } from "./view";
 import type {
   Analysis,
@@ -100,10 +101,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-/** The API's error shapes as one ApiError: a plain detail, {message, errors | detail}, or FastAPI's 422 list. */
+/** The API's error shapes as one ApiError: a plain detail, {message, errors | detail}, a pull over the size limit
+ * ({message, estimated, max}), or FastAPI's 422 list. */
 export function errorFromBody(status: number, body: any, fallback = `Request failed (${status})`): ApiError {
   const detail = body?.detail;
   if (typeof detail === "string") return new ApiError(detail, status);
+  if (detail?.message && typeof detail.estimated === "number" && typeof detail.max === "number")
+    return new ApiError(detail.message, status, [budgetMessage(detail.estimated, detail.max)]);
   if (detail?.message)
     return new ApiError(detail.message, status, detail.errors ?? (detail.detail ? [detail.detail] : []));
   if (Array.isArray(detail))

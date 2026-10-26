@@ -642,8 +642,9 @@ function CvCard({ target, cv }: { target: string; cv: CrossValidation }) {
 function RunChoice({ run }: { run: ModelRun }) {
   const qc = useQueryClient();
   const me = useMe().data;
-  const lead = useCan()("chooseModel");
-  const canNote = lead || (me != null && me.role !== "viewer" && me.id === run.created_by);
+  const canDo = useCan();
+  const lead = canDo("chooseModel");
+  const canNote = lead || (canDo("train") && me?.id === run.created_by);
   const [note, setNote] = useState(run.note ?? "");
   const save = useMutation({
     mutationFn: (body: { note?: string; chosen?: boolean }) => api.updateRun(run.id, body),

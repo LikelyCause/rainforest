@@ -1,6 +1,16 @@
-import type { Dataset, FamilyKey, FieldListItem } from "./types";
+import { can } from "./can";
+import type { Dataset, FamilyKey, FieldListItem, Role } from "./types";
 
 export const FAMILIES: FamilyKey[] = ["tree", "linear", "neural"];
+
+/** What the Baseline tab says in place of the setup form, or null when the viewer gets the form. `locked`: a
+ * refresh holds the dataset, and the targets offered would be the fields it is about to replace. */
+export function setupNote(me: { role: Role } | undefined, locked: boolean): string | null {
+  if (can(me, "startBaseline", locked)) return null;
+  if (me?.role === "lead")
+    return "A refresh is running. Set up the baseline once it finishes, so its targets come from the new pull's fields.";
+  return "A lead sets up this dataset's first baseline: its model type, targets and who assesses it. Until then you can browse the fields and Explore.";
+}
 const TARGET_TYPES = new Set(["binary", "categorical", "numeric_discrete", "numeric_continuous"]);
 const LABEL_TYPES = new Set(["binary", "categorical"]);
 const MAX_TARGET_LEVELS = 100;
