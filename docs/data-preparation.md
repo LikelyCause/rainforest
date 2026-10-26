@@ -17,7 +17,7 @@ chart (see [Configuration](configuration.md) and [deploy/README.md](../deploy/RE
 a connection string into Rainforest. *Datasets → Connect ▾ → MongoDB collection…* appears when at least one is named.
 To try it without a cluster, `make up-mongo` starts a sample MongoDB (database `rf_dev`, collections `curated` and
 `massive`) as the connection `dev`; [Deployment](deployment.md#trying-an-option-for-one-run) says what it changes, and
-what to add when `.env` already names connections.
+what to add when connections are already set.
 
 Members and leads can create a connected dataset. In the dialog:
 

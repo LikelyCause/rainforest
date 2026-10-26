@@ -37,7 +37,7 @@ as `.env` describes.
 |---|---|
 | `make up-gpu` | the GPU image |
 | `make up-keycloak` | the Keycloak profile, plus the reference Keycloak's sign-in settings for each one `.env` leaves empty (none when `.env` names its own issuer) |
-| `make up-mongo` | the mongo profile: a `mongo:7` with the sample database `rf_dev`, and, when `.env` sets no `RAINFOREST_MONGO_SOURCES`, the connection `dev=mongodb://mongo:27017` as its only source. When `.env` sets them, they stay as they are and the command prints the entry to add to them ([MongoDB sources](#mongodb-sources)) |
+| `make up-mongo` | the mongo profile: a `mongo:7` with the sample database `rf_dev`, and, when no `RAINFOREST_MONGO_SOURCES` is set, the connection `dev=mongodb://mongo:27017` as its only source. When they are set, they stay as they are; unless they already name the sample server, the command prints the entry to add and where to add it ([MongoDB sources](#mongodb-sources)) |
 
 `make up-keycloak` stops with an error when `.env` sets `RAINFOREST_AUTH_MODE` to something other than `oidc`.
 
@@ -62,11 +62,15 @@ the `mongodata` volume and is published on `127.0.0.1:${MONGO_PORT:-27017}`, and
 sample collections `curated` (300 documents) and `massive` (500, with a deeper key some documents have, a column of
 mixed types and 50 rows that repeat `curated` ones) into the database `rf_dev` the first time. A later start leaves the
 database as it is. Point `RAINFOREST_MONGO_SOURCES` at it as `dev=mongodb://mongo:27017`. `make up-mongo` does that
-for its run when `.env` sets no sources, and prints what to add to `.env` to keep it. When `.env` sets them, the run
-starts with them as written: Compose reads `.env` with its own `$$` unescaping, which a copy of the raw text would
-miss. The command then prints the entry to append to the value, `;dev=mongodb://mongo:27017` (named `rf-dev` when `dev`
-is already taken); run `make up-mongo` again once it is added. `make down` stops the profile with the rest and
-`make clean` deletes the volume.
+for its run when no sources are set, and prints what to add to `.env` to keep it. When sources are set, the run starts
+with them as written (Compose reads `.env` with its own `$$` unescaping, which a copy of the raw text would miss), and:
+
+- when they already name `mongodb://mongo:27017`, under any name, the command prints nothing about them;
+- otherwise it prints the entry to append to the value, `;dev=mongodb://mongo:27017` (named `rf-dev` when `dev` is
+  already taken), and where: in `.env`, or, when the value comes from the shell environment or the make command line
+  (which Compose reads before `.env`), wherever that sets it. Run `make up-mongo` again once it is added.
+
+`make down` stops the profile with the rest and `make clean` deletes the volume.
 
 A pull holds the combined dataset in memory, roughly 2–3 times its in-memory size ([Size](data-preparation.md#size)),
 so give the API enough RAM for the largest dataset you connect. On Kubernetes the connections are chart values, each
