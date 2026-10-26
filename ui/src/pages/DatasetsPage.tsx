@@ -16,7 +16,7 @@ import { api, uploadDataset } from "../api";
 import { PROCESSING, pollInterval, refreshesDone, useFields, useMe } from "../hooks";
 import { pullState } from "../pulls";
 import { eligibleTarget } from "../baselines";
-import { can, canRefresh, lockedTitle } from "../can";
+import { can, lockedTitle, refreshBlocker } from "../can";
 import { metricLabel } from "../experiments";
 import { defaultTask, taskLabel } from "../decision";
 import { fmtAgo, fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
@@ -1276,14 +1276,7 @@ export function DatasetsPage() {
         onTargets={withTargets && ds.status === "ready" ? () => setTargetFor(ds.id) : undefined}
         onRefresh={
           ds.source && me.data?.role === "lead"
-            ? {
-                run: () => void refresh(ds),
-                blocked: canRefresh(me.data, ds)
-                  ? null
-                  : ds.status === "refreshing" || ds.last_pull?.status === "running"
-                    ? "A refresh is already running"
-                    : "Wait until the dataset is ready",
-              }
+            ? { run: () => void refresh(ds), blocked: refreshBlocker(me.data, ds) }
             : undefined
         }
       />

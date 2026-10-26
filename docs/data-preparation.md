@@ -40,7 +40,8 @@ The pull runs as a background job. The dataset is *Pending* while it waits, then
 pulled and combined, and then goes through the same profiling, associations and baseline set-up as an upload. The
 *Datasets* page marks it as connected and shows when it was last pulled, or that the last pull failed. A pull that
 fails (the server is unreachable, the account is refused, the size budget is exceeded, the time limit passes) leaves
-the dataset *Failed* with the reason. Error messages name the connection, never its address or credentials.
+the dataset *Failed* with the reason; it has no data to refresh, so delete it and connect again. Error messages name
+the connection, never its address or credentials.
 
 ### How documents become columns
 

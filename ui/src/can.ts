@@ -50,10 +50,18 @@ export function lockedTitle(ds: { status: DatasetStatus }): string | null {
   return ds.status === "refreshing" ? "A refresh is running; try again once it finishes" : null;
 }
 
-/** A lead may refresh a connected dataset that is ready and has no pull running. */
-export function canRefresh(
+/** Why Refresh… is off, as its tooltip; null when it can run: a lead, a connected dataset that is ready, no pull
+ * running. A dataset whose connect failed never becomes ready (a refresh only replaces data it has), so waiting
+ * would not help. */
+export function refreshBlocker(
   me: { role: Role } | null | undefined,
   ds: { source: object | null; status: DatasetStatus; last_pull: Pick<PullSummary, "status"> | null },
-): boolean {
-  return me?.role === "lead" && ds.source !== null && ds.status === "ready" && ds.last_pull?.status !== "running";
+): string | null {
+  if (me?.role !== "lead") return "Only a lead can refresh a dataset";
+  if (ds.source === null) return "This dataset isn't connected to a source";
+  if (ds.status === "refreshing" || ds.last_pull?.status === "running") return "A refresh is already running";
+  if (ds.status === "failed")
+    return "The connect failed, so there is nothing to refresh: delete this dataset and connect it again";
+  if (ds.status !== "ready") return "Wait until the dataset is ready";
+  return null;
 }

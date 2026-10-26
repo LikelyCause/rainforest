@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ACTIONS, can, canRefresh, lockedTitle } from "./can";
+import { ACTIONS, can, lockedTitle, refreshBlocker } from "./can";
 
 const connected = { source: { connection: "x" }, status: "ready", last_pull: { status: "done" } } as const;
 
@@ -29,23 +29,30 @@ describe("can while a dataset is locked", () => {
   });
 });
 
-describe("canRefresh", () => {
-  it("lets a lead refresh a ready connected dataset", () => {
-    expect(canRefresh({ role: "lead" }, connected)).toBe(true);
-    expect(canRefresh({ role: "lead" }, { ...connected, last_pull: null })).toBe(true);
+describe("refreshBlocker", () => {
+  const lead = { role: "lead" } as const;
+  it("is null when a lead can refresh a ready connected dataset", () => {
+    expect(refreshBlocker(lead, connected)).toBeNull();
+    expect(refreshBlocker(lead, { ...connected, last_pull: null })).toBeNull();
   });
-  it("is for leads only", () => {
-    expect(canRefresh({ role: "member" }, connected)).toBe(false);
-    expect(canRefresh({ role: "viewer" }, connected)).toBe(false);
-    expect(canRefresh(null, connected)).toBe(false);
+  it("says a refresh is running", () => {
+    expect(refreshBlocker(lead, { ...connected, status: "refreshing" })).toBe("A refresh is already running");
+    expect(refreshBlocker(lead, { ...connected, last_pull: { status: "running" } })).toBe(
+      "A refresh is already running",
+    );
   });
-  it("is off while refreshing, while a pull runs or when the dataset isn't ready", () => {
-    expect(canRefresh({ role: "lead" }, { ...connected, status: "refreshing" })).toBe(false);
-    expect(canRefresh({ role: "lead" }, { ...connected, last_pull: { status: "running" } })).toBe(false);
-    expect(canRefresh({ role: "lead" }, { ...connected, status: "profiling" })).toBe(false);
+  it("says a dataset whose connect failed has to be connected again", () => {
+    expect(refreshBlocker(lead, { ...connected, status: "failed", last_pull: { status: "failed" } })).toBe(
+      "The connect failed, so there is nothing to refresh: delete this dataset and connect it again",
+    );
   });
-  it("is off for a dataset that isn't connected", () => {
-    expect(canRefresh({ role: "lead" }, { ...connected, source: null })).toBe(false);
+  it("asks to wait while the dataset is still being set up", () => {
+    expect(refreshBlocker(lead, { ...connected, status: "profiling" })).toBe("Wait until the dataset is ready");
+  });
+  it("names who may refresh, and what", () => {
+    for (const me of [{ role: "member" } as const, { role: "viewer" } as const, null])
+      expect(refreshBlocker(me, connected)).toBe("Only a lead can refresh a dataset");
+    expect(refreshBlocker(lead, { ...connected, source: null })).toBe("This dataset isn't connected to a source");
   });
 });
 
