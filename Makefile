@@ -38,19 +38,25 @@ up-keycloak:   ## `make up` plus the dev-only Keycloak, filling the sign-in sett
 	env $(kc_fill) $(kc_profile) docker compose up -d --build
 	@$(if $(kc_keep),printf '%s\n' "These applied to this run only. To keep them for \`make up\` add them to .env:" $(foreach d,$(kc_keep),"  $(d)"))
 
-# The sample MongoDB (mongo profile) is the connection "dev"; sources .env already has are kept.
-dev_source = dev=mongodb://mongo:27017
+# The sample MongoDB (mongo profile) is the connection dev=mongodb://mongo:27017. It is added to the run only when
+# .env has no sources: a value re-exported from .env would skip Compose's $$ unescaping, so otherwise the entry to add
+# is printed.
+mongo_uri = mongodb://mongo:27017
 mongo_sources = $(call setting,RAINFOREST_MONGO_SOURCES)
-mongo_have = $(findstring $(dev_source),$(mongo_sources))
-mongo_value = $(if $(mongo_sources),$(mongo_sources);)$(dev_source)
-mongo_fill = $(if $(mongo_have),,RAINFOREST_MONGO_SOURCES='$(subst ','\'',$(mongo_value))')
+mongo_entries = $(subst ;, ,$(mongo_sources))
+mongo_names = $(foreach e,$(mongo_entries),$(firstword $(subst =, ,$(e))))
+# An entry for the sample server under any name counts; if there is none, the first of these names .env hasn't taken.
+mongo_have = $(filter %=$(mongo_uri),$(mongo_entries))
+mongo_name = $(firstword $(filter-out $(mongo_names),dev rf-dev rf-dev-2 rf-dev-3 rf-dev-4 rf-dev-5))
+mongo_fill = $(if $(mongo_sources),,RAINFOREST_MONGO_SOURCES=dev=$(mongo_uri))
+mongo_add = $(if $(mongo_sources),$(if $(mongo_have),,;$(mongo_name)=$(mongo_uri)))
 mongo_on = $(filter mongo,$(subst $(comma), ,$(kc_profiles)))
 mongo_profile = COMPOSE_PROFILES=$(if $(mongo_on),$(kc_profiles),$(if $(kc_profiles),$(kc_profiles)$(comma))mongo)
-mongo_keep = $(strip $(if $(mongo_on),,$(mongo_profile)) $(if $(mongo_have),,RAINFOREST_MONGO_SOURCES=$(if $(mongo_sources),<your-sources>;)$(dev_source)))
-# The docker line is silent because it carries the connection strings .env already has.
-up-mongo:      ## `make up` plus a sample MongoDB (database rf_dev) as the connection "dev", for this run only (docs/data-preparation.md › Connected datasets)
-	@env $(mongo_fill) $(mongo_profile) docker compose up -d --build
+mongo_keep = $(strip $(if $(mongo_on),,$(mongo_profile)) $(mongo_fill))
+up-mongo:      ## `make up` plus a sample MongoDB (database rf_dev) as the connection "dev" when .env sets no sources, for this run only (docs/data-preparation.md › Connected datasets)
+	env $(mongo_fill) $(mongo_profile) docker compose up -d --build
 	@$(if $(mongo_keep),printf '%s\n' "These applied to this run only. To keep them for \`make up\` add them to .env:" $(foreach d,$(mongo_keep),"  $(d)"))
+	@$(if $(mongo_add),printf '%s\n' "RAINFOREST_MONGO_SOURCES is already set and was left as it is. To use the sample MongoDB add this to the end of its value in .env and run \`make up-mongo\` again:" "  $(mongo_add)")
 
 gpu-check:     ## what the running API sees: GPU name, memory, driver, and whether XGBoost can use it
 	docker compose exec api python -c "import json; from app.gpu import detect; print(json.dumps(detect(), indent=2))"
