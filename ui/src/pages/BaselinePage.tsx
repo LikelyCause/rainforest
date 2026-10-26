@@ -10,7 +10,7 @@ import { Banner, Chip, Icon, ProgressBar, Tabs, confirmDialog, stageOf, useDismi
 import { ReuseCard } from "../components/ReuseCard";
 import { StartBaseline } from "../components/StartBaseline";
 import { ErrorAlert } from "../components/ui";
-import { FAMILIES } from "../baselines";
+import { FAMILIES, setupNote } from "../baselines";
 import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtInt } from "../format";
 import { builtFrom } from "../recipes";
 import { submittedText } from "../team";
@@ -78,9 +78,10 @@ export function BaselinePage() {
   const t = team.data;
 
   if (stage === "setup") {
+    const note = setupNote(me, ds.status === "refreshing");
     return (
       <div className="page bl-page">
-        {me?.role === "lead" ? (
+        {note === null ? (
           <StartBaseline ds={ds} />
         ) : (
           <>
@@ -91,10 +92,7 @@ export function BaselinePage() {
                 field kept, dropped or retyped.
               </p>
             </div>
-            <Banner tone="info">
-              A lead sets up this dataset's first baseline: its model type, targets and who assesses it. Until then you
-              can browse the fields and Explore.
-            </Banner>
+            <Banner tone="info">{note}</Banner>
           </>
         )}
       </div>

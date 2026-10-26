@@ -523,6 +523,8 @@ export interface ExportJob {
   recipe_name?: string | null;
   experiment_id: number;
   experiment_name: string | null;
+  /** The pull of a connected dataset the export read; null for any other dataset. */
+  pull_id: number | null;
   n_rows: number | null;
   n_features: number | null;
   summary: Record<string, any>;

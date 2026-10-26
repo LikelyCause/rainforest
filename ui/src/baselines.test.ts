@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { eligibleTarget, startBaselineDefaults } from "./baselines";
+import { eligibleTarget, setupNote, startBaselineDefaults } from "./baselines";
 import { baselineLabel } from "./format";
 
 const me = { id: 7 };
@@ -53,5 +53,23 @@ describe("eligibleTarget", () => {
     expect(eligibleTarget(f("g", { semantic_type: "numeric_discrete", n_unique: 5000 }))).toBeNull();
     expect(eligibleTarget(f("t", { semantic_type: "text" }))).toMatch(/text/i);
     expect(eligibleTarget(f("id", { semantic_type: "categorical", n_unique: 5000 }))).toMatch(/100/);
+  });
+});
+
+describe("setupNote", () => {
+  it("gives a lead the setup form", () => {
+    expect(setupNote({ role: "lead" }, false)).toBeNull();
+  });
+
+  it("holds the form back from a lead while a refresh runs", () => {
+    expect(setupNote({ role: "lead" }, true)).toBe(
+      "A refresh is running. Set up the baseline once it finishes, so its targets come from the new pull's fields.",
+    );
+  });
+
+  it("tells anyone else that a lead sets it up", () => {
+    for (const role of ["member", "viewer"] as const)
+      expect(setupNote({ role }, false)).toMatch(/^A lead sets up this dataset's first baseline/);
+    expect(setupNote(undefined, false)).toMatch(/^A lead sets up/);
   });
 });

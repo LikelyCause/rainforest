@@ -342,7 +342,7 @@ export function ExperimentsPage() {
 /** The experiment's details and notes, and renaming and archiving for its owner or a lead. */
 function NotesTab({ ds, x, me, blocked }: { ds: Dataset; x: ExperimentDetail; me: Me; blocked: string | null }) {
   const qc = useQueryClient();
-  const editable = canEdit(x, me);
+  const editable = canEdit(x, me, ds.status === "refreshing");
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(x.name);
   const [notes, setNotes] = useState(x.notes ?? "");
@@ -534,6 +534,7 @@ function AdjustmentsTab({ ds, x }: { ds: Dataset; x: ExperimentDetail }) {
     );
   }
   const same = a.count === 0 && !a.targets_changed;
+  const adjustable = x.can_adjust && ds.status !== "refreshing";
   return (
     <div className="page exp-narrow">
       <section className="card stack" aria-labelledby="adjust-title">
@@ -544,7 +545,7 @@ function AdjustmentsTab({ ds, x }: { ds: Dataset; x: ExperimentDetail }) {
               {same ? `Same as ${base}` : `Changes to ${base}, this experiment only`}
             </span>
           </div>
-          {x.can_adjust && (
+          {adjustable && (
             <Link className="btn primary" to={adjust}>
               <Icon name="flask" />
               Adjust fields
@@ -554,7 +555,7 @@ function AdjustmentsTab({ ds, x }: { ds: Dataset; x: ExperimentDetail }) {
         {same ? (
           <span className="secondary">
             Every field is prepared as {base} decided.
-            {x.can_adjust
+            {adjustable
               ? " Adjust fields to try other choices: a field's role, type or prep settings, or the targets."
               : ""}
           </span>
@@ -565,7 +566,7 @@ function AdjustmentsTab({ ds, x }: { ds: Dataset; x: ExperimentDetail }) {
                 <tr>
                   <th scope="col">Field</th>
                   <th scope="col">Changed</th>
-                  {x.can_adjust && (
+                  {adjustable && (
                     <th scope="col">
                       <span className="exp-sr">Revert</span>
                     </th>
@@ -581,13 +582,13 @@ function AdjustmentsTab({ ds, x }: { ds: Dataset; x: ExperimentDetail }) {
                     <td>
                       {a.targets.before.join(", ") || "none"} → {a.targets.after.join(", ") || "none"}
                     </td>
-                    {x.can_adjust && <td />}
+                    {adjustable && <td />}
                   </tr>
                 )}
                 {a.fields.map((f) => (
                   <tr key={f.name}>
                     <td>
-                      {x.can_adjust ? (
+                      {adjustable ? (
                         <Link to={withView(`/d/${ds.id}/review/${idOf(f.name) ?? ""}`, `experiment:${x.id}`)}>
                           {f.name}
                         </Link>
@@ -602,7 +603,7 @@ function AdjustmentsTab({ ds, x }: { ds: Dataset; x: ExperimentDetail }) {
                         ))}
                       </ul>
                     </td>
-                    {x.can_adjust && (
+                    {adjustable && (
                       <td>
                         <button
                           type="button"
@@ -621,7 +622,7 @@ function AdjustmentsTab({ ds, x }: { ds: Dataset; x: ExperimentDetail }) {
             </table>
           </div>
         )}
-        {x.can_adjust && !same && (
+        {adjustable && !same && (
           <div className="row exp-end">
             <button
               type="button"
@@ -667,7 +668,7 @@ export function ExperimentPage() {
   const jobs = useJobs(ds.id, xid);
   const [fresh, setFresh] = useState<number[]>([]);
   const base = `/d/${ds.id}/experiments/${xid}`;
-  const blocked = x.data && me ? addBlocked(x.data, me) : null;
+  const blocked = x.data && me ? addBlocked(x.data, me, ds.status === "refreshing") : null;
   const canAdd = Boolean(x.data && me) && !blocked;
   useJobToasts({
     x: x.data ?? ({ id: xid } as Experiment),
