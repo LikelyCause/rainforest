@@ -17,6 +17,7 @@ import {
   previewRequest,
   specOf,
   unknownColumns,
+  type ConnectEdit,
 } from "../sources";
 import type { Dataset, FlattenKind, PreviewResult, SourceInfo } from "../types";
 import { Banner, Dialog } from "./kit";
@@ -41,7 +42,7 @@ export function ConnectDialog({
 }) {
   const qc = useQueryClient();
   const uid = useId();
-  const [d, edit] = useReducer(editDraft, sources[0]?.name ?? "", newDraft);
+  const [d, dispatch] = useReducer(editDraft, sources[0]?.name ?? "", newDraft);
   // Kept with the request it answered: an edit that changes the request hides it, one that doesn't (a label) keeps it.
   const [sampled, setSampled] = useState<{ key: string; result: PreviewResult } | null>(null);
   const { connection, database, chosen, picks } = d;
@@ -110,6 +111,14 @@ export function ConnectDialog({
       onClose();
     },
   });
+  const edit = (e: ConnectEdit) => {
+    // An error about the collections of another database would read as one about these.
+    if (e.type === "connection" || e.type === "database") {
+      run.reset();
+      connect.reset();
+    }
+    dispatch(e);
+  };
 
   const flagged = preview?.columns.filter((c) => FLAGGED.has(c.kind)) ?? [];
   const fits = preview?.budget.fits ?? false;
@@ -300,7 +309,7 @@ export function ConnectDialog({
             })}
             <div className="row connect-row">
               <button type="button" disabled={!canPreview} onClick={() => run.mutate({ key, body: previewRequest(d) })}>
-                {run.isPending ? "Sampling…" : sampled ? "Preview again" : "Preview"}
+                {run.isPending ? "Sampling…" : preview ? "Preview again" : "Preview"}
               </button>
               <span className="muted small-text">Samples 200 documents per collection.</span>
             </div>
@@ -415,7 +424,7 @@ export function ConnectDialog({
             )}
           </div>
         )}
-        <ErrorAlert error={connect.error} title={connect.error ? "Couldn't connect" : undefined} />
+        <ErrorAlert error={connect.error} title="Couldn't connect." />
       </div>
     </Dialog>
   );
