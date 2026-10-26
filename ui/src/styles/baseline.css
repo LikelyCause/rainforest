@@ -67,6 +67,9 @@
 .bls-page .card-head h2 { display: flex; align-items: center; }
 .bls-back { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; }
 .inline-chips { display: inline-flex; }
+.pull-card ul { margin: 0; padding-left: var(--space-4); }
+.pull-card h3 { font-size: var(--fs-body); }
+.refresh-banner { padding-bottom: 0; }
 
 /* Set-up form */
 .start-baseline { gap: 18px; }

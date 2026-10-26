@@ -1,7 +1,7 @@
 import { useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { can } from "../can";
+import { useCan } from "./DatasetLayout";
 import { useMe } from "../hooks";
 import { describeSettings } from "../settings";
 import { showError } from "../toast";
@@ -642,7 +642,7 @@ function CvCard({ target, cv }: { target: string; cv: CrossValidation }) {
 function RunChoice({ run }: { run: ModelRun }) {
   const qc = useQueryClient();
   const me = useMe().data;
-  const lead = can(me, "chooseModel");
+  const lead = useCan()("chooseModel");
   const canNote = lead || (me != null && me.role !== "viewer" && me.id === run.created_by);
   const [note, setNote] = useState(run.note ?? "");
   const save = useMutation({

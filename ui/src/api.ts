@@ -164,6 +164,7 @@ export const api = {
     request<PreviewResult>(`/api/sources/${encodeURIComponent(name)}/preview`, json("POST", data)),
   connectDataset: (data: ConnectRequest) => request<Dataset>("/api/datasets/connect", json("POST", data)),
   datasetPulls: (id: number) => request<Pull[]>(`/api/datasets/${id}/pulls`),
+  refreshDataset: (id: number) => request<Pull>(`/api/datasets/${id}/refresh`, { method: "POST" }),
   fields: (id: number, view: View = null) => request<FieldListItem[]>(`/api/datasets/${id}/fields${viewQuery(view)}`),
   field: (fieldId: number, view: View = null) => request<FieldResponse>(`/api/fields/${fieldId}${viewQuery(view)}`),
   correlations: (fieldId: number, limit = 20) =>

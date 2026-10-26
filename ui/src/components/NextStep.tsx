@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "../api";
 import { can } from "../can";
+import { useLead } from "./DatasetLayout";
 import { useFields, useInvalidateTeam, useMe } from "../hooks";
 import { baselineLabel, fmtInt } from "../format";
 import { showError, toast } from "../toast";
@@ -64,7 +65,7 @@ export function NextStep({
   });
   const here = (p: string) => loc.pathname === p || loc.pathname.startsWith(`${p}/`);
   const base = `/d/${ds.id}`;
-  const lead = me?.role === "lead";
+  const lead = useLead();
   const label = team?.recipe.label ?? ds.baseline?.label ?? "this baseline";
   const shortLabel = ds.baseline
     ? baselineLabel(ds.baseline.family, ds.baseline.version, true, ds.baseline.name)

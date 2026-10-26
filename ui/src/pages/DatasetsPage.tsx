@@ -13,9 +13,9 @@ import {
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, uploadDataset } from "../api";
-import { PROCESSING, useFields, useMe } from "../hooks";
+import { PROCESSING, pollInterval, useFields, useMe } from "../hooks";
 import { eligibleTarget } from "../baselines";
-import { can } from "../can";
+import { can, canRefresh } from "../can";
 import { metricLabel } from "../experiments";
 import { defaultTask, taskLabel } from "../decision";
 import { fmtAgo, fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
@@ -285,12 +285,15 @@ function RowMenu({
   onRename,
   onDelete,
   onTargets,
+  onRefresh,
 }: {
   ds: Dataset;
   canDelete: boolean;
   onRename: () => void;
   onDelete: () => void;
   onTargets?: () => void;
+  /** Given to a lead on a connected dataset; `blocked` says why it can't run now. */
+  onRefresh?: { run: () => void; blocked: string | null };
 }) {
   const nav = useNavigate();
   const [open, setOpen] = useState(false);
@@ -299,6 +302,7 @@ function RowMenu({
   const close = useCallback(() => setOpen(false), []);
   useDismiss(ref, open, close);
   const style = useAnchored(button, open, "right");
+  const refreshing = ds.status === "refreshing";
   const item = (label: string, run: () => void, extra?: { disabled?: boolean; title?: string; danger?: boolean }) => (
     <button
       type="button"
@@ -329,20 +333,30 @@ function RowMenu({
       </button>
       {open && (
         <div className="popover" role="menu" style={style}>
-          {item("Rename", onRename)}
+          {item("Rename", onRename, {
+            disabled: refreshing,
+            title: refreshing ? "A refresh is running; try again once it finishes" : undefined,
+          })}
           {onTargets && ds.status === "ready" && item("Targets…", onTargets)}
+          {onRefresh &&
+            item("Refresh…", onRefresh.run, {
+              disabled: onRefresh.blocked !== null,
+              title: onRefresh.blocked ?? "Pull the collections again",
+            })}
           {canDelete &&
             ds.status === "ready" &&
             ds.phase === "assessing" &&
             item("Assessors…", () => nav(`/d/${ds.id}/baseline`))}
           {item("Delete…", onDelete, {
             danger: true,
-            disabled: !canDelete || PROCESSING.has(ds.status),
+            disabled: !canDelete || PROCESSING.has(ds.status) || refreshing,
             title: !canDelete
               ? "Only a lead can delete a dataset"
               : PROCESSING.has(ds.status)
                 ? "Wait for processing to finish"
-                : undefined,
+                : refreshing
+                  ? "A refresh is running; try again once it finishes"
+                  : undefined,
           })}
         </div>
       )}
@@ -396,6 +410,7 @@ function SourceBadge({ ds }: { ds: Dataset }) {
       <Chip tone="accent" title={`${ds.source.database} on ${ds.source.connection}`}>
         connected
       </Chip>
+      {ds.status === "refreshing" && <Chip tone="warn">refreshing</Chip>}
       <span className="secondary">
         {sourceSummary(ds.source)}
         {pulled && ` · pulled ${fmtAgo(pulled)}`}
@@ -1051,8 +1066,7 @@ export function DatasetsPage() {
   const { data, isLoading, error } = useQuery({
     queryKey: ["datasets"],
     queryFn: api.datasets,
-    refetchInterval: (q) =>
-      (q.state.data as Dataset[] | undefined)?.some((d) => PROCESSING.has(d.status)) ? 1000 : false,
+    refetchInterval: (q) => pollInterval(((q.state.data as Dataset[] | undefined) ?? []).map((d) => d.status)),
   });
   const demo = useMutation({
     mutationFn: () => api.createSample({ rows: 50_000, fields: 150, seed: 42, target_kind: "mixed" }),
@@ -1110,6 +1124,40 @@ export function DatasetsPage() {
       toast({ message: `Deleted ${ds.name}` });
     } catch (e) {
       showError(`Couldn't delete ${ds.name}`, e);
+    }
+  };
+
+  const refresh = async (ds: Dataset) => {
+    if (!ds.source) return;
+    const pulled = ds.last_pull?.finished_at;
+    const ok = await confirmDialog({
+      title: `Refresh ${ds.name}?`,
+      confirm: "Refresh",
+      body: (
+        <div className="stack bl-gap-8">
+          <p>
+            Pulls {ds.source.collections.map((c) => c.label).join(", ")} again from {ds.source.connection}
+            {pulled ? `; the last pull finished ${fmtAgo(pulled)} (${fmtDate(pulled)})` : ""}. While it runs the dataset
+            is read-only.
+          </p>
+          <ul>
+            <li>The raw data is replaced with the new pull.</li>
+            <li>Fields are profiled again.</li>
+            <li>Explore results are marked out of date.</li>
+            <li>Decisions are kept for the fields that remain.</li>
+            <li>New and drifted fields are listed so you can start a new baseline version with them reopened.</li>
+          </ul>
+        </div>
+      ),
+    });
+    if (!ok) return;
+    try {
+      await api.refreshDataset(ds.id);
+      qc.invalidateQueries({ queryKey: ["datasets"] });
+      qc.invalidateQueries({ queryKey: ["dataset", ds.id] });
+      toast({ message: `Refreshing ${ds.name}`, detail: "It is read-only until the pull finishes." });
+    } catch (e) {
+      showError(`Couldn't refresh ${ds.name}`, e);
     }
   };
 
@@ -1221,6 +1269,18 @@ export function DatasetsPage() {
         onRename={() => setRenaming(ds.id)}
         onDelete={() => void remove(ds)}
         onTargets={withTargets && ds.status === "ready" ? () => setTargetFor(ds.id) : undefined}
+        onRefresh={
+          ds.source && me.data?.role === "lead"
+            ? {
+                run: () => void refresh(ds),
+                blocked: canRefresh(me.data, ds)
+                  ? null
+                  : ds.status === "refreshing" || ds.last_pull?.status === "running"
+                    ? "A refresh is already running"
+                    : "Wait until the dataset is ready",
+              }
+            : undefined
+        }
       />
     );
   const errorDetails = (ds: Dataset) =>
@@ -1352,7 +1412,7 @@ export function DatasetsPage() {
                 </li>
               )}
               {shown.map((ds) => {
-                const ready = ds.status === "ready";
+                const ready = ds.status === "ready" || ds.status === "refreshing";
                 const stage = stageOf(ds);
                 const body = (
                   <>
@@ -1450,7 +1510,7 @@ export function DatasetsPage() {
                     </tr>
                   )}
                   {shown.map((ds) => {
-                    const ready = ds.status === "ready";
+                    const ready = ds.status === "ready" || ds.status === "refreshing";
                     const busy = PROCESSING.has(ds.status);
                     return (
                       <Fragment key={ds.id}>

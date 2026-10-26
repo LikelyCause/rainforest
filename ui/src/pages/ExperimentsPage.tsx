@@ -2,9 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { can } from "../can";
 import { useMe, useTeam } from "../hooks";
-import { useDatasetContext } from "../components/DatasetLayout";
+import { useCan, useDatasetContext } from "../components/DatasetLayout";
 import { Empty, ErrorAlert } from "../components/ui";
 import { Banner, Chip, confirmDialog, Dialog, Icon, Segmented } from "../components/kit";
 import { ExportsTab, RunsTab, TrainTab, useJobs, useJobToasts } from "./ExperimentWorkspace";
@@ -224,6 +223,7 @@ function FinalizedCard({
 export function ExperimentsPage() {
   const ds = useDatasetContext();
   const me = useMe().data;
+  const canDo = useCan();
   const [params, setParams] = useSearchParams();
   const [filter, setFilter] = useState<ExperimentFilter>("all");
   const [creating, setCreating] = useState<{ source?: string } | null>(null);
@@ -232,7 +232,7 @@ export function ExperimentsPage() {
   const shown = filterExperiments(list.data ?? [], filter, me);
   const finalizedParam = params.get("finalized");
   const prompt = finalizedPrompt(list.data, ds.baseline, finalizedParam);
-  const canCreate = can(me, "createExperiment");
+  const canCreate = canDo("createExperiment");
   return (
     <div className="page experiments-page">
       <div className="row exp-between">

@@ -3,19 +3,51 @@ import { reuseGroups } from "../recipes";
 import type { ReuseSummary } from "../types";
 import { Banner, Chip } from "./kit";
 
-/** How a reused recipe matched this dataset: carried, reopened (with why), missing, and the targets. */
-export function ReuseCard({ reuse, label }: { reuse: ReuseSummary; label: string }) {
-  const g = reuseGroups(reuse);
-  const list = (names: string[]) =>
-    names.length ? (
-      names.map((n) => (
+export const NameChips = ({ names }: { names: string[] }) =>
+  names.length ? (
+    <>
+      {names.map((n) => (
         <span key={n} className="name-chip">
           {n}
         </span>
-      ))
-    ) : (
-      <span className="muted">none</span>
-    );
+      ))}
+    </>
+  ) : (
+    <span className="muted">none</span>
+  );
+
+/** The reopened fields grouped by why, with the numbers behind each. */
+export function ReopenedTable({ groups }: { groups: ReturnType<typeof reuseGroups>["reopened"] }) {
+  return (
+    <div className="table-wrap">
+      <table className="data" aria-label="Reopened fields">
+        <thead>
+          <tr>
+            <th>Reason</th>
+            <th>Field</th>
+            <th>Details</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.flatMap((grp) =>
+            grp.fields.map((f, i) => (
+              <tr key={f.name}>
+                <td>{i === 0 ? <Chip tone="warn">{grp.label}</Chip> : null}</td>
+                <td>{f.name}</td>
+                <td className="secondary">{f.detail}</td>
+              </tr>
+            )),
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** How a reused recipe matched this dataset: carried, reopened (with why), missing, and the targets. */
+export function ReuseCard({ reuse, label }: { reuse: ReuseSummary; label: string }) {
+  const g = reuseGroups(reuse);
+  const list = (names: string[]) => <NameChips names={names} />;
   return (
     <section className="card stack reuse-card" aria-label="Reuse summary">
       <div className="card-head">
@@ -39,28 +71,7 @@ export function ReuseCard({ reuse, label }: { reuse: ReuseSummary; label: string
             <span>
               <b className="num">{reuse.reopened.length}</b> reopened for assessment:
             </span>
-            <div className="table-wrap">
-              <table className="data" aria-label="Reopened fields">
-                <thead>
-                  <tr>
-                    <th>Reason</th>
-                    <th>Field</th>
-                    <th>Details</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {g.reopened.flatMap((grp) =>
-                    grp.fields.map((f, i) => (
-                      <tr key={f.name}>
-                        <td>{i === 0 ? <Chip tone="warn">{grp.label}</Chip> : null}</td>
-                        <td>{f.name}</td>
-                        <td className="secondary">{f.detail}</td>
-                      </tr>
-                    )),
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <ReopenedTable groups={g.reopened} />
           </div>
         )}
         <div>

@@ -8,7 +8,7 @@ import { JoinAssessment } from "../components/JoinAssessment";
 import { DerivedFields } from "../components/DerivedFields";
 import { useView, type View, viewKey, withView } from "../view";
 import { FieldsViewSwitch } from "../components/FieldsViewSwitch";
-import { useDatasetContext } from "../components/DatasetLayout";
+import { useCan, useDatasetContext } from "../components/DatasetLayout";
 import { Empty, ErrorAlert, StatusGlyph, glyphFor } from "../components/ui";
 import { Banner, Chip, Icon, Segmented } from "../components/kit";
 import { fmtNum, fmtPct, TYPE_SHORT } from "../format";
@@ -804,7 +804,7 @@ export function BulkEditPage() {
   const access = useAccess(ds, view);
   // The console reads every table, work in progress included, so it isn't a Viewer's.
   const sql = can(useMe().data, "querySql");
-  const derive = can(useMe().data, "editDataset");
+  const derive = useCan()("editDataset");
   const st = useFinderState();
   const presetLabel = (p: string | null) => PRESETS.find((x) => x.key === p)?.label ?? "Custom filter";
   // SQL and Derived read and change the baseline in progress, so an experiment's or a finalized copy shows the table.

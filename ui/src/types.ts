@@ -150,15 +150,25 @@ export interface ConnectRequest {
   targets?: string[];
 }
 
+/** How the new fields compare with one model type's latest finalized baseline (the same match a reused recipe gets). */
+export interface FamilyDrift {
+  carried: string[];
+  reopened: ReopenedField[];
+  missing: string[];
+}
+
+/** A pull's drift summary by model type; only types with a finalized baseline appear. */
+export type PullDrift = Record<string, FamilyDrift>;
+
 export interface Pull extends PullSummary {
-  per_source: { label: string; documents: number; removed_duplicates: number }[] | null;
+  per_source: { label: string; documents: number; removed_duplicates?: number }[] | null;
   flatten_notes: {
     arrays?: string[];
     mixed?: string[];
     renamed?: Record<string, string>;
     compared_on?: string[];
   } | null;
-  drift: Record<string, unknown> | null;
+  drift: PullDrift | null;
   error: string | null;
   created_by_name: string | null;
 }

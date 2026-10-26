@@ -2,14 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { can } from "../can";
-import { useFields, useMe, useTeam } from "../hooks";
-import { useDatasetContext } from "../components/DatasetLayout";
+import { useFields, useTeam } from "../hooks";
+import { useCan, useDatasetContext, useLead } from "../components/DatasetLayout";
 import { Empty, ErrorAlert } from "../components/ui";
 import { Banner, Chip, Icon } from "../components/kit";
+import { PullCard } from "../components/PullCard";
 import { ReuseCard } from "../components/ReuseCard";
 import { StartBaseline } from "../components/StartBaseline";
 import { familyShort, fmtAgo, fmtDate, fmtInt, TYPE_SHORT } from "../format";
+import { parseReopen } from "../pulls";
 import { builtFrom, fmtChange, pickable, startLabel } from "../recipes";
 import { toast } from "../toast";
 import type { BaselineLine, Dataset, FamilyKey, RecipeVersion } from "../types";
@@ -19,7 +20,6 @@ import { BaselineTabs } from "./BaselinePage";
 
 export function BaselinesPage() {
   const ds = useDatasetContext();
-  const me = useMe().data;
   const team = useTeam(ds.id);
   const lines = useQuery({ queryKey: ["baselines", ds.id], queryFn: () => api.baselines(ds.id) });
   const [params, setParams] = useSearchParams();
@@ -29,14 +29,17 @@ export function BaselinesPage() {
   // ?v=<recipe id>: the version switcher (or Browse's way back) brings that version into view.
   const focus = Number(params.get("v")) || null;
   const [starting, setStarting] = useState(Boolean(startFamily));
-  const clearParam = (k: string) => {
-    if (params.has(k)) {
+  const reopenValue = params.get("reopen");
+  const reopen = useMemo(() => parseReopen(reopenValue), [reopenValue]);
+  const clearParam = (...keys: string[]) => {
+    if (keys.some((k) => params.has(k))) {
       const n = new URLSearchParams(params);
-      n.delete(k);
+      keys.forEach((k) => n.delete(k));
       setParams(n, { replace: true });
     }
   };
-  const lead = me?.role === "lead";
+  const lead = useLead();
+  const canDo = useCan();
   const t = team.data;
   const cur = ds.baseline;
   const inProgress = Boolean(t && t.recipe.phase !== "finalized" && !cur?.setup);
@@ -81,6 +84,7 @@ export function BaselinesPage() {
         </Banner>
       )}
       {t?.recipe.reuse && <ReuseCard reuse={t.recipe.reuse} label={t.recipe.label ?? ""} />}
+      <PullCard ds={ds} />
       {t && inProgress && (
         <Banner
           tone="info"
@@ -104,9 +108,10 @@ export function BaselinesPage() {
           line={l}
           focus={focus}
           canChange={Boolean(lead && t?.recipe.phase === "finalized" && l.latest_finalized_id)}
-          canRename={can(me, "renameBaseline") && !cur?.setup}
+          canRename={canDo("renameBaseline") && !cur?.setup}
           startOpen={newFamily === l.family}
-          onClose={() => clearParam("new")}
+          reopen={newFamily === l.family ? reopen : undefined}
+          onClose={() => clearParam("new", "reopen")}
         />
       ))}
       {all.length > 1 && <Diff ds={ds} versions={all} />}
@@ -121,6 +126,7 @@ function BaselineCard({
   canChange,
   canRename,
   startOpen,
+  reopen,
   onClose,
 }: {
   ds: Dataset;
@@ -129,9 +135,13 @@ function BaselineCard({
   canChange: boolean;
   canRename: boolean;
   startOpen?: boolean;
+  reopen?: string[];
   onClose?: () => void;
 }) {
   const [changing, setChanging] = useState(Boolean(startOpen));
+  useEffect(() => {
+    if (startOpen) setChanging(true);
+  }, [startOpen]);
   const [renaming, setRenaming] = useState(false);
   const latest = line.versions.find((v) => v.id === line.latest_finalized_id);
   return (
@@ -161,8 +171,10 @@ function BaselineCard({
         latest &&
         (changing ? (
           <NewVersion
+            key={reopen?.join(",")}
             ds={ds}
             parent={latest}
+            reopen={reopen}
             onCancel={() => {
               setChanging(false);
               onClose?.();
@@ -411,13 +423,31 @@ function Diff({ ds, versions }: { ds: Dataset; versions: RecipeVersion[] }) {
   );
 }
 
-function NewVersion({ ds, parent, onCancel }: { ds: Dataset; parent: RecipeVersion; onCancel: () => void }) {
+/** `reopen`: field names to start with chosen (from a pull's summary); the rest of the fields are one click away. */
+function NewVersion({
+  ds,
+  parent,
+  reopen,
+  onCancel,
+}: {
+  ds: Dataset;
+  parent: RecipeVersion;
+  reopen?: string[];
+  onCancel: () => void;
+}) {
   const fields = useFields(ds.id);
   const invalidate = useInvalidateTeam(ds.id);
   const [search, setSearch] = useState("");
   const [types, setTypes] = useState<Set<string>>(new Set());
   const [attention, setAttention] = useState(false);
   const [chosen, setChosen] = useState<Set<number>>(new Set());
+  const seeded = useRef(false);
+  useEffect(() => {
+    if (seeded.current || !reopen?.length || !fields.data) return;
+    seeded.current = true;
+    const want = new Set(reopen);
+    setChosen(new Set(fields.data.filter((f) => want.has(f.name)).map((f) => f.id)));
+  }, [fields.data, reopen]);
   const all = fields.data ?? [];
   const visible = useMemo(() => pickable(all, { search, types, attention }), [all, search, types, attention]);
   const typeCounts = useMemo(() => {

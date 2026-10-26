@@ -2,8 +2,8 @@ import { useMemo, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api";
-import { can } from "../../can";
-import { useFields, useMe } from "../../hooks";
+import { useFields } from "../../hooks";
+import { useCan } from "../DatasetLayout";
 import { Empty, ErrorAlert } from "../ui";
 import { Banner, ProgressBar, StatusBadge } from "../kit";
 import { fmtAgo, fmtInt } from "../../format";
@@ -105,7 +105,7 @@ export function AnalysisState<R>({
   children: (result: R, row: Analysis<R>) => ReactNode;
 }) {
   const { row, query } = a;
-  const mayRecompute = can(useMe().data, "recompute");
+  const mayRecompute = useCan()("recompute");
   if (!row) {
     if (query.error) {
       return (

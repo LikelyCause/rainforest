@@ -5,7 +5,7 @@ import { api } from "../api";
 import { can } from "../can";
 import { useFields, useInvalidateTeam, useMe, useTeam } from "../hooks";
 import { Avatar } from "../components/Avatar";
-import { useDatasetContext } from "../components/DatasetLayout";
+import { useDatasetContext, useLead } from "../components/DatasetLayout";
 import { Banner, Chip, Icon, ProgressBar, Tabs, confirmDialog, stageOf, useDismiss } from "../components/kit";
 import { ReuseCard } from "../components/ReuseCard";
 import { StartBaseline } from "../components/StartBaseline";
@@ -152,8 +152,7 @@ function Title({ ds, team }: { ds: Dataset; team: TeamState }) {
 
 function Assessing({ ds, team }: { ds: Dataset; team: TeamState }) {
   const r = team.recipe;
-  const me = useMe().data;
-  const lead = me?.role === "lead";
+  const lead = useLead();
   return (
     <>
       {r.reopened != null && !r.reuse && (
@@ -280,7 +279,7 @@ function MyAssessment({ ds, me }: { ds: Dataset; me: NonNullable<TeamState["me"]
 
 function Assessors({ ds, team }: { ds: Dataset; team: TeamState }) {
   const me = useMe().data;
-  const lead = me?.role === "lead";
+  const lead = useLead();
   const invalidate = useInvalidateTeam(ds.id);
   const users = useUserMap();
   const [adding, setAdding] = useState(false);
@@ -508,7 +507,7 @@ function finalizeBody(team: TeamState, label: string) {
 function InReview({ ds, team }: { ds: Dataset; team: TeamState }) {
   const me = useMe().data;
   const nav = useNavigate();
-  const lead = me?.role === "lead";
+  const lead = useLead();
   const invalidate = useInvalidateTeam(ds.id);
   const users = useUserMap();
   const r = team.review;
@@ -623,7 +622,7 @@ function finalSummary(r: NonNullable<TeamState["review"]>): string {
 function Finalized({ ds, team }: { ds: Dataset; team: TeamState }) {
   const me = useMe().data;
   const r = team.recipe;
-  const lead = me?.role === "lead";
+  const lead = useLead();
   return (
     <>
       <section className="card bl-review" aria-labelledby="bl-final">
@@ -663,8 +662,7 @@ function Finalized({ ds, team }: { ds: Dataset; team: TeamState }) {
 
 /** Every baseline and version, newest first, with what each was built from and what it fed. */
 function Versions({ ds, team }: { ds: Dataset; team: TeamState }) {
-  const me = useMe().data;
-  const lead = me?.role === "lead";
+  const lead = useLead();
   const lines = useQuery({ queryKey: ["baselines", ds.id], queryFn: () => api.baselines(ds.id) });
   const experiments = useQuery({ queryKey: ["experiments", ds.id], queryFn: () => api.experiments(ds.id) });
   const cur = team.recipe;
@@ -711,7 +709,7 @@ function Versions({ ds, team }: { ds: Dataset; team: TeamState }) {
           </div>
         );
       })}
-      {lead && free.length > 0 && can(me, "startBaseline") && (
+      {lead && free.length > 0 && (
         <div className="card bl-other">
           <span className="bl-label">Other model types</span>
           <p className="secondary small-text">

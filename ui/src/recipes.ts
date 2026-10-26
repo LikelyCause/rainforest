@@ -50,7 +50,10 @@ export interface ReuseGroup {
 }
 
 /** The reuse summary as the page shows it: reopened fields grouped by reason (in a fixed order), the rest as lists. */
-export function reuseGroups(s: ReuseSummary): {
+export function reuseGroups(
+  s: Pick<ReuseSummary, "carried" | "reopened" | "missing"> &
+    Partial<Pick<ReuseSummary, "targets" | "targets_not_carried">>,
+): {
   carried: string[];
   reopened: ReuseGroup[];
   missing: string[];
@@ -70,8 +73,8 @@ export function reuseGroups(s: ReuseSummary): {
     carried: s.carried,
     reopened,
     missing: s.missing,
-    targets: s.targets,
-    targetsNotCarried: s.targets_not_carried,
+    targets: s.targets ?? [],
+    targetsNotCarried: s.targets_not_carried ?? [],
     needsAssessing: s.reopened.length > 0,
   };
 }

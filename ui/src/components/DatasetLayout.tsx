@@ -1,11 +1,11 @@
-import { createContext, useContext } from "react";
+import { createContext, useContext, useEffect, useRef } from "react";
 import { Link, Outlet, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { can } from "../can";
-import { PROCESSING, useDataset, useMe } from "../hooks";
+import { can, type Action } from "../can";
+import { PROCESSING, useDataset, useMe, usePulls } from "../hooks";
 import { ErrorAlert } from "./ui";
-import { ProgressBar, confirmDialog } from "./kit";
+import { Banner, ProgressBar, confirmDialog } from "./kit";
 import type { Dataset } from "../types";
 
 const DatasetContext = createContext<Dataset | null>(null);
@@ -17,12 +17,44 @@ export function useDatasetContext(): Dataset {
   return ds;
 }
 
+/** `can` for the dataset being viewed: nothing that writes to it while a refresh holds it. */
+export function useCan(): (action: Action) => boolean {
+  const me = useMe().data;
+  const locked = useContext(DatasetContext)?.status === "refreshing";
+  return (action) => can(me, action, locked);
+}
+
+/** A lead who can act now: not a lead at all, or a lead while a refresh holds the dataset, gets false. */
+export const useLead = () => useCan()("finalize");
+
+function RefreshBanner({ ds }: { ds: Dataset }) {
+  const pulls = usePulls(ds.id);
+  const starter = pulls.data?.[0]?.created_by_name;
+  return (
+    <div className="page refresh-banner">
+      <Banner
+        tone="info"
+        role="status"
+        title={`Refreshing from ${ds.source?.connection ?? "its source"}${starter ? `, started by ${starter}` : ""}.`}
+      >
+        This dataset is read-only until the pull finishes.
+      </Banner>
+    </div>
+  );
+}
+
 export function DatasetLayout() {
   const datasetId = Number(useParams().datasetId);
   const ds = useDataset(datasetId, !Number.isNaN(datasetId));
   const me = useMe().data;
   const qc = useQueryClient();
   const nav = useNavigate();
+  const status = ds.data?.status;
+  const was = useRef(status);
+  useEffect(() => {
+    if (was.current === "refreshing" && status && status !== "refreshing") qc.invalidateQueries();
+    was.current = status;
+  }, [status, qc]);
   const del = useMutation({
     mutationFn: () => api.deleteDataset(datasetId),
     onSuccess: () => {
@@ -110,6 +142,7 @@ export function DatasetLayout() {
   }
   return (
     <DatasetContext.Provider value={d}>
+      {d.status === "refreshing" && <RefreshBanner ds={d} />}
       <Outlet />
     </DatasetContext.Provider>
   );

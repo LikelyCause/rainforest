@@ -12,13 +12,26 @@ export const useMe = () => useQuery({ queryKey: ["me"], queryFn: api.me, staleTi
 
 export const useOptions = () => useQuery({ queryKey: ["options"], queryFn: api.options, staleTime: Infinity });
 
+/** How often to look again while a refresh holds the dataset. */
+export const REFRESH_POLL_MS = 3000;
+
+/** Poll interval for a list of datasets: fast while one is processing, slower while one is being refreshed. */
+export function pollInterval(statuses: string[]): number | false {
+  if (statuses.some((s) => PROCESSING.has(s))) return 1000;
+  return statuses.includes("refreshing") ? REFRESH_POLL_MS : false;
+}
+
 export const useDataset = (id: number, enabled = true) =>
   useQuery({
     queryKey: ["dataset", id],
     queryFn: () => api.dataset(id),
     enabled,
-    refetchInterval: (q) => (q.state.data && PROCESSING.has((q.state.data as Dataset).status) ? 1000 : false),
+    refetchInterval: (q) => pollInterval(q.state.data ? [(q.state.data as Dataset).status] : []),
   });
+
+/** A connected dataset's pulls, newest first. */
+export const usePulls = (id: number, enabled = true) =>
+  useQuery({ queryKey: ["pulls", id], queryFn: () => api.datasetPulls(id), enabled });
 
 export const useTeam = (id: number, enabled = true) =>
   useQuery({ queryKey: ["team", id], queryFn: () => api.team(id), enabled });
@@ -30,6 +43,8 @@ export function useAccess(ds: Dataset, view: View = null): Access {
   const v = parseView(view);
   const team = useTeam(ds.id, !v && ds.phase === "assessing");
   const x = useExperiment(v?.kind === "experiment" ? v.id : null);
+  if (ds.status === "refreshing")
+    return { source: "team", canEdit: false, note: "A refresh is running: read-only until it finishes." };
   if (v?.kind === "experiment") {
     if (!x.data) return { source: "experiment", canEdit: false, note: "Loading…" };
     return x.data.can_adjust

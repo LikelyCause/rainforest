@@ -203,7 +203,7 @@ function TopBar() {
               /
             </span>
             <DatasetSwitcher ds={d} />
-            {d.status === "ready" && <DatasetTabs ds={d} />}
+            {(d.status === "ready" || d.status === "refreshing") && <DatasetTabs ds={d} />}
           </>
         ) : (
           <Tabs
@@ -214,7 +214,7 @@ function TopBar() {
         )}
         <UserMenu compact={Boolean(d)} />
       </div>
-      {d?.status === "ready" && <DatasetBar ds={d} />}
+      {(d?.status === "ready" || d?.status === "refreshing") && <DatasetBar ds={d} />}
     </header>
   );
 }
@@ -404,7 +404,7 @@ function VersionSwitcher({ ds, stage }: { ds: Dataset; stage: Stage }) {
           <Link to={`/d/${ds.id}/baselines`} className="menu-link" onClick={close}>
             Versions and compare
           </Link>
-          {can(me, "startBaseline") && (
+          {can(me, "startBaseline", ds.status === "refreshing") && (
             <Link to={`/d/${ds.id}/baselines`} className="menu-link" onClick={close}>
               New version or baseline…
             </Link>

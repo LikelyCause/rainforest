@@ -5,11 +5,12 @@ import { api } from "../api";
 import { can } from "../can";
 import { useAccess, useFields, useMe, useOptions, useTeam } from "../hooks";
 import { Avatar } from "../components/Avatar";
-import { useDatasetContext } from "../components/DatasetLayout";
+import { useCan, useDatasetContext, useLead } from "../components/DatasetLayout";
 import { DecisionPanel, type DecisionPanelHandle, type VoteKey } from "../components/DecisionPanel";
 import { FieldDetailView } from "../components/FieldDetailView";
 import { Chip, Icon, Segmented } from "../components/kit";
 import { FieldsViewSwitch } from "../components/FieldsViewSwitch";
+import { PullCard } from "../components/PullCard";
 import { ReuseCard } from "../components/ReuseCard";
 import { Empty, ErrorAlert, StatusGlyph } from "../components/ui";
 import { bandsText } from "../decision";
@@ -97,7 +98,8 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
   const agreed = (fields.data ?? []).filter((f) => !inQueue.has(f.id) && !f.locked);
   const summary = queue.data?.summary ?? team.review;
   const finalized = team.recipe.phase === "finalized";
-  const lead = me?.role === "lead";
+  const lead = useLead();
+  const canDo = useCan();
   // A version nobody assesses: nothing reopened (the lead edits directly), or a reused recipe that carried everything.
   const direct = team.assessors.length === 0;
 
@@ -314,6 +316,7 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
 
       <section className="detail tr-main">
         <ErrorAlert error={queue.error ?? fields.error} />
+        {!item && <PullCard ds={ds} />}
         {item && catalog ? (
           <>
             <div className="tr-phone-back">
@@ -368,7 +371,7 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
               users={users}
               meId={me?.id}
             />
-            <Discussion item={item} review={review.data} users={users} canComment={!finalized && can(me, "comment")} />
+            <Discussion item={item} review={review.data} users={users} canComment={!finalized && canDo("comment")} />
             <FieldProfile ds={ds} id={item.field_id} data={field.data} />
           </>
         ) : queue.data && items.length > 0 ? null : team.recipe.reuse ? (
