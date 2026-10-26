@@ -43,11 +43,13 @@ NEW = "raw.parquet.new"
 def run_refresh(dataset_id: int, pull_id: int) -> None:
     """The refresh job. Whoever queued it recorded the pull as running and set the dataset `refreshing`. A failure
     before the swap commits leaves the old data, fields and warnings as they were and the dataset `ready`."""
-    ds = fetch_one("SELECT * FROM meta.datasets WHERE id = %s", (dataset_id,))
-    if ds is None:  # deleted while queued; the pull row went with it
-        return
-    src = fetch_one("SELECT * FROM meta.dataset_sources WHERE dataset_id = %s", (dataset_id,))
+    src = None
+    # Everything is inside the try: a failure that skipped the handler would leave the dataset locked.
     try:
+        ds = fetch_one("SELECT * FROM meta.datasets WHERE id = %s", (dataset_id,))
+        if ds is None:  # deleted while queued; the pull row went with it
+            return
+        src = fetch_one("SELECT * FROM meta.dataset_sources WHERE dataset_id = %s", (dataset_id,))
         if src is None:
             raise ValueError("The dataset has no source to pull from")
         _refresh(ds, src, pull_id)
@@ -298,6 +300,9 @@ def _discard_new(dataset_id: int) -> None:
 
 def _error(src: dict | None, exc: Exception) -> str:
     if isinstance(exc, PyMongoError):  # pull_into redacts the pull's own; this keeps any other path redacted
-        source = sources.registry().get(src["connection"]) if src else None
+        try:
+            source = sources.registry().get(src["connection"]) if src else None
+        except Exception:  # noqa: BLE001 - the registry failing too must not keep the dataset locked
+            source = None
         return source.redact(str(exc)) if source else "The MongoDB driver failed"
     return str(exc) or type(exc).__name__

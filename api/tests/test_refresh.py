@@ -389,6 +389,58 @@ def test_refresh_failure_in_the_swap_rolls_back(source, monkeypatch):
     assert _leftovers(ds) == [] and not _new_table(ds)
 
 
+def _bare_dataset() -> int:
+    """A connected dataset's rows alone, for a refresh that fails before it reads anything."""
+    ds = db.fetch_one(
+        """INSERT INTO meta.datasets (name, file_format, status, created_by)
+           VALUES ('connected', 'mongodb', 'ready', %s) RETURNING id""",
+        (_user(),),
+    )["id"]
+    db.execute(
+        """INSERT INTO meta.dataset_sources (dataset_id, kind, connection, database, collections, add_source, dedupe)
+           VALUES (%s, 'mongodb', 'test', 'd', '[{"name": "curated"}]', false, false)""",
+        (ds,),
+    )
+    return ds
+
+
+@pytest.mark.parametrize("table", ["meta.datasets", "meta.dataset_sources"])
+def test_refresh_failing_before_the_pull_still_ends_it(database, monkeypatch, table):
+    ds = _bare_dataset()
+    real = refresh.fetch_one
+
+    def failing(query, *args):
+        if f"FROM {table} " in query:
+            raise RuntimeError("the database went away")
+        return real(query, *args)
+
+    monkeypatch.setattr(refresh, "fetch_one", failing)
+
+    pull = _refresh(ds)
+
+    assert pull["status"] == "failed" and pull["error"] == "the database went away" and pull["finished_at"]
+    after = _dataset(ds)
+    assert after["status"] == "ready" and after["status_message"] == "Ready" and after["error"] is None
+
+
+def test_a_driver_error_stays_redacted_when_the_connections_cannot_be_read(database, monkeypatch):
+    ds = _bare_dataset()
+
+    def driver_error(*args):
+        raise PyMongoError("auth failed for mongodb://u:secret@db.example.com:27017")
+
+    def no_registry():
+        raise ValueError("RAINFOREST_MONGO_SOURCES is malformed")
+
+    monkeypatch.setattr(refresh, "_refresh", driver_error)
+    monkeypatch.setattr(refresh.sources, "registry", no_registry)
+
+    pull = _refresh(ds)
+
+    assert pull["status"] == "failed" and pull["error"] == "The MongoDB driver failed"
+    assert _dataset(ds)["status"] == "ready"
+
+
 def test_refresh_without_a_finalized_baseline_has_no_drift(source):
     ds = _connect(source, finalize=False)
     source.massive.insert_many(_fresh_docs(200, 0.6))
