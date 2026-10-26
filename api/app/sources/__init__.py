@@ -16,6 +16,7 @@ from urllib.parse import quote
 from ..config import get_settings
 
 NAME_RE = re.compile(r"[a-z0-9-]+")
+PREVIEW_SAMPLE = 200  # documents per collection
 ColumnKind = Literal["number", "text", "datetime", "boolean", "json", "identifier", "mixed"]
 
 
@@ -58,6 +59,7 @@ class PreviewResult:
     per_source: list[dict] = field(default_factory=list)
     estimated_rows: int = 0
     estimated_cells: int = 0
+    compared_on: list[str] = field(default_factory=list)  # `compared_columns` of the sample, by its kinds
 
 
 @dataclass
@@ -80,6 +82,16 @@ def chunk_paths(out_dir: Path, label: str) -> list[Path]:
     while (p := chunk_path(out_dir, label, len(out))).exists():
         out.append(p)
     return out
+
+
+def compared_columns(
+    columns: list[str], per_collection: list[set[str]], is_identifier: Callable[[str], bool]
+) -> list[str]:
+    """The columns deduplication compares rows on unless `match_on` names them: of `columns`, those every collection
+    that returned documents has (`per_collection`), less `_id` and identifiers, since each collection's own keys
+    would make every row distinct."""
+    shared = set.intersection(*per_collection) if per_collection else set()
+    return [c for c in columns if c in shared and c != "_id" and not is_identifier(c)]
 
 
 def as_text(value: Any) -> str | None:
@@ -108,7 +120,9 @@ class Source(Protocol):
     def list_collections(self, database: str) -> list[dict]:
         """`{name, documents}` per collection."""
 
-    def preview(self, database: str, collections: list[CollectionSpec], sample: int = 200) -> PreviewResult: ...
+    def preview(
+        self, database: str, collections: list[CollectionSpec], sample: int = PREVIEW_SAMPLE
+    ) -> PreviewResult: ...
 
     def pull(
         self,

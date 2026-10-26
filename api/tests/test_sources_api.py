@@ -35,8 +35,10 @@ def client(mongo, mongo_url, tmp_path_factory, login_as):
     get_settings.cache_clear()
 
 
-def _preview(client, mongo, *collections, name="test"):
-    return client.post(f"/api/sources/{name}/preview", json={"database": mongo.name, "collections": list(collections)})
+def _preview(client, mongo, *collections, name="test", **extra):
+    return client.post(
+        f"/api/sources/{name}/preview", json={"database": mongo.name, "collections": list(collections), **extra}
+    )
 
 
 def test_sources_lists_names_only(client):
@@ -66,6 +68,28 @@ def test_preview_flattens_and_estimates(client, mongo):
     assert r["estimated_rows"] == 800 and r["budget"]["fits"] is True
     assert r["budget"]["max_cells"] == 600_000_000 and r["estimated_cells"] > 800
     assert [s["name"] for s in r["per_source"]] == ["curated", "massive"]
+
+
+def test_preview_names_the_columns_deduplication_compares_on(client, mongo):
+    r = _preview(client, mongo, {"name": "curated"}, {"name": "massive"}).json()
+    # `_id` is an identifier and `extra.depth.key` is only in massive.
+    assert r["compared_on"] == ["vehicle", "engine", "rpm.mean", "rpm.max", "tags", "when"]
+    # Alone, massive has `extra.depth.key` everywhere, but the preview flags it as an identifier by its name.
+    alone = _preview(client, mongo, {"name": "massive"}).json()
+    assert alone["compared_on"] == r["compared_on"]
+
+
+def test_preview_compares_on_match_on_when_given(client, mongo):
+    r = _preview(client, mongo, {"name": "curated"}, {"name": "massive"}, match_on=[" engine", "vehicle", "engine"])
+    assert r.status_code == 200, r.text
+    assert r.json()["compared_on"] == ["engine", "vehicle"]
+    assert _preview(client, mongo, {"name": "curated"}, match_on=[]).json()["compared_on"][0] == "vehicle"
+
+
+def test_preview_refuses_a_match_on_column_the_sample_lacks(client, mongo):
+    r = _preview(client, mongo, {"name": "curated"}, {"name": "massive"}, match_on=["vehicle", "nope"])
+    assert r.status_code == 422
+    assert r.json()["detail"] == "Match on column not found in a sample of up to 200 documents per collection: nope"
 
 
 def test_preview_applies_a_filter_and_projection(client, mongo):

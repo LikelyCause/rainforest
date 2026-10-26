@@ -17,7 +17,7 @@ from .. import profiling, sources
 from ..config import get_settings
 from ..db import execute, fetch_one, jsonb
 from ..processing import _Status, process_dataset
-from . import CollectionSpec, Source, SourceError, as_text, chunk_paths
+from . import CollectionSpec, Source, SourceError, as_text, chunk_paths, compared_columns
 
 log = logging.getLogger(__name__)
 
@@ -37,9 +37,9 @@ def assemble(
 ) -> dict:
     """The chunks `pull` wrote, one frame in collection order, written to `dest`; the chunks are deleted.
 
-    Deduplication compares the columns every collection has, less `_id` and unique-looking identifiers (each
-    collection's own keys would make every row distinct), or exactly `match_on`. Rows are in collection order, so
-    keeping the first of each group keeps the row of the collection listed first."""
+    Deduplication compares `compared_columns` (identifiers by profiling's inference on the data), or exactly
+    `match_on`. Rows are in collection order, so keeping the first of each group keeps the row of the collection
+    listed first."""
     labels = [s.label or s.name for s in specs]
     chunks = {label: chunk_paths(out_dir, label) for label in labels}
     schemas = {p: pl.read_parquet_schema(p) for paths in chunks.values() for p in paths}
@@ -74,8 +74,8 @@ def assemble(
                 raise ValueError(f"Match on names columns the data doesn't have: {', '.join(missing)}")
             compared = list(match_on)
         else:
-            shared = set.intersection(*(set().union(*(schemas[p] for p in chunks[lb])) for lb in labels if chunks[lb]))
-            compared = [c for c in data_cols if c in shared and c != "_id" and not _identifier_like(df[c], c)]
+            per_collection = [set().union(*(schemas[p] for p in chunks[lb])) for lb in labels if chunks[lb]]
+            compared = compared_columns(data_cols, per_collection, lambda c: _identifier_like(df[c], c))
     before = _per_rank(df)
     if compared:
         df = df.unique(subset=compared, keep="first", maintain_order=True)

@@ -291,6 +291,7 @@ class SourceCollectionIn(BaseModel):
 class SourcePreviewIn(BaseModel):
     database: str = Field(min_length=1, max_length=255)
     collections: list[SourceCollectionIn] = Field(min_length=1, max_length=50)
+    match_on: list[str] | None = Field(None, max_length=500, description="Columns that decide what a duplicate is")
 
 
 class ConnectCollectionIn(SourceCollectionIn):

@@ -323,6 +323,13 @@ def test_preview_share_counts_collections_without_the_column():
     assert shares == {"x": 1.0, "only_a": 0.5}
 
 
+def test_preview_compares_on_columns_every_collection_has_less_identifiers():
+    a = _FakeCollection([{"_id": ObjectId(), "code_id": f"k{i}", "x": i % 3, "y": "s", "only_a": 1} for i in range(50)])
+    b = _FakeCollection([{"_id": ObjectId(), "code_id": "z", "x": 0, "y": "s"}])
+    src = _source(_FakeClient({"d": _FakeDb({"a": a, "b": b})}))
+    assert src.preview("d", [CollectionSpec("a"), CollectionSpec("b")]).compared_on == ["x", "y"]
+
+
 def test_preview_booleans_are_their_own_kind_never_identifiers():
     coll = _FakeCollection([{"is_id": True, "active": False, "key": 7}, {"is_id": False, "active": True, "key": 8}])
     src = _source(_FakeClient({"d": _FakeDb({"c": coll})}))

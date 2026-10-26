@@ -160,10 +160,18 @@ def test_assemble_dedupe_keeps_the_first_collections_row_and_skips_identifiers(t
     out = assemble(tmp_path, specs, True, True, None, tmp_path / "raw.parquet")
     df = pl.read_parquet(tmp_path / "raw.parquet")
     # code_id is unique-looking, so rows match on x and y alone: three in a, and b's (9, "t").
-    assert out["compared_on"] == ["x", "y"]
+    assert out["compared_on"] == ["x", "y"] == src.preview("d", specs).compared_on
     assert out["removed_duplicates"] == {"a": 597, "second": 1}
     assert df.columns[0] == "source" and df["source"].to_list() == ["a", "a", "a", "second"]
     assert df["_id"].to_list() == ["a0", "a1", "a2", "b1"]
+
+
+def test_a_collection_without_documents_does_not_empty_the_comparison(tmp_path):
+    src = _fake(a=[{"_id": f"a{i}", "x": i % 2, "y": "s"} for i in range(6)], empty=[])
+    specs = [CollectionSpec("a"), CollectionSpec("empty")]
+    assert src.preview("d", specs).compared_on == ["x", "y"]
+    src.pull("d", specs, tmp_path, 10**9, 60, None)
+    assert assemble(tmp_path, specs, True, True, None, tmp_path / "raw.parquet")["compared_on"] == ["x", "y"]
 
 
 def test_assemble_match_on_must_name_columns(tmp_path):
@@ -200,6 +208,7 @@ def test_assemble_adds_source_and_dedupes_on_shared_columns(mongo, mongo_url, tm
     assert "_id" not in out["compared_on"] and "extra.depth.key" not in out["compared_on"]
     assert set(out["compared_on"]) == {"vehicle", "engine", "rpm.mean", "rpm.max", "tags", "when"}
     assert df["rpm.mean"].dtype == pl.String and "extra.depth.key" in df.columns
+    assert _source(mongo_url).preview(mongo.name, SPECS).compared_on == out["compared_on"]
 
 
 def test_assemble_match_on_overrides(mongo, mongo_url, tmp_path):

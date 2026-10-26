@@ -23,6 +23,7 @@ from pymongo.errors import ConfigurationError, ExecutionTimeout, OperationFailur
 
 from ..profiling import ID_NAME_RE
 from . import (
+    PREVIEW_SAMPLE,
     BudgetExceeded,
     CollectionSpec,
     ColumnInfo,
@@ -33,6 +34,7 @@ from . import (
     SourceError,
     as_text,
     chunk_path,
+    compared_columns,
 )
 
 SYSTEM_DATABASES = {"admin", "config", "local"}
@@ -236,11 +238,12 @@ class MongoSource:
                 out.append({"name": name, "documents": _estimated(db[name])})
         return out
 
-    def preview(self, database: str, collections: list[CollectionSpec], sample: int = 200) -> PreviewResult:
+    def preview(self, database: str, collections: list[CollectionSpec], sample: int = PREVIEW_SAMPLE) -> PreviewResult:
         present: dict[str, int] = {}
         categories: dict[str, set[str]] = {}
         sampled = 0
         per_source: list[dict] = []
+        per_collection: list[set[str]] = []
         total_rows = total_cells = 0
         with self._guard():
             db = self.client[database]
@@ -251,6 +254,8 @@ class MongoSource:
                 total_rows += documents
                 total_cells += documents * len(counts)
                 sampled += seen
+                if seen:
+                    per_collection.append(set(counts))
                 per_source.append(
                     {
                         "name": spec.name,
@@ -265,7 +270,9 @@ class MongoSource:
                     categories.setdefault(col, set()).update(kinds[col])
         # A collection that lacks a column still counts in the denominator.
         columns = [_column(col, categories[col], n / sampled if sampled else 0.0) for col, n in present.items()]
-        return PreviewResult(columns, per_source, total_rows, total_cells)
+        kinds = {c.name: c.kind for c in columns}
+        compared = compared_columns(list(present), per_collection, lambda col: kinds[col] == "identifier")
+        return PreviewResult(columns, per_source, total_rows, total_cells, compared)
 
     @staticmethod
     def _sample(coll, spec: CollectionSpec, sample: int):

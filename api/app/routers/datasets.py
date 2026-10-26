@@ -32,7 +32,7 @@ from ..sources.pull import RANK, run_connect
 from ._lock import refuse_refreshing, refuse_while_refreshing
 from .exports import PHASE_WAIT
 from .fields import _sync_targets, has_screen_fields, screen_pairs, screen_targets, set_targets
-from .sources import _source, collection_specs
+from .sources import _source, collection_specs, match_columns
 
 log = logging.getLogger(__name__)
 CORRELATED_TYPES = NUMERIC | {"datetime", "categorical", "binary"}
@@ -367,6 +367,7 @@ def connect(body: ConnectRequest, user: CurrentUser) -> dict:
     max_cells = get_settings().source_max_cells
     if estimate.estimated_cells > max_cells:
         raise HTTPException(422, {"message": "Too large", "estimated": estimate.estimated_cells, "max": max_cells})
+    match_on = match_columns(src.match_on, estimate)
 
     def stored(text: str | None) -> dict | None:
         # Already validated as a document; kept as the extended JSON the client sent, which `specs_from` re-parses.
@@ -376,7 +377,6 @@ def connect(body: ConnectRequest, user: CurrentUser) -> dict:
         {"name": c.name, "label": label, "filter": stored(c.filter), "projection": stored(c.projection)}
         for c, label in zip(src.collections, labels)
     ]
-    match_on = list(dict.fromkeys(m.strip() for m in src.match_on or [] if m.strip())) or None
     targets = list(dict.fromkeys(t.strip() for t in body.targets if t.strip()))
     ds = _create(body.name, None, "mongodb", targets, user["id"], None, body.recipe_id)
     try:

@@ -184,6 +184,25 @@ def test_over_the_budget_is_422_with_the_estimate(lead, mongo, monkeypatch):
         get_settings.cache_clear()
 
 
+def test_match_on_must_name_a_sampled_column(lead, mongo):
+    before = len(lead.get("/api/datasets").json())
+    r = lead.post("/api/datasets/connect", json=_body(mongo, "curated", "massive", match_on=["vehicle", "nope"]))
+    assert r.status_code == 422
+    assert r.json()["detail"] == "Match on column not found in a sample of up to 200 documents per collection: nope"
+    assert len(lead.get("/api/datasets").json()) == before, "no dataset is left behind"
+
+
+def test_match_on_is_stored_trimmed_and_once(lead, mongo):
+    body = _body(mongo, "curated", "massive", name="Matched", match_on=[" engine", "vehicle", "engine", " "])
+    r = lead.post("/api/datasets/connect", json=body)
+    assert r.status_code == 202, r.text
+    try:
+        assert r.json()["source"]["match_on"] == ["engine", "vehicle"]
+    finally:
+        _wait(lead, r.json()["id"])
+        lead.delete(f"/api/datasets/{r.json()['id']}")
+
+
 def test_filters_round_trip_as_the_strings_sent(lead, mongo):
     flt = '{"vehicle": "van", "when": {"$gte": {"$date": "2020-01-01T00:00:00Z"}}}'
     r = lead.post(

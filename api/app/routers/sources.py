@@ -9,7 +9,7 @@ from .. import sources
 from ..auth import CurrentUser
 from ..config import get_settings
 from ..schemas import SourceCollectionIn, SourcePreviewIn
-from ..sources import CollectionSpec, Source, SourceError
+from ..sources import PREVIEW_SAMPLE, CollectionSpec, PreviewResult, Source, SourceError
 
 router = APIRouter(prefix="/api/sources", tags=["sources"])
 
@@ -46,6 +46,19 @@ def collection_specs(collections: list[SourceCollectionIn]) -> list[CollectionSp
     ]
 
 
+def match_columns(match_on: list[str] | None, preview: PreviewResult) -> list[str] | None:
+    """`match_on` trimmed and without repeats, None when it names nothing. A name no sampled document has is a 422
+    now, since the pull would only find out once everything is pulled."""
+    names = list(dict.fromkeys(m.strip() for m in match_on or [] if m.strip())) or None
+    sampled = {c.name for c in preview.columns}
+    if unknown := [n for n in names or [] if n not in sampled]:
+        raise HTTPException(
+            422,
+            f"Match on column not found in a sample of up to {PREVIEW_SAMPLE} documents per collection: {unknown[0]}",
+        )
+    return names
+
+
 @router.get("")
 def list_sources(user: CurrentUser) -> list[dict]:
     return [{"name": s.name, "kind": s.kind} for s in sources.registry().values()]
@@ -78,8 +91,10 @@ def preview(name: str, body: SourcePreviewIn, user: CurrentUser) -> dict:
         result = source.preview(body.database, specs)
     except SourceError as exc:
         raise HTTPException(502, str(exc)) from None
+    match_on = match_columns(body.match_on, result)
     max_cells = get_settings().source_max_cells
     return {
         **asdict(result),
+        "compared_on": match_on or result.compared_on,
         "budget": {"max_cells": max_cells, "fits": result.estimated_cells <= max_cells},
     }
