@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ACTIONS, can, canRefresh } from "./can";
+import { ACTIONS, can, canRefresh, lockedTitle } from "./can";
 
 const connected = { source: { connection: "x" }, status: "ready", last_pull: { status: "done" } } as const;
 
@@ -46,5 +46,14 @@ describe("canRefresh", () => {
   });
   it("is off for a dataset that isn't connected", () => {
     expect(canRefresh({ role: "lead" }, { ...connected, source: null })).toBe(false);
+  });
+});
+
+describe("lockedTitle", () => {
+  it("says why a dataset's row controls are off while it refreshes", () => {
+    expect(lockedTitle({ status: "refreshing" })).toBe("A refresh is running; try again once it finishes");
+  });
+  it("is null otherwise", () => {
+    for (const status of ["ready", "profiling", "failed"] as const) expect(lockedTitle({ status })).toBeNull();
   });
 });

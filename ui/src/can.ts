@@ -45,6 +45,11 @@ export function can(me: { role: Role } | null | undefined, action: Action, locke
   return !LEAD_ONLY.has(action) || me.role === "lead";
 }
 
+/** Why a dataset's own controls on the Datasets list are off, as their tooltip: a refresh holds it. Null when not. */
+export function lockedTitle(ds: { status: DatasetStatus }): string | null {
+  return ds.status === "refreshing" ? "A refresh is running; try again once it finishes" : null;
+}
+
 /** A lead may refresh a connected dataset that is ready and has no pull running. */
 export function canRefresh(
   me: { role: Role } | null | undefined,

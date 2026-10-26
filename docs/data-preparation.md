@@ -146,7 +146,8 @@ suggestion follow the new suggestions. A pull from before a baseline was finaliz
 comparison with it and says so; the next refresh compares them.
 
 **While it runs** the dataset is locked. Its pages open read-only with a banner naming who started the refresh, and
-experiments take no exports, runs, notes or adjustments until it ends. The API refuses writes to the dataset and new
+experiments take no exports, runs, notes or adjustments until it ends. On the Datasets list its rename, targets and
+delete are off. The API refuses writes to the dataset and new
 exports, runs and Explore computations on it with `409`. A refresh is refused with `409` while a baseline version is
 being assessed or is in team review, and while an export or a run of the dataset is running. If the pull fails, the
 dataset, its fields and its data stay as they were and the failed pull is recorded with its error.

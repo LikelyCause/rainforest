@@ -16,7 +16,7 @@ import { api, uploadDataset } from "../api";
 import { PROCESSING, pollInterval, refreshesDone, useFields, useMe } from "../hooks";
 import { pullState } from "../pulls";
 import { eligibleTarget } from "../baselines";
-import { can, canRefresh } from "../can";
+import { can, canRefresh, lockedTitle } from "../can";
 import { metricLabel } from "../experiments";
 import { defaultTask, taskLabel } from "../decision";
 import { fmtAgo, fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
@@ -303,7 +303,7 @@ function RowMenu({
   const close = useCallback(() => setOpen(false), []);
   useDismiss(ref, open, close);
   const style = useAnchored(button, open, "right");
-  const refreshing = ds.status === "refreshing";
+  const locked = lockedTitle(ds);
   const item = (label: string, run: () => void, extra?: { disabled?: boolean; title?: string; danger?: boolean }) => (
     <button
       type="button"
@@ -334,10 +334,7 @@ function RowMenu({
       </button>
       {open && (
         <div className="popover" role="menu" style={style}>
-          {item("Rename", onRename, {
-            disabled: refreshing,
-            title: refreshing ? "A refresh is running; try again once it finishes" : undefined,
-          })}
+          {item("Rename", onRename, { disabled: locked !== null, title: locked ?? undefined })}
           {onTargets && ds.status === "ready" && item("Targets…", onTargets)}
           {onRefresh &&
             item("Refresh…", onRefresh.run, {
@@ -350,14 +347,12 @@ function RowMenu({
             item("Assessors…", () => nav(`/d/${ds.id}/baseline`))}
           {item("Delete…", onDelete, {
             danger: true,
-            disabled: !canDelete || PROCESSING.has(ds.status) || refreshing,
+            disabled: !canDelete || PROCESSING.has(ds.status) || locked !== null,
             title: !canDelete
               ? "Only a lead can delete a dataset"
               : PROCESSING.has(ds.status)
                 ? "Wait for processing to finish"
-                : refreshing
-                  ? "A refresh is running; try again once it finishes"
-                  : undefined,
+                : (locked ?? undefined),
           })}
         </div>
       )}
@@ -1464,7 +1459,7 @@ export function DatasetsPage() {
                         {menu(ds, true)}
                       </span>
                     </div>
-                    {targetFor === ds.id && ready && editor && (
+                    {targetFor === ds.id && ds.status === "ready" && editor && (
                       <TargetPicker
                         ds={ds}
                         anchor={targetAnchor}
@@ -1522,6 +1517,7 @@ export function DatasetsPage() {
                   {shown.map((ds) => {
                     const ready = ds.status === "ready" || ds.status === "refreshing";
                     const busy = PROCESSING.has(ds.status);
+                    const locked = lockedTitle(ds);
                     return (
                       <Fragment key={ds.id}>
                         <tr
@@ -1586,7 +1582,8 @@ export function DatasetsPage() {
                                       <button
                                         type="button"
                                         className="ghost target-chips"
-                                        title="Change targets"
+                                        title={locked ?? "Change targets"}
+                                        disabled={locked !== null}
                                         aria-expanded={targetFor === ds.id}
                                         onClick={(e) => {
                                           e.stopPropagation();
@@ -1599,6 +1596,8 @@ export function DatasetsPage() {
                                       <button
                                         type="button"
                                         className="chip attention on"
+                                        title={locked ?? undefined}
+                                        disabled={locked !== null}
                                         aria-expanded={targetFor === ds.id}
                                         onClick={(e) => {
                                           e.stopPropagation();
@@ -1610,7 +1609,7 @@ export function DatasetsPage() {
                                       </button>
                                     ))}
                                 </span>
-                                {targetFor === ds.id && editor && (
+                                {targetFor === ds.id && editor && locked === null && (
                                   <TargetPicker
                                     ds={ds}
                                     anchor={targetAnchor}
