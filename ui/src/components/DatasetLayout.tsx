@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { can, type Action } from "../can";
 import { PROCESSING, useDataset, useMe, usePulls } from "../hooks";
+import { pullStarter } from "../pulls";
 import { ErrorAlert } from "./ui";
 import { Banner, ProgressBar, confirmDialog } from "./kit";
 import type { Dataset } from "../types";
@@ -28,8 +29,8 @@ export function useCan(): (action: Action) => boolean {
 export const useLead = () => useCan()("finalize");
 
 function RefreshBanner({ ds }: { ds: Dataset }) {
-  const pulls = usePulls(ds.id);
-  const starter = pulls.data?.[0]?.created_by_name;
+  const pulls = usePulls(ds.id, true, true);
+  const starter = pullStarter(pulls.data, ds.last_pull?.id);
   return (
     <div className="page refresh-banner">
       <Banner

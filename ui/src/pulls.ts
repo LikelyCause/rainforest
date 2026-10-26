@@ -1,5 +1,5 @@
-import { fmtInt } from "./format";
-import type { Pull, PullDrift } from "./types";
+import { familyShort, fmtAgo, fmtInt } from "./format";
+import type { BaselineSummary, Dataset, Pull, PullDrift, PullSummary } from "./types";
 
 const count = (n: number, one: string, many = `${one}s`) => `${fmtInt(n)} ${n === 1 ? one : many}`;
 
@@ -47,4 +47,51 @@ export function flattenLines(notes: Pull["flatten_notes"]): string[] {
   if (renamed.length) lines.push(`Renamed: ${renamed.map(([from, to]) => `${from} → ${to}`).join(", ")}`);
   if (notes.compared_on?.length) lines.push(`Duplicates compared on: ${notes.compared_on.join(", ")}`);
   return lines;
+}
+
+type PullTimes = Pick<PullSummary, "status" | "started_at" | "finished_at">;
+
+/** "pulled 3 minutes ago", "last pull failed 3 minutes ago" or "pulling…"; null before any pull. */
+export function pullState(last: PullTimes | null): string | null {
+  if (!last) return null;
+  if (last.status === "running") return "pulling…";
+  if (last.status === "failed") return `last pull failed ${fmtAgo(last.finished_at ?? last.started_at)}`;
+  return last.finished_at ? `pulled ${fmtAgo(last.finished_at)}` : null;
+}
+
+/** Who started pull `id`. A list fetched before that pull began doesn't have it, and its newest entry is someone
+ * else's pull, so that gives null rather than a name. */
+export function pullStarter(pulls: Pull[] | undefined, id: number | undefined): string | null {
+  return pulls?.find((p) => p.id === id)?.created_by_name ?? null;
+}
+
+const andList = (xs: string[]) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}`);
+
+/** What to say about the finalized baselines a finished pull wasn't compared with: a connect pull is never compared,
+ * and a refresh compares only the baselines finalized when it ran. Null when it covers every one of them. */
+export function uncomparedNote(
+  pull: Pick<Pull, "drift">,
+  baselines: Pick<BaselineSummary, "family" | "latest_finalized_id">[],
+): string | null {
+  const finalized = baselines.filter((b) => b.latest_finalized_id !== null).map((b) => b.family);
+  const missing = finalized.filter((f) => !pull.drift?.[f]);
+  if (finalized.length === 0)
+    return Object.keys(pull.drift ?? {}).length ? null : "No finalized baseline to compare with yet.";
+  if (missing.length === 0) return null;
+  const names = andList(missing.map(familyShort));
+  return `This pull predates the finalized ${names} baseline${missing.length === 1 ? "" : "s"}; refresh to compare.`;
+}
+
+/** Whether the Team page shows the latest pull rather than a field: when the URL asks for it, or, with no field
+ * asked for, when that pull finished after the version was finalized (it is what a lead acts on next). */
+export function showsPull(
+  asked: { pull: boolean; field: boolean },
+  ds: Pick<Dataset, "source" | "last_pull">,
+  finalizedAt: string | null,
+): boolean {
+  const last = ds.last_pull;
+  if (!ds.source || !last) return false;
+  if (asked.pull) return true;
+  if (asked.field || last.status === "running" || !last.finished_at || !finalizedAt) return false;
+  return new Date(last.finished_at).getTime() > new Date(finalizedAt).getTime();
 }

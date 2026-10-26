@@ -13,7 +13,8 @@ import {
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, uploadDataset } from "../api";
-import { PROCESSING, pollInterval, useFields, useMe } from "../hooks";
+import { PROCESSING, pollInterval, refreshesDone, useFields, useMe } from "../hooks";
+import { pullState } from "../pulls";
 import { eligibleTarget } from "../baselines";
 import { can, canRefresh } from "../can";
 import { metricLabel } from "../experiments";
@@ -401,10 +402,10 @@ function ConnectMenu({ onCreated }: { onCreated: (ds: Dataset) => void }) {
   );
 }
 
-/** "vehicles · curated, mining" and when the newest pull finished; nothing for an upload or a sample. */
+/** "vehicles · curated, mining" and how the newest pull went; nothing for an upload or a sample. */
 function SourceBadge({ ds }: { ds: Dataset }) {
   if (!ds.source) return null;
-  const pulled = ds.last_pull?.finished_at;
+  const pulled = pullState(ds.last_pull);
   return (
     <span className="home-source small-text">
       <Chip tone="accent" title={`${ds.source.database} on ${ds.source.connection}`}>
@@ -413,7 +414,7 @@ function SourceBadge({ ds }: { ds: Dataset }) {
       {ds.status === "refreshing" && <Chip tone="warn">refreshing</Chip>}
       <span className="secondary">
         {sourceSummary(ds.source)}
-        {pulled && ` · pulled ${fmtAgo(pulled)}`}
+        {pulled && ` · ${pulled}`}
       </span>
     </span>
   );
@@ -1130,6 +1131,7 @@ export function DatasetsPage() {
   const refresh = async (ds: Dataset) => {
     if (!ds.source) return;
     const pulled = ds.last_pull?.finished_at;
+    const outcome = ds.last_pull?.status === "failed" ? "failed" : "finished";
     const ok = await confirmDialog({
       title: `Refresh ${ds.name}?`,
       confirm: "Refresh",
@@ -1137,8 +1139,8 @@ export function DatasetsPage() {
         <div className="stack bl-gap-8">
           <p>
             Pulls {ds.source.collections.map((c) => c.label).join(", ")} again from {ds.source.connection}
-            {pulled ? `; the last pull finished ${fmtAgo(pulled)} (${fmtDate(pulled)})` : ""}. While it runs the dataset
-            is read-only.
+            {pulled ? `; the last pull ${outcome} ${fmtAgo(pulled)} (${fmtDate(pulled)})` : ""}. While it runs the
+            dataset is read-only.
           </p>
           <ul>
             <li>The raw data is replaced with the new pull.</li>
@@ -1155,11 +1157,19 @@ export function DatasetsPage() {
       await api.refreshDataset(ds.id);
       qc.invalidateQueries({ queryKey: ["datasets"] });
       qc.invalidateQueries({ queryKey: ["dataset", ds.id] });
+      qc.invalidateQueries({ queryKey: ["pulls", ds.id] });
       toast({ message: `Refreshing ${ds.name}`, detail: "It is read-only until the pull finishes." });
     } catch (e) {
       showError(`Couldn't refresh ${ds.name}`, e);
     }
   };
+
+  // A refresh replaces the fields, pulls, team state and baselines; the dataset's own page invalidates them when it
+  // sees the refresh end, but a refresh seen ending here would leave them cached for the next visit.
+  const refreshing = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    if (refreshesDone(refreshing.current, data ?? []).length > 0) qc.invalidateQueries();
+  }, [data, qc]);
 
   // Tell the user when a dataset they're waiting on becomes ready.
   const wasProcessing = useRef<Set<number>>(new Set());

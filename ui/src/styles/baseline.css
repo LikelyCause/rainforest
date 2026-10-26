@@ -98,6 +98,7 @@
 .tr .queue-item.active .name { font-weight: 600; }
 .tr .queue-item .badge { flex: none; }
 .tr .queue-item > .ic { margin-top: 3px; color: var(--text-muted); }
+.tr .tr-pull { height: auto; justify-content: flex-start; text-align: left; white-space: normal; font-weight: 400; }
 .tr-pad { display: block; padding: 10px 12px; }
 .tr-foot { padding: 8px 16px 12px; margin: 0; }
 .tr-main { gap: 20px; }
