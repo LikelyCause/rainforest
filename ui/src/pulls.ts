@@ -16,6 +16,9 @@ export function reopenPath(datasetId: number, family: string, names: string[]): 
   return `/d/${datasetId}/baselines?${q}`;
 }
 
+/** A version is being assessed or is in team review, so no new one can start until it is finalized. */
+export const versionInProgress = (ds: Pick<Dataset, "phase">) => ds.phase === "assessing" || ds.phase === "review";
+
 /** The names in a `reopen` query value. */
 export function parseReopen(value: string | null): string[] {
   return [...new Set((value ?? "").split(",").filter(Boolean))];

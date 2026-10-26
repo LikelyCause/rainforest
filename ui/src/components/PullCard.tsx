@@ -5,7 +5,7 @@ import { Banner } from "./kit";
 import { ErrorAlert } from "./ui";
 import { familyShort, fmtAgo, fmtInt } from "../format";
 import { usePulls } from "../hooks";
-import { flattenLines, pullHeadline, reopenPath, reopenedNames, uncomparedNote } from "../pulls";
+import { flattenLines, pullHeadline, reopenPath, reopenedNames, uncomparedNote, versionInProgress } from "../pulls";
 import { reuseGroups } from "../recipes";
 import type { Dataset, FamilyDrift, Pull } from "../types";
 
@@ -38,7 +38,7 @@ function FamilyBlock({ ds, family, drift }: { ds: Dataset; family: string; drift
           <NameChips names={g.missing} />
         </span>
       </div>
-      {lead && names.length > 0 && (
+      {lead && names.length > 0 && !versionInProgress(ds) && (
         <div>
           <Link className="btn" to={reopenPath(ds.id, family, names)}>
             Start a new version with these fields reopened

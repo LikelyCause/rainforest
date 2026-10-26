@@ -9,6 +9,7 @@ import {
   reopenedNames,
   showsPull,
   uncomparedNote,
+  versionInProgress,
 } from "./pulls";
 import type { Dataset, Pull, PullDrift } from "./types";
 
@@ -65,6 +66,17 @@ describe("reopenPath and parseReopen", () => {
     expect(reopenPath(7, "linear", [])).toBe("/d/7/baselines?new=linear");
     expect(parseReopen(null)).toEqual([]);
     expect(parseReopen("a,,b,a")).toEqual(["a", "b"]);
+  });
+});
+
+describe("versionInProgress", () => {
+  it("is true while a version is being assessed or is in team review", () => {
+    expect(versionInProgress({ phase: "assessing" })).toBe(true);
+    expect(versionInProgress({ phase: "review" })).toBe(true);
+  });
+  it("is false once the current version is finalized", () => {
+    expect(versionInProgress({ phase: "finalized" })).toBe(false);
+    expect(versionInProgress({ phase: null })).toBe(false);
   });
 });
 
