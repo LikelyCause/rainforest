@@ -16,7 +16,8 @@ Connections are named by the deployment, in `RAINFOREST_MONGO_SOURCES` for Compo
 chart (see [Configuration](configuration.md) and [deploy/README.md](../deploy/README.md#mongodb-sources)). Nobody types
 a connection string into Rainforest. *Datasets → Connect ▾ → MongoDB collection…* appears when at least one is named.
 To try it without a cluster, `make up-mongo` starts a sample MongoDB (database `rf_dev`, collections `curated` and
-`massive`) as the connection `dev`; [Deployment](deployment.md#trying-an-option-for-one-run) says what it changes.
+`massive`) as the connection `dev`; [Deployment](deployment.md#trying-an-option-for-one-run) says what it changes, and
+what to add when `.env` already names connections.
 
 Members and leads can create a connected dataset. In the dialog:
 
@@ -25,8 +26,8 @@ Members and leads can create a connected dataset. In the dialog:
    (`{"$oid": …}`, `{"$date": …}`) is accepted. They are passed to the server as written, so connect with a read-only
    account.
 3. **Preview** samples 200 documents per collection and shows the flattened columns with their types and how often
-   each is present, the columns flagged (arrays, mixed types), and the estimated rows and cells against the
-   [size budget](#size).
+   each is present, the columns flagged (arrays, mixed types), the columns exact duplicates would be compared on
+   ([below](#the-source-column-and-duplicates)), and the estimated rows and cells against the [size budget](#size).
 4. Name the dataset and choose whether to add a **source column** and to **leave out exact duplicate rows**
    ([below](#the-source-column-and-duplicates)).
 
@@ -59,16 +60,18 @@ every column name to lowercase letters, digits and underscores (`a_b`), as for a
 Edge cases:
 
 - **Empty-string keys.** A key `""` gives a column with an empty name, and `{a: {"": 1}}` gives `a.`. Field names keep
-  such oddities; the raw table, which the SQL console reads, cleans every column name to lowercase letters, digits and
-  underscores as for an upload, so these become `col_<position>` and `a`.
+  such oddities; in the raw table they become `col_<position>` and `a`.
 - **A field that is always `{}`** produces no column: an empty document has no values to flatten, so the field
   vanishes. One that is `{}` in some documents and has keys in others is a column wherever it has keys.
 - **Mixed types** are read as text, with numbers and booleans written in their text form, so nothing is lost. The type
   is then inferred from the text as for an upload.
 - **Arrays** are JSON text. Elements that are documents keep their keys inside the text, and BSON types inside become
   strings or numbers.
-- **Keys that collide** after the dot replacement (`{"a.b": 1, "a_b": 2}` would give `a_b` twice) keep the name of the
-  one that had no dot and give the other a `_2`, `_3`, … suffix; the warning lists each rename.
+- **Keys that collide** after the dot replacement (`{"a.b": 1, "a_b": 2}` would give `a_b` twice). Within a document,
+  keys without a dot keep their names, and a dotted key that would take a name already in use gets a `_2`, `_3`, …
+  suffix. Across the pull, the first name given to a key path stays its name in every later document, and a later path
+  that would take a name already in use gets the next free suffix, so a key without a dot gets the suffix when its
+  dotted twin appeared in an earlier document. The warning lists each rename.
 
 ### The source column and duplicates
 
@@ -82,8 +85,10 @@ Leaving out exact duplicates removes rows that are equal on the **comparison col
 - By default these are the columns every chosen collection has, less `_id`, the `source` column and any column that
   profiles as an identifier (unique-looking keys such as `…_id` and UUIDs), because each collection's own keys would
   make every row distinct. Columns that only some collections have never take part, so a row of a collection with
-  extra fields can still match a row without them.
-- A **Match on** list in the dialog replaces them, for example the record's natural key.
+  extra fields can still match a row without them. The preview lists these columns.
+- A **Match on** list in the dialog replaces them, for example the record's natural key. Each column in it must appear
+  in the preview's sample (up to 200 documents per collection), or Connect refuses it, so a key that only turns up
+  further down a collection can't be named there.
 - Duplicates are removed within a collection as well as across them. Of a group of equal rows, the one from the
   collection listed first stays.
 
@@ -108,13 +113,17 @@ processing are bounded by `PROFILE_SAMPLE_ROWS` and `COPY_BATCH_ROWS`, as for an
 It always re-pulls all of them: the combined rows and the duplicate removal depend on all of them together.
 
 **It keeps** every field that is still in the data, by name, with its id, so its decisions, history, settings and notes
-stay. Derived fields are computed again with the same formulas, and the dataset's targets stay targets.
+stay. Derived fields are computed again with the same formulas. A target stays a target while profiling still accepts
+it on the new data.
 
 **It replaces** the Parquet copy and the raw table, the fields' statistics and inferred types, and the associations.
 Every Explore result of the dataset is marked out of date, since it was computed on the old rows. New fields come in
 with suggestions, as at upload. A field that is no longer in the data is deleted with its decisions and history, and so
-is a derived field whose inputs vanished; each is listed in the dataset's warnings. A target that vanished stops being
-a target, with a warning. An experiment's adjustments on a removed field are dropped, and its Adjustments card says so.
+is a derived field whose inputs vanished; each is listed in the dataset's warnings. A target that is no longer in the
+data is deleted like any other field, with the warning *Target column no longer in the data*. A target that profiling
+now turns down (a non-numeric one with more than 100 distinct values, as at upload) stays a field but stops being a
+target: its decision goes back to the suggestion, unreviewed, and the warning *Not used as target(s)* names it. An
+experiment's adjustments on a removed field are dropped, and its Adjustments card says so.
 
 **It reopens nothing by itself.** For each model family with a finalized baseline, it compares the new fields with that
 family's latest finalized baseline by the rules for [reusing a baseline](team-workflow.md#reusing-another-datasets-baseline):
@@ -122,7 +131,8 @@ a field is *carried* when its type is unchanged and its statistics haven't drift
 the distinct values within half to double), and *reopened* when it is new, has a new type or has drifted, with the
 numbers. Fields of the baseline that are gone are listed. The result is that pull's **drift summary**, shown for each
 family on the *Team* page and on the baseline's card, where a lead can start a new version with the reopened fields
-selected. Until a baseline is finalized the summary is informational: the working decisions follow the new statistics.
+selected. A dataset with no finalized baseline gets no drift summary; its decisions that are still at their suggestion
+follow the new suggestions.
 
 **While it runs** the dataset is locked. Its pages open read-only with a banner, and the API refuses writes to the
 dataset and new exports, runs and Explore computations on it with `409`. A refresh is refused with `409` while a
@@ -130,9 +140,10 @@ baseline version is being assessed or is in team review, and while an export or 
 the pull fails, the dataset, its fields and its data stay as they were and the failed pull is recorded with its error.
 
 **Exports after a refresh** are built from the new data. Each export of a connected dataset records the pull it was made
-from in its manifest and MLflow parameters, and the exports list shows it (*pull #3*), so it stays clear which data a
-run was trained on; an export made earlier keeps its own Parquet file. The export preview blocks when a field of the
-baseline is no longer in the data, and warns when the baseline was finalized before the latest pull.
+from in its manifest and MLflow parameters, and the exports list shows it on the export's row as *pull #<n>*, where n is
+the pull's id, so it stays clear which data a run was trained on; an export made earlier keeps its own Parquet file.
+The export preview blocks when a field of the baseline is no longer in the data, and warns when the baseline was
+finalized before the latest pull.
 
 ## Type inference
 
