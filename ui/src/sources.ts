@@ -156,10 +156,13 @@ export function unknownColumns(names: string[], preview: PreviewResult | null): 
   return names.filter((n) => !known.has(n));
 }
 
-/** "vin, model_year": the columns the preview says duplicates are compared on; null before a preview. */
-export function comparedOnText(preview: PreviewResult | null): string | null {
+/** "vin, model_year": the columns duplicates will be compared on, null before a preview. The rule the preview
+ * endpoint applies: `matchOn` once the preview has every column in it (what Connect then sends), else the preview's
+ * default. Worked out here so typing in Match on doesn't need another preview. */
+export function comparedOnText(preview: PreviewResult | null, matchOn: string[]): string | null {
   if (!preview?.compared_on) return null;
-  return preview.compared_on.join(", ") || "no shared columns, so nothing is left out";
+  const columns = matchOn.length > 0 && unknownColumns(matchOn, preview).length === 0 ? matchOn : preview.compared_on;
+  return columns.join(", ") || "no shared columns, so nothing is left out";
 }
 
 /** Why Connect can't go ahead yet, in the order the dialog asks for things; null when it can. */

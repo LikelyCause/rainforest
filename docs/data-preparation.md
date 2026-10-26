@@ -96,7 +96,8 @@ Leaving out exact duplicates removes rows that are equal on the **comparison col
   documents beyond the sample bring a column or a kind of value the sample didn't have.
 - A **Match on** list in the dialog replaces them, for example the record's natural key. Each column in it must appear
   in the preview's sample (up to 200 documents per collection), or Connect refuses it, so a key that only turns up
-  further down a collection can't be named there.
+  further down a collection can't be named there. Once every column in it is in the preview, the dialog lists it as
+  the comparison columns.
 - Duplicates are removed within a collection as well as across them. Of a group of equal rows, the one from the
   collection listed first stays.
 

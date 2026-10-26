@@ -124,7 +124,7 @@ export function ConnectDialog({
   const fits = preview?.budget.fits ?? false;
   const canPreview = chosen.length > 0 && !invalid && !run.isPending;
   const blocker = connectBlocker({ chosen: chosen.length, invalid, preview, name, dedupe, unknownMatch });
-  const comparedOn = comparedOnText(preview);
+  const comparedOn = comparedOnText(preview, matchOn);
   const ids = {
     why: `${uid}-why`,
     name: `${uid}-name`,

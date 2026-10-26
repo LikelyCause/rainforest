@@ -174,12 +174,18 @@ describe("matchColumns and unknownColumns", () => {
 
 describe("comparedOnText", () => {
   it("lists the preview's comparison columns", () => {
-    expect(comparedOnText(preview())).toBe("vin, model_year");
+    expect(comparedOnText(preview(), [])).toBe("vin, model_year");
+  });
+
+  it("lists Match on instead once every column in it is in the preview", () => {
+    expect(comparedOnText(preview(), ["model_year"])).toBe("model_year");
+    expect(comparedOnText(preview({ compared_on: [] }), ["vin", "_id"])).toBe("vin, _id");
+    expect(comparedOnText(preview(), ["model_year", "colour"])).toBe("vin, model_year");
   });
 
   it("says when there is nothing to compare on, and is null without a preview", () => {
-    expect(comparedOnText(preview({ compared_on: [] }))).toBe("no shared columns, so nothing is left out");
-    expect(comparedOnText(null)).toBeNull();
+    expect(comparedOnText(preview({ compared_on: [] }), [])).toBe("no shared columns, so nothing is left out");
+    expect(comparedOnText(null, ["vin"])).toBeNull();
   });
 });
 
