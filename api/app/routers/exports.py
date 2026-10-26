@@ -203,10 +203,15 @@ def _preview_of(
     if not personal and (problem := source_problem(recipe)) is not None:
         blocking.insert(0, problem)
     # A refresh can take away fields a finalized snapshot names; the data checks read only the columns still there.
+    # One the baseline drops is never read, so its going changes nothing.
     present = {
         r["name"] for r in conn.execute("SELECT name FROM meta.fields WHERE dataset_id = %s", (dataset_id,)).fetchall()
     }
-    blocking += [f"Field in the baseline is no longer in the data: {n}" for n in snap["fields"] if n not in present]
+    blocking += [
+        f"Field in the baseline is no longer in the data: {n}"
+        for n, f in snap["fields"].items()
+        if n not in present and (f["decision"]["action"] == "keep" or n in targets)
+    ]
     class_targets = [t for t in targets if tasks[t]["task"] == "classes" and t in present]
     if lone := _lone_class_problem(ds["parquet_path"], class_targets):
         blocking.append(lone)
@@ -343,6 +348,10 @@ def export_rows(dataset_id: int, req: ExportRowsRequest, user: CurrentUser) -> d
         _, targets, tasks = export_spec(conn, dataset_id, snap, recipe["family"])
     config = json.dumps(req.model_dump(exclude={"recipe_id", "experiment_id"}), sort_keys=True)
     path = Path(ds["parquet_path"])
+    # A refresh can take away a target the snapshot names; the preview blocks the export for it.
+    columns = set(pl.read_parquet_schema(path))
+    targets = [t for t in targets if t in columns]
+    tasks = {t: v for t, v in tasks.items() if t in columns}
     return copy.deepcopy(
         _rows_after_rules(
             str(path), path.stat().st_mtime_ns, config, tuple(targets), json.dumps(tasks, sort_keys=True, default=str)

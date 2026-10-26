@@ -71,14 +71,12 @@ def _wait_export(client, export_id: int, timeout: float = 120) -> dict:
         time.sleep(0.3)
 
 
-@pytest.fixture(scope="module")
-def ds(clients, mongo):
-    """`curated` connected by the lead, `vehicle` its target, with a finalized Trees baseline."""
-    lead = clients["lead"]
+def _connected(lead, mongo, name: str, drop: tuple[str, ...] = ()) -> int:
+    """`curated` connected by the lead, `vehicle` its target and `drop` dropped, with a finalized Trees baseline."""
     r = lead.post(
         "/api/datasets/connect",
         json={
-            "name": "Refreshed",
+            "name": name,
             "source": {"connection": "test", "database": mongo.name, "collections": [{"name": "curated"}]},
         },
     )
@@ -87,9 +85,17 @@ def ds(clients, mongo):
     assert _wait(lead, ds_id)["status"] == "ready"
     assert lead.patch(f"/api/datasets/{ds_id}", json={"target_columns": ["vehicle"]}).status_code == 200
     assert _wait(lead, ds_id)["status"] == "ready"
+    for n in drop:
+        db.execute("UPDATE meta.field_decisions SET action = 'drop' WHERE field_id = %s", (_field(ds_id, n)["id"],))
     set_phase(ds_id, "finalized")
+    return ds_id
+
+
+@pytest.fixture(scope="module")
+def ds(clients, mongo):
+    ds_id = _connected(clients["lead"], mongo, "Refreshed")
     yield ds_id
-    lead.delete(f"/api/datasets/{ds_id}")
+    clients["lead"].delete(f"/api/datasets/{ds_id}")
 
 
 @contextmanager
@@ -231,21 +237,42 @@ def test_an_export_after_a_refresh_records_the_pull(lead, ds, mongo):
         seed(mongo)
 
 
-def test_preview_blocks_on_baseline_fields_the_refresh_removed(lead, ds, mongo):
-    # The target goes too: the preview's checks on target values must not read a column that is gone.
-    mongo.curated.update_many({}, {"$unset": {"engine": "", "vehicle": ""}})
+def test_preview_blocks_on_kept_fields_and_targets_the_refresh_removed(lead, mongo):
+    ds = _connected(lead, mongo, "Fields gone", drop=("rpm.max",))
+    snap = db.fetch_one("SELECT snapshot FROM meta.recipes WHERE dataset_id = %s AND phase = 'finalized'", (ds,))
+    actions = {n: f["decision"]["action"] for n, f in snap["snapshot"]["fields"].items()}
+    assert (actions["rpm.max"], actions["engine"], actions["vehicle"]) == ("drop", "keep", "target")
+    gone = "Field in the baseline is no longer in the data: "
+    try:
+        # The target goes last: the preview's checks on target values must not read a column that is gone.
+        for unset, blocked in (("rpm.max", []), ("engine", ["engine"]), ("vehicle", ["engine", "vehicle"])):
+            mongo.curated.update_many({}, {"$unset": {unset: ""}})
+            with _held(lead, ds):
+                pass
+            assert _latest_pull(ds)["status"] == "done" and _field(ds, unset) is None
+            r = lead.get(f"/api/datasets/{ds}/export-preview")
+            assert r.status_code == 200, r.text
+            assert sorted(b for b in r.json()["blocking"] if b.startswith(gone)) == [gone + n for n in blocked], unset
+        r = lead.post(f"/api/datasets/{ds}/exports", json={})
+        assert r.status_code == 422 and {gone + "engine", gone + "vehicle"} <= set(r.json()["detail"]["errors"])
+    finally:
+        seed(mongo)
+        lead.delete(f"/api/datasets/{ds}")
+
+
+def test_export_rows_reads_only_the_targets_a_refresh_left(lead, mongo):
+    ds = _connected(lead, mongo, "Target gone")
+    mongo.curated.update_many({}, {"$unset": {"vehicle": ""}})
     try:
         with _held(lead, ds):
             pass
-        assert _field(ds, "engine") is None and _field(ds, "vehicle") is None
-        r = lead.get(f"/api/datasets/{ds}/export-preview")
+        assert _latest_pull(ds)["status"] == "done" and _field(ds, "vehicle") is None
+        r = lead.post(f"/api/datasets/{ds}/export-rows", json={})
         assert r.status_code == 200, r.text
-        gone = [f"Field in the baseline is no longer in the data: {n}" for n in ("engine", "vehicle")]
-        assert set(gone) <= set(r.json()["blocking"])
-        r = lead.post(f"/api/datasets/{ds}/exports", json={})
-        assert r.status_code == 422 and set(gone) <= set(r.json()["detail"]["errors"])
+        assert r.json()["rows"] == 300 and r.json()["missing_target"] == 0 and r.json()["split"] is None
     finally:
         seed(mongo)
+        lead.delete(f"/api/datasets/{ds}")
 
 
 def test_mlflow_logs_the_pull_an_export_was_built_from(file_store, tmp_path):  # noqa: F811
