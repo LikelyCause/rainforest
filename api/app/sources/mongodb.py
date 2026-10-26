@@ -270,8 +270,8 @@ class MongoSource:
                     categories.setdefault(col, set()).update(kinds[col])
         # A collection that lacks a column still counts in the denominator.
         columns = [_column(col, categories[col], n / sampled if sampled else 0.0) for col, n in present.items()]
-        kinds = {c.name: c.kind for c in columns}
-        compared = compared_columns(list(present), per_collection, lambda col: kinds[col] == "identifier")
+        kind_of = {c.name: c.kind for c in columns}
+        compared = compared_columns(list(present), per_collection, lambda col: kind_of[col] == "identifier")
         return PreviewResult(columns, per_source, total_rows, total_cells, compared)
 
     @staticmethod

@@ -203,7 +203,7 @@ def _preview_of(
     if not personal and (problem := source_problem(recipe)) is not None:
         blocking.insert(0, problem)
     # A refresh can take away fields a finalized snapshot names; the data checks read only the columns still there.
-    # One the baseline drops is never read, so its going changes nothing.
+    # A field the baseline drops is never read, so it may go.
     present = {
         r["name"] for r in conn.execute("SELECT name FROM meta.fields WHERE dataset_id = %s", (dataset_id,)).fetchall()
     }
