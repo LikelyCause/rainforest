@@ -116,6 +116,18 @@ The manifest's `config` records:
 | `adjustments` | `count`, `fields`, `targets_changed`, `targets`, `detail`: each adjusted field's changes, and `removed_by_refresh`: the baseline's fields a refresh took out of the data (not counted as adjustments) |
 | `assessor_id` | for a personal export only |
 | `pull_id` | for a connected dataset only: the pull its data came from |
+| `derived` | the derived fields the export reads, with the derived fields they read: each one's `name`, `kind` and `spec` as defined when the export started, in the order they were added |
+
+The export row's `config` also carries `input_schema`, written when the export finishes. It has one entry per source
+field the export reads: its features, targets and row-rule fields, and the fields its derived fields read. Each entry
+holds:
+
+- `dtype`: the column's polars dtype in the dataset's Parquet copy
+- `datetime_format`: for a date field, the format the export read it with
+- `integer_codes`: true for a category stored as integers, so `7.0` and `07` read as `7`
+
+Scoring reads new records with these and the frozen `derived` formulas, so removing a derived field later doesn't
+change an export. Exports made before these were recorded have neither key.
 
 A connected dataset's data changes when a lead refreshes it, so an export of one also records the pull it was built
 from: the newest finished pull when the export starts. The export row carries it as `pull_id`, the manifest's `config` repeats it, and each run trained on the export logs it to MLflow as the parameter
@@ -247,8 +259,9 @@ The manifest records:
 - A binary field's missing values take the most frequent level, or the level you name as the fill value. Any other
   fill label adds a `<field>__isna` column instead of a third code.
 - Numeric fill values are applied before log1p or winsorizing, so they are in the field's own units.
-- A field retyped to a date has its date format detected once over the whole column when you save. So every chunk of
-  the export reads it the same way.
+- A field retyped to a date has its date format detected once over the whole column when you save. A date field with
+  no recorded format has it detected over the whole column when the export starts. So every chunk of the export, and
+  scoring, read it the same way.
 
 ## Training
 

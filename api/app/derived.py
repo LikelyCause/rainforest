@@ -126,6 +126,26 @@ def check_spec(kind: str, spec: dict, columns: list[str]) -> list[str]:
     return list(fields)
 
 
+def closure(defined: list[dict], columns: list[str], names: list[str]) -> tuple[list[dict], list[str]]:
+    """Of `defined` ({name, kind, spec} in the order they were added), the ones reading `names` takes, with the
+    derived fields they read in turn; and the other fields under them all, in the order first met."""
+    by_name = {d["name"]: d for d in defined}
+    need: set[str] = set()
+    sources: dict[str, None] = {}
+
+    def visit(n: str) -> None:
+        if n not in by_name:
+            sources.setdefault(n)
+        elif n not in need:
+            need.add(n)
+            for m in check_spec(by_name[n]["kind"], by_name[n]["spec"], columns):
+                visit(m)
+
+    for n in names:
+        visit(n)
+    return [d for d in defined if d["name"] in need], list(sources)
+
+
 def compute(df: pl.DataFrame, kind: str, spec: dict) -> pl.Series:
     """The derived column for every row of `df`."""
     if kind == "formula":

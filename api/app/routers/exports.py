@@ -13,15 +13,15 @@ import polars as pl
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
-from .. import bands, experiments, jobs, recipes
+from .. import bands, derived, experiments, jobs, recipes
 from ..auth import CurrentUser
 from ..config import get_settings
 from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..leakage import leak_names
 from ..profiling import coerce_numeric
 from ..schemas import ExportRequest, ExportRowsRequest, RowRules
-from ..semantics import FAMILIES, NON_FEATURE_TYPES, grouped_target, validate_decision
-from ..transform import FieldSpec, check_target_classes, rows_after_rules, run_export
+from ..semantics import FAMILIES, NON_FEATURE_TYPES, NUMERIC, grouped_target, validate_decision
+from ..transform import FieldSpec, check_target_classes, input_schema, rows_after_rules, run_export
 from ._lock import refuse_refreshing, refuse_while_refreshing
 from .fields import _same_settings
 
@@ -477,6 +477,16 @@ def start_export(dataset_id: int, req: ExportRequest, user: CurrentUser) -> dict
         }
         if personal:
             config["assessor_id"] = x["assessor_id"]
+        # The derived fields as defined now, so scoring computes them the same way after one is removed.
+        specs, targets, _ = export_spec(conn, dataset_id, snap, pv["family"])
+        rows = conn.execute(
+            "SELECT name, derived FROM meta.fields WHERE dataset_id = %s ORDER BY ordinal", (dataset_id,)
+        ).fetchall()
+        config["derived"], _ = derived.closure(
+            [{"name": r["name"], **r["derived"]} for r in rows if r["derived"] is not None],
+            [r["name"] for r in rows],
+            export_reads(specs, targets, config),
+        )
         # The data a connected dataset has now; the manifest carries the config, so it says which pull too.
         pull = latest_pull(conn, dataset_id)
         if pull is not None:
@@ -593,6 +603,35 @@ def export_spec(conn, dataset_id: int, snap: dict, family: str) -> tuple[list[Fi
     return specs, recipes.snapshot_targets(snap), target_tasks(conn, dataset_id, snap)
 
 
+def export_reads(specs: list[FieldSpec], targets: list[str], config: dict) -> list[str]:
+    """The fields an export reads: its features, its targets and the fields its row rules name."""
+    first = config.get("first_per") or {}
+    rules = [r["field"] for r in config.get("exclude") or []]
+    rules += [v for v in (first.get("key"), first.get("order"), config.get("group_by")) if v]
+    features = [s.name for s in specs if s.semantic_type not in NON_FEATURE_TYPES]
+    return list(dict.fromkeys([*features, *targets, *rules]))
+
+
+def _input_schema(
+    path: Path, snap: dict, specs: list[FieldSpec], targets: list[str], tasks: dict, config: dict, manifest: dict
+) -> dict[str, dict]:
+    """The input schema of each source field the export read, its derived fields' inputs included, with the date
+    formats the export pinned."""
+    frozen = config["derived"]
+    columns = [*pl.read_parquet_schema(path), *(d["name"] for d in frozen)]
+    _, sources = derived.closure(frozen, columns, export_reads(specs, targets, config))
+    fed = {f["name"]: f for f in manifest["fields"]}
+
+    def kind(name: str) -> str:
+        if name in tasks:
+            return "category" if tasks[name]["task"] == "classes" else "number"
+        t = (fed.get(name) or snap["fields"].get(name, {}).get("decision") or {}).get("semantic_type")
+        return "number" if t in NUMERIC else "date" if t == "datetime" else "category"
+
+    formats = {n: f["datetime_format"] for n, f in fed.items() if f["semantic_type"] == "datetime"}
+    return input_schema(path, {n: kind(n) for n in sources}, formats)
+
+
 def _run(export_id: int) -> None:
     exp = fetch_one("SELECT * FROM meta.exports WHERE id = %s", (export_id,))
     ds = fetch_one("SELECT * FROM meta.datasets WHERE id = %s", (exp["dataset_id"],))
@@ -619,6 +658,12 @@ def _run(export_id: int) -> None:
         manifest = run_export(
             Path(ds["parquet_path"]), specs, targets, out_dir, exp["config"], progress, family=fam, target_tasks=tasks
         )
+        # Exports made before derived fields were frozen have neither key.
+        frozen = {}
+        if "derived" in exp["config"]:
+            frozen["input_schema"] = _input_schema(
+                Path(ds["parquet_path"]), snap, specs, targets, tasks, exp["config"], manifest
+            )
         summary = {
             "split_counts": manifest["split_counts"],
             "split_info": manifest["split_info"],
@@ -635,9 +680,9 @@ def _run(export_id: int) -> None:
         }
         execute(
             """UPDATE meta.exports SET status='done', error=NULL, progress=1, status_message='Done',
-                      output_dir=%s,
+                      output_dir=%s, config = config || %s,
                       n_rows=%s, n_features=%s, summary=%s, finished_at=now(), updated_at=now() WHERE id=%s""",
-            (str(out_dir), manifest["rows_written"], manifest["n_features"], jsonb(summary), export_id),
+            (str(out_dir), jsonb(frozen), manifest["rows_written"], manifest["n_features"], jsonb(summary), export_id),
         )
     except Exception as exc:  # noqa: BLE001
         log.exception("export %s failed", export_id)

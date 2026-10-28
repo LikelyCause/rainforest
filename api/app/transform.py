@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -45,7 +45,7 @@ from sklearn.preprocessing import (
 from . import bands, transforms
 from .config import get_settings
 from .parquet_rows import read_rows
-from .profiling import coerce_numeric, null_infinite, parse_datetime
+from .profiling import coerce_numeric, column_datetime_format, null_infinite, parse_datetime
 from .semantics import (
     DEFAULT_BIN_COUNT,
     DEFAULT_FAMILY,
@@ -437,6 +437,39 @@ def coercion_exprs(specs: list[FieldSpec]) -> dict[str, Callable[[pl.Series], pl
     return out
 
 
+def pin_datetime_formats(parquet_path: Path, specs: list[FieldSpec]) -> list[FieldSpec]:
+    """Date fields with no recorded format get the one detected over their whole column. Left to each chunk, a chunk
+    whose days are all 12 or less reads dd/mm dates as mm/dd, and scoring would have no format to match."""
+    return [
+        replace(f, datetime_format=column_datetime_format(pl.read_parquet(parquet_path, columns=[f.name]).to_series()))
+        if f.semantic_type == "datetime" and not f.datetime_format
+        else f
+        for f in specs
+    ]
+
+
+def input_schema(parquet_path: Path, kinds: dict[str, str], formats: dict[str, str | None]) -> dict[str, dict]:
+    """What scoring converts an incoming value of each source field to: its dtype in the dataset's Parquet, the format
+    its dates were read with, and whether it is a category stored as integers (so "7.0" and "07" mean 7). `kinds` says
+    how the export reads each field ("number", "date" or "category"); `formats` the date formats the export used."""
+    dtypes = pl.read_parquet_schema(parquet_path)
+    out: dict[str, dict] = {}
+    for name, kind in kinds.items():
+        fmt = None
+        if kind == "date":
+            fmt = (
+                formats[name]
+                if name in formats
+                else column_datetime_format(pl.read_parquet(parquet_path, columns=[name]).to_series())
+            )
+        out[name] = {
+            "dtype": str(dtypes[name]),
+            "datetime_format": fmt,
+            "integer_codes": kind == "category" and dtypes[name].is_integer(),
+        }
+    return out
+
+
 def to_pandas_frame(df: pl.DataFrame, specs: list[FieldSpec], coercers, consume: bool = False) -> pd.DataFrame:
     """`consume` drops each column from `df` once converted, so the two copies never coexist in full."""
     data: dict[str, Any] = {}
@@ -822,6 +855,7 @@ def run_export(
     if clash := {ROW_ID, SPLIT_COL} & set(targets):
         raise ValueError(f"Target name(s) {', '.join(sorted(clash))} are reserved for the export's own columns.")
 
+    specs = pin_datetime_formats(parquet_path, specs)
     n_rows = pl.scan_parquet(parquet_path).select(pl.len()).collect().item()
 
     # 1. targets + split ------------------------------------------------------------
