@@ -204,6 +204,7 @@ def pull_into(dataset_id: int, src: dict, dest: Path, status: str = "ingesting",
                 s.source_max_cells,
                 s.source_pull_timeout_s,
                 lambda label, n: st.set(status, 0.0, f"Pulling {label}: {n:,} documents"),
+                ((previous or {}).get("flatten_notes") or {}).get("key_paths"),
             )
         except PyMongoError as exc:  # a source's pull wraps its own; this keeps any other path redacted
             raise SourceError(source.redact(str(exc))) from None

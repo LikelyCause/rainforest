@@ -169,6 +169,7 @@ export interface Pull extends Omit<PullSummary, "has_drift"> {
     renamed?: Record<string, string>;
     compared_on?: string[];
     source_column?: string | null;
+    key_paths?: [string[], string][];
     removed_fields?: string[];
   } | null;
   drift: PullDrift | null;

@@ -400,12 +400,12 @@ def test_refresh_failure_leaves_the_dataset_untouched(source, mongo_url, monkeyp
     source.massive.insert_many(_fresh_docs(200, 0.6))
     real_pull = MongoSource.pull
 
-    def fail_after_one_chunk(self, database, collections, out_dir, budget, timeout, progress):
+    def fail_after_one_chunk(self, database, collections, out_dir, budget, timeout, progress, names=None):
         def progress_then_drop(label, n):
             assert list(out_dir.glob("chunk_*.parquet"))
             raise PyMongoError(f"connection reset by peer, Topology: {mongo_url}")
 
-        return real_pull(self, database, collections, out_dir, budget, timeout, progress_then_drop)
+        return real_pull(self, database, collections, out_dir, budget, timeout, progress_then_drop, names)
 
     monkeypatch.setattr(MongoSource, "pull", fail_after_one_chunk)
 
@@ -705,3 +705,21 @@ def test_recording_a_failure_leaves_a_newer_refresh_alone(database):
 
     assert _dataset(ds)["status"] == "refreshing"
     assert db.fetch_one("SELECT status FROM meta.dataset_pulls WHERE id = %s", (newer,))["status"] == "running"
+
+
+def test_a_refresh_keeps_renamed_columns_whatever_the_document_order(source):
+    docs = [{"vehicle": "dotted van", "c.d": "dotted"}, {"vehicle": "literal van", "c_d": "literal"}]
+    source.curated.insert_many([dict(d) for d in docs])
+    ds = _connect(source, finalize=False)
+    dotted = _field(ds, "c_d")
+    first = pl.read_parquet(_dataset(ds)["parquet_path"])
+    assert set(first["c_d"].drop_nulls()) == {"dotted"}
+    source.curated.delete_many({"vehicle": {"$in": ["dotted van", "literal van"]}})
+    source.curated.insert_many([dict(d) for d in docs[::-1]])
+
+    pull = _refresh(ds)
+
+    assert pull["status"] == "done", pull["error"]
+    df = pl.read_parquet(_dataset(ds)["parquet_path"])
+    assert _field(ds, "c_d")["id"] == dotted["id"] and set(df["c_d"].drop_nulls()) == {"dotted"}
+    assert set(df["c_d_2"].drop_nulls()) == {"literal"}

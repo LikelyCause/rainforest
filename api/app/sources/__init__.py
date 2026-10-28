@@ -65,7 +65,7 @@ class PreviewResult:
 @dataclass
 class PullResult:
     per_source: list[dict]  # {label, documents} per collection, in the order pulled
-    flatten_notes: dict  # arrays (columns), mixed (columns), renamed ({original key path: column})
+    flatten_notes: dict  # arrays, mixed (columns), renamed ({original key path: column}), key_paths ([path, column])
     identifiers: list[str]  # columns of kind `identifier` by the preview's rule, over every pulled value
 
 
@@ -136,7 +136,9 @@ class Source(Protocol):
         budget_cells: int,
         timeout_s: int,
         progress: Progress,
-    ) -> PullResult: ...
+        names: list | None = None,
+    ) -> PullResult:
+        """`names`: the previous pull's `flatten_notes.key_paths`, whose column names this pull keeps."""
 
 
 def parse_sources(text: str) -> dict[str, str]:

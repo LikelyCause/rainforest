@@ -331,6 +331,7 @@ class MongoSource:
         budget_cells: int,
         timeout_s: int,
         progress: Progress,
+        names: list | None = None,
     ) -> PullResult:
         """Every document of `collections` as flat rows in `out_dir/chunk_<label>_<n>.parquet`. The budget is the
         preview's estimate (documents x the columns a sample of them flattens to, the figure the dialog showed), so
@@ -340,7 +341,7 @@ class MongoSource:
         if estimated > budget_cells:
             raise BudgetExceeded(estimated, budget_cells)
         out_dir.mkdir(parents=True, exist_ok=True)
-        chunks = _Chunks(out_dir)
+        chunks = _Chunks(out_dir, names)
         per_source = []
         with self._guard():
             db = self.client[database]
@@ -402,10 +403,13 @@ class _Chunks:
     written as strings, so those are noted per document; every other category follows from the value types a chunk
     already gathers."""
 
-    def __init__(self, out_dir: Path):
+    def __init__(self, out_dir: Path, names: list | None = None):
         self.out_dir = out_dir
         self.by_path: dict[tuple[str, ...], str] = {}
-        self.taken: set[str] = set()
+        # A refresh's: the [key path, column] pairs of the previous pull, whose names win over this pull's document
+        # order, so a field keeps holding the same key. Every one is reserved, seen in this pull or not.
+        self.earlier: dict[tuple[str, ...], str] = {tuple(path): name for path, name in names or []}
+        self.taken: set[str] = set(self.earlier.values())
         self.order: dict[str, None] = {}
         self.kinds: dict[str, set[str]] = {}
         self.mixed: dict[str, None] = {}
@@ -417,8 +421,8 @@ class _Chunks:
         self.written: dict[str, int] = {}
 
     def _name(self, proposed: str, path: tuple[str, ...]) -> str:
-        name = proposed
-        if name in self.taken:
+        name = self.earlier.get(path) or proposed
+        if path not in self.earlier and name in self.taken:
             name = base = ".".join(map(_segment, path))
             n = 2
             while name in self.taken:
@@ -479,7 +483,12 @@ class _Chunks:
         self.written[label] = n + 1
 
     def notes(self) -> dict:
-        return {"arrays": list(self.arrays), "mixed": list(self.mixed), "renamed": self.renamed}
+        return {
+            "arrays": list(self.arrays),
+            "mixed": list(self.mixed),
+            "renamed": self.renamed,
+            "key_paths": [[list(path), name] for path, name in self.by_path.items()],
+        }
 
     def identifiers(self) -> list[str]:
         return [c for c in self.order if column_kind(c, self.categories.get(c, set())) == "identifier"]

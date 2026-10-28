@@ -78,7 +78,8 @@ Edge cases:
   keys without a dot keep their names, and a dotted key that would take a name already in use gets a `_2`, `_3`, …
   suffix. Across the pull, the first name given to a key path stays its name in every later document, and a later path
   that would take a name already in use gets the next free suffix, so a key without a dot gets the suffix when its
-  dotted twin appeared in an earlier document. The warning lists each rename.
+  dotted twin appeared in an earlier document. A refresh starts from the names the previous pull gave, so a
+  field keeps holding the same key whatever order the documents now come in. The warning lists each rename.
 
 ### The source column and duplicates
 

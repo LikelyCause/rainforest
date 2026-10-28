@@ -486,3 +486,22 @@ def test_missing_collections_asks_only_for_the_collections_the_account_may_read(
     src._client = _Client(_Database({"a": _Collection([])}))
     assert src.missing_collections("d", ["a", "gone"]) == ["gone"]
     assert src.client["d"].calls == [{"filter": {"name": {"$in": ["a", "gone"]}}, "authorizedCollections": True}]
+
+
+def _columns_of(tmp_path, docs, names=None) -> tuple[dict, dict]:
+    out = tmp_path / str(len(list(tmp_path.iterdir())))
+    r = _fake(c=docs).pull("d", [CollectionSpec("c")], out, 10**9, 60, None, names)
+    df = pl.concat([pl.read_parquet(p) for p in sorted(out.glob("chunk_*.parquet"))], how="diagonal_relaxed")
+    # Which column each document's value landed in, by the value.
+    return {v: c for c in df.columns for v in df[c].drop_nulls().to_list()}, r.flatten_notes
+
+
+def test_renamed_columns_keep_their_names_across_pulls_in_another_order(tmp_path):
+    docs = [{"c.d": "dotted"}, {"c_d": "literal"}, {"": "empty"}, {"_empty": "named"}, {"a": {"x.y": "nested"}}]
+    first, notes = _columns_of(tmp_path, docs)
+    assert first == {"dotted": "c_d", "literal": "c_d_2", "empty": "_empty", "named": "_empty_2", "nested": "a.x_y"}
+    assert _columns_of(tmp_path, docs[::-1])[0] != first  # without the earlier names, the order decides
+    again, later = _columns_of(tmp_path, docs[::-1], notes["key_paths"])
+    assert again == first and sorted(map(tuple, map(tuple, later["key_paths"]))) == sorted(
+        map(tuple, map(tuple, notes["key_paths"]))
+    )
