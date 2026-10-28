@@ -233,12 +233,21 @@ def insert_field(conn, dataset_id: int, p: profiling.FieldProfile, db_col: str, 
     return fid
 
 
-def update_field(conn, field_id: int, p: profiling.FieldProfile, db_col: str) -> None:
-    """A field's new profile after a refresh, keeping its id, name and whatever anyone decided about it. A decision
-    or settings nobody chose (still the suggestion) follow the new suggestion, as a new field's would, except a
-    target's type, which is part of its role, and a reviewed field's settings; actions and target state are
-    re-derived by refresh_target_state afterwards."""
+def update_field(conn, field_id: int, p: profiling.FieldProfile, db_col: str, parquet: Path) -> None:
+    """A field's new profile after a refresh (`parquet` is the new data), keeping its id, name and whatever anyone
+    decided about it. A decision or settings nobody chose (still the suggestion) follow the new suggestion, as a new
+    field's would, except a target's type, which is part of its role, and a reviewed field's settings; actions and
+    target state are re-derived by refresh_target_state afterwards."""
     by_family = suggest_all(p.inferred_type, p.summary, p.is_target)
+    stats = dict(p.stats)
+    old = conn.execute(
+        "SELECT stats ->> 'datetime_format' AS fmt FROM meta.fields WHERE id = %s", (field_id,)
+    ).fetchone()
+    if old["fmt"] and not stats.get("datetime_format"):
+        # Someone retyped it to datetime, which profiling doesn't know: its format is detected again on the new data,
+        # as the retype did on the old, and the old one stays when the new data gives none.
+        column = pl.read_parquet(parquet, columns=[p.name]).to_series()
+        stats["datetime_format"] = profiling.column_datetime_format(column) or old["fmt"]
     values = {
         "ordinal": p.ordinal,
         "db_column": db_col,
@@ -247,7 +256,7 @@ def update_field(conn, field_id: int, p: profiling.FieldProfile, db_col: str) ->
         "inference_confidence": p.confidence,
         "inference_reasons": p.reasons,
         **{c: json_safe(p.summary.get(c)) for c in SUMMARY_COLS},
-        "stats": jsonb(p.stats),
+        "stats": jsonb(stats),
         "charts": jsonb(p.charts),
         "suggestion": jsonb(by_family),
     }

@@ -129,7 +129,7 @@ def _refresh(ds: dict, src: dict, pull_id: int) -> None:
         family, targets = row["model_family"], list(row["target_columns"] or [])
         rejected = [p.name for p in profiles if p.name in targets and not p.is_target]
         rejected_ids, before = _untarget(conn, dataset_id, family, rejected)
-        field_ids, vanished = _reconcile(conn, dataset_id, profiles, db_cols, dropped)
+        field_ids, vanished = _reconcile(conn, dataset_id, profiles, db_cols, dropped, new)
         replace_correlations(conn, dataset_id, field_ids, assocs)
         upsert_correlations(conn, dataset_id, [(field_ids[a.i], field_ids[a.j], a) for a in screened])
         refresh_target_state(conn, dataset_id)
@@ -253,7 +253,12 @@ def _untarget(conn, dataset_id: int, family: str, rejected: list[str]) -> tuple[
 
 
 def _reconcile(
-    conn, dataset_id: int, profiles: list[profiling.FieldProfile], db_cols: list[str], dropped: list[int]
+    conn,
+    dataset_id: int,
+    profiles: list[profiling.FieldProfile],
+    db_cols: list[str],
+    dropped: list[int],
+    parquet: Path,
 ) -> tuple[list[int], list[str]]:
     """Fields by name: a persisting one is updated in place, a new one inserted with seeded suggestions, a vanished
     one deleted (its decisions, history, settings and correlations go with it), and so is a derived field that
@@ -271,7 +276,7 @@ def _reconcile(
     ids = []
     for p, db_col in zip(profiles, db_cols):
         if p.name in existing:
-            update_field(conn, existing[p.name], p, db_col)
+            update_field(conn, existing[p.name], p, db_col, parquet)
             ids.append(existing[p.name])
         else:
             ids.append(insert_field(conn, dataset_id, p, db_col))

@@ -7,15 +7,17 @@ import random
 
 import polars as pl
 import pytest
+from pymongo import UpdateOne
 from pymongo.errors import PyMongoError
 
 from app import db, recipes, refresh
 from app.analysis.runner import data_version, public
 from app.config import get_settings
 from app.processing import not_used_as_targets
+from app.profiling import parse_datetime
 from app.routers.datasets import SELECT_DATASET
 from app.routers.derived import DerivedIn, add_derived
-from app.routers.fields import set_targets
+from app.routers.fields import _remember_datetime_format, set_targets
 from app.sources.mongodb import MongoSource
 from app.sources.pull import run_connect
 
@@ -330,6 +332,41 @@ def test_refresh_recomputes_derived_and_drops_orphans(source):
         )
     }
     assert after["db_column"] in cols
+
+
+def _day_first_dates(coll) -> None:
+    """A `seen` date on every document, day first, with too much junk for profiling to infer dates."""
+    coll.bulk_write(
+        [
+            UpdateOne(
+                {"_id": d["_id"]},
+                {"$set": {"seen": f"{i % 28 + 1:02d}/{i % 12 + 1:02d}/2023" if i % 7 else f"unknown {i}"}},
+            )
+            for i, d in enumerate(coll.find({}, {"_id": 1}))
+        ]
+    )
+
+
+def test_refresh_keeps_the_date_format_of_a_field_retyped_to_datetime(source):
+    for coll in (source.curated, source.massive):
+        _day_first_dates(coll)
+    ds = _connect(source, finalize=False)
+    seen = _field(ds, "seen")
+    assert seen["inferred_type"] != "datetime"
+    with db.connection() as conn:
+        conn.execute("UPDATE meta.field_decisions SET semantic_type = 'datetime' WHERE field_id = %s", (seen["id"],))
+        _remember_datetime_format(conn, seen)
+    assert _field(ds, "seen")["stats"]["datetime_format"] == "%d/%m/%Y"
+    source.massive.insert_many(_fresh_docs(10, 0))
+
+    assert _refresh(ds)["status"] == "done"
+
+    assert _field(ds, "seen")["stats"]["datetime_format"] == "%d/%m/%Y"
+    with db.connection() as conn:
+        (row,) = [r for r in recipes.spec_rows(conn, ds, recipes.snapshot(conn, ds), "tree") if r["name"] == "seen"]
+    col = pl.read_parquet(_dataset(ds)["parquet_path"], columns=["seen"]).to_series()
+    dates = col.str.contains("/").fill_null(False).sum()
+    assert dates > 500 and parse_datetime(col, row["datetime_format"]).drop_nulls().len() == dates
 
 
 def test_refresh_failure_leaves_the_dataset_untouched(source, mongo_url, monkeypatch):
