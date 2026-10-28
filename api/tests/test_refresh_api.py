@@ -334,3 +334,54 @@ def test_mlflow_logs_the_pull_an_export_was_built_from(file_store, tmp_path):  #
     assert file_store.get_run(run_id).data.params["rainforest.pull_id"] == "12"
     _, plain = mlflow_log.log_run(_run_row(2), "Vehicles", {"model": "lightgbm"}, model_dir)
     assert "rainforest.pull_id" not in file_store.get_run(plain).data.params
+
+
+def _new_version_after_refresh(lead, mongo, name: str, change) -> tuple[int, object]:
+    """A dataset refreshed after `change` to its collection, and the response to starting a new version on it."""
+    ds = _connected(lead, mongo, name)
+    change(mongo.curated)
+    with _held(lead, ds):
+        pass
+    assert _latest_pull(ds)["status"] == "done", _latest_pull(ds)["error"]
+    return ds, lead.post(f"/api/datasets/{ds}/recipes", json={})
+
+
+def test_a_new_version_starts_once_a_refresh_removed_a_baseline_target(lead, mongo):
+    ds, r = _new_version_after_refresh(
+        lead, mongo, "Target unset", lambda c: c.update_many({}, {"$unset": {"vehicle": ""}})
+    )
+    try:
+        assert r.status_code == 200, r.text
+        assert lead.get(f"/api/datasets/{ds}").json()["target_columns"] == []
+        engine = db.fetch_one("SELECT * FROM meta.field_decisions WHERE field_id = %s", (_field(ds, "engine")["id"],))
+        assert engine["action"] == "keep" and engine["source"] == "user" and engine["reviewed"]
+        summary = {
+            "missing": ["vehicle"],
+            "targets_not_carried": [{"name": "vehicle", "problem": "no longer in the data"}],
+        }
+        assert r.json()["recipe"]["start_summary"] == summary
+        assert lead.get(f"/api/datasets/{ds}/recipes").json()[0]["start_summary"] == summary
+    finally:
+        seed(mongo)
+        lead.delete(f"/api/datasets/{ds}")
+
+
+def test_a_new_version_starts_once_profiling_turned_a_baseline_target_down(lead, mongo):
+    def many_labels(c):
+        c.insert_many([{"vehicle": f"V{i:03d}", "engine": "V6", "rpm": {"mean": 1000.0 + i}} for i in range(200)])
+
+    ds, r = _new_version_after_refresh(lead, mongo, "Target rejected", many_labels)
+    try:
+        assert r.status_code == 200, r.text
+        assert lead.get(f"/api/datasets/{ds}").json()["target_columns"] == []
+        vehicle = _field(ds, "vehicle")
+        assert (
+            db.fetch_one("SELECT action FROM meta.field_decisions WHERE field_id = %s", (vehicle["id"],))["action"]
+            != "target"
+        )
+        summary = r.json()["recipe"]["start_summary"]
+        (dropped,) = summary["targets_not_carried"]
+        assert summary["missing"] == [] and dropped["name"] == "vehicle" and "distinct values" in dropped["problem"]
+    finally:
+        seed(mongo)
+        lead.delete(f"/api/datasets/{ds}")

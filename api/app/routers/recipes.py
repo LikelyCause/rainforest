@@ -41,7 +41,7 @@ def versions(dataset_id: int, _: CurrentUser) -> list[dict]:
         rows = conn.execute(
             """SELECT r.id, r.dataset_id, r.family, r.version, r.phase, r.scope, r.parent_id, r.created_by,
                       cu.name AS created_by_name, r.created_at, r.finalized_by, fu.name AS finalized_by_name,
-                      r.finalized_at, r.reuse,
+                      r.finalized_at, r.reuse, r.start_summary,
                       CASE WHEN r.scope = 'reopened'
                            THEN (SELECT count(*) FROM meta.recipe_reopened o WHERE o.recipe_id = r.id) END AS reopened,
                       p.dataset_id AS parent_dataset_id, p.family AS parent_family, p.version AS parent_version,

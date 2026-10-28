@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { builtFrom, fmtChange, fmtValue, pickable, reasonDetail, reuseGroups, startLabel } from "./recipes";
+import { builtFrom, fmtChange, fmtValue, pickable, reasonDetail, reuseGroups, startLabel, startNotes } from "./recipes";
 import type { FieldListItem, ReuseSummary } from "./types";
 
 const summary: ReuseSummary = {
@@ -131,5 +131,23 @@ describe("builtFrom", () => {
     expect(builtFrom({ ...v, reuse: { ...summary, source: { ...summary.source, family: "linear" } } }, true)).toBe(
       "reused Linear baseline v3 of Churn (since deleted)",
     );
+  });
+});
+
+describe("startNotes", () => {
+  it("says what a new version could not carry over after a refresh", () => {
+    expect(startNotes(null)).toEqual([]);
+    expect(
+      startNotes({
+        missing: ["engine", "tags"],
+        targets_not_carried: [
+          { name: "engine", problem: "no longer in the data" },
+          { name: "vehicle", problem: "205 distinct values; predicting classes allows at most 100" },
+        ],
+      }),
+    ).toEqual([
+      "No longer in the data: engine, tags.",
+      "Not carried over as targets: engine (no longer in the data), vehicle (205 distinct values; predicting classes allows at most 100).",
+    ]);
   });
 });

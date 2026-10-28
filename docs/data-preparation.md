@@ -141,8 +141,10 @@ a field is *carried* when its type is unchanged and its statistics haven't drift
 the distinct values within half to double), and *reopened* when it is new, has a new type or has drifted, with the
 numbers. Fields of the baseline that are gone are listed. The result is that pull's **drift summary**, shown for each
 family above the baselines on *Versions* and under *Latest pull* in the *Team* page's queue, where a lead can start a
-new version with the reopened fields selected. The *Team* page opens on it when the pull came after the version was
-finalized. A dataset with no finalized baseline gets no drift summary; its decisions that are still at their
+new version with the reopened fields selected. The new version carries the baseline's decisions for the fields still
+in the data; a target that is gone, or that is no longer a valid target, is left out (a field still there takes its
+suggestion), and the version's page lists what wasn't carried over. The *Team* page opens on the drift summary when
+the pull came after the version was finalized. A dataset with no finalized baseline gets no drift summary; its decisions that are still at their
 suggestion follow the new suggestions. A pull from before a baseline was finalized, such as the first pull, has no
 comparison with it and says so; the next refresh compares them.
 

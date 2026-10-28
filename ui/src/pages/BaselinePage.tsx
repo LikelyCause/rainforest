@@ -12,7 +12,7 @@ import { StartBaseline } from "../components/StartBaseline";
 import { ErrorAlert } from "../components/ui";
 import { FAMILIES, setupNote } from "../baselines";
 import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtInt } from "../format";
-import { builtFrom } from "../recipes";
+import { builtFrom, startNotes } from "../recipes";
 import { submittedText } from "../team";
 import { showError, toast } from "../toast";
 import type { AssessorProgress, Dataset, Experiment, RecipeVersion, TeamState } from "../types";
@@ -105,6 +105,11 @@ export function BaselinePage() {
       <div className="bl-grid">
         <div className="bl-main">
           <Title ds={ds} team={t} />
+          {t.recipe.phase !== "finalized" && startNotes(t.recipe.start_summary).length > 0 && (
+            <Banner tone="warn" title="Not everything was carried over from the version before.">
+              {startNotes(t.recipe.start_summary).join(" ")}
+            </Banner>
+          )}
           {t.recipe.phase === "assessing" ? (
             <Assessing ds={ds} team={t} />
           ) : t.recipe.phase === "review" ? (

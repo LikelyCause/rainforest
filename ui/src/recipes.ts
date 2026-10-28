@@ -8,6 +8,7 @@ import type {
   ReopenReason,
   ReopenedField,
   ReuseSummary,
+  StartSummary,
   TargetBins,
   TargetTask,
 } from "./types";
@@ -138,6 +139,18 @@ export function startLabel(next: number, reopen: number): string {
   return reopen === 0
     ? `Start v${next} and edit directly`
     : `Start v${next}, reopening ${reopen} field${reopen === 1 ? "" : "s"}`;
+}
+
+/** What a new version could not carry over from the one before, one sentence each; empty when it carried everything. */
+export function startNotes(s: StartSummary | null | undefined): string[] {
+  if (!s) return [];
+  const out: string[] = [];
+  if (s.missing.length) out.push(`No longer in the data: ${s.missing.join(", ")}.`);
+  if (s.targets_not_carried.length)
+    out.push(
+      `Not carried over as targets: ${s.targets_not_carried.map((t) => `${t.name} (${t.problem})`).join(", ")}.`,
+    );
+  return out;
 }
 
 /** What a version was built from: a reused baseline of another dataset, the version or baseline before, or the suggestions.

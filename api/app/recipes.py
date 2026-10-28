@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from psycopg import sql
 
 from .db import jsonb
-from .semantics import SETTING_KEYS, suggest, validate_decision
+from .semantics import SETTING_KEYS, suggest, target_problem, validate_decision
 
 DECISION_KEYS = ("action", "semantic_type", "notes", "target_task", "target_bins")
 FAMILY_LABEL = {"tree": "Trees", "linear": "Linear", "neural": "Neural"}
@@ -56,20 +56,50 @@ def start_version(
     conn, dataset_id: int, user_id: int | None, family: str, phase: str = "assessing", scope: str = "all"
 ) -> dict:
     """The next version of `family`'s baseline, from its latest finalized version, whose snapshot becomes the
-    working copy (every field carried over as reviewed). Returns the new row with `_target_work`, the
-    (uncorrelated, added) pair from setting its targets."""
+    working copy (every field carried over as reviewed). A refresh since may have removed some of its fields or made
+    a target invalid: those targets are left out (their fields, when still there, take their suggestions) and the
+    version's `start_summary` says so. Returns the new row with `_target_work`, the (uncorrelated, added) pair from
+    setting its targets."""
     lock_dataset(conn, dataset_id)
     require_none_in_progress(current(conn, dataset_id, lock="update"))
     parent = latest_finalized(conn, dataset_id, family)
     if parent is None:
         raise HTTPException(409, f"There's no finalized {FAMILY_LABEL[family]} baseline to start a new version from.")
-    row = conn.execute(
-        f"""INSERT INTO meta.recipes (dataset_id, family, version, phase, scope, parent_id, created_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING {RECIPE_COLS}""",
-        (dataset_id, family, next_version(conn, dataset_id, family), phase, scope, parent["id"], user_id),
-    ).fetchone()
     snap = snapshot_of(conn, parent)
-    work = load_working(conn, dataset_id, snap, family, snapshot_targets(snap), user_id, reviewed=True)
+    n_unique = {
+        r["name"]: r["n_unique"]
+        for r in conn.execute("SELECT name, n_unique FROM meta.fields WHERE dataset_id = %s", (dataset_id,)).fetchall()
+    }
+    targets, not_carried = [], []
+    for name, task in snapshot_target_tasks(snap).items():
+        problem = (
+            target_problem(snap["fields"][name]["decision"]["semantic_type"], n_unique[name], task["task"])
+            if name in n_unique
+            else "no longer in the data"
+        )
+        if problem:
+            not_carried.append({"name": name, "problem": problem})
+        else:
+            targets.append(name)
+    missing = [n for n in snap["fields"] if n not in n_unique]
+    summary = {"missing": missing, "targets_not_carried": not_carried} if missing or not_carried else None
+    row = conn.execute(
+        f"""INSERT INTO meta.recipes (dataset_id, family, version, phase, scope, parent_id, created_by, start_summary)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING {RECIPE_COLS}""",
+        (
+            dataset_id,
+            family,
+            next_version(conn, dataset_id, family),
+            phase,
+            scope,
+            parent["id"],
+            user_id,
+            None if summary is None else jsonb(summary),
+        ),
+    ).fetchone()
+    dropped = {t["name"] for t in not_carried}
+    working = {**snap, "fields": {n: f for n, f in snap["fields"].items() if n not in dropped}}
+    work = load_working(conn, dataset_id, working, family, targets, user_id, reviewed=True)
     return {**row, "_target_work": work}
 
 

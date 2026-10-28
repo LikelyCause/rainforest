@@ -124,7 +124,7 @@ def _team_state(conn, dataset_id: int, user: dict) -> dict:
         ).fetchall()
     }
     open_ = recipes.open_field_ids(conn, recipe)
-    reuse = conn.execute("SELECT reuse FROM meta.recipes WHERE id = %s", (recipe["id"],)).fetchone()["reuse"]
+    extra = conn.execute("SELECT reuse, start_summary FROM meta.recipes WHERE id = %s", (recipe["id"],)).fetchone()
     return {
         "recipe": {
             **recipe,
@@ -133,7 +133,8 @@ def _team_state(conn, dataset_id: int, user: dict) -> dict:
             "created_by_name": names.get(recipe["created_by"]),
             "finalized_by_name": names.get(recipe["finalized_by"]),
             "reopened": None if open_ is None else len(open_),
-            "reuse": reuse,
+            "reuse": extra["reuse"],
+            "start_summary": extra["start_summary"],
         },
         "assessors": assessors,
         "me": None

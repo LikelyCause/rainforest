@@ -907,6 +907,13 @@ export interface Recipe {
   /** How many fields this version reopened; null when every field is open. */
   reopened?: number | null;
   reuse?: ReuseSummary | null;
+  start_summary?: StartSummary | null;
+}
+
+/** What a new version could not carry over from the version before, because a refresh changed the data since. */
+export interface StartSummary {
+  missing: string[];
+  targets_not_carried: { name: string; problem: string }[];
 }
 
 export type ReopenReason = "new" | "type_changed" | "drift" | "target" | "settings";
