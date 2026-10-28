@@ -376,7 +376,8 @@ nothing is chained. The run is named for the class, as in "LightGBM · vehicle =
   0.01, for validation and test.
 - `balance` weights the classes by their training counts: LightGBM and XGBoost get a positive-class weight of
   negatives / positives, and random forest, histogram GBM and logistic regression get balanced class weights. MLP has
-  no class weights; the report notes that balance was ignored. Balance can't be combined with a class-weight setting.
+  no class weights; the report notes that balance was ignored. Balance can't be combined with a class-weight setting
+  changed from its default.
 - Cross-validation folds are calibrated on the validation split too.
 - The training split needs rows of the class and of the rest, and so does the validation split.
 

@@ -238,13 +238,24 @@ def ovr_label(spec: ModelSpec, target: str, positive_class: str) -> str:
     return f"{spec.label} · {target} = {positive_class} vs rest"
 
 
-# The settings that weight classes; a one-vs-rest run's `balance` sets one of them itself.
-CLASS_WEIGHTING = ("class_weight", "scale_pos_weight", "is_unbalance")
+# The settings that weight classes, at the values that weight nothing; a one-vs-rest run's `balance` sets one itself.
+CLASS_WEIGHTING = {"class_weight": None, "scale_pos_weight": 1.0, "is_unbalance": False}
 
 
-def one_vs_rest_target(manifest: dict, target: str | None, positive_class: str) -> tuple[str | None, str | None]:
-    """The class target a one-vs-rest run of `positive_class` trains on (the export's only target when `target` is
-    None), or the reason there isn't one."""
+def weighting_clash(spec: ModelSpec, params: dict[str, Any]) -> list[str]:
+    """The class-weighting settings in `params` that `balance` would contradict: those moved off their defaults (a
+    client sending every setting sends these too)."""
+    catalogued = {s.name: s.default for s in model_params.settings_for(spec.key) or []}
+    return [
+        k
+        for k, neutral in CLASS_WEIGHTING.items()
+        if k in params and params[k] != catalogued.get(k, spec.default_params.get(k, neutral))
+    ]
+
+
+def class_target(manifest: dict, target: str | None) -> tuple[str | None, str | None]:
+    """The class target one-vs-rest runs train on (the export's only target when `target` is None), or the reason
+    there isn't one."""
     targets = manifest["targets"]
     if target is None:
         if len(targets) != 1:
@@ -254,6 +265,14 @@ def one_vs_rest_target(manifest: dict, target: str | None, positive_class: str) 
         return None, f"{target!r} isn't a target of this export (its targets: {', '.join(targets)})"
     if (manifest.get("target_kinds") or {}).get(target) == "regression":
         return None, f"{target} is predicted as a number; a one-vs-rest run needs classes or bands"
+    return target, None
+
+
+def one_vs_rest_target(manifest: dict, target: str | None, positive_class: str) -> tuple[str | None, str | None]:
+    """The class target a one-vs-rest run of `positive_class` trains on, or the reason there isn't one."""
+    target, problem = class_target(manifest, target)
+    if problem:
+        return None, problem
     classes = (manifest.get("target_classes") or {}).get(target) or []
     if positive_class not in classes:
         shown = ", ".join(classes[:20]) + (f" and {len(classes) - 20} more" if len(classes) > 20 else "")

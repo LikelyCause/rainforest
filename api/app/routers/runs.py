@@ -18,7 +18,6 @@ from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..modeling import mlflow_log
 from ..modeling import params as model_params
 from ..modeling.registry import (
-    CLASS_WEIGHTING,
     MODELS,
     PLANNED,
     catalog,
@@ -30,6 +29,7 @@ from ..modeling.registry import (
     ovr_label,
     param_problems,
     regression_problem,
+    weighting_clash,
 )
 from ..schemas import RunRequest
 from ._lock import refuse_while_refreshing
@@ -121,7 +121,7 @@ def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
             raise HTTPException(422, problem)
         if req.order is not None and req.order != [req.target]:
             raise HTTPException(422, f"A one-vs-rest run trains only {req.target}; leave the order out")
-        if req.balance and (clash := [k for k in CLASS_WEIGHTING if k in req.params]):
+        if req.balance and (clash := weighting_clash(spec, req.params)):
             raise HTTPException(422, f"Choose balance or set {', '.join(clash)}, not both")
         targets, kinds = [req.target], ["binary"]
     else:

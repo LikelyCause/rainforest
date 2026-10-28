@@ -54,19 +54,33 @@ def _is_range(spec: Any) -> bool:
     return isinstance(spec, dict)
 
 
-def grid(space: dict[str, list]) -> list[dict]:
-    """Every combination of the lists, in the space's order."""
+def grid_size(space: dict[str, list]) -> int:
+    """How many combinations `grid` would give, without building them."""
     for name, values in space.items():
         if _is_range(values):
             raise ValueError(f"{name}: a grid takes lists of values; use random sampling for a range")
+        if not isinstance(values, (list, tuple)):
+            raise ValueError(f"{name}: give a list of values")
         if not values:
             raise ValueError(f"{name}: no values to try")
+    return math.prod(len(v) for v in space.values())
+
+
+def grid(space: dict[str, list]) -> list[dict]:
+    """Every combination of the lists, in the space's order."""
+    grid_size(space)
     return [dict(zip(space, combo)) for combo in itertools.product(*space.values())]
 
 
+def _finite(b: Any) -> bool:
+    try:
+        return isinstance(b, (int, float)) and not isinstance(b, bool) and math.isfinite(b)
+    except OverflowError:  # an int too large for a float
+        return False
+
+
 def _check_range(name: str, spec: dict) -> None:
-    bounds = (spec.get("low"), spec.get("high"))
-    if not all(isinstance(b, (int, float)) and not isinstance(b, bool) and math.isfinite(b) for b in bounds):
+    if not (_finite(spec.get("low")) and _finite(spec.get("high"))):
         raise ValueError(f"{name}: a range needs a finite numeric low and high")
     if spec["low"] > spec["high"]:
         raise ValueError(f"{name}: the range's low is above its high")

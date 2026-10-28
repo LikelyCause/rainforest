@@ -57,7 +57,6 @@ from ..gpu import effective_device
 from . import crossval
 from .mlflow_log import MODEL_FILE
 from .registry import (
-    CLASS_WEIGHTING,
     DEFAULT_MODEL,
     MODELS,
     ModelSpec,
@@ -74,6 +73,7 @@ from .registry import (
     param_problems,
     regression_problem,
     regressor_params,
+    weighting_clash,
 )
 
 log = logging.getLogger("train")
@@ -378,6 +378,8 @@ def choose_threshold(curve: list[dict], rule: dict) -> tuple[float, str | None]:
         return float(value), None
     if kind not in ("f1", "precision"):
         raise ValueError(f"Unknown threshold rule {kind!r} (choose f1, precision or fixed)")
+    if not curve:
+        raise ValueError("The run has no threshold curve on validation to choose a threshold from")
     points = sorted(curve, key=lambda p: p["threshold"])
     best = max(points, key=lambda p: p["f1"])
     f1_choice, f1_note = float(best["threshold"]), None
@@ -831,7 +833,7 @@ def _train_one_vs_rest(
         raise ValueError(f"The validation split needs rows of {name} and of the rest to calibrate the model")
     weighting = None
     if balance:
-        if clash := [k for k in CLASS_WEIGHTING if k in params]:
+        if clash := weighting_clash(spec, params):
             raise ValueError(f"Choose balance or set {', '.join(clash)}, not both")
         weights, note = balance_params(spec, y_tr)
         params = {**params, **weights}

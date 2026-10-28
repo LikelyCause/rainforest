@@ -176,6 +176,34 @@ def test_balance_with_a_weighting_setting_is_refused(ovr_export, tmp_path):
         )
 
 
+def test_balance_with_weighting_settings_at_their_defaults_is_accepted(ovr_export, tmp_path):
+    # A client that sends every setting sends the weighting ones at their defaults; only a real choice clashes.
+    report = train(
+        ovr_export,
+        "lightgbm",
+        params={"n_estimators": 10, "is_unbalance": False, "scale_pos_weight": 1.0, "class_weight": None},
+        out_dir=tmp_path / "m",
+        target="vehicle",
+        positive_class="V04",
+        balance=True,
+    )
+    assert report["params"]["scale_pos_weight"] > 10
+
+
+def test_weighting_clash_names_only_settings_moved_off_their_defaults():
+    from app.modeling.registry import weighting_clash
+
+    lgbm = MODELS["lightgbm"]
+    assert weighting_clash(lgbm, {"is_unbalance": False, "scale_pos_weight": 1, "class_weight": None}) == []
+    assert weighting_clash(lgbm, {"is_unbalance": True, "scale_pos_weight": 1.0}) == ["is_unbalance"]
+    assert weighting_clash(lgbm, {"scale_pos_weight": 3.0, "class_weight": "balanced"}) == [
+        "class_weight",
+        "scale_pos_weight",
+    ]
+    assert weighting_clash(MODELS["random_forest"], {"class_weight": None}) == []
+    assert weighting_clash(MODELS["random_forest"], {"class_weight": "balanced"}) == ["class_weight"]
+
+
 def test_cross_validation_on_a_one_vs_rest_run(ovr_export, tmp_path):
     report = _ovr(ovr_export, tmp_path / "m", cv_folds=3)
     assert report["cross_validation"]["folds"] == 3 and report["cross_validation"]["stratified_on"] == "vehicle"
@@ -225,6 +253,12 @@ def test_choose_threshold_rules():
         choose_threshold(CURVE, {"kind": "median"})
 
 
+def test_choose_threshold_on_an_empty_curve_says_so():
+    for rule in ({"kind": "f1"}, {"kind": "precision", "min": 0.8}):
+        with pytest.raises(ValueError, match="no threshold curve"):
+            choose_threshold([], rule)
+
+
 def test_a_curve_where_nothing_scores_falls_back_to_one_half():
     flat = [{**p, "precision": 0.0, "recall": 0.0, "f1": 0.0} for p in CURVE]
     t, note = choose_threshold(flat, {"kind": "f1"})
@@ -243,6 +277,19 @@ def test_mlflow_records_the_positive_class_and_the_batch():
     plain = run_tags({"dataset_id": 1, "export_id": 2, "id": 3}, "d", {"model": "lightgbm"}, None)
     assert not {"rainforest.positive_class", "rainforest.batch_id", "rainforest.batch_kind"} & set(plain)
     assert model_file_name({"chain_kind": "one_vs_rest"}) == "calibrated_classifier.joblib"
+
+
+def test_scores_of_a_single_number_target_run_are_its_predicted_numbers(ovr_export, tmp_path):
+    report = train(ovr_export, "lightgbm", ["price"], params={"n_estimators": 30}, cv=None, out_dir=tmp_path / "m")
+    assert report["chain_kind"] == "target_chain"
+    manifest, df = load_export(ovr_export)
+    test = df.filter(pl.col(manifest["split_column"]) == "test")
+    X, y = test.select(manifest["feature_names"]).to_numpy(), test["price"].to_numpy()
+    values = predict_scores(tmp_path / "m", X)
+    assert values.shape == (len(X),) and values.dtype.kind == "f"
+    # The numbers the run was scored on: the same rows give the report's test RMSE.
+    rmse = float(np.sqrt(np.mean((values - y) ** 2)))
+    assert rmse == pytest.approx(report["metrics"]["test"]["price"]["rmse"], rel=1e-9)
 
 
 def test_run_requests_default_to_no_positive_class():

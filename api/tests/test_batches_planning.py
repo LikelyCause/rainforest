@@ -124,6 +124,20 @@ def test_grid_refuses_an_empty_list_and_names_the_setting():
         batches.grid({"max_depth": [], "n_estimators": [10]})
 
 
+def test_grid_refuses_a_scalar_where_a_list_is_expected_and_names_the_setting():
+    # A string is iterable: without the check "gbdt" would give four combinations, one per letter.
+    for bad in ("gbdt", 5, None):
+        with pytest.raises(ValueError, match="boosting_type"):
+            batches.grid({"boosting_type": bad, "n_estimators": [10]})
+
+
+def test_grid_size_counts_the_combinations_without_building_them():
+    assert batches.grid_size({"a": [1, 2, 3], "b": ["x", "y"]}) == 6
+    assert batches.grid_size({"a": list(range(1000)), "b": list(range(1000)), "c": list(range(1000))}) == 10**9
+    with pytest.raises(ValueError, match="learning_rate"):
+        batches.grid_size({"learning_rate": {"low": 0.01, "high": 0.3}})
+
+
 # ---- random -------------------------------------------------------------------------------------------------------
 
 SPACE = {
@@ -251,6 +265,12 @@ def test_a_scalar_where_a_list_is_expected_names_the_setting():
 def test_malformed_ranges_are_refused_with_the_setting_named(spec):
     with pytest.raises(ValueError, match="x"):
         batches.random_samples({"x": spec}, 1, 0, _ok)
+
+
+def test_a_range_bound_too_large_for_a_float_is_refused_with_the_setting_named():
+    for spec in ({"low": 1, "high": 10**400}, {"low": -(10**400), "high": 1}):
+        with pytest.raises(ValueError, match="num_leaves"):
+            batches.random_samples({"num_leaves": spec}, 1, 0, _ok)
 
 
 # ---- settings -----------------------------------------------------------------------------------------------------
