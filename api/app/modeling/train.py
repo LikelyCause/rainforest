@@ -43,6 +43,7 @@ from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
     balanced_accuracy_score,
+    brier_score_loss,
     confusion_matrix,
     log_loss,
     precision_recall_fscore_support,
@@ -56,6 +57,7 @@ from ..gpu import effective_device
 from . import crossval
 from .mlflow_log import MODEL_FILE
 from .registry import (
+    CLASS_WEIGHTING,
     DEFAULT_MODEL,
     MODELS,
     ModelSpec,
@@ -66,7 +68,9 @@ from .registry import (
     get_model,
     importances,
     label_for,
+    one_vs_rest_target,
     order_problem,
+    ovr_label,
     param_problems,
     regression_problem,
     regressor_params,
@@ -336,11 +340,15 @@ def evaluate(
     return out, details
 
 
-def threshold_table(y_true: np.ndarray, p1: np.ndarray) -> list[dict[str, float]]:
-    """Precision, recall and F1 of the positive class, and the share flagged, at each threshold from 0.05 to 0.95:
-    what moving the cut-off from 0.5 would trade."""
+TABLE_THRESHOLDS = np.round(np.arange(0.05, 0.951, 0.05), 2)
+CURVE_THRESHOLDS = np.round(np.linspace(0, 1, 101), 2)
+
+
+def threshold_table(y_true: np.ndarray, p1: np.ndarray, thresholds: np.ndarray = TABLE_THRESHOLDS) -> list[dict]:
+    """Precision, recall and F1 of the positive class, and the share flagged, at each threshold (by default 0.05 to
+    0.95): what moving the cut-off from 0.5 would trade."""
     out = []
-    for t in np.round(np.arange(0.05, 0.951, 0.05), 2):
+    for t in thresholds:
         flagged = p1 >= t
         tp = int((flagged & (y_true == 1)).sum())
         prec = tp / int(flagged.sum()) if flagged.any() else 0.0
@@ -355,6 +363,135 @@ def threshold_table(y_true: np.ndarray, p1: np.ndarray) -> list[dict[str, float]
             }
         )
     return out
+
+
+def choose_threshold(curve: list[dict], rule: dict) -> tuple[float, str | None]:
+    """A binary model's cut-off from its validation threshold curve, and a note when the rule couldn't be met.
+
+    `{"kind": "f1"}` takes the threshold that maximises F1 (the lowest of a tie); `{"kind": "precision", "min": p}` the
+    lowest whose precision reaches p, else the F1 choice; `{"kind": "fixed", "value": t}` takes t."""
+    kind = rule.get("kind")
+    if kind == "fixed":
+        value = rule.get("value")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 1:
+            raise ValueError("A fixed threshold must be a number from 0 to 1")
+        return float(value), None
+    if kind not in ("f1", "precision"):
+        raise ValueError(f"Unknown threshold rule {kind!r} (choose f1, precision or fixed)")
+    points = sorted(curve, key=lambda p: p["threshold"])
+    best = max(points, key=lambda p: p["f1"])
+    f1_choice, f1_note = float(best["threshold"]), None
+    if best["f1"] <= 0:
+        # Every cut-off would be as good as flagging everything (threshold 0), which is no choice at all.
+        f1_choice, f1_note = 0.5, "No threshold gives a positive F1 on validation; 0.5 is used"
+    if kind == "f1":
+        return f1_choice, f1_note
+    p = rule.get("min")
+    if isinstance(p, bool) or not isinstance(p, (int, float)) or not 0 < p <= 1:
+        raise ValueError("A precision rule needs a minimum above 0 and at most 1")
+    if hit := next((pt for pt in points if pt["precision"] >= p), None):
+        return float(hit["threshold"]), None
+    note = f"No threshold reaches precision {p:g} on validation; the F1 choice ({f1_choice:.2f}) is used"
+    return f1_choice, f"{note}. {f1_note}" if f1_note else note
+
+
+ISOTONIC_MIN = 200
+
+
+def calibration_method(positives: int, negatives: int) -> str:
+    """Isotonic regression fits any monotone shape but overfits a small split; Platt's sigmoid needs far fewer rows."""
+    return "isotonic" if positives >= ISOTONIC_MIN and negatives >= ISOTONIC_MIN else "sigmoid"
+
+
+def calibrate(est, X: np.ndarray, y: np.ndarray, method: str, handles_nan: bool):
+    """`est`, already fitted, with a calibrator fit on (X, y): its predict_proba gives calibrated probabilities."""
+    from sklearn.calibration import CalibratedClassifierCV
+    from sklearn.frozen import FrozenEstimator
+
+    rows = np.arange(len(y))
+    # One "fold" that both fits (a no-op on the frozen model) and predicts every row, so the calibrator learns from all
+    # of them, as cv="prefit" does (deprecated in scikit-learn 1.6), and no class needs a minimum count per fold.
+    with config_context(assume_finite=handles_nan):
+        return CalibratedClassifierCV(FrozenEstimator(est), method=method, cv=[(rows, rows)]).fit(X, y)
+
+
+def balance_params(spec: ModelSpec, y: np.ndarray) -> tuple[dict[str, Any], str | None]:
+    """Class weighting for a binary target `y`: the boosters' own positive-class weight (negatives / positives), the
+    "balanced" class weight for models that have one, or nothing and a note."""
+    if spec.key in ("lightgbm", "xgboost"):
+        pos = int(np.sum(y == 1))
+        return {"scale_pos_weight": (len(y) - pos) / pos}, None
+    if "class_weight" in spec.build({}, 0).get_params():
+        return {"class_weight": "balanced"}, None
+    return {}, f"{spec.label} has no class weighting; balance was ignored"
+
+
+def scores_of(model, report: dict, X: np.ndarray) -> np.ndarray:
+    """A run's scores for rows X (the export's features, in manifest order): calibrated P(positive) for a one-vs-rest
+    run; for a single-target run, the class-probability matrix (column j = encoded class j) or the predicted
+    numbers. Rows are scored as float32, as training scores them, so the same rows give the same numbers."""
+    X = np.asarray(X, dtype=np.float32)
+    spec = MODELS.get(report.get("model"))
+    with config_context(assume_finite=bool(spec and spec.handles_nan)):
+        if report.get("chain_kind") == "one_vs_rest":
+            return model.predict_proba(X)[:, 1]
+        order = report.get("order") or []
+        if len(order) != 1:
+            raise ValueError("A chain of several targets has no single set of scores")
+        n_classes = [len((report.get("target_classes") or {}).get(order[0]) or [])]
+        if isinstance(model, TargetChain):
+            return model.predict_all(X, n_classes)[0]
+        return chain_predict_proba(model, X, n_classes)[0]
+
+
+def predict_scores(model_dir: Path, X: np.ndarray) -> np.ndarray:
+    """`scores_of` for the run saved in `model_dir`."""
+    report = json.loads((Path(model_dir) / "report.json").read_text())
+    return scores_of(joblib.load(Path(model_dir) / MODEL_FILE), report, X)
+
+
+def _train_groups(manifest: dict, df: pl.DataFrame, export_dir: Path) -> np.ndarray | None:
+    """The export's group of each training row, in row order, when the export kept groups whole."""
+    if not (gfile := manifest["files"].get("groups")):
+        return None
+    rows = df.filter(pl.col(manifest["split_column"]) == "train")["__row_id"].to_numpy()
+    return np.load(export_dir / gfile)[rows]
+
+
+def _cross_validate(
+    splits: list[tuple[np.ndarray, np.ndarray]],
+    note: str | None,
+    stratified_on: str | None,
+    single_valued: Callable[[np.ndarray], list[str]],
+    fit_score: Callable[[np.ndarray, np.ndarray], dict],
+    say: Callable[[str], None],
+) -> dict[str, Any]:
+    """Fit and score each fold. CV only adds scores: whatever stops a fold skips it with a note, and the run keeps its
+    model and scores."""
+    per_fold: list[dict[str, Any]] = []
+    t1 = time.time()
+    for k, (rows, _) in enumerate(splits, 1):
+        if lone := single_valued(rows):
+            splits, note = (
+                [],
+                f"Cross-validation skipped: fold {k}'s training rows have a single value of {', '.join(lone)}",
+            )
+            break
+    for k, (rows, held) in enumerate(splits, 1):
+        say(f"Cross-validating: fold {k} of {len(splits)}")
+        try:
+            per_fold.append(fit_score(rows, held))
+        except Exception as exc:  # noqa: BLE001 - any failure skips CV, not the run
+            log.warning("cross-validation fold %s of %s failed", k, len(splits), exc_info=True)
+            per_fold, note = [], f"Cross-validation skipped: fold {k} of {len(splits)} failed ({exc})"
+            break
+    return {
+        "folds": len(per_fold),
+        "stratified_on": stratified_on if per_fold else None,
+        "note": note,
+        "seconds": round(time.time() - t1, 1),
+        "targets": crossval.summarize(per_fold),
+    }
 
 
 SCATTER_MAX_POINTS = 1000
@@ -439,8 +576,15 @@ def train(
     progress: Callable[[str], None] | None = None,
     device: str = "cpu",
     cv_folds: int = 0,
+    target: str | None = None,
+    positive_class: str | None = None,
+    balance: bool = False,
 ) -> dict[str, Any]:
+    """Train a chain on the export's targets in `order_names`, or, with `positive_class`, one calibrated binary model
+    of that class of `target` against the rest (`balance` weights the classes)."""
     spec = get_model(model)
+    if positive_class is None and (target is not None or balance):
+        raise ValueError("target and balance apply to a one-vs-rest run; set positive_class too")
     if problems := param_problems(spec, params or {}):
         raise ValueError("; ".join(problems))
     if cv == 1:
@@ -453,6 +597,28 @@ def train(
     problem = compatibility(spec, export_family, bool(manifest.get("contains_nan", False)))
     if problem:
         raise ValueError(problem)
+    say = progress or (lambda msg: log.info(msg))
+    if positive_class is not None:
+        target, problem = one_vs_rest_target(manifest, target, positive_class)
+        if problem:
+            raise ValueError(problem)
+        if order_names and order_names != [target]:
+            raise ValueError(f"A one-vs-rest run trains only {target}; leave the order out")
+        return _train_one_vs_rest(
+            export_dir,
+            manifest,
+            df,
+            spec,
+            params,
+            seed,
+            out_dir,
+            say,
+            device,
+            cv_folds,
+            target,
+            positive_class,
+            balance,
+        )
     feats: list[str] = manifest["feature_names"]
     split_col = manifest["split_column"]
     order_names = order_names or manifest["targets"]
@@ -465,7 +631,6 @@ def train(
     numeric = [k == "regression" for k in kinds]
     if problem := regression_problem(spec, kinds):
         raise ValueError(problem)
-    say = progress or (lambda msg: log.info(msg))
 
     def xy(split: str) -> tuple[np.ndarray, np.ndarray]:
         part = df.filter(pl.col(split_col) == split)
@@ -554,47 +719,29 @@ def train(
     cross_validation = None
     if cv_folds:
         strat = next((i for i in order if not numeric[i]), None)
-        groups = None
-        if gfile := manifest["files"].get("groups"):
-            rows = df.filter(pl.col(split_col) == "train")["__row_id"].to_numpy()
-            groups = np.load(export_dir / gfile)[rows]
         splits, note, stratified = crossval.folds(
             None if strat is None else Y_tr[:, strat],
             len(X_tr),
             cv_folds,
             seed,
             None if strat is None else targets[strat],
-            groups,
+            _train_groups(manifest, df, export_dir),
         )
-        per_fold: list[dict[str, Any]] = []
-        t1 = time.time()
-        # CV only adds scores: whatever stops a fold skips it with a note, and the run keeps its model and scores.
-        for k, (rows, _) in enumerate(splits, 1):
-            if lone := [t for i, t in enumerate(targets) if np.unique(Y_tr[rows, i]).size < 2]:
-                splits, note = (
-                    [],
-                    (f"Cross-validation skipped: fold {k}'s training rows have a single value of {', '.join(lone)}"),
-                )
-                break
-        for k, (rows, held) in enumerate(splits, 1):
-            say(f"Cross-validating: fold {k} of {len(splits)}")
-            try:
-                fold_chain = make_chain()
-                fit(fold_chain, X_tr[rows], Y_tr[rows])
-                per_fold.append(score(fold_chain, X_tr[held], Y_tr[held])[0])
-            except Exception as exc:  # noqa: BLE001 - any failure skips CV, not the run
-                log.warning("cross-validation fold %s of %s failed", k, len(splits), exc_info=True)
-                per_fold, note = [], f"Cross-validation skipped: fold {k} of {len(splits)} failed ({exc})"
-                break
-        summary = crossval.summarize(per_fold)
-        cross_validation = {
-            "folds": len(per_fold),
-            "stratified_on": targets[strat] if stratified and per_fold else None,
-            "note": note,
-            "seconds": round(time.time() - t1, 1),
-            "targets": summary,
-        }
-        if summary:
+
+        def fit_score(rows: np.ndarray, held: np.ndarray) -> dict:
+            fold_chain = make_chain()
+            fit(fold_chain, X_tr[rows], Y_tr[rows])
+            return score(fold_chain, X_tr[held], Y_tr[held])[0]
+
+        cross_validation = _cross_validate(
+            splits,
+            note,
+            targets[strat] if stratified else None,
+            lambda rows: [t for i, t in enumerate(targets) if np.unique(Y_tr[rows, i]).size < 2],
+            fit_score,
+            say,
+        )
+        if summary := cross_validation["targets"]:
             metrics["cv"] = {t: {m: v["mean"] for m, v in ms.items()} for t, ms in summary.items()}
 
     top_features = {}
@@ -640,6 +787,171 @@ def train(
         },
         "metrics": metrics,
         "evaluation": details,
+        "top_features": top_features,
+        **({"cv_folds": cv_folds, "cross_validation": cross_validation} if cv_folds else {}),
+    }
+    (out_dir / "report.json").write_text(json.dumps(report, indent=2))
+    report["model_dir"] = str(out_dir)
+    return report
+
+
+def _train_one_vs_rest(
+    export_dir: Path,
+    manifest: dict,
+    df: pl.DataFrame,
+    spec: ModelSpec,
+    params: dict,
+    seed: int,
+    out_dir: Path | None,
+    say: Callable[[str], None],
+    device: str,
+    cv_folds: int,
+    target: str,
+    positive_class: str,
+    balance: bool,
+) -> dict[str, Any]:
+    """One binary model of `target == positive_class`, calibrated on the validation split; every score it reports is
+    a calibrated one. The export's other targets take no part."""
+    feats: list[str] = manifest["feature_names"]
+    split_col = manifest["split_column"]
+    code = manifest["target_classes"][target].index(positive_class)
+    labels = [f"not {positive_class}", positive_class]
+    name = f"{target} = {positive_class}"
+
+    def xy(split: str) -> tuple[np.ndarray, np.ndarray]:
+        part = df.filter(pl.col(split_col) == split)
+        y = part[target].to_numpy().astype(np.int64) == code
+        return part.select(feats).to_numpy().astype(np.float32), y.astype(np.int64)
+
+    (X_tr, y_tr), (X_va, y_va), (X_te, y_te) = xy("train"), xy("valid"), xy("test")
+    positives = {"train": int(y_tr.sum()), "valid": int(y_va.sum()), "test": int(y_te.sum())}
+    if not 0 < positives["train"] < len(y_tr):
+        raise ValueError(f"The training split needs rows of {name} and of the rest")
+    if not 0 < positives["valid"] < len(y_va):
+        raise ValueError(f"The validation split needs rows of {name} and of the rest to calibrate the model")
+    weighting = None
+    if balance:
+        if clash := [k for k in CLASS_WEIGHTING if k in params]:
+            raise ValueError(f"Choose balance or set {', '.join(clash)}, not both")
+        weights, note = balance_params(spec, y_tr)
+        params = {**params, **weights}
+        weighting = {**weights, "note": note}
+    method = calibration_method(positives["valid"], len(y_va) - positives["valid"])
+    label = ovr_label(spec, target, positive_class)
+    say(
+        f"Fitting {label} on {X_tr.shape[0]:,} rows × {X_tr.shape[1]:,} features"
+        + (" on the GPU" if device == "cuda" else "")
+    )
+
+    def fit(X: np.ndarray, y: np.ndarray):
+        est = spec.build(classifier_params(spec, {**spec.default_params, **params}), seed)
+        with config_context(assume_finite=spec.handles_nan):
+            est.fit(X, y)
+        return est, calibrate(est, X_va, y_va, method, spec.handles_nan)
+
+    t0 = time.time()
+    est, model = fit(X_tr, y_tr)
+    fit_seconds = time.time() - t0
+    if device == "cuda" and not (used := effective_device(est.get_booster())).startswith("cuda"):
+        raise RuntimeError(f"GPU training was requested but {spec.label} ran on {used}")
+
+    info = {"chain_kind": "one_vs_rest", "model": spec.key}
+
+    def score(fitted, X: np.ndarray, y: np.ndarray) -> tuple[dict[str, float], dict[str, Any]]:
+        p1 = scores_of(fitted, info, X)
+        return evaluate(y, np.column_stack([1 - p1, p1]), labels)
+
+    say(f"Calibrating ({method}) and evaluating on validation and test splits")
+    with config_context(assume_finite=spec.handles_nan):
+        raw = {s: est.predict_proba(X)[:, 1] for s, X in (("valid", X_va), ("test", X_te)) if len(X)}
+    metrics: dict[str, Any] = {}
+    details: dict[str, Any] = {}
+    curve: dict[str, list[dict]] = {}
+    brier: dict[str, dict[str, float]] = {}
+    for split, X, y in (("valid", X_va, y_va), ("test", X_te, y_te)):
+        if not len(X):
+            continue
+        p1 = scores_of(model, info, X)
+        m, d = evaluate(y, np.column_stack([1 - p1, p1]), labels)
+        metrics[split], details[split] = {target: m}, {target: d}
+        curve[split] = threshold_table(y, p1, CURVE_THRESHOLDS)
+        brier[split] = {
+            "brier_before": float(brier_score_loss(y, raw[split])),
+            "brier_after": float(brier_score_loss(y, p1)),
+        }
+    calibration = {
+        "method": method,
+        "valid_positives": positives["valid"],
+        "valid_negatives": len(y_va) - positives["valid"],
+        **brier["valid"],
+        **({"test": brier["test"]} if "test" in brier else {}),
+    }
+
+    cross_validation = None
+    if cv_folds:
+        splits, note, stratified = crossval.folds(
+            y_tr, len(X_tr), cv_folds, seed, target, _train_groups(manifest, df, export_dir)
+        )
+
+        def fit_score(rows: np.ndarray, held: np.ndarray) -> dict:
+            # Each fold's model is calibrated on the validation split too, so its scores are on the run's own scale.
+            return {target: score(fit(X_tr[rows], y_tr[rows])[1], X_tr[held], y_tr[held])[0]}
+
+        cross_validation = _cross_validate(
+            splits,
+            note,
+            target if stratified else None,
+            lambda rows: [target] if np.unique(y_tr[rows]).size < 2 else [],
+            fit_score,
+            say,
+        )
+        if summary := cross_validation["targets"]:
+            metrics["cv"] = {t: {m: v["mean"] for m, v in ms.items()} for t, ms in summary.items()}
+
+    top_features = {}
+    imp = importances(spec, est, feats)
+    if imp is not None and len(imp) == len(feats):
+        top_features[target] = [
+            {
+                "feature": feats[k],
+                "source": manifest["feature_source_field"].get(feats[k], feats[k]),
+                "importance": float(imp[k]),
+            }
+            for k in np.argsort(imp)[::-1][:25]
+        ]
+
+    out_dir = out_dir or export_dir.parent.parent / "models" / f"export{export_dir.name}_{spec.key}_{int(time.time())}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    joblib.dump(model, out_dir / MODEL_FILE, compress=3)
+    report = {
+        "export_dir": str(export_dir),
+        "model": spec.key,
+        "model_label": label,
+        "family": spec.family,
+        "export_family": manifest.get("model_family", "tree"),
+        "order": [target],
+        "chain_method": None,
+        "chain_kind": "one_vs_rest",
+        "target": target,
+        "positive_class": positive_class,
+        "balance": balance,
+        **({"class_weighting": weighting} if weighting else {}),
+        "target_tasks": {target: (manifest.get("target_tasks") or {}).get(target, "classes")},
+        "target_kinds": {target: "binary"},
+        "cv": None,
+        "seed": seed,
+        "target_classes": {target: labels},
+        "missing_from_train": {},
+        "positives": positives,
+        "n_train": int(len(X_tr)),
+        "n_features": len(feats),
+        "fit_seconds": round(fit_seconds, 1),
+        "device": device,
+        "params": {k: (list(v) if isinstance(v, tuple) else v) for k, v in {**spec.default_params, **params}.items()},
+        "metrics": metrics,
+        "evaluation": details,
+        "threshold_curve": curve,
+        "calibration": calibration,
         "top_features": top_features,
         **({"cv_folds": cv_folds, "cross_validation": cross_validation} if cv_folds else {}),
     }

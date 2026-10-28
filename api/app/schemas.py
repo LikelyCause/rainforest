@@ -145,6 +145,11 @@ class RunRequest(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     device: Literal["cpu", "cuda"] = "cpu"
     experiment_id: int | None = Field(None, description="Must be the export's experiment, which the run joins")
+    positive_class: str | None = Field(
+        None, max_length=500, description="Train one binary model of this class of `target` against the rest"
+    )
+    target: str | None = Field(None, max_length=500, description="The class target of a one-vs-rest run")
+    balance: bool = Field(False, description="One-vs-rest only: weight the classes by their counts in training")
 
     @model_validator(mode="after")
     def _check(self) -> RunRequest:

@@ -18,13 +18,16 @@ from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..modeling import mlflow_log
 from ..modeling import params as model_params
 from ..modeling.registry import (
+    CLASS_WEIGHTING,
     MODELS,
     PLANNED,
     catalog,
     compatibility,
     dry_fit_problem,
     label_for,
+    one_vs_rest_target,
     order_problem,
+    ovr_label,
     param_problems,
     regression_problem,
 )
@@ -111,9 +114,23 @@ def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
         raise HTTPException(409, f"No usable GPU: {info['reason']}" if info else "No GPU is available to the API")
     if problems := param_problems(spec, req.params):
         raise HTTPException(422, {"message": "Invalid model parameters", "errors": problems})
-    if req.order is not None and (problem := order_problem(req.order, manifest["targets"])):
-        raise HTTPException(422, problem)
-    kinds = [(manifest.get("target_kinds") or {}).get(t) for t in (req.order or manifest["targets"])]
+    one_vs_rest = req.positive_class is not None
+    if one_vs_rest:
+        req.target, problem = one_vs_rest_target(manifest, req.target, req.positive_class)
+        if problem:
+            raise HTTPException(422, problem)
+        if req.order is not None and req.order != [req.target]:
+            raise HTTPException(422, f"A one-vs-rest run trains only {req.target}; leave the order out")
+        if req.balance and (clash := [k for k in CLASS_WEIGHTING if k in req.params]):
+            raise HTTPException(422, f"Choose balance or set {', '.join(clash)}, not both")
+        targets, kinds = [req.target], ["binary"]
+    else:
+        if req.target is not None or req.balance:
+            raise HTTPException(422, "target and balance apply to a one-vs-rest run; set positive_class too")
+        if req.order is not None and (problem := order_problem(req.order, manifest["targets"])):
+            raise HTTPException(422, problem)
+        targets = req.order or manifest["targets"]
+        kinds = [(manifest.get("target_kinds") or {}).get(t) for t in targets]
     if problem := regression_problem(spec, kinds):
         raise HTTPException(422, problem)
     if model_params.settings_for(spec.key):
@@ -121,13 +138,16 @@ def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
         if problems := model_params.setting_problems(spec.key, req.params):
             raise HTTPException(422, {"message": "Invalid model settings", "errors": problems})
         stats = manifest.get("target_stats") or {}
-        for t, kind in zip(req.order or manifest["targets"], kinds):
+        for t, kind in zip(targets, kinds):
             if kind == "regression" and (
                 p := model_params.objective_problem(req.params, (stats.get(t) or {}).get("min"))
             ):
                 raise HTTPException(422, p)
         if problem := dry_fit_problem(spec, req.params, kinds):
             raise HTTPException(422, problem)
+    # A run that isn't one-vs-rest stores the config it always has.
+    stored = {"experiment_id"} if one_vs_rest else {"experiment_id", "positive_class", "target", "balance"}
+    label = ovr_label(spec, req.target, req.positive_class) if one_vs_rest else label_for(spec, kinds)
     with connection() as conn:
         # Recorded under the row lock, so a refresh starting now sees the run and refuses.
         refuse_while_refreshing(conn, exp["dataset_id"])
@@ -142,11 +162,11 @@ def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
                 exp["dataset_id"],
                 spec.key,
                 spec.family,
-                jsonb(req.model_dump(exclude={"experiment_id"})),
+                jsonb(req.model_dump(exclude=stored)),
                 jobs.owner_id(),
                 user["id"],
                 exp["experiment_id"],
-                jsonb({"model_label": label_for(spec, kinds)}),
+                jsonb({"model_label": label}),
             ),
         ).fetchone()
     jobs.submit(_run, run["id"], exp["output_dir"], req.model_dump())
@@ -286,6 +306,9 @@ def _run(run_id: int, export_dir: str, req: dict) -> None:
             progress,
             device=req.get("device", "cpu"),
             cv_folds=req.get("cv_folds", 0),
+            target=req.get("target"),
+            positive_class=req.get("positive_class"),
+            balance=req.get("balance", False),
         )
         if mlflow_log.enabled():
             with connection() as conn:

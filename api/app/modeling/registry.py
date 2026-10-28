@@ -234,6 +234,33 @@ def label_for(spec: ModelSpec, kinds: list[str]) -> str:
     return spec.mixed_label or f"{spec.label} and {spec.regressor_label.lower()}"
 
 
+def ovr_label(spec: ModelSpec, target: str, positive_class: str) -> str:
+    return f"{spec.label} · {target} = {positive_class} vs rest"
+
+
+# The settings that weight classes; a one-vs-rest run's `balance` sets one of them itself.
+CLASS_WEIGHTING = ("class_weight", "scale_pos_weight", "is_unbalance")
+
+
+def one_vs_rest_target(manifest: dict, target: str | None, positive_class: str) -> tuple[str | None, str | None]:
+    """The class target a one-vs-rest run of `positive_class` trains on (the export's only target when `target` is
+    None), or the reason there isn't one."""
+    targets = manifest["targets"]
+    if target is None:
+        if len(targets) != 1:
+            return None, f"Choose the target of the one-vs-rest run (this export's targets: {', '.join(targets)})"
+        target = targets[0]
+    if target not in targets:
+        return None, f"{target!r} isn't a target of this export (its targets: {', '.join(targets)})"
+    if (manifest.get("target_kinds") or {}).get(target) == "regression":
+        return None, f"{target} is predicted as a number; a one-vs-rest run needs classes or bands"
+    classes = (manifest.get("target_classes") or {}).get(target) or []
+    if positive_class not in classes:
+        shown = ", ".join(classes[:20]) + (f" and {len(classes) - 20} more" if len(classes) > 20 else "")
+        return None, f"{positive_class!r} isn't a class of {target} (its classes: {shown})"
+    return target, None
+
+
 def get_model(key: str) -> ModelSpec:
     spec = MODELS.get(key)
     if spec is None:

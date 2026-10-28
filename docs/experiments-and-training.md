@@ -360,6 +360,26 @@ Under the settings, *Try several values* takes up to two settings and the values
 experiment, so the runs table and its ★ compare them. Every combination's values are checked before any starts.
 The runs then start one by one, and one the API refuses stops the rest.
 
+### One class against the rest
+
+A run started through the API with `positive_class` (and `target`, when the export has several targets) trains one
+binary model: that class of a class target against every other class. The export's other targets take no part, and
+nothing is chained. The run is named for the class, as in "LightGBM · vehicle = V07 vs rest".
+
+- The model is calibrated on the validation split, so its scores are probabilities that compare across classes:
+  isotonic regression when the validation split has at least 200 rows of the class and 200 of the rest, else a
+  sigmoid. The report's `calibration` gives the method and the Brier score before and after, on validation and test.
+- Every score the run reports, and the saved model's predictions, are calibrated.
+- The validation split also chooses thresholds, so its scores are slightly optimistic; the test split gives the
+  honest number.
+- `threshold_curve` holds precision, recall, F1 and the share flagged at every threshold from 0 to 1 in steps of
+  0.01, for validation and test.
+- `balance` weights the classes by their training counts: LightGBM and XGBoost get a positive-class weight of
+  negatives / positives, and random forest, histogram GBM and logistic regression get balanced class weights. MLP has
+  no class weights; the report notes that balance was ignored. Balance can't be combined with a class-weight setting.
+- Cross-validation folds are calibrated on the validation split too.
+- The training split needs rows of the class and of the rest, and so does the validation split.
+
 ### Cross-validation
 
 A run can also fit its chain on K folds of the training rows. It uses the same model, settings, chain folds and
@@ -395,6 +415,7 @@ Every run is scored per target on the validation and test splits.
 - ROC curves: one-vs-rest per class for multiclass targets, up to 200 points each
 - PR-AUC (`pr_auc`; `pr_auc_macro` for multiclass). Read this score when the positive class is rare.
 - for a binary target, a threshold table: precision, recall, F1 and the share flagged at each cut from 0.05 to 0.95
+  (and, for a one-vs-rest run, a threshold curve from 0 to 1 in steps of 0.01)
 - the top importances per chain link
 
 **Number targets** get:

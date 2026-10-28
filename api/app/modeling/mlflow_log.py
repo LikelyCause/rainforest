@@ -32,9 +32,12 @@ _PARAM_MAX = 6000
 
 
 def model_file_name(report: dict | None) -> str:
-    """`target_chain.joblib` when any target is a number, else `classifier_chain.joblib`."""
+    """`calibrated_classifier.joblib` for a one-vs-rest run, `target_chain.joblib` when any target is a number, else
+    `classifier_chain.joblib`."""
     report = report or {}
     kind = report.get("chain_kind")
+    if kind == "one_vs_rest":
+        return "calibrated_classifier.joblib"
     if kind not in ("classifier_chain", "target_chain"):  # a report from before chain_kind: read its target kinds
         numeric = "regression" in (report.get("target_kinds") or {}).values()
         kind = "target_chain" if numeric else "classifier_chain"
@@ -89,6 +92,8 @@ def run_params(report: dict) -> dict[str, str]:
         out[_key("estimator", k)] = v  # None included: it is a setting too (e.g. max_depth=None)
     for t, task in (report.get("target_tasks") or {}).items():
         out[_key("target", t, "task")] = task
+    if report.get("positive_class") is not None:
+        out.update(target=report.get("target"), positive_class=report["positive_class"], balance=report.get("balance"))
     return {_key(k): str(v)[:_PARAM_MAX] for k, v in out.items()}
 
 
@@ -122,6 +127,9 @@ def run_tags(run: dict, dataset_name: str, report: dict, user: str | None) -> di
         "rainforest.model": report.get("model") or run.get("model"),
         "rainforest.model_family": report.get("export_family"),
         "rainforest.user": user,
+        "rainforest.positive_class": report.get("positive_class"),
+        "rainforest.batch_id": run.get("batch_id"),
+        "rainforest.batch_kind": run.get("batch_kind"),
     }
     if baseline := run.get("baseline"):
         tags["rainforest.baseline"] = baseline.get("label")
@@ -278,8 +286,9 @@ def log_model_run(run_id: int, report: dict, user: str | None = None) -> dict[st
                       u.name || coalesce(' <' || u.email || '>', '') AS user_label,
                       e.recipe_id, rc.version AS recipe_version, r.experiment_id, x.name AS experiment_name,
                       e.config -> 'baseline' AS baseline, e.config -> 'adjustments' AS adjustments,
-                      e.config AS export_config, e.output_dir AS export_dir
+                      e.config AS export_config, e.output_dir AS export_dir, r.batch_id, b.kind AS batch_kind
                FROM meta.model_runs r JOIN meta.datasets d ON d.id = r.dataset_id
+               LEFT JOIN meta.run_batches b ON b.id = r.batch_id
                LEFT JOIN meta.exports e ON e.id = r.export_id
                LEFT JOIN meta.recipes rc ON rc.id = e.recipe_id
                LEFT JOIN meta.experiments x ON x.id = r.experiment_id
