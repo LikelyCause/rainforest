@@ -160,7 +160,8 @@ export interface FamilyDrift {
 /** A pull's drift summary by model type; only types with a finalized baseline appear. */
 export type PullDrift = Record<string, FamilyDrift>;
 
-export interface Pull extends PullSummary {
+/** A pull as `…/pulls` and `…/refresh` return it; `has_drift` is only on a dataset's `last_pull`. */
+export interface Pull extends Omit<PullSummary, "has_drift"> {
   per_source: { label: string; documents: number; removed_duplicates?: number }[] | null;
   flatten_notes: {
     arrays?: string[];
@@ -168,6 +169,7 @@ export interface Pull extends PullSummary {
     renamed?: Record<string, string>;
     compared_on?: string[];
     source_column?: string | null;
+    removed_fields?: string[];
   } | null;
   drift: PullDrift | null;
   error: string | null;

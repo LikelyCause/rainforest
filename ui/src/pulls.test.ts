@@ -7,7 +7,9 @@ import {
   pullState,
   reopenPath,
   reopenedNames,
+  removedFields,
   showsPull,
+  shownPulls,
   uncomparedNote,
   versionInProgress,
 } from "./pulls";
@@ -19,7 +21,6 @@ const pull = (over: Partial<Pull> = {}): Pull => ({
   started_at: "2026-10-25T10:00:00Z",
   finished_at: "2026-10-25T10:02:00Z",
   rows: 750,
-  has_drift: false,
   per_source: [
     { label: "curated", documents: 500, removed_duplicates: 0 },
     { label: "mining", documents: 300, removed_duplicates: 50 },
@@ -94,6 +95,30 @@ describe("pullHeadline", () => {
   it("says failed or running without counts", () => {
     expect(pullHeadline(pull({ id: 13, status: "failed", rows: null }))).toBe("Pull #13 failed");
     expect(pullHeadline(pull({ id: 14, status: "running", rows: null }))).toBe("Pull #14 running");
+  });
+});
+
+describe("shownPulls", () => {
+  const done = pull({ id: 11 });
+  it("shows the newest finished pull's summary, with a failed or running pull after it as a notice", () => {
+    const failed = pull({ id: 13, status: "failed", rows: null, error: "test: collection massive no longer exists" });
+    expect(shownPulls([failed, pull({ id: 12, status: "failed" }), done])).toEqual({ summary: done, notice: failed });
+    const running = pull({ id: 14, status: "running", finished_at: null });
+    expect(shownPulls([running, done])).toEqual({ summary: done, notice: running });
+  });
+  it("has no notice when the newest pull finished, and no summary before any did", () => {
+    expect(shownPulls([done, pull({ id: 10, status: "failed" })])).toEqual({ summary: done, notice: null });
+    const failed = pull({ id: 1, status: "failed" });
+    expect(shownPulls([failed])).toEqual({ summary: null, notice: failed });
+    expect(shownPulls([])).toEqual({ summary: null, notice: null });
+    expect(shownPulls(undefined)).toEqual({ summary: null, notice: null });
+  });
+});
+
+describe("removedFields", () => {
+  it("lists every field the pull removed", () => {
+    expect(removedFields(pull({ flatten_notes: { removed_fields: ["a", "b"] } }))).toEqual(["a", "b"]);
+    expect(removedFields(pull())).toEqual([]);
   });
 });
 
@@ -173,21 +198,22 @@ describe("uncomparedNote", () => {
 });
 
 describe("showsPull", () => {
+  const last = (over: Partial<Pull> = {}) => ({ ...pull(over), has_drift: false });
   const ds = (over: Partial<Pick<Dataset, "source" | "last_pull">> = {}) => ({
     source: { connection: "vehicles" } as Dataset["source"],
-    last_pull: pull({ id: 13, finished_at: "2026-10-25T10:02:00Z" }),
+    last_pull: last({ id: 13, finished_at: "2026-10-25T10:02:00Z" }),
     ...over,
   });
   const none = { pull: false, field: false };
 
   it("opens on a pull that came after the version was finalized", () => {
     expect(showsPull(none, ds(), "2026-10-24T09:00:00Z")).toBe(true);
-    expect(showsPull(none, ds({ last_pull: pull({ status: "failed" }) }), "2026-10-24T09:00:00Z")).toBe(true);
+    expect(showsPull(none, ds({ last_pull: last({ status: "failed" }) }), "2026-10-24T09:00:00Z")).toBe(true);
   });
 
   it("opens on the queue for a pull from before finalizing, a running pull or a version still in review", () => {
     expect(showsPull(none, ds(), "2026-10-26T09:00:00Z")).toBe(false);
-    expect(showsPull(none, ds({ last_pull: pull({ status: "running", finished_at: null }) }), "2026-10-24")).toBe(
+    expect(showsPull(none, ds({ last_pull: last({ status: "running", finished_at: null }) }), "2026-10-24")).toBe(
       false,
     );
     expect(showsPull(none, ds(), null)).toBe(false);

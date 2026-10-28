@@ -40,6 +40,19 @@ export function pullHeadline(pull: Pull): string {
   return parts.join(" · ");
 }
 
+/** What the latest pull card shows of a dataset's pulls (newest first): the newest finished pull's summary, since its
+ * data is the data in use, and the newest pull as a notice when it failed or is still running. */
+export function shownPulls(pulls: Pull[] | undefined): { summary: Pull | null; notice: Pull | null } {
+  const newest = pulls?.[0];
+  return {
+    summary: pulls?.find((p) => p.status === "done") ?? null,
+    notice: newest && newest.status !== "done" ? newest : null,
+  };
+}
+
+/** Every field a refresh deleted; the dataset's warning names only the first few. */
+export const removedFields = (pull: Pull): string[] => pull.flatten_notes?.removed_fields ?? [];
+
 /** What flattening did to the documents, one readable line per kind of note. */
 export function flattenLines(notes: Pull["flatten_notes"]): string[] {
   if (!notes) return [];

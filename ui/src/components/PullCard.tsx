@@ -5,7 +5,16 @@ import { Banner } from "./kit";
 import { ErrorAlert } from "./ui";
 import { familyShort, fmtAgo, fmtInt } from "../format";
 import { usePulls } from "../hooks";
-import { flattenLines, pullHeadline, reopenPath, reopenedNames, uncomparedNote, versionInProgress } from "../pulls";
+import {
+  flattenLines,
+  pullHeadline,
+  removedFields,
+  reopenPath,
+  reopenedNames,
+  shownPulls,
+  uncomparedNote,
+  versionInProgress,
+} from "../pulls";
 import { reuseGroups } from "../recipes";
 import type { Dataset, FamilyDrift, Pull } from "../types";
 
@@ -49,12 +58,30 @@ function FamilyBlock({ ds, family, drift }: { ds: Dataset; family: string; drift
   );
 }
 
+/** A newer pull than the summary's: one that failed (the data in use is still the summary's) or is still running. */
+function Notice({ pull }: { pull: Pull }) {
+  if (pull.status === "failed")
+    return (
+      <ErrorAlert
+        error={{ message: pull.error ?? "The pull failed." }}
+        title={`${pullHeadline(pull)} ${fmtAgo(pull.finished_at ?? pull.started_at)}; the data is as it was.`}
+      />
+    );
+  return (
+    <Banner tone="info">
+      {pullHeadline(pull)}, started {fmtAgo(pull.started_at)}
+      {pull.created_by_name ? ` by ${pull.created_by_name}` : ""}.
+    </Banner>
+  );
+}
+
 function Summary({ ds, pull }: { ds: Dataset; pull: Pull }) {
   const lines = flattenLines(pull.flatten_notes);
+  const removed = removedFields(pull);
   const families = Object.entries(pull.drift ?? {});
   const note = uncomparedNote(pull, ds.baselines);
   return (
-    <section className="card stack pull-card" aria-label="Latest pull">
+    <>
       <div className="card-head">
         <h2>{pullHeadline(pull)}</h2>
         <span className="muted small-text">
@@ -62,12 +89,6 @@ function Summary({ ds, pull }: { ds: Dataset; pull: Pull }) {
           {pull.created_by_name ? ` · by ${pull.created_by_name}` : ""}
         </span>
       </div>
-      {pull.status === "failed" && (
-        <ErrorAlert
-          error={{ message: pull.error ?? "The pull failed." }}
-          title="This pull failed; the data is as it was."
-        />
-      )}
       {pull.per_source && pull.per_source.length > 0 && (
         <ul>
           {pull.per_source.map((s) => (
@@ -89,23 +110,35 @@ function Summary({ ds, pull }: { ds: Dataset; pull: Pull }) {
           ))}
         </ul>
       )}
-      {pull.status === "done" && (
-        <>
-          {families.map(([family, d]) => (
-            <FamilyBlock key={family} ds={ds} family={family} drift={d} />
-          ))}
-          {note && <span className="muted">{note}</span>}
-        </>
+      {removed.length > 0 && (
+        <details>
+          <summary>
+            <b className="num">{fmtInt(removed.length)}</b> field{removed.length === 1 ? "" : "s"} removed by this pull
+          </summary>
+          <span className="chips inline-chips">
+            <NameChips names={removed} />
+          </span>
+        </details>
       )}
-    </section>
+      {families.map(([family, d]) => (
+        <FamilyBlock key={family} ds={ds} family={family} drift={d} />
+      ))}
+      {note && <span className="muted">{note}</span>}
+    </>
   );
 }
 
-/** The latest pull of a connected dataset: what came in, what flattening did, and how it compares with each
- * finalized baseline. Nothing for a dataset that isn't connected or hasn't pulled. */
+/** A connected dataset's pulls: the newest finished one (what came in, what flattening did, how it compares with
+ * each finalized baseline), under a notice when a later pull failed or is running. Nothing for a dataset that isn't
+ * connected or hasn't pulled. */
 export function PullCard({ ds }: { ds: Dataset }) {
   const pulls = usePulls(ds.id, ds.source !== null, ds.status === "refreshing");
-  const pull = pulls.data?.[0];
-  if (!ds.source || !pull) return <ErrorAlert error={pulls.error} />;
-  return <Summary ds={ds} pull={pull} />;
+  const { summary, notice } = shownPulls(pulls.data);
+  if (!ds.source || (!summary && !notice)) return <ErrorAlert error={pulls.error} />;
+  return (
+    <section className="card stack pull-card" aria-label="Latest pull">
+      {notice && <Notice pull={notice} />}
+      {summary && <Summary ds={ds} pull={summary} />}
+    </section>
+  );
 }
