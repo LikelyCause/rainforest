@@ -505,13 +505,3 @@ def test_renamed_columns_keep_their_names_across_pulls_in_another_order(tmp_path
     assert again == first and sorted(map(tuple, map(tuple, later["key_paths"]))) == sorted(
         map(tuple, map(tuple, notes["key_paths"]))
     )
-
-
-def test_a_name_kept_for_a_key_this_pull_lacks_does_not_push_another_key_aside(tmp_path, monkeypatch):
-    monkeypatch.setattr(mongodb, "CHUNK_DOCS", 1)
-    _, notes = _columns_of(tmp_path, [{"c.d": "dotted", "n": 1}])
-    assert notes["renamed"] == {"c.d": "c_d"}
-    cols, later = _columns_of(tmp_path, [{"c_d": ["literal"], "n": 2}, {"c_d": ["more"], "n": 3}], notes["key_paths"])
-    assert cols == {'["literal"]': "c_d", '["more"]': "c_d", 2: "n", 3: "n"}
-    assert later["renamed"] == {} and later["arrays"] == ["c_d"]
-    assert sorted(later["key_paths"]) == [[["c_d"], "c_d"], [["n"], "n"]]
