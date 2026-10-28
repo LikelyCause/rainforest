@@ -55,8 +55,15 @@ def _user() -> int:
     return db.fetch_one("SELECT id FROM meta.users ORDER BY id LIMIT 1")["id"]
 
 
-def _connect(mongo, *, target: str | None = None, derived: tuple[tuple[str, str], ...] = (), finalize=True) -> int:
-    """curated + massive connected and ready, with a hand-made decision and note on `vehicle` (so it has history and
+def _connect(
+    mongo,
+    *,
+    target: str | None = None,
+    derived: tuple[tuple[str, str], ...] = (),
+    finalize=True,
+    collections: tuple[str, ...] = ("curated", "massive"),
+) -> int:
+    """`collections` (curated + massive) connected and ready, with a hand-made decision and note on `vehicle` (so it has history and
     user settings), optional targets and formulas, and a finalized Trees baseline."""
     with db.connection() as conn:
         ds = conn.execute(
@@ -69,7 +76,7 @@ def _connect(mongo, *, target: str | None = None, derived: tuple[tuple[str, str]
             """INSERT INTO meta.dataset_sources
                    (dataset_id, kind, connection, database, collections, add_source, dedupe, created_by)
                VALUES (%s, 'mongodb', 'test', %s, %s, true, true, %s)""",
-            (ds, mongo.name, db.jsonb([{"name": "curated"}, {"name": "massive"}]), _user()),
+            (ds, mongo.name, db.jsonb([{"name": c} for c in collections]), _user()),
         )
     run_connect(ds)
     row = db.fetch_one("SELECT status, error FROM meta.datasets WHERE id = %s", (ds,))
@@ -403,6 +410,48 @@ def test_refresh_failure_leaves_the_dataset_untouched(source, mongo_url, monkeyp
         == fields
     )
     assert _leftovers(ds) == [] and not _new_table(ds)
+
+
+def _untouched(ds: int, before: dict, fields: list[dict]) -> None:
+    after = _dataset(ds)
+    assert after["status"] == "ready" and after["row_count"] == before["row_count"] and _raw_rows(ds) == 750
+    assert after["warnings"] == before["warnings"]
+    assert db.fetch_all("SELECT id, name, null_pct FROM meta.fields WHERE dataset_id = %s ORDER BY id", (ds,)) == fields
+    assert _leftovers(ds) == [] and not _new_table(ds)
+
+
+@pytest.mark.parametrize(
+    "change,error",
+    [
+        (lambda c: c.drop(), "test: collection massive no longer exists in the database"),
+        (lambda c: c.rename("massive_old"), "test: collection massive no longer exists in the database"),
+        (lambda c: c.delete_many({}), "test: collection massive returned no documents; its previous pull had 500"),
+    ],
+    ids=["dropped", "renamed", "emptied"],
+)
+def test_refresh_fails_on_a_missing_or_newly_empty_collection(source, change, error):
+    ds = _connect(source)
+    before = _dataset(ds)
+    fields = db.fetch_all("SELECT id, name, null_pct FROM meta.fields WHERE dataset_id = %s ORDER BY id", (ds,))
+    change(source.massive)
+    try:
+        pull = _refresh(ds)
+    finally:
+        source.drop_collection("massive_old")
+
+    assert pull["status"] == "failed" and pull["error"] == error
+    _untouched(ds, before, fields)
+
+
+def test_a_collection_that_was_empty_may_stay_empty(source):
+    source.create_collection("quiet")
+    try:
+        ds = _connect(source, collections=("curated", "quiet"), finalize=False)
+        pull = _refresh(ds)
+    finally:
+        source.drop_collection("quiet")
+    assert pull["status"] == "done", pull["error"]
+    assert pull["per_source"][1] == {"label": "quiet", "documents": 0, "removed_duplicates": 0}
 
 
 def test_refresh_failure_in_the_swap_rolls_back(source, monkeypatch):

@@ -151,10 +151,16 @@ def warnings_for(notes: dict, removed: dict[str, int], dedupe: bool) -> list[str
     return out
 
 
-def pull_into(dataset_id: int, src: dict, dest: Path, status: str = "ingesting") -> dict:
+def pull_into(
+    dataset_id: int, src: dict, dest: Path, status: str = "ingesting", previous: dict[str, int] | None = None
+) -> dict:
     """Pull a dataset's collections into `dest`, reporting progress under `status`. Returns what the pull row stores:
     rows, per_source (with each collection's removed duplicates) and flatten_notes. The chunk directory is gone
-    afterwards, whatever happens."""
+    afterwards, whatever happens.
+
+    `previous` (a refresh's: documents per label in the last successful pull) makes a collection that no longer
+    exists, or that returns no documents after returning some, fail the pull: taken as it is, it would delete its
+    rows, and with them the fields only it has and their decisions."""
     s = get_settings()
     st = _Status(dataset_id)
     pull_dir = s.datasets_dir / str(dataset_id) / "pull"
@@ -165,6 +171,8 @@ def pull_into(dataset_id: int, src: dict, dest: Path, status: str = "ingesting")
             raise SourceError(f"{src['connection']}: no connection of that name is configured")
         source: Source = registry[src["connection"]]
         specs = specs_from(src["collections"])
+        if previous is not None:
+            _require_collections(source, src, specs)
         try:
             result = source.pull(
                 src["database"],
@@ -176,6 +184,13 @@ def pull_into(dataset_id: int, src: dict, dest: Path, status: str = "ingesting")
             )
         except PyMongoError as exc:  # a source's pull wraps its own; this keeps any other path redacted
             raise SourceError(source.redact(str(exc))) from None
+        if previous is not None:
+            for spec, got in zip(specs, result.per_source):
+                if got["documents"] == 0 and previous.get(got["label"], 0) > 0:
+                    raise SourceError(
+                        f"{src['connection']}: collection {spec.name} returned no documents; its previous pull had "
+                        f"{previous[got['label']]:,}"
+                    )
         st.set(status, 0.0, "Combining collections", force=True)
         summary = assemble(
             pull_dir,
@@ -195,6 +210,16 @@ def pull_into(dataset_id: int, src: dict, dest: Path, status: str = "ingesting")
         "flatten_notes": {**result.flatten_notes, "compared_on": summary["compared_on"]},
         "removed_duplicates": removed,
     }
+
+
+def _require_collections(source: Source, src: dict, specs: list[CollectionSpec]) -> None:
+    present = {c["name"] for c in source.list_collections(src["database"])}
+    if missing := [s.name for s in specs if s.name not in present]:
+        one = len(missing) == 1
+        raise SourceError(
+            f"{src['connection']}: collection{'' if one else 's'} {', '.join(missing)} no longer "
+            f"exist{'s' if one else ''} in the database"
+        )
 
 
 def run_connect(dataset_id: int) -> None:
