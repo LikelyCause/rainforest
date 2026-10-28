@@ -254,7 +254,10 @@ class MongoSource:
 
     def missing_collections(self, database: str, names: list[str]) -> list[str]:
         with self._guard():
-            found = set(self.client[database].list_collection_names(filter={"name": {"$in": names}}))
+            # authorizedCollections: an account allowed `find` on some collections only may still list those.
+            found = set(
+                self.client[database].list_collection_names(filter={"name": {"$in": names}}, authorizedCollections=True)
+            )
         return [n for n in names if n not in found]
 
     def preview(self, database: str, collections: list[CollectionSpec], sample: int = PREVIEW_SAMPLE) -> PreviewResult:

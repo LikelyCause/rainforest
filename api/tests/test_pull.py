@@ -469,3 +469,20 @@ def test_migration_constraints(database):
         )
     }
     assert "pull_id" in cols
+
+
+class _Database(dict):
+    def __init__(self, colls):
+        super().__init__(colls)
+        self.calls: list[dict] = []
+
+    def list_collection_names(self, **kw):
+        self.calls.append(kw)
+        return [n for n in self if n in kw["filter"]["name"]["$in"]]
+
+
+def test_missing_collections_asks_only_for_the_collections_the_account_may_read():
+    src = _fake()
+    src._client = _Client(_Database({"a": _Collection([])}))
+    assert src.missing_collections("d", ["a", "gone"]) == ["gone"]
+    assert src.client["d"].calls == [{"filter": {"name": {"$in": ["a", "gone"]}}, "authorizedCollections": True}]
