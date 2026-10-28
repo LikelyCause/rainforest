@@ -131,7 +131,7 @@ it on the new data.
 **It replaces** the Parquet copy and the raw table, the fields' statistics and inferred types, and the associations.
 Every Explore result of the dataset is marked out of date, since it was computed on the old rows. New fields come in
 with suggestions, as at upload. A field that is no longer in the data is deleted with its decisions and history, and so
-is a derived field whose inputs vanished; each is listed in the dataset's warnings. A target that is no longer in the
+is a derived field whose inputs vanished; the dataset's warnings name the first 20, and the pull lists them all. A target that is no longer in the
 data is deleted like any other field, with the warning *Target column no longer in the data*. A target that profiling
 now turns down (a non-numeric one with more than 100 distinct values, as at upload) stays a field but stops being a
 target: its decision goes back to the suggestion, unreviewed, and the warning *Not used as target(s)* names it. An
@@ -143,7 +143,9 @@ a field is *carried* when its type is unchanged and its statistics haven't drift
 the distinct values within half to double), and *reopened* when it is new, has a new type or has drifted, with the
 numbers. Fields of the baseline that are gone are listed. The result is that pull's **drift summary**, shown for each
 family above the baselines on *Versions* and under *Latest pull* in the *Team* page's queue, where a lead can start a
-new version with the reopened fields selected. The new version carries the baseline's decisions for the fields still
+new version with the reopened fields selected. That card shows the newest pull that finished, whose data is the data
+in use, with every field it removed under a collapsed list; a later pull that failed is shown above it with its error,
+and so is one still running. The new version carries the baseline's decisions for the fields still
 in the data; a target that is gone, or that is no longer a valid target, is left out (a field still there takes its
 suggestion), and the version's page lists what wasn't carried over. The *Team* page opens on the drift summary when
 the pull came after the version was finalized. A dataset with no finalized baseline gets no drift summary; its

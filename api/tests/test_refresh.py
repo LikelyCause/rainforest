@@ -254,6 +254,19 @@ def test_refresh_removes_vanished_fields_and_targets(source):
     assert not db.fetch_one("SELECT bool_or(is_target) AS t FROM meta.fields WHERE dataset_id = %s", (ds,))["t"]
 
 
+def test_the_pull_lists_every_field_the_refresh_removed(source):
+    extra = {f"k{i:02d}": i for i in range(25)}
+    source.curated.update_many({}, {"$set": extra})
+    ds = _connect(source, derived=(("k_sum", "k00 + k01"),), finalize=False)
+    source.curated.update_many({}, {"$unset": {k: "" for k in extra}})
+
+    pull = _refresh(ds)
+
+    assert pull["status"] == "done", pull["error"]
+    assert pull["flatten_notes"]["removed_fields"] == ["k_sum", *extra]
+    assert "Fields no longer in the data: " + ", ".join(list(extra)[:20]) + " and 5 more" in _dataset(ds)["warnings"]
+
+
 def test_refresh_drops_a_target_profiling_now_rejects(source):
     ds = _connect(source, target="engine")
     engine = _field(ds, "engine")

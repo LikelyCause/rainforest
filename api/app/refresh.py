@@ -178,7 +178,13 @@ def _refresh(ds: dict, src: dict, pull_id: int) -> None:
             (
                 n_rows,
                 jsonb(pulled["per_source"]),
-                jsonb(pulled["flatten_notes"]),
+                # Every field it deleted; the warning names only the first few.
+                jsonb(
+                    {
+                        **pulled["flatten_notes"],
+                        "removed_fields": [f["name"] for f in formulas if f["id"] in dropped] + vanished,
+                    }
+                ),
                 jsonb(drift) if drift else None,
                 pull_id,
             ),
@@ -288,7 +294,9 @@ def _reconcile(
     conn.execute("DELETE FROM meta.fields WHERE id = ANY(%s)", (dropped,))
     existing = {
         r["name"]: r["id"]
-        for r in conn.execute("SELECT id, name FROM meta.fields WHERE dataset_id = %s", (dataset_id,)).fetchall()
+        for r in conn.execute(
+            "SELECT id, name FROM meta.fields WHERE dataset_id = %s ORDER BY ordinal", (dataset_id,)
+        ).fetchall()
     }
     present = {p.name for p in profiles}
     vanished = [n for n in existing if n not in present]
