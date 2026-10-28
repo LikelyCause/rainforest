@@ -688,3 +688,20 @@ def test_a_restart_puts_back_a_refresh_whose_pull_already_ended(database, status
         assert db.fetch_one("SELECT status FROM meta.dataset_pulls WHERE dataset_id = %s", (ds,))["status"] == status
     finally:
         jobs.shutdown()
+
+
+def test_recording_a_failure_leaves_a_newer_refresh_alone(database):
+    ds = _bare_dataset()
+    old = db.fetch_one(
+        "INSERT INTO meta.dataset_pulls (dataset_id, status) VALUES (%s, 'running') RETURNING id", (ds,)
+    )["id"]
+    refresh._record_failure(ds, old, "pull broke")  # committed; a retry would write the same again
+    newer = db.fetch_one(
+        "INSERT INTO meta.dataset_pulls (dataset_id, status) VALUES (%s, 'running') RETURNING id", (ds,)
+    )["id"]
+    db.execute("UPDATE meta.datasets SET status = 'refreshing' WHERE id = %s", (ds,))
+
+    refresh._record_failure(ds, old, "pull broke")
+
+    assert _dataset(ds)["status"] == "refreshing"
+    assert db.fetch_one("SELECT status FROM meta.dataset_pulls WHERE id = %s", (newer,))["status"] == "running"

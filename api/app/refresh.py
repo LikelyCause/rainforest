@@ -76,9 +76,13 @@ def _record_failure(dataset_id: int, pull_id: int, error: str) -> None:
                     (error, pull_id),
                 )
                 conn.execute(
+                    # Only while no newer refresh holds it: an attempt can fail after its commit went through.
                     """UPDATE meta.datasets SET status = 'ready', progress = 1, status_message = 'Ready', error = NULL,
-                              updated_at = now() WHERE id = %s""",
-                    (dataset_id,),
+                              updated_at = now()
+                        WHERE id = %s AND status = 'refreshing' AND NOT EXISTS (
+                              SELECT 1 FROM meta.dataset_pulls
+                               WHERE dataset_id = %s AND status = 'running' AND id <> %s)""",
+                    (dataset_id, dataset_id, pull_id),
                 )
             return
         except Exception:  # noqa: BLE001
