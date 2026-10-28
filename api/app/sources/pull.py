@@ -243,8 +243,7 @@ def pull_into(dataset_id: int, src: dict, dest: Path, status: str = "ingesting",
 
 
 def _require_collections(source: Source, src: dict, specs: list[CollectionSpec]) -> None:
-    present = {c["name"] for c in source.list_collections(src["database"])}
-    if missing := [s.name for s in specs if s.name not in present]:
+    if missing := source.missing_collections(src["database"], [s.name for s in specs]):
         one = len(missing) == 1
         raise SourceError(
             f"{src['connection']}: collection{'' if one else 's'} {', '.join(missing)} no longer "

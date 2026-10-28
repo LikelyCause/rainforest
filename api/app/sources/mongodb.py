@@ -252,6 +252,11 @@ class MongoSource:
                 out.append({"name": name, "documents": _estimated(db[name])})
         return out
 
+    def missing_collections(self, database: str, names: list[str]) -> list[str]:
+        with self._guard():
+            found = set(self.client[database].list_collection_names(filter={"name": {"$in": names}}))
+        return [n for n in names if n not in found]
+
     def preview(self, database: str, collections: list[CollectionSpec], sample: int = PREVIEW_SAMPLE) -> PreviewResult:
         present: dict[str, int] = {}
         categories: dict[str, set[str]] = {}

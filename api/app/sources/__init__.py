@@ -121,6 +121,9 @@ class Source(Protocol):
     def list_collections(self, database: str) -> list[dict]:
         """`{name, documents}` per collection."""
 
+    def missing_collections(self, database: str, names: list[str]) -> list[str]:
+        """Those of `names` the database has no collection (or view) of, in order."""
+
     def preview(
         self, database: str, collections: list[CollectionSpec], sample: int = PREVIEW_SAMPLE
     ) -> PreviewResult: ...
