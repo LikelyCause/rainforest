@@ -1,10 +1,45 @@
-"""Batches: which classes a one-vs-rest batch trains, and the combinations a search tries."""
+"""Batches: which classes a one-vs-rest batch trains, the combinations a search tries, the feeder that submits a
+batch's runs one at a time, and the rows of its results.
+
+A batch's runs are inserted `pending` with no owner. The feeder gives the next one an owner and submits it only when
+none of the batch's runs is submitted or running, so other jobs queue between them instead of behind the whole batch.
+"""
 
 import itertools
+import json
 import math
 import random
+import statistics
 from collections.abc import Callable
 from typing import Any
+
+WAITING = "Waiting in its batch"
+# Fewer test positives than this and a class's test metrics say little, so its row is flagged weak.
+WEAK_TEST_POSITIVES = 30
+
+LOWER_IS_BETTER = frozenset({"log_loss", "rmse", "mae", "mape"})
+NUMBER_METRICS = frozenset({"rmse", "mae", "r2", "mape", "band_accuracy", "band_f1_macro"})
+CLASS_METRICS = frozenset(
+    {
+        "accuracy",
+        "balanced_accuracy",
+        "log_loss",
+        "precision_macro",
+        "recall_macro",
+        "f1_macro",
+        "precision_weighted",
+        "recall_weighted",
+        "f1_weighted",
+        "pr_auc_macro",
+        "roc_auc_ovr_macro",
+        "precision",
+        "recall",
+        "f1",
+        "specificity",
+        "roc_auc",
+        "pr_auc",
+    }
+)
 
 # Per class, the positives in each split: {"train": n, "valid": n, "test": n}; "train" and "valid" are required.
 # "valid_rows" (all rows of the validation split, not just this class's) is optional; 0 means nothing to calibrate on.
@@ -144,3 +179,174 @@ def random_samples(
                 f"({len(samples)} found); the last was rejected: {reason}"
             )
     return samples, redraws
+
+
+# ---- ranking ------------------------------------------------------------------------------------------------------
+
+_BINARY_ONLY = frozenset({"precision", "recall", "f1", "specificity", "roc_auc", "pr_auc"})
+_MULTICLASS_ONLY = frozenset({"pr_auc_macro", "roc_auc_ovr_macro"})
+
+
+def default_ranking(kind: str | None) -> str:
+    """The validation metric a search ranks on: PR-AUC for a binary (or one-vs-rest) target, macro-F1 for several
+    classes, R² for a number."""
+    return {"multiclass": "f1_macro", "regression": "r2"}.get(kind or "", "pr_auc")
+
+
+def ranking_problem(metric: str, kind: str | None) -> str | None:
+    """Why `metric` can't rank runs of a target of this kind, or None."""
+    if kind == "regression":
+        allowed = NUMBER_METRICS
+    else:
+        allowed = CLASS_METRICS - (_BINARY_ONLY if kind == "multiclass" else _MULTICLASS_ONLY)
+    if metric not in allowed:
+        return f"{metric!r} isn't a metric of this target (choose from {', '.join(sorted(allowed))})"
+    return None
+
+
+def _number(v: Any) -> float | None:
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else None
+
+
+def run_summary(run: dict, spec: dict, weak_pr_auc: float) -> dict:
+    """One row of a batch's results: the run's state and, once it has them, the metrics its batch kind compares."""
+    from .modeling.train import choose_threshold
+
+    config, report, metrics = run.get("config") or {}, run.get("report") or {}, run.get("metrics") or {}
+    target = config.get("target") or spec.get("ranked_target")
+    row: dict[str, Any] = {
+        "run_id": run["id"],
+        "status": run["status"],
+        "status_message": run.get("status_message"),
+        "error": run.get("error"),
+        "label": report.get("model_label"),
+        "positive_class": config.get("positive_class"),
+        "retried": bool(report.get("retried")),
+        "fit_seconds": report.get("fit_seconds"),
+        "finished_at": run.get("finished_at"),
+    }
+
+    def metric(split: str, name: str) -> float | None:
+        return _number(((metrics.get(split) or {}).get(target) or {}).get(name))
+
+    if spec["kind"] == "search":
+        ranking = spec["ranking"]
+        cv = (((report.get("cross_validation") or {}).get("targets") or {}).get(target) or {}).get(ranking) or {}
+        params = config.get("params") or {}
+        row.update(
+            settings={k: params.get(k) for k in spec["space"]}, value=metric("valid", ranking), cv_std=cv.get("std")
+        )
+    if row["positive_class"] is not None:
+        curve = report.get("threshold_curve") or {}
+        threshold = choose_threshold(curve["valid"], {"kind": "f1"})[0] if curve.get("valid") else None
+
+        def f1_at(split: str) -> float | None:
+            point = next((p for p in curve.get(split) or [] if p["threshold"] == threshold), None)
+            return None if point is None else _number(point["f1"])
+
+        positives = report.get("positives")
+        row.update(
+            positives=positives,
+            threshold=threshold,
+            **{
+                split: {"pr_auc": metric(split, "pr_auc"), "roc_auc": metric(split, "roc_auc"), "f1": f1_at(split)}
+                for split in ("valid", "test")
+            },
+        )
+        row["weak"] = None
+        if run["status"] == "done":
+            valid_pr_auc = row["valid"]["pr_auc"]
+            row["weak"] = (valid_pr_auc is not None and valid_pr_auc < weak_pr_auc) or (
+                (positives or {}).get("test", 0) < WEAK_TEST_POSITIVES
+            )
+    return row
+
+
+def leaderboard(rows: list[dict], ranking: str) -> list[dict]:
+    """A search's combinations, best first by the ranking metric on validation: for a one-vs-rest search, the mean
+    over its classes. A combination is ranked only once every one of its runs has the metric, so a partial mean never
+    passes for the whole."""
+    groups: dict[str, list[dict]] = {}
+    for r in rows:
+        groups.setdefault(json.dumps(r["settings"], sort_keys=True, default=str), []).append(r)
+    entries = []
+    for runs in groups.values():
+        values = [r["value"] for r in runs]
+        stds = [r["cv_std"] for r in runs if _number(r["cv_std"]) is not None]
+        entries.append(
+            {
+                "settings": runs[0]["settings"],
+                "run_ids": [r["run_id"] for r in runs],
+                "value": statistics.fmean(values) if all(v is not None for v in values) else None,
+                "classes": {r["positive_class"]: r["value"] for r in runs if r["positive_class"] is not None},
+                "cv_std": statistics.fmean(stds) if len(stds) == len(runs) else None,
+                "fit_seconds": sum(r["fit_seconds"] or 0 for r in runs),
+            }
+        )
+    sign = 1 if ranking in LOWER_IS_BETTER else -1
+    entries.sort(key=lambda e: (e["value"] is None, sign * (e["value"] or 0)))
+    for i, e in enumerate(entries):
+        e["rank"] = i + 1 if e["value"] is not None else None
+    return entries
+
+
+# ---- feeding ------------------------------------------------------------------------------------------------------
+
+
+def feed(batch_id: int) -> None:
+    """Submit the batch's next waiting run unless one of its runs is already submitted or running; with none left,
+    the batch is done. Called when a batch starts, when one of its runs ends, and after a restart; the batch row's
+    lock keeps two callers from both submitting."""
+    from . import jobs
+    from .db import connection
+    from .routers.runs import _run
+
+    owner = jobs.owner_id()
+    with connection() as conn:
+        batch = conn.execute(
+            """SELECT b.status, e.output_dir FROM meta.run_batches b JOIN meta.exports e ON e.id = b.export_id
+                WHERE b.id = %s FOR UPDATE OF b""",
+            (batch_id,),
+        ).fetchone()
+        if batch is None or batch["status"] != "running":
+            return
+        if conn.execute(
+            """SELECT 1 FROM meta.model_runs WHERE batch_id = %s
+                  AND (status = 'running' OR (status = 'pending' AND owner IS NOT NULL)) LIMIT 1""",
+            (batch_id,),
+        ).fetchone():
+            return
+        run = conn.execute(
+            """UPDATE meta.model_runs SET owner = %s, status_message = 'Queued', updated_at = now()
+                WHERE id = (SELECT id FROM meta.model_runs WHERE batch_id = %s AND status = 'pending' AND owner IS NULL
+                             ORDER BY id LIMIT 1)
+            RETURNING id, config""",
+            (owner, batch_id),
+        ).fetchone()
+        if run is None:
+            conn.execute("UPDATE meta.run_batches SET status = 'done', finished_at = now() WHERE id = %s", (batch_id,))
+            return
+    jobs.submit(_run, run["id"], batch["output_dir"], run["config"])
+
+
+def resume_all() -> None:
+    """After a restart: every running batch queues the run the restart interrupted once more (marked `retried`; a
+    second interruption leaves it failed), then carries on with its waiting runs."""
+    from . import jobs
+    from .db import connection
+
+    with connection() as conn:
+        conn.execute(
+            """UPDATE meta.model_runs r
+                  SET status = 'pending', status_message = %s, error = NULL, owner = NULL, finished_at = NULL,
+                      updated_at = now(), report = coalesce(r.report, '{}') || '{"retried": true}'
+                 FROM meta.run_batches b
+                WHERE b.id = r.batch_id AND b.status = 'running' AND r.status = 'failed' AND r.error = %s
+                  AND r.report -> 'retried' IS NULL""",
+            (WAITING, jobs.INTERRUPTED),
+        )
+        running = [
+            b["id"] for b in conn.execute("SELECT id FROM meta.run_batches WHERE status = 'running' ORDER BY id")
+        ]
+    for batch_id in running:
+        feed(batch_id)

@@ -38,6 +38,7 @@ log = logging.getLogger(__name__)
 OWNER_LOCK = 7_311_205
 SLOT_LOCK = 7_311_206
 TICKET_LOCK = 7_311_207
+INTERRUPTED = "Interrupted by an API restart."
 KEEPALIVE_S = 30.0
 SLOT_POLL_S = 1.0
 
@@ -113,7 +114,8 @@ def _keep_owner_lock() -> None:
 
 
 def sweep(owner: int | None = None) -> None:
-    """Fail jobs whose owning process is gone, or with `owner`, every active job stamped with that id."""
+    """Fail jobs whose owning process is gone, or with `owner`, every active job stamped with that id. Without
+    `owner` (at startup), running batches then resume."""
     dead = sql.SQL(_DEAD) if owner is None else sql.SQL("owner = {}").format(sql.Literal(owner))
     with connection() as conn:
         # Before the datasets below change status: a pull is interrupted with the dataset job it belongs to.
@@ -157,13 +159,19 @@ def sweep(owner: int | None = None) -> None:
             ).format(dead)
         )
         for table in ("exports", "model_runs", "analyses"):
+            # A batch's runs that it hasn't submitted yet have no owner and no job to lose: the batch resumes them.
+            waiting = sql.SQL(" AND NOT (batch_id IS NOT NULL AND owner IS NULL)" if table == "model_runs" else "")
             conn.execute(
                 sql.SQL(
-                    """UPDATE meta.{} SET status = 'failed', error = 'Interrupted by an API restart.',
-                          status_message = 'Failed', finished_at = now(), updated_at = now()
-                    WHERE status IN ('pending', 'running') AND {}"""
-                ).format(sql.Identifier(table), dead)
+                    """UPDATE meta.{} SET status = 'failed', error = {}, status_message = 'Failed',
+                          finished_at = now(), updated_at = now()
+                    WHERE status IN ('pending', 'running') AND {}{}"""
+                ).format(sql.Identifier(table), sql.Literal(INTERRUPTED), dead, waiting)
             )
+    if owner is None:
+        from . import batches
+
+        batches.resume_all()
 
 
 def start() -> None:

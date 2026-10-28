@@ -159,7 +159,7 @@ def test_train_rejects_unsupported_device_before_loading(tmp_path):
 def fake_export(monkeypatch):
     exp = {"dataset_id": 1, "model_family": "tree", "output_dir": "/nowhere"}
     manifest = {"targets": ["a"], "contains_nan": True}
-    monkeypatch.setattr(runs, "_export_manifest", lambda export_id, user: (exp, manifest))
+    monkeypatch.setattr(runs, "export_manifest", lambda export_id, user: (exp, manifest))
 
 
 def test_start_run_cuda_without_gpu_is_409(monkeypatch, fake_export):

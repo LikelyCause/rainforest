@@ -11,6 +11,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from . import auth, db, experiments, gpu, jobs, processing
 from .config import get_settings
 from .routers import baselines, datasets, explore, exports, fields, query, recipes, runs, sources, team, users
+from .routers import batches as batches_router
 from .routers import derived as derived_router
 from .routers import experiments as experiments_router
 from .semantics import option_catalog
@@ -71,6 +72,7 @@ app.include_router(fields.router)
 app.include_router(query.router)
 app.include_router(exports.router)
 app.include_router(runs.router)
+app.include_router(batches_router.router)
 app.include_router(explore.router)
 app.include_router(users.router)
 app.include_router(team.router)

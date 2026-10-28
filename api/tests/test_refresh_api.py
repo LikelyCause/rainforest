@@ -202,6 +202,10 @@ LOCKED_ROUTES = {
     "export rows": lambda c, i: c.post(f"/api/datasets/{i['ds']}/export-rows", json={}),
     "export": lambda c, i: c.post(f"/api/datasets/{i['ds']}/exports", json={}),
     "run": lambda c, i: c.post(f"/api/exports/{i['export']}/runs", json={"model": "lightgbm", "cv": 0, "cv_folds": 0}),
+    "batch": lambda c, i: c.post(
+        f"/api/exports/{i['export']}/batches", json={"kind": "one_vs_rest", "target": "vehicle", "cv_folds": 0}
+    ),
+    "cancel batch": lambda c, i: c.post(f"/api/batches/{i['batch']}/cancel"),
     "rename": lambda c, i: c.patch(f"/api/datasets/{i['ds']}", json={"name": "Renamed"}),
     "targets": lambda c, i: c.patch(f"/api/datasets/{i['ds']}", json={"target_columns": ["vehicle"]}),
     "delete": lambda c, i: c.delete(f"/api/datasets/{i['ds']}"),
@@ -223,7 +227,13 @@ def ids(clients, ds) -> dict:
            VALUES (%s, %s, 'lightgbm', 'tree', 'done', %s, %s) RETURNING id""",
         (export["id"], ds, lead.user["id"], export["experiment_id"]),
     )["id"]
+    batch = db.fetch_one(
+        """INSERT INTO meta.run_batches (experiment_id, export_id, kind, name, spec, created_by)
+           VALUES (%s, %s, 'one_vs_rest', 'Per vehicle', '{}', %s) RETURNING id""",
+        (export["experiment_id"], export["id"], lead.user["id"]),
+    )["id"]
     return {
+        "batch": batch,
         "ds": ds,
         "field": engine["id"],
         "type": engine["inferred_type"],

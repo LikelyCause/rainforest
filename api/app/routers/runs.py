@@ -6,20 +6,23 @@ import json
 import logging
 import time
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from .. import experiments, gpu, jobs
+from .. import batches, experiments, gpu, jobs
 from ..auth import CurrentUser
+from ..batches import WAITING
 from ..db import connection, execute, fetch_all, fetch_one, jsonb
 from ..modeling import mlflow_log
 from ..modeling import params as model_params
 from ..modeling.registry import (
     MODELS,
     PLANNED,
+    ModelSpec,
     catalog,
     compatibility,
     dry_fit_problem,
@@ -40,7 +43,7 @@ router = APIRouter(prefix="/api", tags=["models"])
 
 RUN_COLS = """id, export_id, dataset_id, model, family, status, status_message, error, config, metrics,
               report, created_at, updated_at, finished_at, mlflow_experiment_id,
-              mlflow_run_id, created_by, experiment_id, note, chosen_at,
+              mlflow_run_id, created_by, experiment_id, note, chosen_at, batch_id,
               (SELECT name FROM meta.users u WHERE u.id = chosen_by) AS chosen_by_name"""
 
 
@@ -65,7 +68,7 @@ def system() -> dict:
     return {"gpu": gpu.detect(), "mlflow": {"enabled": enabled, "browseUrl": browse_url}}
 
 
-def _export_manifest(export_id: int, user: dict) -> tuple[dict, dict]:
+def export_manifest(export_id: int, user: dict) -> tuple[dict, dict]:
     exp = visible_export(export_id, user)
     if exp["status"] != "done":
         raise HTTPException(409, "Export is not finished")
@@ -79,7 +82,7 @@ def _export_manifest(export_id: int, user: dict) -> tuple[dict, dict]:
 @router.get("/exports/{export_id}/models")
 def models_for_export(export_id: int, user: CurrentUser) -> list[dict]:
     """Every registered model, with whether (and why not) it can train on this export."""
-    exp, manifest = _export_manifest(export_id, user)
+    exp, manifest = export_manifest(export_id, user)
     out = []
     for m in catalog():
         if m["planned"]:
@@ -92,11 +95,21 @@ def models_for_export(export_id: int, user: CurrentUser) -> list[dict]:
     return out
 
 
-@router.post("/exports/{export_id}/runs", status_code=202)
-def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
-    exp, manifest = _export_manifest(export_id, user)
+@dataclass(frozen=True)
+class Checked:
+    """A run request that passed the model checks: what it trains and the label it is shown under."""
+
+    spec: ModelSpec
+    targets: list[str]
+    kinds: list[str | None]
+    label: str
+
+
+def check_model(exp: dict, manifest: dict, req: RunRequest) -> Checked:
+    """The checks of a run request that don't depend on its settings: the model, device and targets. Raises the
+    run's 4xx; fills in `req.target` for a one-vs-rest run of the export's only target."""
     if req.experiment_id is not None and req.experiment_id != exp["experiment_id"]:
-        raise HTTPException(422, f"Export #{export_id} belongs to experiment {exp['experiment_id']}; its runs do too")
+        raise HTTPException(422, f"Export #{exp['id']} belongs to experiment {exp['experiment_id']}; its runs do too")
     if req.model in PLANNED:
         raise HTTPException(422, f"{PLANNED[req.model]['label']} is planned and can't be trained yet.")
     spec = MODELS.get(req.model)
@@ -112,18 +125,14 @@ def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
     if req.device == "cuda" and not gpu.gpu_available():
         info = gpu.detect()
         raise HTTPException(409, f"No usable GPU: {info['reason']}" if info else "No GPU is available to the API")
-    if problems := param_problems(spec, req.params):
-        raise HTTPException(422, {"message": "Invalid model parameters", "errors": problems})
-    one_vs_rest = req.positive_class is not None
-    if one_vs_rest:
+    if req.positive_class is not None:
         req.target, problem = one_vs_rest_target(manifest, req.target, req.positive_class)
         if problem:
             raise HTTPException(422, problem)
         if req.order is not None and req.order != [req.target]:
             raise HTTPException(422, f"A one-vs-rest run trains only {req.target}; leave the order out")
-        if req.balance and (clash := weighting_clash(spec, req.params)):
-            raise HTTPException(422, f"Choose balance or set {', '.join(clash)}, not both")
         targets, kinds = [req.target], ["binary"]
+        label = ovr_label(spec, req.target, req.positive_class)
     else:
         if req.target is not None or req.balance:
             raise HTTPException(422, "target and balance apply to a one-vs-rest run; set positive_class too")
@@ -131,44 +140,81 @@ def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
             raise HTTPException(422, problem)
         targets = req.order or manifest["targets"]
         kinds = [(manifest.get("target_kinds") or {}).get(t) for t in targets]
+        label = label_for(spec, kinds)
     if problem := regression_problem(spec, kinds):
         raise HTTPException(422, problem)
-    if model_params.settings_for(spec.key):
-        req.params = model_params.normalize(spec.key, req.params)
-        if problems := model_params.setting_problems(spec.key, req.params):
-            raise HTTPException(422, {"message": "Invalid model settings", "errors": problems})
-        stats = manifest.get("target_stats") or {}
-        for t, kind in zip(targets, kinds):
-            if kind == "regression" and (
-                p := model_params.objective_problem(req.params, (stats.get(t) or {}).get("min"))
-            ):
-                raise HTTPException(422, p)
-        if problem := dry_fit_problem(spec, req.params, kinds):
-            raise HTTPException(422, problem)
+    return Checked(spec, targets, kinds, label)
+
+
+def check_params(checked: Checked, manifest: dict, req: RunRequest, dry_fits: dict | None = None) -> None:
+    """The checks of a run's settings, the 64-row dry fit last; whole numbers in `req.params` become ints. A batch
+    passes `dry_fits` so runs with the same settings and target kinds share one fit."""
+    spec = checked.spec
+    if problems := param_problems(spec, req.params):
+        raise HTTPException(422, {"message": "Invalid model parameters", "errors": problems})
+    if req.positive_class is not None and req.balance and (clash := weighting_clash(spec, req.params)):
+        raise HTTPException(422, f"Choose balance or set {', '.join(clash)}, not both")
+    if not model_params.settings_for(spec.key):
+        return
+    req.params = model_params.normalize(spec.key, req.params)
+    if problems := model_params.setting_problems(spec.key, req.params):
+        raise HTTPException(422, {"message": "Invalid model settings", "errors": problems})
+    stats = manifest.get("target_stats") or {}
+    for t, kind in zip(checked.targets, checked.kinds):
+        if kind == "regression" and (p := model_params.objective_problem(req.params, (stats.get(t) or {}).get("min"))):
+            raise HTTPException(422, p)
+    key = (json.dumps(req.params, sort_keys=True, default=str), tuple(checked.kinds))
+    if dry_fits is None or key not in dry_fits:
+        problem = dry_fit_problem(spec, req.params, checked.kinds)
+        if dry_fits is not None:
+            dry_fits[key] = problem
+    else:
+        problem = dry_fits[key]
+    if problem:
+        raise HTTPException(422, problem)
+
+
+def insert_run(
+    conn, exp: dict, checked: Checked, req: RunRequest, user_id: int, owner: int | None, batch_id: int | None = None
+) -> dict:
+    """The run's row, `pending`. A batch's runs wait with no owner until the batch submits them."""
     # A run that isn't one-vs-rest stores the config it always has.
-    stored = {"experiment_id"} if one_vs_rest else {"experiment_id", "positive_class", "target", "balance"}
-    label = ovr_label(spec, req.target, req.positive_class) if one_vs_rest else label_for(spec, kinds)
+    stored = (
+        {"experiment_id"}
+        if req.positive_class is not None
+        else {"experiment_id", "positive_class", "target", "balance"}
+    )
+    # Named for its targets from the start ("Ridge regression" for numbers), so a queued or failed run reads right.
+    return conn.execute(
+        f"""INSERT INTO meta.model_runs (export_id, dataset_id, model, family, status, status_message, config,
+                                         owner, created_by, experiment_id, report, batch_id)
+            VALUES (%s, %s, %s, %s, 'pending', %s, %s, %s, %s, %s, %s, %s) RETURNING {RUN_COLS}""",
+        (
+            exp["id"],
+            exp["dataset_id"],
+            checked.spec.key,
+            checked.spec.family,
+            "Queued" if batch_id is None else WAITING,
+            jsonb(req.model_dump(exclude=stored)),
+            owner,
+            user_id,
+            exp["experiment_id"],
+            jsonb({"model_label": checked.label}),
+            batch_id,
+        ),
+    ).fetchone()
+
+
+@router.post("/exports/{export_id}/runs", status_code=202)
+def start_run(export_id: int, req: RunRequest, user: CurrentUser) -> dict:
+    exp, manifest = export_manifest(export_id, user)
+    checked = check_model(exp, manifest, req)
+    check_params(checked, manifest, req)
     with connection() as conn:
         # Recorded under the row lock, so a refresh starting now sees the run and refuses.
         refuse_while_refreshing(conn, exp["dataset_id"])
         experiments.require_writable(experiments.get_visible(conn, exp["experiment_id"], user), user)
-        # Named for its targets from the start ("Ridge regression" for numbers), so a queued or failed run reads right.
-        run = conn.execute(
-            f"""INSERT INTO meta.model_runs (export_id, dataset_id, model, family, status, status_message, config,
-                                             owner, created_by, experiment_id, report)
-                VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s, %s, %s, %s) RETURNING {RUN_COLS}""",
-            (
-                export_id,
-                exp["dataset_id"],
-                spec.key,
-                spec.family,
-                jsonb(req.model_dump(exclude=stored)),
-                jobs.owner_id(),
-                user["id"],
-                exp["experiment_id"],
-                jsonb({"model_label": label}),
-            ),
-        ).fetchone()
+        run = insert_run(conn, exp, checked, req, user["id"], jobs.owner_id())
     jobs.submit(_run, run["id"], exp["output_dir"], req.model_dump())
     return _with_url(run)
 
@@ -265,7 +311,8 @@ def download(run_id: int, kind: str, user: CurrentUser) -> FileResponse:
 def _finish(conn, run_id: int, report: dict, logged: dict) -> None:
     conn.execute(
         """UPDATE meta.model_runs SET status = 'done', error = NULL, status_message = 'Done', metrics = %s,
-                  report = %s, mlflow_experiment_id = %s, mlflow_run_id = %s,
+                  report = jsonb_strip_nulls(jsonb_build_object('retried', report -> 'retried')) || %s,
+                  mlflow_experiment_id = %s, mlflow_run_id = %s,
                   model_dir = %s, finished_at = now(), updated_at = now() WHERE id = %s""",
         (
             jsonb(report["metrics"]),
@@ -279,6 +326,23 @@ def _finish(conn, run_id: int, report: dict, logged: dict) -> None:
 
 
 def _run(run_id: int, export_dir: str, req: dict) -> None:
+    # Only a run still waiting starts: one cancelled while queued, or already started by an earlier submission (a
+    # restart can queue a batch run twice), is left alone.
+    claimed = fetch_one(
+        """UPDATE meta.model_runs SET status = 'running', error = NULL, status_message = 'Loading export',
+                  updated_at = now() WHERE id = %s AND status = 'pending' RETURNING batch_id""",
+        (run_id,),
+    )
+    if claimed is None:
+        return
+    try:
+        _train_run(run_id, export_dir, req)
+    finally:
+        if claimed["batch_id"] is not None:
+            batches.feed(claimed["batch_id"])
+
+
+def _train_run(run_id: int, export_dir: str, req: dict) -> None:
     from ..config import get_settings
     from ..modeling.train import train
 
@@ -290,7 +354,6 @@ def _run(run_id: int, export_dir: str, req: dict) -> None:
         )
 
     try:
-        progress("Loading export")
         out_dir = get_settings().models_dir / f"run{run_id}_{req['model']}_{int(time.time())}"
         params = req.get("params") or {}
         if "n_jobs" in MODELS[req["model"]].default_params:

@@ -160,6 +160,46 @@ class RunRequest(BaseModel):
         return self
 
 
+class Sampler(BaseModel):
+    kind: Literal["grid", "random"] = "grid"
+    n: int | None = Field(None, ge=1, description="Random only: how many combinations to draw")
+    seed: int = 0
+
+
+class BatchRequest(BaseModel):
+    kind: Literal["one_vs_rest", "search"]
+    name: str | None = Field(None, max_length=200)
+    model: str = "lightgbm"
+    device: Literal["cpu", "cuda"] = "cpu"
+    params: dict[str, Any] = Field(default_factory=dict)
+    seed: int = 42
+    cv: int = Field(5, ge=0, le=10)
+    cv_folds: int = Field(5, ge=0, le=20)
+    target: str | None = Field(None, max_length=500)
+    classes: list[str] | None = Field(None, description="One-vs-rest: the classes to train (default: all)")
+    balance: bool = False
+    space: dict[str, list | dict] | None = Field(None, description="Search: each setting's values or range")
+    sampler: Sampler | None = None
+    ranking: str | None = Field(None, max_length=100)
+    search_classes: list[str] | None = Field(None, description="One-vs-rest search: the classes it is tuned on")
+
+    @model_validator(mode="after")
+    def _check(self) -> BatchRequest:
+        if self.cv == 1 or self.cv_folds == 1:
+            raise ValueError("cv and cv_folds take 0 or at least 2 folds")
+        if self.kind == "one_vs_rest":
+            if extra := [k for k in ("space", "sampler", "ranking", "search_classes") if getattr(self, k) is not None]:
+                raise ValueError(f"{', '.join(extra)} apply to a search batch")
+        else:
+            if not self.space:
+                raise ValueError("A search needs a space: the settings to try")
+            if self.classes is not None:
+                raise ValueError("A search is tuned on search_classes, not classes")
+            if self.sampler and self.sampler.kind == "random" and self.sampler.n is None:
+                raise ValueError("A random search needs n, the number of combinations")
+        return self
+
+
 class AnalysisParams(BaseModel):
     data: str = Field("raw", pattern=r"^(raw|export:\d+)$")
     kept: bool = False
