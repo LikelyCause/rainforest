@@ -37,7 +37,9 @@ The feature in one pass:
 
 ## Known open issues
 
-These are confirmed and being fixed; check `git log` for commits after `0e4423e` to see which have landed.
+These were confirmed by the final review. Fixes for all four are committed (`5b514ec`, `d51ab54`, `69b46ab`,
+`c02d7b0`, each with a test that failed first) but **have not yet been reviewed**; treat them as the part of the branch
+most likely to need another look.
 
 - **Exports after a refresh judge the wrong decisions for non-default experiments** (`routers/exports.py`
   `used_fields`). A refresh deletes a vanished field, and the experiment's own decision for it goes with it (cascade),
@@ -62,7 +64,7 @@ Deferred minors are listed in the review log (lines with `minor (deferred)`); no
   `dev` connection; *Datasets → Connect ▾*.
 - Chart: `bash deploy/chart/test.sh`; `helm lint deploy/chart/rainforest -f deploy/chart/rainforest/ci/dev-values.yaml`.
 
-## State at the last full run (`0e4423e`)
+## State at the last full run (`c02d7b0`)
 
-API 1085 passed, 1 skipped. UI typecheck clean, 254 passed plus the 4 `theme.test.ts` failures that are also on
+API 1093 passed, 1 skipped. UI typecheck clean, 254 passed plus the 4 `theme.test.ts` failures that are also on
 `main`. Chart 174/174, lint clean. ESLint 0 errors (20 warnings, also on `main`).
