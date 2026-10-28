@@ -343,10 +343,13 @@ def _in_use(conn, dataset_id: int, gone: dict[int, str]) -> dict:
     # A personal export reads the assessor's own decision for the fields the version works on, and the version's
     # snapshot for the carried ones; a field outside the snapshot isn't in it at all.
     rows = conn.execute(
+        # The snapshot is joined after DISTINCT: deduplicating rows that carry it would compare it once per row.
         """WITH pairs AS (
-                SELECT DISTINCT a.recipe_id, a.user_id, r.scope, r.snapshot FROM meta.assessments a
-                  JOIN meta.recipes r ON r.id = a.recipe_id
-                 WHERE r.dataset_id = %(ds)s AND r.phase = 'finalized')
+                SELECT p.recipe_id, p.user_id, r.scope, r.snapshot
+                  FROM (SELECT DISTINCT a.recipe_id, a.user_id FROM meta.assessments a
+                          JOIN meta.recipes r ON r.id = a.recipe_id
+                         WHERE r.dataset_id = %(ds)s AND r.phase = 'finalized') p
+                  JOIN meta.recipes r ON r.id = p.recipe_id)
            SELECT p.recipe_id, p.user_id, g.id AS field_id, g.name,
                   p.snapshot -> 'fields' -> g.name -> 'decision' ->> 'action' AS team_action,
                   (p.scope = 'all' OR EXISTS (SELECT 1 FROM meta.recipe_reopened o
