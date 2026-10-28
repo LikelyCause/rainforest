@@ -323,32 +323,48 @@ def _reconcile(
 
 def _in_use(conn, dataset_id: int, gone: dict[int, str]) -> dict:
     """Of the fields about to be deleted (`gone`, by id), those each team experiment's copy keeps or targets (by
-    experiment id), and those each personal experiment's assessment does ("<recipe id>:<user id>"). Their rows go with
-    the fields, so this record is how an export check later knows what the experiment read (exports.used_fields)."""
-    from .assessment import personal_snapshot  # assessment imports processing, which this module imports
-
+    experiment id), and those each assessor's assessment of a finalized version keeps or targets as a personal export
+    reads it ("<recipe id>:<user id>"; `assessment.personal_snapshot`). Their rows go with the fields, so this record is
+    how an export check later knows what an experiment read (exports.used_fields). Every experiment and assessor gets
+    an entry, empty or not, so one made later is told apart by having none."""
     out: dict[str, dict[str, list[str]]] = {"experiments": {}, "assessments": {}}
-    if not gone:
-        return out
+    ids = list(gone)
     for r in conn.execute(
-        """SELECT e.experiment_id, f.name FROM meta.experiment_decisions e
-             JOIN meta.fields f ON f.id = e.field_id JOIN meta.experiments x ON x.id = e.experiment_id
-            WHERE e.field_id = ANY(%s) AND e.action IN ('keep', 'target') AND NOT x.is_default
-            ORDER BY e.experiment_id, f.ordinal""",
-        (list(gone),),
+        """SELECT x.id, coalesce(array_agg(f.name ORDER BY f.ordinal) FILTER (WHERE f.id IS NOT NULL), '{}') AS names
+             FROM meta.experiments x
+             LEFT JOIN meta.experiment_decisions e
+                    ON e.experiment_id = x.id AND e.field_id = ANY(%(ids)s) AND e.action IN ('keep', 'target')
+             LEFT JOIN meta.fields f ON f.id = e.field_id
+            WHERE x.dataset_id = %(ds)s AND x.assessor_id IS NULL AND NOT x.is_default
+            GROUP BY x.id""",
+        {"ids": ids, "ds": dataset_id},
     ).fetchall():
-        out["experiments"].setdefault(str(r["experiment_id"]), []).append(r["name"])
-    for r in conn.execute(
-        """SELECT DISTINCT x.recipe_id, x.assessor_id FROM meta.experiments x JOIN meta.recipes r ON r.id = x.recipe_id
-            WHERE x.dataset_id = %s AND x.assessor_id IS NOT NULL AND r.phase = 'finalized'""",
-        (dataset_id,),
-    ).fetchall():
-        snap = personal_snapshot(conn, recipes.get(conn, r["recipe_id"]), r["assessor_id"])
-        names = [
-            n for n in gone.values() if (f := snap["fields"].get(n)) and f["decision"]["action"] in ("keep", "target")
-        ]
-        if names:
-            out["assessments"][f"{r['recipe_id']}:{r['assessor_id']}"] = names
+        out["experiments"][str(r["id"])] = list(r["names"])
+    # A personal export reads the assessor's own decision for the fields the version works on, and the version's
+    # snapshot for the carried ones; a field outside the snapshot isn't in it at all.
+    rows = conn.execute(
+        """WITH pairs AS (
+                SELECT DISTINCT a.recipe_id, a.user_id, r.scope, r.snapshot FROM meta.assessments a
+                  JOIN meta.recipes r ON r.id = a.recipe_id
+                 WHERE r.dataset_id = %(ds)s AND r.phase = 'finalized')
+           SELECT p.recipe_id, p.user_id, g.id AS field_id, g.name,
+                  p.snapshot -> 'fields' -> g.name -> 'decision' ->> 'action' AS team_action,
+                  (p.scope = 'all' OR EXISTS (SELECT 1 FROM meta.recipe_reopened o
+                                               WHERE o.recipe_id = p.recipe_id AND o.field_id = g.id)) AS open,
+                  a.action AS own_action
+             FROM pairs p
+            CROSS JOIN unnest(%(ids)s::bigint[], %(names)s::text[]) AS g(id, name)
+             LEFT JOIN meta.assessments a ON a.recipe_id = p.recipe_id AND a.user_id = p.user_id AND a.field_id = g.id
+            ORDER BY p.recipe_id, p.user_id, array_position(%(ids)s::bigint[], g.id)""",
+        {"ds": dataset_id, "ids": ids, "names": [gone[i] for i in ids]},
+    ).fetchall()
+    for r in rows:
+        names = out["assessments"].setdefault(f"{r['recipe_id']}:{r['user_id']}", [])
+        if r["team_action"] is None:
+            continue
+        action = r["own_action"] if r["open"] and r["own_action"] is not None else r["team_action"]
+        if action in ("keep", "target"):
+            names.append(r["name"])
     return out
 
 

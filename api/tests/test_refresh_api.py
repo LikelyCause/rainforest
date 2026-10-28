@@ -516,3 +516,33 @@ def test_the_gone_field_check_follows_what_the_experiment_used(lead, mongo, kind
     finally:
         seed(mongo)
         lead.delete(f"/api/datasets/{ds}")
+
+
+@pytest.mark.parametrize("kind", ["team", "personal"])
+def test_an_experiment_made_after_the_refresh_blocks_on_what_its_baseline_used(lead, mongo, kind):
+    ds = _connected(lead, mongo, f"Late {kind}")
+    set_phase(ds, "assessing")
+    rid = lead.get(f"/api/datasets/{ds}/team").json()["recipe"]["id"]
+    assert lead.post(f"/api/datasets/{ds}/assessors", json={"user_id": lead.user["id"]}).status_code == 200
+    set_phase(ds, "finalized")
+    gone = "Field in the baseline is no longer in the data: engine"
+    try:
+        mongo.curated.update_many({}, {"$unset": {"engine": ""}})
+        with _held(lead, ds) as pull:
+            pass
+        assert _latest_pull(ds)["status"] == "done"
+        source = f"recipe:{rid}" if kind == "team" else f"assessment:{rid}:{lead.user['id']}"
+        r = lead.post(f"/api/datasets/{ds}/experiments", json={"name": "Late", "source": source})
+        assert r.status_code in (200, 201), r.text
+        x = r.json()
+        r = lead.get(f"/api/datasets/{ds}/export-preview", params={"experiment_id": x["id"]})
+        assert gone in r.json()["blocking"]
+        r = lead.post(f"/api/datasets/{ds}/exports", json={"experiment_id": x["id"]})
+        assert r.status_code == 422 and gone in r.json()["detail"]["errors"]
+        recorded = _latest_pull(ds)["flatten_notes"]["removed_in_use"]
+        # Every assessor of a finalized version is recorded, an experiment or not; the late team one is not.
+        assert recorded["assessments"] == {f"{rid}:{lead.user['id']}": ["engine"]}
+        assert str(x["id"]) not in recorded["experiments"] and _latest_pull(ds)["id"] == pull["id"]
+    finally:
+        seed(mongo)
+        lead.delete(f"/api/datasets/{ds}")

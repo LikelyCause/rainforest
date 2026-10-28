@@ -142,7 +142,8 @@ These block the export:
 - no kept features
 - a field the export keeps, or one of its targets, that a refresh took out of the data (a field it drops may go).
   For a team experiment that is what its own copy kept or targeted, adjustments included, and for a personal one what
-  its assessment did, as the refresh recorded them before deleting the field
+  its assessment did, as the refresh recorded them before deleting the field; for an experiment made after that
+  refresh, what its baseline kept or targeted
 - a target class with a single row
 - a numeric target with values that don't read as numbers, or with a single value
 - a band with fewer than 2 rows

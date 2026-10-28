@@ -265,21 +265,25 @@ def used_fields(conn, recipe: dict, snap: dict, x: dict | None) -> list[str]:
     )
     out = dict.fromkeys(n for n in used(snap) if n in present)
     decided: set[str] = set()
+    unrecorded: set[str] = set()  # removed by a pull with no entry for this experiment: it was made after
     for p in conn.execute(
         """SELECT flatten_notes FROM meta.dataset_pulls
             WHERE dataset_id = %s AND status = 'done' AND flatten_notes ? 'removed_in_use' ORDER BY id DESC""",
         (x["dataset_id"],),
     ).fetchall():
         notes = p["flatten_notes"]
-        mine = set(notes["removed_in_use"][kind].get(key, []))
+        record = notes["removed_in_use"][kind]
         for n in notes.get("removed_fields") or []:
-            if n not in decided:
-                decided.add(n)
-                if n in mine:
-                    out[n] = None
+            if n in decided:
+                continue
+            decided.add(n)
+            if key not in record:
+                unrecorded.add(n)
+            elif n in record[key]:
+                out[n] = None
     if recipe["phase"] == "finalized":
         base = recipes.snapshot_of(conn, recipe)
-        out.update(dict.fromkeys(n for n in used(base) if n not in present and n not in decided))
+        out.update(dict.fromkeys(n for n in used(base) if n not in present and (n not in decided or n in unrecorded)))
     out.update(dict.fromkeys(x.get("target_order") or []))
     return list(out)
 
