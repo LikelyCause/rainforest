@@ -377,6 +377,7 @@ class MongoSource:
                 per_source.append({"label": label, "documents": documents})
                 if progress:
                     progress(label, documents)
+        chunks.finish()
         return PullResult(per_source, chunks.notes(), chunks.identifiers())
 
 
@@ -408,9 +409,11 @@ class _Chunks:
         self.out_dir = out_dir
         self.by_path: dict[tuple[str, ...], str] = {}
         # A refresh's: the [key path, column] pairs of the previous pull, whose names win over this pull's document
-        # order, so a field keeps holding the same key. Every one is reserved, seen in this pull or not.
+        # order, so a field keeps holding the same key. They are reserved while the pull runs, since a path may turn
+        # up late; `finish` releases those of paths that never did.
         self.earlier: dict[tuple[str, ...], str] = {tuple(path): name for path, name in names or []}
         self.taken: set[str] = set(self.earlier.values())
+        self.proposed: dict[tuple[str, ...], str] = {}  # what flatten_document named each path where first seen
         self.order: dict[str, None] = {}
         self.kinds: dict[str, set[str]] = {}
         self.mixed: dict[str, None] = {}
@@ -421,20 +424,55 @@ class _Chunks:
         self.rows: list[dict] = []
         self.written: dict[str, int] = {}
 
+    @staticmethod
+    def _free(proposed: str, path: tuple[str, ...], taken: set[str]) -> str:
+        if proposed not in taken:
+            return proposed
+        name = base = ".".join(map(_segment, path))
+        n = 2
+        while name in taken:
+            name = f"{base}_{n}"
+            n += 1
+        return name
+
     def _name(self, proposed: str, path: tuple[str, ...]) -> str:
-        name = self.earlier.get(path) or proposed
-        if path not in self.earlier and name in self.taken:
-            name = base = ".".join(map(_segment, path))
-            n = 2
-            while name in self.taken:
-                name = f"{base}_{n}"
-                n += 1
+        self.proposed[path] = proposed
+        name = self.earlier[path] if path in self.earlier else self._free(proposed, path, self.taken)
         self.by_path[path] = name
         self.taken.add(name)
         self.order[name] = None
         if name != ".".join(path):
             self.renamed[".".join(path)] = name
         return name
+
+    def finish(self) -> None:
+        """Release the names reserved for earlier key paths this pull never met: a path that took a suffix only
+        because of one gets the name it would otherwise have had, and the chunks already written are renamed."""
+        if all(path in self.by_path for path in self.earlier):
+            return
+        taken = {name for path, name in self.by_path.items() if path in self.earlier}
+        final: dict[tuple[str, ...], str] = {}
+        for path, name in self.by_path.items():  # in the order first seen, as they were named
+            final[path] = name if path in self.earlier else self._free(self.proposed[path], path, taken)
+            taken.add(final[path])
+        rename = {self.by_path[path]: name for path, name in final.items() if name != self.by_path[path]}
+        if not rename:
+            return
+
+        def new(col: str) -> str:
+            return rename.get(col, col)
+
+        self.by_path = final
+        self.order = {new(c): None for c in self.order}
+        self.mixed = {new(c): None for c in self.mixed}
+        self.arrays = {new(c): None for c in self.arrays}
+        self.kinds = {new(c): v for c, v in self.kinds.items()}
+        self.categories = {new(c): v for c, v in self.categories.items()}
+        self.renamed = {".".join(path): name for path, name in final.items() if name != ".".join(path)}
+        for chunk in self.out_dir.glob("chunk_*.parquet"):
+            df = pl.read_parquet(chunk)
+            if any(c in rename for c in df.columns):
+                df.select(pl.col(c).alias(new(c)) for c in df.columns).write_parquet(chunk)
 
     def add(self, label: str, doc: Mapping) -> None:
         notes: dict = {}
