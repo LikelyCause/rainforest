@@ -151,7 +151,7 @@ def _refresh(ds: dict, src: dict, pull_id: int) -> None:
         family, targets = row["model_family"], list(row["target_columns"] or [])
         rejected = [p.name for p in profiles if p.name in targets and not p.is_target]
         rejected_ids, before = _untarget(conn, dataset_id, family, rejected)
-        field_ids, vanished = _reconcile(conn, dataset_id, profiles, db_cols, dropped, new)
+        field_ids, vanished, in_use = _reconcile(conn, dataset_id, profiles, db_cols, dropped, new)
         replace_correlations(conn, dataset_id, field_ids, assocs)
         upsert_correlations(conn, dataset_id, [(field_ids[a.i], field_ids[a.j], a) for a in screened])
         refresh_target_state(conn, dataset_id)
@@ -183,6 +183,7 @@ def _refresh(ds: dict, src: dict, pull_id: int) -> None:
                     {
                         **pulled["flatten_notes"],
                         "removed_fields": [f["name"] for f in formulas if f["id"] in dropped] + vanished,
+                        "removed_in_use": in_use,
                     }
                 ),
                 jsonb(drift) if drift else None,
@@ -290,8 +291,8 @@ def _reconcile(
 ) -> tuple[list[int], list[str]]:
     """Fields by name: a persisting one is updated in place, a new one inserted with seeded suggestions, a vanished
     one deleted (its decisions, history, settings and correlations go with it), and so is a derived field that
-    couldn't be recomputed. Returns the field ids in profile order and the names of the vanished fields."""
-    conn.execute("DELETE FROM meta.fields WHERE id = ANY(%s)", (dropped,))
+    couldn't be recomputed. Returns the field ids in profile order, the names of the vanished fields, and which of
+    the deleted fields each experiment read (`_in_use`)."""
     existing = {
         r["name"]: r["id"]
         for r in conn.execute(
@@ -299,8 +300,11 @@ def _reconcile(
         ).fetchall()
     }
     present = {p.name for p in profiles}
-    vanished = [n for n in existing if n not in present]
-    conn.execute("DELETE FROM meta.fields WHERE id = ANY(%s)", ([existing[n] for n in vanished],))
+    gone = {i: n for n, i in existing.items() if n not in present or i in dropped}
+    vanished = [n for i, n in gone.items() if i not in dropped]
+    in_use = _in_use(conn, dataset_id, gone)
+    conn.execute("DELETE FROM meta.fields WHERE id = ANY(%s)", (list(gone),))
+    existing = {n: i for n, i in existing.items() if i not in gone}
     # (dataset_id, ordinal) is unique and not deferrable, so the survivors move out of the way before renumbering.
     conn.execute("UPDATE meta.fields SET ordinal = -1 - ordinal WHERE dataset_id = %s", (dataset_id,))
     ids = []
@@ -310,7 +314,38 @@ def _reconcile(
             ids.append(existing[p.name])
         else:
             ids.append(insert_field(conn, dataset_id, p, db_col))
-    return ids, vanished
+    return ids, vanished, in_use
+
+
+def _in_use(conn, dataset_id: int, gone: dict[int, str]) -> dict:
+    """Of the fields about to be deleted (`gone`, by id), those each team experiment's copy keeps or targets (by
+    experiment id), and those each personal experiment's assessment does ("<recipe id>:<user id>"). Their rows go with
+    the fields, so this record is how an export check later knows what the experiment read (exports.used_fields)."""
+    from .assessment import personal_snapshot  # assessment imports processing, which this module imports
+
+    out: dict[str, dict[str, list[str]]] = {"experiments": {}, "assessments": {}}
+    if not gone:
+        return out
+    for r in conn.execute(
+        """SELECT e.experiment_id, f.name FROM meta.experiment_decisions e
+             JOIN meta.fields f ON f.id = e.field_id JOIN meta.experiments x ON x.id = e.experiment_id
+            WHERE e.field_id = ANY(%s) AND e.action IN ('keep', 'target') AND NOT x.is_default
+            ORDER BY e.experiment_id, f.ordinal""",
+        (list(gone),),
+    ).fetchall():
+        out["experiments"].setdefault(str(r["experiment_id"]), []).append(r["name"])
+    for r in conn.execute(
+        """SELECT DISTINCT x.recipe_id, x.assessor_id FROM meta.experiments x JOIN meta.recipes r ON r.id = x.recipe_id
+            WHERE x.dataset_id = %s AND x.assessor_id IS NOT NULL AND r.phase = 'finalized'""",
+        (dataset_id,),
+    ).fetchall():
+        snap = personal_snapshot(conn, recipes.get(conn, r["recipe_id"]), r["assessor_id"])
+        names = [
+            n for n in gone.values() if (f := snap["fields"].get(n)) and f["decision"]["action"] in ("keep", "target")
+        ]
+        if names:
+            out["assessments"][f"{r['recipe_id']}:{r['assessor_id']}"] = names
+    return out
 
 
 def drift_by_family(conn, dataset_id: int, fields: list[dict]) -> dict[str, dict]:

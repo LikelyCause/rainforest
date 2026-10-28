@@ -172,8 +172,9 @@ a collection that was empty at the previous pull may stay empty.
 from in its manifest and MLflow parameters, and the exports list shows it on the export's row as *pull #<n>*, where n is
 the pull's id, so it stays clear which data a run was trained on; an export made earlier keeps its own Parquet file.
 The export preview blocks when a field the export keeps, or one of its targets, is no longer in the data (a field it
-drops may go), whether the export is of the baseline, a team experiment or a personal one; for a team experiment that
-includes the fields its baseline keeps and targets. It warns when the baseline was finalized before the latest pull.
+drops may go), whether the export is of the baseline, a team experiment or a personal one. An experiment's copy, or
+the assessment a personal one follows, loses a removed field's decision with the field, so the refresh records first
+which fields each experiment kept or targeted, and the check reads that record. It warns when the baseline was finalized before the latest pull.
 
 ## Type inference
 

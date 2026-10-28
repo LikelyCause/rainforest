@@ -463,3 +463,56 @@ def test_fields_a_refresh_removed_are_not_adjustments(lead, mongo):
     finally:
         seed(mongo)
         lead.delete(f"/api/datasets/{ds}")
+
+
+def _decide_in(lead, ds: int, kind: str, x: dict, name: str, action: str) -> None:
+    """`name` set to `action` in the experiment's own copy (team) or in the assessment it follows (personal)."""
+    fid = _field(ds, name)["id"]
+    if kind == "team":
+        db.execute(
+            "UPDATE meta.experiment_decisions SET action = %s WHERE experiment_id = %s AND field_id = %s",
+            (action, x["id"], fid),
+        )
+    else:
+        db.execute(
+            "UPDATE meta.assessments SET action = %s, source = 'user' WHERE recipe_id = %s AND user_id = %s "
+            "AND field_id = %s",
+            (action, x["recipe_id"], lead.user["id"], fid),
+        )
+
+
+@pytest.mark.parametrize("kind", ["team", "personal"])
+@pytest.mark.parametrize(
+    "name,baseline,own,blocked",
+    [("engine", "keep", "drop", False), ("rpm.max", "drop", "keep", True)],
+    ids=["dropped-by-the-experiment", "kept-by-the-experiment"],
+)
+def test_the_gone_field_check_follows_what_the_experiment_used(lead, mongo, kind, name, baseline, own, blocked):
+    ds = _connected(lead, mongo, f"Gone {kind} {name}", drop=(name,) if baseline == "drop" else ())
+    x = _experiments(lead, ds)[kind]
+    _decide_in(lead, ds, kind, x, name, own)
+    gone = "Field in the baseline is no longer in the data: "
+
+    def blocking() -> list[str]:
+        r = lead.get(f"/api/datasets/{ds}/export-preview", params={"experiment_id": x["id"]})
+        assert r.status_code == 200, r.text
+        return [b for b in r.json()["blocking"] if b.startswith(gone)]
+
+    try:
+        assert blocking() == []
+        mongo.curated.update_many({}, {"$unset": {name: ""}})
+        with _held(lead, ds) as pull:
+            pass
+        assert _latest_pull(ds)["status"] == "done"
+        assert blocking() == ([gone + name] if blocked else [])
+        r = lead.post(f"/api/datasets/{ds}/exports", json={"experiment_id": x["id"]})
+        assert r.status_code == (422 if blocked else 202), r.text
+        if not blocked:
+            assert _wait_export(lead, r.json()["id"])["status"] == "done"
+        notes = db.fetch_one("SELECT flatten_notes FROM meta.dataset_pulls WHERE id = %s", (pull["id"],))
+        recorded = notes["flatten_notes"]["removed_in_use"]
+        key = str(x["id"]) if kind == "team" else f"{x['recipe_id']}:{lead.user['id']}"
+        assert recorded["experiments" if kind == "team" else "assessments"].get(key, []) == ([name] if blocked else [])
+    finally:
+        seed(mongo)
+        lead.delete(f"/api/datasets/{ds}")

@@ -245,13 +245,42 @@ def _preview_of(
 
 
 def used_fields(conn, recipe: dict, snap: dict, x: dict | None) -> list[str]:
-    """The fields an export of `snap` reads, kept or as a target, by name; for a team experiment of its own, also
-    those its baseline's snapshot reads and its targets."""
-    snaps = [snap]
-    if x is not None and x["assessor_id"] is None and not x["is_default"] and recipe["phase"] == "finalized":
-        snaps.append(recipes.snapshot_of(conn, recipe))
-    out = {n: None for s in snaps for n, f in s["fields"].items() if f["decision"]["action"] in ("keep", "target")}
-    out.update(dict.fromkeys((x or {}).get("target_order") or []))
+    """The fields an export of `snap` reads, kept or as a target, by name. An experiment's copy (or the assessment a
+    personal one follows) loses a field's row when a refresh removes the field, so for a removed field the record the
+    refresh kept says whether this experiment read it (`removed_in_use`, by the newest pull that removed it); for a
+    field removed by a pull from before that record, the baseline's snapshot stands in."""
+
+    def used(s: dict) -> list[str]:
+        return [n for n, f in s["fields"].items() if f["decision"]["action"] in ("keep", "target")]
+
+    if x is None or (x["is_default"] and x["assessor_id"] is None):
+        return used(snap)
+    present = {
+        r["name"] for r in conn.execute("SELECT name FROM meta.fields WHERE dataset_id = %s", (x["dataset_id"],))
+    }
+    kind, key = (
+        ("experiments", str(x["id"]))
+        if x["assessor_id"] is None
+        else ("assessments", f"{x['recipe_id']}:{x['assessor_id']}")
+    )
+    out = dict.fromkeys(n for n in used(snap) if n in present)
+    decided: set[str] = set()
+    for p in conn.execute(
+        """SELECT flatten_notes FROM meta.dataset_pulls
+            WHERE dataset_id = %s AND status = 'done' AND flatten_notes ? 'removed_in_use' ORDER BY id DESC""",
+        (x["dataset_id"],),
+    ).fetchall():
+        notes = p["flatten_notes"]
+        mine = set(notes["removed_in_use"][kind].get(key, []))
+        for n in notes.get("removed_fields") or []:
+            if n not in decided:
+                decided.add(n)
+                if n in mine:
+                    out[n] = None
+    if recipe["phase"] == "finalized":
+        base = recipes.snapshot_of(conn, recipe)
+        out.update(dict.fromkeys(n for n in used(base) if n not in present and n not in decided))
+    out.update(dict.fromkeys(x.get("target_order") or []))
     return list(out)
 
 
