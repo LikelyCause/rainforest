@@ -546,3 +546,39 @@ def test_an_experiment_made_after_the_refresh_blocks_on_what_its_baseline_used(l
     finally:
         seed(mongo)
         lead.delete(f"/api/datasets/{ds}")
+
+
+def test_the_in_use_record_reads_assessments_as_a_personal_export_does(lead, mongo):
+    from app import refresh
+    from app.assessment import personal_snapshot
+    from app.recipes import get
+
+    ds = _connected(lead, mongo, "In use record", drop=("rpm.max",))
+    engine, rpm_max = _field(ds, "engine"), _field(ds, "rpm.max")
+    try:
+        r = lead.post(f"/api/datasets/{ds}/recipes", json={"reopen": [engine["id"]]})
+        assert r.status_code == 200, r.text
+        rid = r.json()["recipe"]["id"]
+        assert lead.post(f"/api/datasets/{ds}/assessors", json={"user_id": lead.user["id"]}).status_code == 200
+        # The reopened field follows the assessment; a carried one keeps the version's decision whatever the row says.
+        for f, action in ((engine, "drop"), (rpm_max, "keep")):
+            db.execute(
+                "UPDATE meta.assessments SET action = %s WHERE recipe_id = %s AND user_id = %s AND field_id = %s",
+                (action, rid, lead.user["id"], f["id"]),
+            )
+        set_phase(ds, "finalized")
+        gone = {
+            r["id"]: r["name"]
+            for r in db.fetch_all("SELECT id, name FROM meta.fields WHERE dataset_id = %s ORDER BY ordinal", (ds,))
+        }
+        with db.connection() as conn:
+            got = refresh._in_use(conn, ds, gone)
+            snap = personal_snapshot(conn, get(conn, rid), lead.user["id"])
+            conn.rollback()
+        expected = [
+            n for n in gone.values() if n in snap["fields"] and snap["fields"][n]["decision"]["action"] != "drop"
+        ]
+        assert got["assessments"][f"{rid}:{lead.user['id']}"] == expected
+        assert "vehicle" in expected and "engine" not in expected and "rpm.max" not in expected
+    finally:
+        lead.delete(f"/api/datasets/{ds}")
