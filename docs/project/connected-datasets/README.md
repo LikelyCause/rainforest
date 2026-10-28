@@ -35,7 +35,15 @@ The feature in one pass:
 7. **Docs**: `docs/data-preparation.md` (Connected datasets), `docs/api.md`, `docs/configuration.md`,
    `docs/deployment.md`, `deploy/README.md`.
 
-## Known open issues
+## Status
+
+**Reviewed and ready to merge.** The last re-review (of the commits through `47f7615`) found every item addressed and
+no correctness defects; its three minors and one docs line were then fixed in `015d6b8`, `864f36a`, `72fe23a` and
+`c83d2c5` (a faster in-use query inside the refresh's lock, no empty records when a refresh deletes nothing, an
+accurate `KeyPaths` type, and the reservation wording). Remaining minors are deferred in the review log; none blocks
+the merge.
+
+## Issues found in the final review, now fixed
 
 These were confirmed by the final review. Fixes for all four are committed (`5b514ec`, `d51ab54`, `69b46ab`,
 `c02d7b0`, each with a test that failed first) and were reviewed. That review found one regression in the first: a
@@ -43,7 +51,7 @@ personal experiment created after a refresh removed a field exported without it,
 (an experiment made after the removal is checked against its baseline, as the default Team export is), with the
 record built in a few queries (`2317f68`) and `names=` passed by keyword (`871a162`). A change to release names
 reserved for absent keys (`348c6f7`) was reverted (`bcf99d4`) because it let a different key take an old field's name
-and decisions; `47f7615` pins that. **These last commits have not yet been reviewed.**
+and decisions; `47f7615` pins that. These were reviewed too.
 
 - **Exports after a refresh judge the wrong decisions for non-default experiments** (`routers/exports.py`
   `used_fields`). A refresh deletes a vanished field, and the experiment's own decision for it goes with it (cascade),
@@ -68,7 +76,7 @@ Deferred minors are listed in the review log (lines with `minor (deferred)`); no
   `dev` connection; *Datasets → Connect ▾*.
 - Chart: `bash deploy/chart/test.sh`; `helm lint deploy/chart/rainforest -f deploy/chart/rainforest/ci/dev-values.yaml`.
 
-## State at the last full run (`47f7615`)
+## State at the last full run (`c83d2c5`, fresh database)
 
-API 1097 passed, 1 skipped. UI typecheck clean, 254 passed plus the 4 `theme.test.ts` failures that are also on
+API 1098 passed, 1 skipped. UI typecheck clean, 254 passed plus the 4 `theme.test.ts` failures that are also on
 `main`. Chart 174/174, lint clean. ESLint 0 errors (20 warnings, also on `main`).
