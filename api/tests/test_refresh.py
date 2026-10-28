@@ -723,3 +723,24 @@ def test_a_refresh_keeps_renamed_columns_whatever_the_document_order(source):
     df = pl.read_parquet(_dataset(ds)["parquet_path"])
     assert _field(ds, "c_d")["id"] == dotted["id"] and set(df["c_d"].drop_nulls()) == {"dotted"}
     assert set(df["c_d_2"].drop_nulls()) == {"literal"}
+
+
+def test_a_name_stays_reserved_for_a_key_the_refresh_no_longer_sees(source):
+    source.curated.insert_one({"vehicle": "dotted van", "c.d": "dotted"})
+    ds = _connect(source, finalize=False)
+    dotted = _field(ds, "c_d")
+    assert dotted is not None and _field(ds, "c_d_2") is None
+    source.curated.delete_many({"vehicle": "dotted van"})
+    source.curated.insert_one({"vehicle": "literal van", "c_d": "literal"})
+
+    pull = _refresh(ds)
+
+    assert pull["status"] == "done", pull["error"]
+    # The literal key never takes the dotted key's name, so it can't inherit that field's id and decisions.
+    assert _field(ds, "c_d") is None
+    literal = _field(ds, "c_d_2")
+    assert literal is not None and literal["id"] != dotted["id"]
+    assert set(pl.read_parquet(_dataset(ds)["parquet_path"])["c_d_2"].drop_nulls()) == {"literal"}
+    assert "c_d" in pull["flatten_notes"]["removed_fields"]
+    assert pull["flatten_notes"]["renamed"] == {"c_d": "c_d_2"}
+    assert any(w.startswith("Fields no longer in the data: ") and "c_d" in w for w in _dataset(ds)["warnings"])
