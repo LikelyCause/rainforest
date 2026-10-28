@@ -39,9 +39,9 @@ app.kubernetes.io/managed-by: {{ .root.Release.Service }}
 {{- printf "%s:%s" .image.repository (default .root.Chart.AppVersion .image.tag) }}
 {{- end }}
 
-{{/* Values.yaml integers arrive as float64, which Go prints as 1e+06; render whole numbers as integers. */}}
+{{/* Values.yaml numbers arrive as float64, which Go prints as 1e+06; render whole numbers as integers, others as is. */}}
 {{- define "rainforest.num" -}}
-{{- if kindIs "float64" . }}{{ . | int64 }}{{ else }}{{ . }}{{ end }}
+{{- if and (kindIs "float64" .) (eq (. | int64 | float64) .) }}{{ . | int64 }}{{ else }}{{ . }}{{ end }}
 {{- end }}
 
 {{/* Services are addressed by FQDN: the UI's nginx resolver ignores search domains. */}}

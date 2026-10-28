@@ -147,6 +147,11 @@ added here. A key the chart sets itself, such as `LOG_LEVEL` (`api.logLevel`), `
 | `api.tuning.SAMPLE_MAX_CELLS` | `60000000` |
 | `api.tuning.SOURCE_MAX_CELLS` | `600000000` |
 | `api.tuning.SOURCE_PULL_TIMEOUT_S` | `3600` |
+| `api.tuning.OVR_MIN_POSITIVES` | `10` |
+| `api.tuning.OVR_WEAK_PR_AUC` | `0.5` |
+| `api.tuning.BATCH_MAX_RUNS` | `500` |
+| `api.tuning.PREDICT_MAX_RECORDS` | `1000` |
+| `api.tuning.DEPLOYMENT_CACHE` | `4` |
 | `api.tuning.DB_POOL_MAX` | `10` |
 | `api.tuning.SQL_TIMEOUT_MS` | `15000` |
 | `api.tuning.SQL_MAX_ROWS` | `2000` |

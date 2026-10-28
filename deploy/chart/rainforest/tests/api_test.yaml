@@ -453,6 +453,25 @@ tests:
           path: data.LOG_LEVEL
           value: info
 
+  - it: carries the batch and deployment settings with their defaults
+    template: configmap.yaml
+    asserts:
+      - equal:
+          path: data.OVR_MIN_POSITIVES
+          value: "10"
+      - equal:
+          path: data.OVR_WEAK_PR_AUC
+          value: "0.5"
+      - equal:
+          path: data.BATCH_MAX_RUNS
+          value: "500"
+      - equal:
+          path: data.PREDICT_MAX_RECORDS
+          value: "1000"
+      - equal:
+          path: data.DEPLOYMENT_CACHE
+          value: "4"
+
   - it: passes a tuning key the chart doesn't set
     template: configmap.yaml
     set:

@@ -39,6 +39,15 @@ class Settings(BaseSettings):
     source_max_cells: int = 600_000_000
     source_pull_timeout_s: int = 3600
 
+    # Batches: a class needs this many training positives to get its own one-vs-rest model, its validation PR-AUC
+    # below the weak bar flags it on the results page, and no batch plans more runs than the cap.
+    ovr_min_positives: int = 10
+    ovr_weak_pr_auc: float = 0.5
+    batch_max_runs: int = 500
+    # Test deployments: records per predict call, and deployments whose models stay loaded in the API process.
+    predict_max_records: int = 1000
+    deployment_cache: int = 4
+
     # SQL console guard rails
     sql_timeout_ms: int = 15_000
     sql_max_rows: int = 2_000
