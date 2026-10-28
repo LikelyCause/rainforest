@@ -52,13 +52,15 @@ ORDER BY target, metric, value DESC;
 | `meta.bulk_batches` | each applied bulk edit: summary and a pre-change snapshot used by undo |
 | `meta.field_correlations` | pairwise associations (one row per unordered pair) |
 | `meta.users` | users: name, email, role (`lead` / `member` / `viewer`), active, `key` (an account from `RAINFOREST_USERS`), `avatar` (the picture's hash), OIDC subject, last seen |
-| `meta.recipes` | baseline versions per dataset: `family` (`tree` / `linear` / `neural`), `version` (counted per family), phase (`assessing` / `review` / `finalized`), `scope` (`all` / `reopened`), who finalized it, the frozen `snapshot`, and `reuse` (the summary when it started from another dataset's baseline) |
+| `meta.recipes` | baseline versions per dataset: `family` (`tree` / `linear` / `neural`), `version` (counted per family), phase (`assessing` / `review` / `finalized`), `scope` (`all` / `reopened`), who finalized it, the frozen `snapshot`, `reuse` (the summary when it started from another dataset's baseline) and `start_summary` (what a new version couldn't carry over from the one before after a refresh) |
 | `meta.recipe_reopened` | the fields a `reopened` version works on |
 | `meta.baseline_names` | a baseline's name: one per dataset and model family (`meta.baseline_name(dataset_id, family)` reads it) |
 | `meta.experiments` | experiments per dataset: name, owner, `source` (`recipe:<id>` or `assessment:<recipe id>:<user id>`), `is_default` (a baseline version's *Team ·* experiment), `target_order`, notes, archived |
 | `meta.experiment_decisions`, `meta.experiment_settings`, `meta.experiment_batches` | each team experiment's own copy of its baseline (decisions, its model family's settings) and its bulk edits; fields that differ from the baseline's snapshot are its adjustments |
 | `meta.exports`, `meta.model_runs` | export jobs; training runs with metrics and report; each with its `experiment_id` |
 | `meta.analyses` | *Explore* jobs (map, tests, importance): params, data version, status, result JSONB |
+| `meta.dataset_sources` | a connected dataset's source: the connection's name (never its address), `database`, `collections` (each `name`, `label`, `filter`, `projection`), `add_source`, `dedupe`, `match_on` |
+| `meta.dataset_pulls` | each pull of a connected dataset: status, `rows`, `per_source`, `flatten_notes`, `drift` (per model family), error, who started it; `meta.exports.pull_id` names the pull an export was built from |
 | `meta.v_field_profiles`, `meta.v_fields`, `meta.v_field_settings`, `meta.v_correlations`, `meta.v_model_metrics` | query-friendly views; see below |
 | `raw.ds_<id>` | the uploaded data (sanitized column names; see `meta.fields.db_column`) |
 

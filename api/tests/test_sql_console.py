@@ -88,6 +88,12 @@ def test_single_queries_with_tricky_text_run(client, q, rows):
     assert r.json()["rows"] == rows
 
 
+@pytest.mark.parametrize("table", ["meta.dataset_sources", "meta.dataset_pulls"])
+def test_the_console_reads_a_connected_datasets_source_and_pulls(client, table):
+    r = _sql(client, f"SELECT count(*) FROM {table}")
+    assert r.status_code == 200, r.text
+
+
 def test_writes_are_refused_even_through_functions(client):
     r = _sql(client, "SELECT * FROM meta.datasets FOR UPDATE")
     assert r.status_code == 400 and "read-only" in r.json()["detail"]["message"]
