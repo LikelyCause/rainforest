@@ -436,6 +436,8 @@ def test_a_restart_fails_the_pull_of_an_interrupted_dataset(database):
     db.execute("INSERT INTO meta.dataset_pulls (dataset_id, status) VALUES (%s, 'running')", (ds,))
     jobs.sweep()
     assert _pulls(ds)[0]["status"] == "failed" and _pulls(ds)[0]["finished_at"] is not None
+    row = db.fetch_one("SELECT status, error FROM meta.datasets WHERE id = %s", (ds,))
+    assert row["status"] == "failed" and row["error"] == "Interrupted by an API restart; delete it and connect again."
 
 
 def test_migration_constraints(database):
