@@ -26,10 +26,12 @@ BATCH_COLS = """b.id, b.experiment_id, b.export_id, e.dataset_id, b.kind, b.name
                 b.created_at, b.finished_at"""
 BATCH_FROM = "meta.run_batches b JOIN meta.exports e ON e.id = b.export_id"
 STATUSES = ("pending", "running", "done", "failed", "cancelled")
-# What a row needs of a run's report; the rest (curves, confusion matrices) would make a 500-run batch megabytes.
+# What a row needs of a run's report; the rest (curves, confusion matrices) would make a 500-run batch megabytes. Only
+# a run trained before the F1 choice was stored needs its curves.
 SUMMARY_REPORT = """jsonb_build_object('model_label', report -> 'model_label', 'retried', report -> 'retried',
                         'fit_seconds', report -> 'fit_seconds', 'positives', report -> 'positives',
-                        'threshold_curve', report -> 'threshold_curve',
+                        'f1_threshold', report -> 'f1_threshold',
+                        'threshold_curve', CASE WHEN report ? 'f1_threshold' THEN NULL ELSE report -> 'threshold_curve' END,
                         'cross_validation', jsonb_build_object('targets', report -> 'cross_validation' -> 'targets'))"""
 
 
@@ -98,6 +100,7 @@ def start_batch(export_id: int, req: BatchRequest, user: CurrentUser) -> dict:
     base = {"model": req.model, "device": req.device, "seed": req.seed, "cv": req.cv, "cv_folds": req.cv_folds}
     one_vs_rest = req.kind == "one_vs_rest" or req.target is not None or req.search_classes is not None
     target, skipped, redraws = None, [], 0
+    counts: batches.ClassCounts = {}
     classes: list[str | None] = [None]
     if one_vs_rest:
         target, problem = class_target(manifest, req.target)
@@ -167,12 +170,16 @@ def start_batch(export_id: int, req: BatchRequest, user: CurrentUser) -> dict:
             raise HTTPException(422, str(exc)) from exc
     _cap(len(classes) * len(combos))
 
-    planned: list[tuple[Checked, RunRequest]] = []
+    planned: list[tuple[Checked, RunRequest, dict]] = []
     for combo, cls in itertools.product(combos, classes):
         r = request(cls, combo)
         checked = check_model(exp, manifest, r)
         check_params(checked, manifest, r, dry_fits)
-        planned.append((checked, r))
+        # Shown on the run's row before it has a report of its own.
+        plan = {"settings": combo}
+        if cls is not None:
+            plan["positives"] = {k: counts[cls][k] for k in ("train", "valid", "test")}
+        planned.append((checked, r, plan))
 
     spec = {
         "model": spec_key,
@@ -199,13 +206,15 @@ def start_batch(export_id: int, req: BatchRequest, user: CurrentUser) -> dict:
     name = (req.name or "").strip() or _default_name(req, first.spec.label, target, classes)
     with connection() as conn:
         refuse_while_refreshing(conn, exp["dataset_id"])
+        # Archiving takes the row FOR UPDATE and refuses while a batch runs, so the two can't cross.
+        conn.execute("SELECT 1 FROM meta.experiments WHERE id = %s FOR SHARE", (exp["experiment_id"],))
         experiments.require_writable(experiments.get_visible(conn, exp["experiment_id"], user), user)
         batch_id = conn.execute(
             """INSERT INTO meta.run_batches (experiment_id, export_id, kind, name, spec, skipped, created_by)
                VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
             (exp["experiment_id"], export_id, req.kind, name, jsonb(spec), jsonb(skipped), user["id"]),
         ).fetchone()["id"]
-        run_ids = [insert_run(conn, exp, c, r, user["id"], None, batch_id)["id"] for c, r in planned]
+        run_ids = [insert_run(conn, exp, c, r, user["id"], None, batch_id, plan)["id"] for c, r, plan in planned]
     batches.feed(batch_id)
     return {
         "batch": _with_counts([_batch_row(batch_id)])[0],

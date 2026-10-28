@@ -228,8 +228,8 @@ def ids(clients, ds) -> dict:
         (export["id"], ds, lead.user["id"], export["experiment_id"]),
     )["id"]
     batch = db.fetch_one(
-        """INSERT INTO meta.run_batches (experiment_id, export_id, kind, name, spec, created_by)
-           VALUES (%s, %s, 'one_vs_rest', 'Per vehicle', '{}', %s) RETURNING id""",
+        """INSERT INTO meta.run_batches (experiment_id, export_id, kind, name, spec, status, created_by)
+           VALUES (%s, %s, 'one_vs_rest', 'Per vehicle', '{}', 'done', %s) RETURNING id""",
         (export["experiment_id"], export["id"], lead.user["id"]),
     )["id"]
     return {
@@ -272,6 +272,26 @@ def test_refresh_is_409_while_an_export_runs(lead, ds):
         )
     finally:
         db.execute("DELETE FROM meta.exports WHERE id = %s", (exp,))
+
+
+def test_refresh_is_409_naming_a_running_batch_to_cancel(lead, ds, ids):
+    batch = db.fetch_one(
+        """INSERT INTO meta.run_batches (experiment_id, export_id, kind, name, spec, created_by)
+           VALUES (%s, %s, 'one_vs_rest', 'Every vehicle', '{}', %s) RETURNING id""",
+        (ids["experiment"], ids["export"], lead.user["id"]),
+    )["id"]
+    run = db.fetch_one(
+        """INSERT INTO meta.model_runs (export_id, dataset_id, model, family, status, created_by, experiment_id,
+                                        batch_id)
+           VALUES (%s, %s, 'lightgbm', 'tree', 'pending', %s, %s, %s) RETURNING id""",
+        (ids["export"], ds, lead.user["id"], ids["experiment"], batch),
+    )["id"]
+    try:
+        r = lead.post(f"/api/datasets/{ds}/refresh")
+        assert r.status_code == 409 and "'Every vehicle'" in r.json()["detail"] and "cancel" in r.json()["detail"]
+    finally:
+        db.execute("DELETE FROM meta.model_runs WHERE id = %s", (run,))
+        db.execute("DELETE FROM meta.run_batches WHERE id = %s", (batch,))
 
 
 def test_an_export_after_a_refresh_records_the_pull(lead, ds, mongo):

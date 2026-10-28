@@ -373,7 +373,8 @@ nothing is chained. The run is named for the class, as in "LightGBM · vehicle =
 - The validation split also chooses thresholds, so its scores are slightly optimistic; the test split gives the
   honest number.
 - `threshold_curve` holds precision, recall, F1 and the share flagged at every threshold from 0 to 1 in steps of
-  0.01, for validation and test.
+  0.01, for validation and test. `f1_threshold` keeps the threshold with the best F1 on validation and its F1 on
+  each split.
 - `balance` weights the classes by their training counts: LightGBM and XGBoost get a positive-class weight of
   negatives / positives, and random forest, histogram GBM and logistic regression get balanced class weights. MLP has
   no class weights; the report notes that balance was ignored. Balance can't be combined with a class-weight setting

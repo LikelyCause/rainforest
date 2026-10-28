@@ -95,6 +95,10 @@ def test_a_one_vs_rest_run_is_a_binary_model_of_one_class(ovr_export, tmp_path):
         assert curve[0]["flagged"] == 1.0 and curve[0]["recall"] == 1.0
     pos = report["positives"]
     assert pos["train"] > 0 and pos["valid"] > 0 and pos["test"] > 0
+    # The F1 choice is kept, so a batch's rows needn't read both curves.
+    t, note = choose_threshold(report["threshold_curve"]["valid"], {"kind": "f1"})
+    at = {s: next(p for p in report["threshold_curve"][s] if p["threshold"] == t)["f1"] for s in ("valid", "test")}
+    assert report["f1_threshold"] == {"threshold": t, "valid_f1": at["valid"], "test_f1": at["test"], "note": note}
     cal = report["calibration"]
     assert cal["method"] in ("isotonic", "sigmoid")
     assert 0 <= cal["brier_after"] <= cal["brier_before"] + 1e-9 and cal["brier_before"] < 0.25

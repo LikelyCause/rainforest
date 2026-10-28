@@ -229,27 +229,28 @@ def run_summary(run: dict, spec: dict, weak_pr_auc: float) -> dict:
     def metric(split: str, name: str) -> float | None:
         return _number(((metrics.get(split) or {}).get(target) or {}).get(name))
 
+    plan = config.get("batch_plan") or {}
     if spec["kind"] == "search":
         ranking = spec["ranking"]
         cv = (((report.get("cross_validation") or {}).get("targets") or {}).get(target) or {}).get(ranking) or {}
         params = config.get("params") or {}
-        row.update(
-            settings={k: params.get(k) for k in spec["space"]}, value=metric("valid", ranking), cv_std=cv.get("std")
-        )
+        settings = plan.get("settings") or {k: params.get(k) for k in spec["space"]}
+        row.update(settings=settings, value=metric("valid", ranking), cv_std=cv.get("std"))
     if row["positive_class"] is not None:
-        curve = report.get("threshold_curve") or {}
-        threshold = choose_threshold(curve["valid"], {"kind": "f1"})[0] if curve.get("valid") else None
-
-        def f1_at(split: str) -> float | None:
-            point = next((p for p in curve.get(split) or [] if p["threshold"] == threshold), None)
-            return None if point is None else _number(point["f1"])
-
-        positives = report.get("positives")
+        if stored := report.get("f1_threshold"):
+            threshold = stored["threshold"]
+            f1 = {split: _number(stored.get(f"{split}_f1")) for split in ("valid", "test")}
+        else:  # a run trained before the choice was stored
+            curve = report.get("threshold_curve") or {}
+            threshold = choose_threshold(curve["valid"], {"kind": "f1"})[0] if curve.get("valid") else None
+            points = {s: next((p for p in curve.get(s) or [] if p["threshold"] == threshold), None) for s in curve}
+            f1 = {split: _number((points.get(split) or {}).get("f1")) for split in ("valid", "test")}
+        positives = report.get("positives") or plan.get("positives")
         row.update(
             positives=positives,
             threshold=threshold,
             **{
-                split: {"pr_auc": metric(split, "pr_auc"), "roc_auc": metric(split, "roc_auc"), "f1": f1_at(split)}
+                split: {"pr_auc": metric(split, "pr_auc"), "roc_auc": metric(split, "roc_auc"), "f1": f1[split]}
                 for split in ("valid", "test")
             },
         )
@@ -291,6 +292,19 @@ def leaderboard(rows: list[dict], ranking: str) -> list[dict]:
 
 
 # ---- feeding ------------------------------------------------------------------------------------------------------
+
+
+def running_batch(conn, *, dataset_id: int | None = None, experiment_id: int | None = None) -> dict | None:
+    """A batch with runs still to finish on the dataset or in the experiment (the oldest), or None. Its waiting runs hold off
+    whatever would pull the data or the experiment from under them, so the refusal can say which batch to cancel."""
+    return conn.execute(
+        """SELECT b.id, b.name FROM meta.run_batches b JOIN meta.exports e ON e.id = b.export_id
+            WHERE b.status = 'running' AND (%(ds)s::bigint IS NULL OR e.dataset_id = %(ds)s)
+              AND EXISTS (SELECT 1 FROM meta.model_runs r WHERE r.batch_id = b.id AND r.status IN ('pending', 'running'))
+              AND (%(x)s::bigint IS NULL OR b.experiment_id = %(x)s)
+            ORDER BY b.id LIMIT 1""",
+        {"ds": dataset_id, "x": experiment_id},
+    ).fetchone()
 
 
 def feed(batch_id: int) -> None:

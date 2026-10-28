@@ -12,7 +12,7 @@ import pyarrow.parquet as pq
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from psycopg import sql
 
-from .. import experiments, jobs, recipes, reuse
+from .. import batches, experiments, jobs, recipes, reuse
 from ..assessment import source_for
 from ..auth import CurrentUser, LeadUser
 from ..config import get_settings
@@ -514,6 +514,10 @@ def refresh_dataset(dataset_id: int, user: LeadUser) -> dict:
             raise HTTPException(
                 409, f"{recipes.label(cur)} {PHASE_WAIT[cur['phase']]}; refresh once a lead finalizes it."
             )
+        if batch := batches.running_batch(conn, dataset_id=dataset_id):
+            raise HTTPException(
+                409, f"Batch {batch['name']!r} is still running on this dataset; cancel it or refresh once it ends."
+            )
         busy = conn.execute(
             """SELECT EXISTS (SELECT 1 FROM meta.exports
                                WHERE dataset_id = %(ds)s AND status IN ('pending', 'running'))
@@ -764,6 +768,8 @@ def delete_dataset(dataset_id: int, _: LeadUser) -> dict:
         refuse_refreshing(ds["status"])
         if ds["status"] in ("pending", "ingesting", "profiling", "correlating"):
             raise HTTPException(409, "Dataset is still processing")
+        if batch := batches.running_batch(conn, dataset_id=dataset_id):
+            raise HTTPException(409, f"Batch {batch['name']!r} is still running on this dataset; cancel it first")
         busy = conn.execute(
             """SELECT EXISTS (SELECT 1 FROM meta.exports
                                WHERE dataset_id = %(ds)s AND status IN ('pending', 'running'))

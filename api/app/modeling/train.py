@@ -881,6 +881,16 @@ def _train_one_vs_rest(
             "brier_before": float(brier_score_loss(y, raw[split])),
             "brier_after": float(brier_score_loss(y, p1)),
         }
+    # The F1 choice and its F1 on each split, so a batch's rows don't read both curves.
+    f1_t, f1_note = choose_threshold(curve["valid"], {"kind": "f1"})
+    f1_threshold = {
+        "threshold": f1_t,
+        **{
+            f"{split}_f1": next((p["f1"] for p in points if p["threshold"] == f1_t), None)
+            for split, points in (("valid", curve["valid"]), ("test", curve.get("test") or []))
+        },
+        "note": f1_note,
+    }
     calibration = {
         "method": method,
         "valid_positives": positives["valid"],
@@ -953,6 +963,7 @@ def _train_one_vs_rest(
         "metrics": metrics,
         "evaluation": details,
         "threshold_curve": curve,
+        "f1_threshold": f1_threshold,
         "calibration": calibration,
         "top_features": top_features,
         **({"cv_folds": cv_folds, "cross_validation": cross_validation} if cv_folds else {}),

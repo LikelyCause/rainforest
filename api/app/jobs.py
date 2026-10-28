@@ -28,6 +28,7 @@ import psycopg
 from psycopg import sql
 from threadpoolctl import threadpool_limits
 
+from .batches import WAITING
 from .config import get_settings
 from .db import connection
 
@@ -157,6 +158,14 @@ def sweep(owner: int | None = None) -> None:
                                    ELSE 'Interrupted by an API restart; upload or generate it again.' END
                 WHERE status IN ('pending', 'ingesting', 'profiling', 'correlating') AND {}"""
             ).format(dead)
+        )
+        # A batch run its dead process had submitted but not started lost nothing: it waits in its batch again,
+        # without using up the retry an interrupted run gets.
+        conn.execute(
+            sql.SQL(
+                """UPDATE meta.model_runs SET owner = NULL, status_message = {}, updated_at = now()
+                WHERE batch_id IS NOT NULL AND status = 'pending' AND owner IS NOT NULL AND {}"""
+            ).format(sql.Literal(WAITING), dead)
         )
         for table in ("exports", "model_runs", "analyses"):
             # A batch's runs that it hasn't submitted yet have no owner and no job to lose: the batch resumes them.

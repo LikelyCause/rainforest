@@ -175,9 +175,17 @@ def check_params(checked: Checked, manifest: dict, req: RunRequest, dry_fits: di
 
 
 def insert_run(
-    conn, exp: dict, checked: Checked, req: RunRequest, user_id: int, owner: int | None, batch_id: int | None = None
+    conn,
+    exp: dict,
+    checked: Checked,
+    req: RunRequest,
+    user_id: int,
+    owner: int | None,
+    batch_id: int | None = None,
+    plan: dict | None = None,
 ) -> dict:
-    """The run's row, `pending`. A batch's runs wait with no owner until the batch submits them."""
+    """The run's row, `pending`. A batch's runs wait with no owner until the batch submits them, and keep the
+    batch's `plan` for them (the class's positives per split, the searched settings) in `config.batch_plan`."""
     # A run that isn't one-vs-rest stores the config it always has.
     stored = (
         {"experiment_id"}
@@ -195,7 +203,7 @@ def insert_run(
             checked.spec.key,
             checked.spec.family,
             "Queued" if batch_id is None else WAITING,
-            jsonb(req.model_dump(exclude=stored)),
+            jsonb({**req.model_dump(exclude=stored), **({"batch_plan": plan} if plan is not None else {})}),
             owner,
             user_id,
             exp["experiment_id"],

@@ -277,6 +277,85 @@ def test_a_retried_run_that_finishes_keeps_its_retried_mark(setup):
     assert done["status"] == "done" and done["rows"][0]["status"] == "done" and done["rows"][0]["retried"] is True
 
 
+def test_a_run_queued_by_a_process_that_died_before_it_started_waits_again_without_using_its_retry(setup):
+    lead = setup["lead"]
+    with _slot_held():
+        out = _post(lead, setup["e"], kind="one_vs_rest", target="y", classes=["q"])
+        (only,) = out["run_ids"]
+        # Submitted (it has an owner) but never started, when its process dies.
+        db.execute("UPDATE meta.model_runs SET owner = %s WHERE id = %s", (DEAD, only))
+        jobs.sweep()
+        (run,) = _runs(out["batch"]["id"])
+        assert run["status"] == "pending" and run["error"] is None and "retried" not in (run["report"] or {})
+        assert run["owner"] == jobs.owner_id(), "the batch submitted it again"
+    done = _finished(lead, out["batch"]["id"])
+    assert done["status"] == "done" and done["rows"][0]["status"] == "done" and done["rows"][0]["retried"] is False
+
+
+def test_waiting_rows_show_their_planned_positives_and_settings(setup):
+    lead = setup["lead"]
+    with _slot_held():
+        ovr = _post(lead, setup["e"], kind="one_vs_rest", target="y")
+        search = _post(
+            lead, setup["e"], kind="search", target="y", search_classes=["p"], space={"n_estimators": [5, 7]}
+        )
+        try:
+            rows = lead.get(f"/api/batches/{ovr['batch']['id']}").json()["rows"]
+            assert {r["status"] for r in rows} == {"pending"}
+            for r in rows:
+                assert set(r["positives"]) == {"train", "valid", "test"} and r["positives"]["train"] > 10
+                assert r["valid"] == {"pr_auc": None, "roc_auc": None, "f1": None} and r["weak"] is None
+            rows = lead.get(f"/api/batches/{search['batch']['id']}").json()["rows"]
+            assert [r["settings"] for r in rows] == [{"n_estimators": 5}, {"n_estimators": 7}]
+            assert all(r["positives"]["train"] > 10 for r in rows)
+        finally:
+            lead.post(f"/api/batches/{ovr['batch']['id']}/cancel")
+            lead.post(f"/api/batches/{search['batch']['id']}/cancel")
+
+
+def test_a_row_reads_the_runs_stored_f1_threshold_or_an_older_runs_curve():
+    from app.batches import run_summary
+
+    curve = {
+        s: [
+            {"threshold": t / 100, "precision": 0.5, "recall": 0.5, "f1": (0.9 if t == 37 else 0.1)} for t in range(101)
+        ]
+        for s in ("valid", "test")
+    }
+    metrics = {s: {"y": {"pr_auc": 0.8, "roc_auc": 0.9}} for s in ("valid", "test")}
+    base = {"id": 1, "status": "done", "config": {"positive_class": "p", "target": "y"}, "metrics": metrics}
+    positives = {"train": 50, "valid": 40, "test": 40}
+    spec = {"kind": "one_vs_rest"}
+    old = run_summary({**base, "report": {"threshold_curve": curve, "positives": positives}}, spec, 0.5)
+    new = run_summary(
+        {
+            **base,
+            "report": {
+                "f1_threshold": {"threshold": 0.37, "valid_f1": 0.9, "test_f1": 0.9, "note": None},
+                "positives": positives,
+            },
+        },
+        spec,
+        0.5,
+    )
+    assert old == new
+    assert new["threshold"] == 0.37 and new["valid"]["f1"] == 0.9 and new["test"]["f1"] == 0.9
+
+
+def test_archiving_an_experiment_with_a_running_batch_is_409_until_it_is_cancelled(setup):
+    lead, x = setup["lead"], setup["x"]
+    with _slot_held():
+        out = _post(lead, setup["e"], kind="one_vs_rest", target="y", classes=["q"], name="Just q")
+        r = lead.patch(f"/api/experiments/{x['id']}", json={"archived": True})
+        assert r.status_code == 409 and "'Just q'" in r.json()["detail"] and "cancel" in r.json()["detail"]
+        deleting = lead.delete(f"/api/datasets/{setup['ds']['id']}")
+        assert deleting.status_code == 409 and "'Just q'" in deleting.json()["detail"]
+        assert "cancel" in deleting.json()["detail"]
+        assert lead.post(f"/api/batches/{out['batch']['id']}/cancel").status_code == 200
+    assert lead.patch(f"/api/experiments/{x['id']}", json={"archived": True}).status_code == 200
+    assert lead.patch(f"/api/experiments/{x['id']}", json={"archived": False}).status_code == 200
+
+
 def test_starting_a_batch_is_409_while_refreshing(setup):
     ds = setup["ds"]["id"]
     db.execute("UPDATE meta.datasets SET status = 'refreshing' WHERE id = %s", (ds,))

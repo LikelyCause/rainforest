@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from .. import experiments
+from .. import batches, experiments
 from ..auth import CurrentUser
 from ..db import connection
 from ..schemas import ExperimentIn, ExperimentPatch, RevertIn
@@ -78,6 +78,11 @@ def patch_experiment(experiment_id: int, body: ExperimentPatch, user: CurrentUse
             conn.execute("UPDATE meta.experiments SET name = %s WHERE id = %s", (sets["name"].strip(), x["id"]))
         if "notes" in sets:
             conn.execute("UPDATE meta.experiments SET notes = %s WHERE id = %s", (sets["notes"] or None, x["id"]))
+        if sets.get("archived"):
+            # Its waiting runs would start in an archived experiment, and couldn't be cancelled there.
+            conn.execute("SELECT 1 FROM meta.experiments WHERE id = %s FOR UPDATE", (x["id"],))
+            if batch := batches.running_batch(conn, experiment_id=x["id"]):
+                raise HTTPException(409, f"Batch {batch['name']!r} is still running; cancel the batch first")
         if sets.get("archived") is not None:
             conn.execute(
                 "UPDATE meta.experiments SET archived_at = CASE WHEN %s THEN coalesce(archived_at, now()) END "
