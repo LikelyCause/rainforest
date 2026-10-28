@@ -364,13 +364,21 @@ def list_for(conn, dataset_id: int, user: dict) -> list[dict]:
     return out
 
 
+# A one-vs-rest run's scores are of one class against the rest, not comparable with a model of the whole target; its
+# batch ranks it instead.
+def not_one_vs_rest(alias: str = "") -> str:
+    """SQL true for a run (of table alias `alias`) that models a whole target."""
+    a = f"{alias}." if alias else ""
+    return f"{a}config ->> 'positive_class' IS NULL AND {a}report ->> 'chain_kind' IS DISTINCT FROM 'one_vs_rest'"
+
+
 def best_by_experiment(conn, ids: list[int]) -> dict[int, dict]:
-    """Per experiment, its best finished run on the validation split: the first target (in chain order) scored with
-    the most preferred metric any of its runs has."""
+    """Per experiment, its best finished run on the validation split, one-vs-rest runs aside: the first target (in
+    chain order) scored with the most preferred metric any of its runs has."""
     out: dict[int, dict] = {}
     runs = conn.execute(
-        """SELECT id, experiment_id, report -> 'order' AS run_order, metrics -> 'valid' AS valid
-             FROM meta.model_runs WHERE experiment_id = ANY(%s) AND status = 'done'""",
+        f"""SELECT id, experiment_id, report -> 'order' AS run_order, metrics -> 'valid' AS valid
+             FROM meta.model_runs WHERE experiment_id = ANY(%s) AND status = 'done' AND {not_one_vs_rest()}""",
         (ids,),
     ).fetchall()
     by_exp: dict[int, list[dict]] = {}

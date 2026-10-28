@@ -10,8 +10,9 @@ import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
-from app import batches, db, jobs
+from app import batches, db, experiments, jobs
 from app.config import get_settings
+from app.routers.datasets import best_by_dataset
 
 from .team_helpers import DB_URL, app_, experiment, export, people, start, submit_and_finalize, upload, wait  # noqa: F401
 
@@ -299,3 +300,35 @@ def test_a_viewer_reads_batches_but_cannot_start_or_cancel_one(setup, app_, logi
     assert viewer.post(f"/api/batches/{batch_id}/cancel").status_code == 403
     assert setup["lead"].get("/api/batches/999999999").status_code == 404
 
+
+def test_one_vs_rest_runs_are_never_an_experiments_or_datasets_best(setup):
+    lead, ds, e = setup["lead"], setup["ds"], setup["e"]
+    x = experiment(lead, ds, setup["rid"], "best")
+
+    def insert(config, report, valid):
+        return db.fetch_one(
+            """INSERT INTO meta.model_runs (export_id, dataset_id, model, family, status, config, report, metrics,
+                                            created_by, experiment_id)
+               VALUES (%s, %s, 'lightgbm', 'tree', 'done', %s, %s, %s, %s, %s) RETURNING id""",
+            (
+                e["id"],
+                ds["id"],
+                db.jsonb(config),
+                db.jsonb(report),
+                db.jsonb({"valid": valid}),
+                lead.user["id"],
+                x["id"],
+            ),
+        )["id"]
+
+    plain = insert({}, {"order": ["y"]}, {"y": {"roc_auc_ovr_macro": 0.6}})
+    ovr = insert(
+        {"positive_class": "p", "target": "y"},
+        {"order": ["y"], "chain_kind": "one_vs_rest"},
+        {"y": {"roc_auc": 0.99}},
+    )
+    with db.connection() as conn:
+        best = experiments.best_by_experiment(conn, [x["id"]])[x["id"]]
+    assert best["run_id"] == plain and best["metric"] == "roc_auc_ovr_macro"
+    by_ds = best_by_dataset([ds["id"]], experiments.visible_ids(lead.user["id"]))[ds["id"]]
+    assert by_ds["run_id"] != ovr and by_ds["metric"] != "roc_auc"

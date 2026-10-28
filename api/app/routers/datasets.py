@@ -208,7 +208,8 @@ def best_by_dataset(ids: list[int], visible: str) -> dict[int, dict]:
                    r.report -> 'order' AS run_order, r.metrics -> 'valid' AS valid, r.chosen_at,
                    x.name AS experiment_name
               FROM meta.model_runs r JOIN meta.experiments x ON x.id = r.experiment_id
-             WHERE r.dataset_id = ANY(%s) AND r.status = 'done' AND r.experiment_id IN ({visible})""",
+             WHERE r.dataset_id = ANY(%s) AND r.status = 'done' AND r.experiment_id IN ({visible})
+               AND (r.chosen_at IS NOT NULL OR {experiments.not_one_vs_rest("r")})""",
         (ids,),
     )
     by_ds: dict[int, list[dict]] = {}
