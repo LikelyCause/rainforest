@@ -72,8 +72,9 @@ CREATE TABLE IF NOT EXISTS meta.deployment_tests (
 CREATE INDEX IF NOT EXISTS deployment_tests_deployment_idx ON meta.deployment_tests (deployment_id, id DESC);
 
 -- The SQL console's role is granted SELECT on every meta table, so these follow the experiment policies: a private
--- experiment's batches, deployments and tests stay out of it. Keys have no policy at all, so it never sees a hash.
--- The app's own role owns the tables, so none of this applies to it.
+-- experiment's batches, deployments and tests stay out of it. Keys have no policy at all, and bootstrap also revokes
+-- the role's SELECT on them (db.PRIVATE_TABLES), so it never sees a hash. The app's own role owns the tables, so none
+-- of this applies to it.
 ALTER TABLE meta.run_batches ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS run_batches_public ON meta.run_batches;
 CREATE POLICY run_batches_public ON meta.run_batches FOR SELECT

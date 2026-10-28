@@ -51,12 +51,27 @@ def test_plan_classes_gives_each_class_one_reason():
     ]
 
 
-def test_plan_classes_with_a_wanted_list_considers_only_those_classes():
+def test_plan_classes_lists_unticked_classes_as_not_selected():
     counts = _counts(A=(50, 10, 10), B=(9, 3, 2), C=(60, 12, 12))
     assert batches.plan_classes(counts, ["B", "C"], 10) == (
         ["C"],
-        [{"class": "B", "reason": "fewer than 10 positives in training"}],
+        [
+            {"class": "A", "reason": "not selected"},
+            {"class": "B", "reason": "fewer than 10 positives in training"},
+        ],
     )
+
+
+def test_not_selected_wins_over_the_other_reasons():
+    counts = _counts(A=(2, 0, 0), B=(60, 12, 12))
+    assert batches.plan_classes(counts, ["B"], 10) == (["B"], [{"class": "A", "reason": "not selected"}])
+
+
+def test_plan_classes_needs_the_training_and_validation_counts():
+    with pytest.raises(ValueError, match="A.*train"):
+        batches.plan_classes({"A": {"valid": 3, "test": 3}}, None, 10)
+    with pytest.raises(ValueError, match="A.*valid"):
+        batches.plan_classes({"A": {"train": 30, "test": 3}}, None, 10)
 
 
 def test_plan_classes_refuses_a_class_the_target_does_not_have():
@@ -152,6 +167,17 @@ def test_a_log_integer_range_stays_inside_its_integer_bounds():
     assert all(type(s["leaves"]) is int and 4 <= s["leaves"] <= 256 for s in samples)
 
 
+def test_a_log_integer_range_gives_its_end_integers_full_mass():
+    # Rounding a draw over [low, high] would give the ends half the mass of their neighbours; 1..2 is the clearest case.
+    counts = {1: 0, 2: 0}
+    space = {"d": {"low": 1, "high": 2, "log": True, "integer": True}, "k": {"low": 0.0, "high": 1.0}}
+    samples, _ = batches.random_samples(space, 4000, 4, _ok)
+    for s in samples:
+        counts[s["d"]] += 1
+    # Log-uniform over [0.5, 2.5): P(1) = ln(1.5/0.5)/ln(5) = 0.68, P(2) = 0.32.
+    assert math.isclose(counts[1] / 4000, math.log(3) / math.log(5), abs_tol=0.04)
+
+
 def test_a_log_range_is_log_uniform():
     # Drawn uniformly the median would sit near 0.5; log-uniform puts it near the geometric mean, 0.0316.
     samples, _ = batches.random_samples({"lr": {"low": 1e-3, "high": 1.0, "log": True}}, 2000, 11, _ok)
@@ -193,9 +219,29 @@ def test_a_small_list_space_cannot_supply_more_distinct_samples_than_it_has():
     assert sorted(s["a"] for s in samples) == [1, 2]
 
 
+def test_repeated_draws_are_not_validated_again():
+    for seed in range(10):
+        seen = []
+
+        def valid(s):
+            seen.append(s["a"])
+            return "no" if s["a"] == 1 else None
+
+        batches.random_samples({"a": [1, 2, 3]}, 2, seed, valid)
+        assert len(seen) == len(set(seen))
+
+
+def test_a_scalar_where_a_list_is_expected_names_the_setting():
+    for bad in (5, "gbdt", None):
+        with pytest.raises(ValueError, match="boosting"):
+            batches.random_samples({"boosting": bad}, 1, 0, _ok)
+
+
 @pytest.mark.parametrize(
     "spec",
     [
+        {"low": float("nan"), "high": 1.0},
+        {"low": 0.0, "high": float("inf")},
         {"low": 5, "high": 1},
         {"low": 0, "high": 1, "log": True},
         {"low": 1},
@@ -298,3 +344,12 @@ def test_row_security_keeps_keys_and_private_experiments_out_of_the_console_role
         r["tablename"] for r in database.fetch_all("SELECT tablename FROM pg_policies WHERE schemaname = 'meta'")
     }
     assert "deployment_keys" not in policies and {"run_batches", "deployments", "deployment_tests"} <= policies
+
+
+def test_the_console_role_has_no_privilege_on_keys(database):
+    from app.config import get_settings
+
+    assert "deployment_keys" in database.PRIVATE_TABLES  # test_bootstrap_roles and test_team check these revokes
+    role = get_settings().readonly_role
+    ok = database.fetch_one("SELECT has_table_privilege(%s, 'meta.deployment_keys', 'SELECT') AS ok", (role,))["ok"]
+    assert ok is False

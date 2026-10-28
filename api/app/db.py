@@ -23,8 +23,16 @@ log = logging.getLogger(__name__)
 _pool: ConnectionPool | None = None
 _ro_pool: ConnectionPool | None = None
 _SCHEMA_LOCK_KEY = 7_311_204  # arbitrary advisory-lock id for schema bootstrap
-# Hold people's own assessments (or say who assesses what) while they are blind: never readable from the console.
-PRIVATE_TABLES = ("dataset_assessors", "assessments", "assessment_settings", "assessment_batches", "review_comments")
+# Hold people's own assessments (or say who assesses what) while they are blind, or API key hashes: never readable
+# from the console.
+PRIVATE_TABLES = (
+    "dataset_assessors",
+    "assessments",
+    "assessment_settings",
+    "assessment_batches",
+    "review_comments",
+    "deployment_keys",
+)
 
 
 def get_pool() -> ConnectionPool:
