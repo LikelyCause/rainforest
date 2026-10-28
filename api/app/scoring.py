@@ -20,8 +20,9 @@ import polars as pl
 
 from . import derived
 from .config import get_settings
+from .ingest import NULL_TOKENS
 from .modeling.mlflow_log import MODEL_FILE
-from .modeling.train import predict_scores, scores_of
+from .modeling.train import scores_of
 from .parquet_rows import read_rows
 from .profiling import coerce_numeric, parse_datetime
 from .semantics import NUMERIC
@@ -30,7 +31,8 @@ from .transform import ROW_ID, SPLIT_COL, FieldSpec, coercion_exprs, to_pandas_f
 REEXPORT = "Re-export to deploy"
 TOLERANCE = 1e-9
 CHECK_ROWS = 50_000
-TRUE_TEXT = {"true": True, "false": False, "1": True, "0": False, "1.0": True, "0.0": False}
+TRUE_TEXT = {"true": True, "false": False, "1": True, "0": False}
+TRAINING_SAMPLE = 5_000
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,12 @@ class Input:
     dtype: Any
     datetime_format: str | None
     decimal_comma: bool | None  # set for a field the features read as a number: text that isn't one fails
+    integer_codes: bool = False
+
+    @property
+    def integer_number(self) -> bool:
+        """A number the dataset stored as integers: read as a float, so 7.5 stays 7.5."""
+        return self.dtype.is_integer() and not self.integer_codes and not self.datetime_format
 
 
 @dataclass
@@ -76,19 +84,27 @@ class Scorer:
     def required(self) -> list[str]:
         return [i.name for i in self.inputs]
 
-    def features(self, df: pl.DataFrame) -> tuple[np.ndarray, dict[str, int]]:
-        """The export's features for the raw records in `df`, and how many values of each field didn't convert."""
+    def frame(self, df: pl.DataFrame) -> tuple[pl.DataFrame, dict[str, int]]:
+        """The source fields converted and the derived fields computed, and how many values of each field didn't
+        convert."""
         if missing := [n for n in self.required if n not in df.columns]:
             raise ValueError(f"Missing field{'s' if len(missing) > 1 else ''}: {', '.join(map(repr, missing))}")
-        cols, warnings = [], {}
+        typed, seen, warnings = [], [], {}
         for i in self.inputs:
             s, failed = convert(df[i.name], i)
-            cols.append(s)
+            typed.append(s)
+            seen.append(integer_text(df[i.name], s) if i.integer_number else s)
             if failed:
                 warnings[i.name] = failed
-        frame = pl.DataFrame(cols)
+        frame, view = pl.DataFrame(typed), pl.DataFrame(seen)
         for d in self.derived:
-            frame = frame.with_columns(derived.compute(frame, d["kind"], d["spec"]).alias(d["name"]))
+            col = derived.compute(view, d["kind"], d["spec"]).alias(d["name"])
+            view, frame = view.with_columns(col), frame.with_columns(col)
+        return frame, warnings
+
+    def features(self, df: pl.DataFrame) -> tuple[np.ndarray, dict[str, int]]:
+        """The export's features for the raw records in `df`, and the conversion failures per field."""
+        frame, warnings = self.frame(df)
         specs = list(self.specs)
         # Fresh coercers per call: they count values as they go, and threads share the scorer.
         X = transform_into(self.preprocessor, to_pandas_frame(frame, specs, coercion_exprs(specs)), self.n_features)
@@ -153,27 +169,99 @@ def parse_dtype(text: str):
         raise ValueError(f"Unknown field type {text!r}; {REEXPORT}") from exc
 
 
-def convert(s: pl.Series, to: Input) -> tuple[pl.Series, int]:
-    """`s` as the dataset stored the field, and how many given values didn't convert (they become missing). NaN and
-    blank text are missing to begin with."""
-    given = s.fill_nan(None) if s.dtype.is_float() else s
+def missing_as_null(s: pl.Series) -> pl.Series:
+    """`s` with what the upload reader reads as missing (its null tokens, the empty string among them) and NaN as
+    null. Nothing else is missing: a blank category is a value, as it was in the dataset."""
+    if s.dtype.is_nested() or s.dtype == pl.Object:
+        raise ValueError(f"Field {s.name!r} takes a single value, not a list or an object")
+    if s.dtype.is_float():
+        return s.fill_nan(None)
+    if s.dtype == pl.String:
+        return pl.select(pl.when(~s.is_in(NULL_TOKENS)).then(s)).to_series().alias(s.name)
+    return s
+
+
+def whole_numbers(given: pl.Series) -> pl.Series:
+    """Int64 of the values that are whole numbers. Integers and integer text are read exactly, past 2^53 too; only
+    values like "7.0" go through a float."""
+    if given.dtype.is_integer() or given.dtype == pl.Boolean:
+        return given.cast(pl.Int64, strict=False)
+    num = coerce_numeric(given, False)
+    whole = pl.select(pl.when(num == num.round(0)).then(num)).to_series().cast(pl.Int64, strict=False)
     if given.dtype == pl.String:
-        given = pl.select(pl.when(given.str.strip_chars() != "").then(given)).to_series()
+        return given.str.strip_chars().cast(pl.Int64, strict=False).fill_null(whole)
+    return whole
+
+
+def integer_text(s: pl.Series, out: pl.Series) -> pl.Series:
+    """An integer-typed number (`out`, its float) as derived fields read it from the dataset's integer column: a whole
+    number as its integer text, so a groups or count value "30" matches 30.0 the way it matched 30."""
+    whole = whole_numbers(missing_as_null(s))
+    text = pl.when(whole.is_not_null() & out.is_not_null()).then(whole.cast(pl.String)).otherwise(out.cast(pl.String))
+    return pl.select(text).to_series().alias(s.name)
+
+
+ISO_8601 = r"^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2})(:\d{2}(?:\.\d{1,9})?)?)?(Z|[+-]\d{2}:?\d{2})?$"
+
+
+def iso_datetime(txt: pl.Series) -> pl.Series:
+    """ISO 8601 text as naive UTC datetimes: a date alone is midnight, a time without an offset is UTC. Anything else
+    is null; guessing a format from the other values sent would read 03/04 differently depending on them."""
+    parts = pl.DataFrame({"t": txt.cast(pl.String).str.strip_chars()}).select(
+        pl.col("t").str.extract_groups(ISO_8601).alias("p")
+    )
+    p = parts.unnest("p")
+    off = pl.col("4")
+    sign = pl.when(off.str.starts_with("-")).then(-1).otherwise(1)
+    minutes = (
+        pl.when(off.is_null() | (off == "Z"))
+        .then(0)
+        .otherwise(
+            sign
+            * (off.str.slice(1, 2).cast(pl.Int64, strict=False) * 60 + off.str.slice(-2).cast(pl.Int64, strict=False))
+        )
+    )
+    stamp = pl.concat_str([pl.col("1"), pl.lit(" "), pl.col("2").fill_null("00:00"), pl.col("3").fill_null(":00")])
+    naive = stamp.str.strptime(pl.Datetime("us"), "%Y-%m-%d %H:%M:%S%.f", strict=False)
+    return p.select(naive - pl.duration(minutes=minutes)).to_series().alias(txt.name)
+
+
+def as_temporal(s: pl.Series, dtype) -> pl.Series:
+    """Dates or datetimes as `dtype`; an aware datetime goes through UTC, and a naive one is taken as UTC."""
+    if isinstance(s.dtype, pl.Datetime) and s.dtype.time_zone is not None:
+        s = s.dt.convert_time_zone("UTC").dt.replace_time_zone(None)
+    if isinstance(dtype, pl.Datetime) and dtype.time_zone is not None:
+        aware = s.cast(pl.Datetime(dtype.time_unit)).dt.replace_time_zone("UTC")
+        return aware.dt.convert_time_zone(dtype.time_zone)
+    return s.cast(dtype, strict=False)
+
+
+def convert(s: pl.Series, to: Input) -> tuple[pl.Series, int]:
+    """`s` as the dataset stored the field, and how many given values didn't convert (they become missing)."""
+    given = missing_as_null(s)
     dtype = to.dtype
-    if dtype.is_numeric():
-        num = coerce_numeric(given, bool(to.decimal_comma), keep_inf=True)
-        if dtype.is_integer():
-            # "7.0" and "07" are 7; 7.5 isn't any integer, and truncating it would invent one.
-            num = pl.select(pl.when(num == num.round(0)).then(num)).to_series()
-        out = num.cast(dtype, strict=False)
+    if dtype.is_integer() and not to.integer_number:
+        # "7.0" and "07" are code 7; 7.5 isn't any code, and truncating it would invent one.
+        out = whole_numbers(given).cast(dtype, strict=False)
+    elif dtype.is_numeric():
+        out = coerce_numeric(given, bool(to.decimal_comma), keep_inf=True)
+        if not dtype.is_integer():
+            out = out.cast(dtype, strict=False)
     elif dtype == pl.Boolean:
         if given.dtype == pl.Boolean:
             out = given
+        elif given.dtype.is_numeric():
+            out = pl.select(pl.when(given == 1).then(True).when(given == 0).then(False)).to_series()
         else:
             txt = given.cast(pl.String).str.strip_chars().str.to_lowercase()
             out = txt.replace_strict(TRUE_TEXT, default=None, return_dtype=pl.Boolean)
     elif dtype.is_temporal():
-        out = parse_datetime(given, to.datetime_format).cast(dtype, strict=False)
+        if given.dtype.is_temporal():
+            out = as_temporal(given, dtype)
+        elif given.dtype in (pl.String, pl.Null):
+            out = as_temporal(iso_datetime(given), dtype)
+        else:
+            out = pl.Series(s.name, [None] * s.len(), dtype=dtype)
     elif dtype == pl.String:
         if given.dtype.is_temporal() and to.datetime_format:
             given = given.dt.strftime(to.datetime_format)
@@ -251,7 +339,14 @@ def _build(conn, export_id: int, models: list[dict]) -> Scorer:
         return f.decimal_comma if f is not None and f.semantic_type in NUMERIC else None
 
     inputs = tuple(
-        Input(n, parse_dtype(schema[n]["dtype"]), schema[n].get("datetime_format"), number_format(n)) for n in sources
+        Input(
+            n,
+            parse_dtype(schema[n]["dtype"]),
+            schema[n].get("datetime_format"),
+            number_format(n),
+            bool(schema[n].get("integer_codes")),
+        )
+        for n in sources
     )
     loaded = tuple(_model(conn, export_id, m) for m in models)
     keys = [label for m in loaded for label in m.labels]
@@ -283,7 +378,9 @@ def _model(conn, export_id: int, m: dict) -> Model:
         kind, labels = "binary", (report["positive_class"],)
         threshold = m.get("threshold")
         if threshold is None:
-            threshold = (report.get("f1_threshold") or {}).get("threshold", 0.5)
+            threshold = (report.get("f1_threshold") or {}).get("threshold")
+        if threshold is None:
+            raise ValueError(f"Run {m['run_id']} has no F1 threshold to start from; give it a threshold")
     elif len(order) != 1:
         raise ValueError(f"Run {m['run_id']} chains several targets; deploy a run with one target")
     elif report["target_kinds"][order[0]] == "regression":
@@ -304,8 +401,9 @@ def _model(conn, export_id: int, m: dict) -> Model:
 
 # =========================================================================== equality check
 def equality_check(conn, export_id: int, models: list[dict]) -> str | None:
-    """None when scoring the raw values of the export's test rows (its validation rows when it has no test split)
-    reproduces each model's scores on the export's own `model_ready.parquet` within 1e-9; else what differs first."""
+    """None when scoring the raw values of the export's test rows reproduces each model's scores on the export's own
+    `model_ready.parquet` within 1e-9; else what differs first. Without test rows it compares the validation rows,
+    without those a sample of training rows, and with no rows at all it doesn't pass."""
     scorer = load(conn, {"export_id": export_id, "models": models})
     exp = conn.execute(
         """SELECT e.output_dir, e.created_at, d.parquet_path, d.profiled_at FROM meta.exports e
@@ -316,14 +414,14 @@ def equality_check(conn, export_id: int, models: list[dict]) -> str | None:
     raw = Path(exp["parquet_path"])
     refreshed = exp["profiled_at"] is not None and exp["profiled_at"] > exp["created_at"]
     hint = " The dataset was refreshed after this export, so its rows may have changed; re-export to deploy."
+    hint = hint if refreshed else ""
     if gone := [n for n in scorer.required if n not in pl.read_parquet_schema(raw)]:
         return f"The dataset no longer has {', '.join(map(repr, gone))}, which the export's features read.{hint}"
-    split = pl.read_parquet(data, columns=[SPLIT_COL])[SPLIT_COL]
-    positions = np.flatnonzero((split == "test").to_numpy())
+    positions = _rows_to_compare(pl.read_parquet(data, columns=[SPLIT_COL])[SPLIT_COL])
     if not positions.size:
-        positions = np.flatnonzero((split == "valid").to_numpy())
+        return "The export has no rows to compare scoring against."
     feats = json.loads((Path(exp["output_dir"]) / "manifest.json").read_text())["feature_names"]
-    n_raw = _rows(raw)
+    n_raw = pl.scan_parquet(raw).select(pl.len()).collect().item()
     for k in range(0, positions.size, CHECK_ROWS):
         part = read_rows(data, [ROW_ID, *feats], positions[k : k + CHECK_ROWS])
         ids = part[ROW_ID].to_numpy()
@@ -332,13 +430,20 @@ def equality_check(conn, export_id: int, models: list[dict]) -> str | None:
         X = part.select(feats).to_numpy()
         got, _ = scorer.outputs(read_rows(raw, scorer.required, ids))
         for m, g in zip(scorer.models, got):
-            if (msg := _differs(m, g, predict_scores(Path(m.model_dir), X), ids)) is not None:
-                return msg + (hint if refreshed else "")
+            if (msg := _differs(m, g, scores_of(m.estimator, m.report, X), ids)) is not None:
+                return msg + hint
     return None
 
 
-def _rows(path: Path) -> int:
-    return pl.scan_parquet(path).select(pl.len()).collect().item()
+def _rows_to_compare(split: pl.Series) -> np.ndarray:
+    """Positions of the test rows, else the validation rows, else a seeded sample of the training rows, sorted."""
+    for name in ("test", "valid"):
+        if (rows := np.flatnonzero((split == name).to_numpy())).size:
+            return rows
+    train = np.flatnonzero((split == "train").to_numpy())
+    if train.size <= TRAINING_SAMPLE:
+        return train
+    return np.sort(np.random.default_rng(0).choice(train, TRAINING_SAMPLE, replace=False))
 
 
 def _differs(m: Model, got: np.ndarray, want: np.ndarray, ids: np.ndarray) -> str | None:
