@@ -116,14 +116,15 @@ The manifest's `config` records:
 | `adjustments` | `count`, `fields`, `targets_changed`, `targets`, `detail`: each adjusted field's changes, and `removed_by_refresh`: the baseline's fields a refresh took out of the data (not counted as adjustments) |
 | `assessor_id` | for a personal export only |
 | `pull_id` | for a connected dataset only: the pull its data came from |
-| `derived` | the derived fields the export reads, with the derived fields they read: each one's `name`, `kind` and `spec` as defined when the export started, in the order they were added |
+| `derived` | the derived fields the export reads, with the derived fields they read: each one's `name`, `kind` and `spec` as defined when the export started, in the order they were added. One that reads a field no longer in the dataset also has `unavailable`, saying which: the export still reads its column, but it can't be computed from new records |
 
 The export row's `config` also carries `input_schema`, written when the export finishes. It has one entry per source
 field the export reads: its features, targets and row-rule fields, and the fields its derived fields read. Each entry
 holds:
 
 - `dtype`: the column's polars dtype in the dataset's Parquet copy
-- `datetime_format`: for a date field, the format the export read it with
+- `datetime_format`: for a date feature, the format the export read it with; for a date field read only by a row rule
+  or a derived field, the format detected over its whole column
 - `integer_codes`: true for a category stored as integers, so `7.0` and `07` read as `7`
 
 Scoring reads new records with these and the frozen `derived` formulas, so removing a derived field later doesn't

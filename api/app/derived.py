@@ -35,8 +35,9 @@ def _bad(msg: str) -> HTTPException:
     return HTTPException(422, msg)
 
 
-def _formula(expr: str, columns: list[str]) -> tuple[pl.Expr, list[str]]:
-    """A polars expression for `expr`, and the fields it reads. Only arithmetic, numbers, field names and FUNCS."""
+def _formula(expr: str, columns: list[str] | None) -> tuple[pl.Expr, list[str]]:
+    """A polars expression for `expr`, and the fields it reads. Only arithmetic, numbers, field names and FUNCS.
+    `columns` None reads any name."""
     names: dict[str, str] = {}
 
     def quoted(m: re.Match) -> str:
@@ -57,7 +58,7 @@ def _formula(expr: str, columns: list[str]) -> tuple[pl.Expr, list[str]]:
             return pl.lit(float(n.value))
         if isinstance(n, ast.Name):
             col = names.get(n.id, n.id)
-            if col not in columns:
+            if columns is not None and col not in columns:
                 raise _bad(f"No field named {col!r} (put a name with spaces or dashes in backticks)")
             used.append(col)
             return pl.col(col).cast(pl.Float64, strict=False)
@@ -126,24 +127,42 @@ def check_spec(kind: str, spec: dict, columns: list[str]) -> list[str]:
     return list(fields)
 
 
+def _reads(kind: str, spec: dict) -> list[str]:
+    """The fields a stored (once valid) spec names, whether or not they still exist."""
+    if kind == "formula":
+        return _formula(spec["expr"], None)[1]
+    return [spec["source"]] if kind == "groups" else list(spec["fields"])
+
+
 def closure(defined: list[dict], columns: list[str], names: list[str]) -> tuple[list[dict], list[str]]:
     """Of `defined` ({name, kind, spec} in the order they were added), the ones reading `names` takes, with the
-    derived fields they read in turn; and the other fields under them all, in the order first met."""
+    derived fields they read in turn; and the other fields under them all, in the order first met.
+
+    Removing a derived field doesn't check what reads it, so a field that names one no longer in `columns` comes back
+    as a leaf with `unavailable` saying why: its column is still in the data and the export reads that, but it can't
+    be computed from new records."""
     by_name = {d["name"]: d for d in defined}
-    need: set[str] = set()
+    need: dict[str, dict] = {}
     sources: dict[str, None] = {}
 
     def visit(n: str) -> None:
         if n not in by_name:
             sources.setdefault(n)
-        elif n not in need:
-            need.add(n)
-            for m in check_spec(by_name[n]["kind"], by_name[n]["spec"], columns):
-                visit(m)
+            return
+        if n in need:
+            return
+        d = need[n] = by_name[n]
+        if "unavailable" in d:
+            return
+        if missing := [m for m in _reads(d["kind"], d["spec"]) if m not in columns]:
+            need[n] = {**d, "unavailable": f"It reads {', '.join(map(repr, missing))}, no longer in the dataset."}
+            return
+        for m in check_spec(d["kind"], d["spec"], columns):
+            visit(m)
 
     for n in names:
         visit(n)
-    return [d for d in defined if d["name"] in need], list(sources)
+    return [need[d["name"]] for d in defined if d["name"] in need], list(sources)
 
 
 def compute(df: pl.DataFrame, kind: str, spec: dict) -> pl.Series:
