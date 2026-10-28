@@ -322,8 +322,10 @@ A team whose data lives in MongoDB can create datasets from its collections (*Da
 values, and each connection string lives in a Secret you create, so nobody types one into Rainforest and none sits in
 a values file.
 
-1. **Create a read-only account** on the MongoDB for Rainforest. It needs `read` on the databases it pulls from (and
-   `listDatabases` if you want the dialog to list them; without it people type the database name). Rainforest only
+1. **Create a read-only account** on the MongoDB for Rainforest. It needs `read` on the databases it pulls from. The
+   dialog lists databases with the `listDatabases` command, which on MongoDB 7 answers an account without the
+   `listDatabases` privilege with the databases it has privileges on, so a read-only account sees the databases it can
+   read and no others; only when the server refuses the command do people type the database name. Rainforest only
    reads, but filters and projections are passed to the server as written, so the account's privileges are the limit
    on what they can do.
 2. **Create one Secret per connection** in the release's namespace, with the connection string under the key `uri`:
