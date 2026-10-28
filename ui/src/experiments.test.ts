@@ -14,6 +14,7 @@ import {
   mlflowExperimentUrl,
   mlflowHome,
   privacyNote,
+  removedLines,
   revertedInput,
   sourceChip,
   sourceLabel,
@@ -342,5 +343,23 @@ describe("splitPreview", () => {
       about: false,
     });
     expect(splitPreview(undefined, null, 0.2, 0, false)).toEqual({ counts: null, about: false });
+  });
+});
+
+describe("removedLines", () => {
+  it("says which fields left the data in which pull, apart from the adjustments", () => {
+    expect(removedLines([])).toEqual([]);
+    expect(
+      removedLines([
+        { name: "rpm.max", pull_id: 14 },
+        { name: "vehicle", pull_id: 15 },
+        { name: "tags", pull_id: 14 },
+        { name: "old", pull_id: null },
+      ]),
+    ).toEqual([
+      "2 fields left the data in pull #14: rpm.max, tags",
+      "1 field left the data in pull #15: vehicle",
+      "1 field left the data in a refresh: old",
+    ]);
   });
 });

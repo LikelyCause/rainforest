@@ -16,6 +16,7 @@ import {
   metricLabel,
   mlflowExperimentUrl,
   privacyNote,
+  removedLines,
   sourceLabel,
   sourceOptions,
   type ExperimentFilter,
@@ -622,6 +623,11 @@ function AdjustmentsTab({ ds, x }: { ds: Dataset; x: ExperimentDetail }) {
             </table>
           </div>
         )}
+        {removedLines(a.removed_by_refresh ?? []).map((line) => (
+          <span key={line} className="muted">
+            {line}
+          </span>
+        ))}
         {adjustable && !same && (
           <div className="row exp-end">
             <button

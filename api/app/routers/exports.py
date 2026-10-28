@@ -439,6 +439,7 @@ def start_export(dataset_id: int, req: ExportRequest, user: CurrentUser) -> dict
                 "targets_changed": adj["targets_changed"],
                 "targets": adj["targets"],
                 "detail": adj["fields"],
+                "removed_by_refresh": adj["removed_by_refresh"],
             },
         }
         if personal:

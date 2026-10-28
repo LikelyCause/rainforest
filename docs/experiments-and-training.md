@@ -113,7 +113,7 @@ The manifest's `config` records:
 | `recipe_id`, `recipe_version` | the baseline version |
 | `experiment_id` | the experiment |
 | `baseline` | `recipe_id`, `family`, `version`, `name`, `label` |
-| `adjustments` | `count`, `fields`, `targets_changed`, `targets`, and `detail`: each adjusted field's changes |
+| `adjustments` | `count`, `fields`, `targets_changed`, `targets`, `detail`: each adjusted field's changes, and `removed_by_refresh`: the baseline's fields a refresh took out of the data (not counted as adjustments) |
 | `assessor_id` | for a personal export only |
 | `pull_id` | for a connected dataset only: the pull its data came from |
 

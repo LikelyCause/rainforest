@@ -1,7 +1,7 @@
 import { toInput } from "./decision";
 import { baselineLabel, fmtInt } from "./format";
 import { SETTING_LABEL } from "./recipes";
-import type { Decision, DecisionInput, Experiment, ExportRows, FieldResponse, Phase, Role } from "./types";
+import type { Adjustments, Decision, DecisionInput, Experiment, ExportRows, FieldResponse, Phase, Role } from "./types";
 
 export type ExperimentFilter = "all" | "mine" | "team" | "archived";
 
@@ -249,4 +249,14 @@ export function finalizedPrompt(
   if (param && Number(param)) return Number(param);
   if (!list || !baseline || baseline.phase !== "finalized") return null;
   return list.some((x) => !x.archived_at && x.recipe_id === baseline.id) ? null : baseline.id;
+}
+
+/** "2 fields left the data in pull #14: a, b", one line per pull: fields a refresh removed, which aren't adjustments. */
+export function removedLines(removed: Adjustments["removed_by_refresh"]): string[] {
+  const byPull = new Map<number | null, string[]>();
+  for (const r of removed) byPull.set(r.pull_id, [...(byPull.get(r.pull_id) ?? []), r.name]);
+  return [...byPull].map(
+    ([pull, names]) =>
+      `${fmtInt(names.length)} field${names.length === 1 ? "" : "s"} left the data in ${pull === null ? "a refresh" : `pull #${pull}`}: ${names.join(", ")}`,
+  );
 }

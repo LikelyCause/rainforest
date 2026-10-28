@@ -427,3 +427,39 @@ def test_experiment_exports_block_on_kept_fields_and_targets_the_refresh_removed
     finally:
         seed(mongo)
         lead.delete(f"/api/datasets/{ds}")
+
+
+def test_fields_a_refresh_removed_are_not_adjustments(lead, mongo):
+    ds = _connected(lead, mongo, "Phantom adjustments", drop=("rpm.max",))
+    rid = lead.get(f"/api/datasets/{ds}").json()["baseline"]["id"]
+    r = lead.post(f"/api/datasets/{ds}/experiments", json={"name": "Try", "source": f"recipe:{rid}"})
+    assert r.status_code in (200, 201), r.text
+    x = r.json()
+
+    def adjustments() -> dict:
+        return lead.get(f"/api/experiments/{x['id']}").json()["adjustments"]
+
+    try:
+        mongo.curated.update_many({}, {"$unset": {"rpm.max": ""}})
+        with _held(lead, ds) as first:
+            pass
+        gone = [{"name": "rpm.max", "pull_id": first["id"]}]
+        a = adjustments()
+        assert (a["count"], a["fields"], a["targets_changed"], a["removed_by_refresh"]) == (0, [], False, gone)
+        row = next(r for r in lead.get(f"/api/datasets/{ds}/experiments").json() if r["id"] == x["id"])
+        assert row["adjusted_count"] == 0 and not row["targets_changed"]
+        r = lead.post(f"/api/datasets/{ds}/exports", json={"experiment_id": x["id"]})
+        assert r.status_code == 202, r.text
+        config = r.json()["config"]["adjustments"]
+        assert (config["count"], config["fields"], config["removed_by_refresh"]) == (0, [], gone)
+        assert _wait_export(lead, r.json()["id"])["status"] == "done"
+
+        mongo.curated.update_many({}, {"$unset": {"vehicle": ""}})
+        with _held(lead, ds) as second:
+            pass
+        a = adjustments()
+        assert (a["count"], a["targets"], a["targets_changed"]) == (0, None, False)
+        assert a["removed_by_refresh"] == [*gone, {"name": "vehicle", "pull_id": second["id"]}]
+    finally:
+        seed(mongo)
+        lead.delete(f"/api/datasets/{ds}")

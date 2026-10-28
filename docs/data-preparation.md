@@ -135,7 +135,9 @@ is a derived field whose inputs vanished; the dataset's warnings name the first 
 data is deleted like any other field, with the warning *Target column no longer in the data*. A target that profiling
 now turns down (a non-numeric one with more than 100 distinct values, as at upload) stays a field but stops being a
 target: its decision goes back to the suggestion, unreviewed, and the warning *Not used as target(s)* names it. An
-experiment's adjustments on a removed field are dropped, and its Adjustments card says so.
+experiment's adjustments on a removed field are dropped. A removed field is not an adjustment: the experiment's
+Adjustments card, its exports' manifests and MLflow count only the changes made to the fields still there, and the
+card lists the removed ones apart (*2 fields left the data in pull #14: …*).
 
 **It reopens nothing by itself.** For each model family with a finalized baseline, it compares the new fields with that
 family's latest finalized baseline by the rules for [reusing a baseline](team-workflow.md#reusing-another-datasets-baseline):

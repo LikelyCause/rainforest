@@ -236,7 +236,7 @@ def snapshot_for(conn, x: dict) -> dict:
     )
 
 
-NO_ADJUSTMENTS = {"fields": [], "targets": None, "count": 0, "targets_changed": False}
+NO_ADJUSTMENTS = {"fields": [], "targets": None, "count": 0, "targets_changed": False, "removed_by_refresh": []}
 
 
 def adjustments(conn, x: dict, snapshots: dict[int, dict] | None = None) -> dict:
@@ -254,6 +254,15 @@ def adjustments(conn, x: dict, snapshots: dict[int, dict] | None = None) -> dict
     recipe, base = snapshots[x["recipe_id"]]
     if base is None:
         return dict(NO_ADJUSTMENTS)
+    # A field a refresh removed is gone from the experiment's copy too; nobody adjusted it, so it is compared as
+    # absent from both and listed apart.
+    present = {
+        r["name"]
+        for r in conn.execute("SELECT name FROM meta.fields WHERE dataset_id = %s", (x["dataset_id"],)).fetchall()
+    }
+    removed = [n for n in base["fields"] if n not in present]
+    if removed:
+        base = {**base, "fields": {n: f for n, f in base["fields"].items() if n in present}}
     d = recipes.diff(base, snapshot_for(conn, x), recipe["family"])
     changed = []
     for f in d["fields"]:
@@ -265,7 +274,20 @@ def adjustments(conn, x: dict, snapshots: dict[int, dict] | None = None) -> dict
         "targets": d["targets"],
         "count": len(changed),
         "targets_changed": d["targets"] is not None,
+        "removed_by_refresh": removed_by(conn, x["dataset_id"], removed),
     }
+
+
+def removed_by(conn, dataset_id: int, names: list[str]) -> list[dict]:
+    """Each of `names` with the pull that removed it (the newest that lists it; null when none does)."""
+    if not names:
+        return []
+    pulls = conn.execute(
+        """SELECT id, flatten_notes -> 'removed_fields' AS removed FROM meta.dataset_pulls
+            WHERE dataset_id = %s AND status = 'done' AND flatten_notes ? 'removed_fields' ORDER BY id DESC""",
+        (dataset_id,),
+    ).fetchall()
+    return [{"name": n, "pull_id": next((p["id"] for p in pulls if n in p["removed"]), None)} for n in names]
 
 
 def revert(conn, x: dict, field_ids: list[int] | None) -> None:

@@ -503,6 +503,8 @@ export interface Adjustments {
   targets: { before: string[]; after: string[] } | null;
   count: number;
   targets_changed: boolean;
+  /** Fields of the baseline a refresh took out of the data, with the pull that did; not adjustments. */
+  removed_by_refresh: { name: string; pull_id: number | null }[];
 }
 
 export interface ExperimentDetail extends Experiment {
