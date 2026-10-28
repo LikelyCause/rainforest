@@ -28,6 +28,7 @@ from . import (
     CollectionSpec,
     ColumnInfo,
     ColumnKind,
+    KeyPaths,
     PreviewResult,
     Progress,
     PullResult,
@@ -331,7 +332,7 @@ class MongoSource:
         budget_cells: int,
         timeout_s: int,
         progress: Progress,
-        names: list | None = None,
+        names: KeyPaths | None = None,
     ) -> PullResult:
         """Every document of `collections` as flat rows in `out_dir/chunk_<label>_<n>.parquet`. The budget is the
         preview's estimate (documents x the columns a sample of them flattens to, the figure the dialog showed), so
@@ -403,7 +404,7 @@ class _Chunks:
     written as strings, so those are noted per document; every other category follows from the value types a chunk
     already gathers."""
 
-    def __init__(self, out_dir: Path, names: list | None = None):
+    def __init__(self, out_dir: Path, names: KeyPaths | None = None):
         self.out_dir = out_dir
         self.by_path: dict[tuple[str, ...], str] = {}
         # A refresh's: the [key path, column] pairs of the previous pull, whose names win over this pull's document

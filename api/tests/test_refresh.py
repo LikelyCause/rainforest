@@ -400,12 +400,12 @@ def test_refresh_failure_leaves_the_dataset_untouched(source, mongo_url, monkeyp
     source.massive.insert_many(_fresh_docs(200, 0.6))
     real_pull = MongoSource.pull
 
-    def fail_after_one_chunk(self, database, collections, out_dir, budget, timeout, progress, names=None):
+    def fail_after_one_chunk(self, database, collections, out_dir, budget, timeout, progress, **kw):
         def progress_then_drop(label, n):
             assert list(out_dir.glob("chunk_*.parquet"))
             raise PyMongoError(f"connection reset by peer, Topology: {mongo_url}")
 
-        return real_pull(self, database, collections, out_dir, budget, timeout, progress_then_drop, names)
+        return real_pull(self, database, collections, out_dir, budget, timeout, progress_then_drop, **kw)
 
     monkeypatch.setattr(MongoSource, "pull", fail_after_one_chunk)
 

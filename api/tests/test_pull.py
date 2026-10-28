@@ -490,7 +490,7 @@ def test_missing_collections_asks_only_for_the_collections_the_account_may_read(
 
 def _columns_of(tmp_path, docs, names=None) -> tuple[dict, dict]:
     out = tmp_path / str(len(list(tmp_path.iterdir())))
-    r = _fake(c=docs).pull("d", [CollectionSpec("c")], out, 10**9, 60, None, names)
+    r = _fake(c=docs).pull("d", [CollectionSpec("c")], out, 10**9, 60, None, names=names)
     df = pl.concat([pl.read_parquet(p) for p in sorted(out.glob("chunk_*.parquet"))], how="diagonal_relaxed")
     # Which column each document's value landed in, by the value.
     return {v: c for c in df.columns for v in df[c].drop_nulls().to_list()}, r.flatten_notes
