@@ -167,8 +167,11 @@ chart-unittest:
     name: helmunittest/helm-unittest:$HELM_VERSION-0.8.2
     entrypoint: [""]
   timeout: 10m
+  # The image runs as uid 1000 and helm-unittest creates tests/__snapshot__; test a copy, since the checkout
+  # belongs to another user.
   script:
-    - cd deploy/chart
+    - cp -R deploy/chart /tmp/chart
+    - cd /tmp/chart
     - helm unittest rainforest
 
 # ------------------------------------------------------------------------------------------------ build
