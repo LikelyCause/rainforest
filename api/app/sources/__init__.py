@@ -71,8 +71,9 @@ class PullResult:
 
 # Called with (label, documents pulled so far) between batches.
 Progress = Callable[[str, int], None] | None
-# A pull's columns with the key path each came from, `[[key, …], column]` as flatten_notes.key_paths stores them.
-KeyPaths = list[tuple[list[str], str]]
+# A pull's columns with the key path each came from, `[[key, …], column]` pairs as flatten_notes.key_paths stores
+# them; read back from JSON, each pair is a list.
+KeyPaths = list[list]
 
 
 def chunk_path(out_dir: Path, label: str, n: int) -> Path:
