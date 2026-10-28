@@ -61,7 +61,7 @@ def _connect(
     target: str | None = None,
     derived: tuple[tuple[str, str], ...] = (),
     finalize=True,
-    collections: tuple[str, ...] = ("curated", "massive"),
+    collections: tuple[str | dict, ...] = ("curated", "massive"),
 ) -> int:
     """`collections` (curated + massive) connected and ready, with a hand-made decision and note on `vehicle` (so it has history and
     user settings), optional targets and formulas, and a finalized Trees baseline."""
@@ -76,7 +76,7 @@ def _connect(
             """INSERT INTO meta.dataset_sources
                    (dataset_id, kind, connection, database, collections, add_source, dedupe, created_by)
                VALUES (%s, 'mongodb', 'test', %s, %s, true, true, %s)""",
-            (ds, mongo.name, db.jsonb([{"name": c} for c in collections]), _user()),
+            (ds, mongo.name, db.jsonb([c if isinstance(c, dict) else {"name": c} for c in collections]), _user()),
         )
     run_connect(ds)
     row = db.fetch_one("SELECT status, error FROM meta.datasets WHERE id = %s", (ds,))
@@ -452,6 +452,51 @@ def test_a_collection_that_was_empty_may_stay_empty(source):
         source.drop_collection("quiet")
     assert pull["status"] == "done", pull["error"]
     assert pull["per_source"][1] == {"label": "quiet", "documents": 0, "removed_duplicates": 0}
+
+
+LABELLED = ({"name": "curated", "label": "clean"}, {"name": "massive", "label": "big"})
+
+
+def test_refresh_pulls_with_the_labels_stored_at_connect(source):
+    ds = _connect(source, collections=LABELLED, finalize=False)
+    field = _field(ds, "source")
+
+    pull = _refresh(ds)
+
+    assert pull["status"] == "done", pull["error"]
+    assert [p["label"] for p in pull["per_source"]] == ["clean", "big"]
+    df = pl.read_parquet(_dataset(ds)["parquet_path"])
+    assert _field(ds, "source")["id"] == field["id"] and set(df["source"]) == {"clean", "big"}
+
+
+def test_the_label_column_keeps_its_name_when_the_documents_gain_that_key(source):
+    ds = _connect(source, collections=LABELLED, finalize=False)
+    field = _field(ds, "source")
+    source.massive.update_many({}, {"$set": {"source": "sensor"}})
+
+    pull = _refresh(ds)
+
+    assert pull["status"] == "done", pull["error"]
+    df = pl.read_parquet(_dataset(ds)["parquet_path"])
+    assert _field(ds, "source")["id"] == field["id"] and set(df["source"]) == {"clean", "big"}
+    assert set(df["source_2"].drop_nulls()) == {"sensor"}
+    assert pull["flatten_notes"]["renamed"] == {"source": "source_2"}
+    assert pull["flatten_notes"]["source_column"] == "source"
+    assert "Keys renamed: source → source_2" in _dataset(ds)["warnings"]
+
+
+def test_the_label_column_keeps_its_name_when_the_documents_lose_that_key(source):
+    source.massive.update_many({}, {"$set": {"source": "sensor"}})
+    ds = _connect(source, collections=LABELLED, finalize=False)
+    labels = _field(ds, "source_2")
+    source.massive.update_many({}, {"$unset": {"source": ""}})
+
+    pull = _refresh(ds)
+
+    assert pull["status"] == "done", pull["error"]
+    df = pl.read_parquet(_dataset(ds)["parquet_path"])
+    assert _field(ds, "source_2")["id"] == labels["id"] and set(df["source_2"]) == {"clean", "big"}
+    assert _field(ds, "source") is None and pull["flatten_notes"]["source_column"] == "source_2"
 
 
 def test_refresh_failure_in_the_swap_rolls_back(source, monkeypatch):

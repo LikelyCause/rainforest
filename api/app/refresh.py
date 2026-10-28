@@ -79,12 +79,12 @@ def _refresh(ds: dict, src: dict, pull_id: int) -> None:
     live, new = base / "raw.parquet", base / NEW
     _discard_new(dataset_id)  # whatever an interrupted refresh left behind
 
-    last = fetch_one(
-        "SELECT per_source FROM meta.dataset_pulls WHERE dataset_id = %s AND status = 'done' ORDER BY id DESC LIMIT 1",
+    previous = fetch_one(
+        """SELECT per_source, flatten_notes FROM meta.dataset_pulls WHERE dataset_id = %s AND status = 'done'
+            ORDER BY id DESC LIMIT 1""",
         (dataset_id,),
     )
-    previous = {p["label"]: p["documents"] for p in (last or {}).get("per_source") or []}
-    pulled = pull_into(dataset_id, src, new, status="refreshing", previous=previous)
+    pulled = pull_into(dataset_id, src, new, status="refreshing", previous=previous or {})
     formulas = fetch_all(
         "SELECT id, name, derived FROM meta.fields WHERE dataset_id = %s AND derived IS NOT NULL ORDER BY ordinal",
         (dataset_id,),

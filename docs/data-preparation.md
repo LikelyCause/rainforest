@@ -84,7 +84,9 @@ Edge cases:
 With several collections, a `source` column names the collection each row came from (or the label typed for it in the
 dialog). It is an ordinary categorical field, reviewed and droppable like any other. It is on, and locked on, when more
 than one collection is chosen, and optional for one. If the documents have a field named `source`, the column is
-`source_2`.
+`source_2`. The labels and the column's name are fixed when the dataset is connected: a refresh pulls each collection
+under the label stored for it, and if the documents later gain a field with the column's name, that field is renamed
+(`source_2`, say, listed under *Keys renamed*), so the column's field keeps holding the labels.
 
 Leaving out exact duplicates removes rows that are equal on the **comparison columns**:
 

@@ -167,6 +167,7 @@ export interface Pull extends PullSummary {
     mixed?: string[];
     renamed?: Record<string, string>;
     compared_on?: string[];
+    source_column?: string | null;
   } | null;
   drift: PullDrift | null;
   error: string | null;

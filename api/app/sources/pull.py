@@ -35,12 +35,14 @@ def assemble(
     dest: Path,
     *,
     identifiers: list[str],
+    source_column: str | None = None,
 ) -> dict:
     """The chunks `pull` wrote, one frame in collection order, written to `dest`; the chunks are deleted.
 
     Deduplication compares `compared_columns` less the pull's `identifiers` (the rule the preview applies to its
     sample), or exactly `match_on`. Rows are in collection order, so keeping the first of each group keeps the row
-    of the collection listed first."""
+    of the collection listed first. The label column is `source_column` when given (a refresh's: the name of the
+    previous pull's); without it, `source` or the first `source_<n>` the documents don't have."""
     labels = [s.label or s.name for s in specs]
     chunks = {label: chunk_paths(out_dir, label) for label in labels}
     schemas = {p: pl.read_parquet_schema(p) for paths in chunks.values() for p in paths}
@@ -84,16 +86,31 @@ def assemble(
     removed = {labels[r]: n - after.get(r, 0) for r, n in before.items() if n > after.get(r, 0)}
 
     out_cols: list[pl.Expr] = []
+    renamed: dict[str, str] = {}
+    name = None
     if add_source:
-        name, n = SOURCE, 2
-        while name in data_cols:  # the documents have a field of that name already
-            name = f"{SOURCE}_{n}"
-            n += 1
+        if source_column is None:
+            name, n = SOURCE, 2
+            while name in data_cols:  # the documents have a field of that name already
+                name = f"{SOURCE}_{n}"
+                n += 1
+        else:
+            # The name the first pull gave it, so its field keeps holding the labels; a key of the documents that
+            # now has that name gives way instead.
+            name = source_column
+            if name in data_cols:
+                n = 2
+                while f"{name}_{n}" in data_cols:
+                    n += 1
+                renamed[name] = f"{name}_{n}"
         out_cols.append(
             pl.col(RANK).replace_strict(list(range(len(labels))), labels, return_dtype=pl.String).alias(name)
         )
     # A field that was null in every document has no type; text is what an upload would give it.
-    out_cols += [pl.col(c).cast(pl.String) if df.schema[c] == pl.Null else pl.col(c) for c in data_cols]
+    out_cols += [
+        (pl.col(c).cast(pl.String) if df.schema[c] == pl.Null else pl.col(c)).alias(renamed.get(c, c))
+        for c in data_cols
+    ]
     df = df.select(out_cols)
 
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -105,7 +122,13 @@ def assemble(
         tmp.unlink(missing_ok=True)
     for path in schemas:
         path.unlink(missing_ok=True)
-    return {"rows": df.height, "removed_duplicates": removed, "compared_on": compared}
+    return {
+        "rows": df.height,
+        "removed_duplicates": removed,
+        "compared_on": [renamed.get(c, c) for c in compared],
+        "source_column": name,
+        "renamed": renamed,
+    }
 
 
 def _per_rank(df: pl.DataFrame) -> dict[int, int]:
@@ -151,16 +174,14 @@ def warnings_for(notes: dict, removed: dict[str, int], dedupe: bool) -> list[str
     return out
 
 
-def pull_into(
-    dataset_id: int, src: dict, dest: Path, status: str = "ingesting", previous: dict[str, int] | None = None
-) -> dict:
+def pull_into(dataset_id: int, src: dict, dest: Path, status: str = "ingesting", previous: dict | None = None) -> dict:
     """Pull a dataset's collections into `dest`, reporting progress under `status`. Returns what the pull row stores:
     rows, per_source (with each collection's removed duplicates) and flatten_notes. The chunk directory is gone
     afterwards, whatever happens.
 
-    `previous` (a refresh's: documents per label in the last successful pull) makes a collection that no longer
-    exists, or that returns no documents after returning some, fail the pull: taken as it is, it would delete its
-    rows, and with them the fields only it has and their decisions."""
+    `previous` is a refresh's last successful pull (its per_source and flatten_notes). A collection that no longer
+    exists, or that returns no documents after returning some, then fails the pull: taken as it is, it would delete
+    its rows, and with them the fields only it has and their decisions. The label column keeps the name it had."""
     s = get_settings()
     st = _Status(dataset_id)
     pull_dir = s.datasets_dir / str(dataset_id) / "pull"
@@ -185,11 +206,12 @@ def pull_into(
         except PyMongoError as exc:  # a source's pull wraps its own; this keeps any other path redacted
             raise SourceError(source.redact(str(exc))) from None
         if previous is not None:
+            had = {p["label"]: p["documents"] for p in previous.get("per_source") or []}
             for spec, got in zip(specs, result.per_source):
-                if got["documents"] == 0 and previous.get(got["label"], 0) > 0:
+                if got["documents"] == 0 and had.get(got["label"], 0) > 0:
                     raise SourceError(
                         f"{src['connection']}: collection {spec.name} returned no documents; its previous pull had "
-                        f"{previous[got['label']]:,}"
+                        f"{had[got['label']]:,}"
                     )
         st.set(status, 0.0, "Combining collections", force=True)
         summary = assemble(
@@ -200,6 +222,7 @@ def pull_into(
             src.get("match_on"),
             dest,
             identifiers=result.identifiers,
+            source_column=((previous or {}).get("flatten_notes") or {}).get("source_column"),
         )
     finally:
         shutil.rmtree(pull_dir, ignore_errors=True)
@@ -207,7 +230,12 @@ def pull_into(
     return {
         "rows": summary["rows"],
         "per_source": [{**p, "removed_duplicates": removed.get(p["label"], 0)} for p in result.per_source],
-        "flatten_notes": {**result.flatten_notes, "compared_on": summary["compared_on"]},
+        "flatten_notes": {
+            **result.flatten_notes,
+            "renamed": {**result.flatten_notes["renamed"], **summary["renamed"]},
+            "compared_on": summary["compared_on"],
+            "source_column": summary["source_column"],
+        },
         "removed_duplicates": removed,
     }
 
