@@ -133,6 +133,11 @@ describe("flattenLines", () => {
       "Duplicates compared on: vin",
     ]);
   });
+  it("shows an empty key as quotes", () => {
+    expect(flattenLines({ renamed: { "": "_empty", "a.": "a._empty" } })).toEqual([
+      'Renamed: "" → _empty, a. → a._empty',
+    ]);
+  });
   it("is empty without notes", () => {
     expect(flattenLines(null)).toEqual([]);
     expect(flattenLines({})).toEqual([]);

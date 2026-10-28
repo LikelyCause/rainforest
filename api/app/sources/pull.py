@@ -24,6 +24,7 @@ log = logging.getLogger(__name__)
 SOURCE = "source"
 RANK = "__source_rank"
 NAMES_IN_WARNING = 20
+EMPTY_SHOWN = '""'  # how a warning shows an empty key
 
 
 def assemble(
@@ -166,7 +167,8 @@ def warnings_for(notes: dict, removed: dict[str, int], dedupe: bool) -> list[str
     if notes.get("mixed"):
         out.append(f"Mixed types read as text: {names(notes['mixed'])}")
     if notes.get("renamed"):
-        out.append(f"Keys renamed: {names([f'{k} → {v}' for k, v in notes['renamed'].items()])}")
+        renamed = [f"{k or EMPTY_SHOWN} → {v}" for k, v in notes["renamed"].items()]
+        out.append(f"Keys renamed: {names(renamed)}")
     if removed:
         out.append(f"Duplicates removed: {names([f'{k} {v:,}' for k, v in removed.items()])}")
     if dedupe and not notes.get("compared_on"):

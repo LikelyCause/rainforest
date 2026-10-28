@@ -86,11 +86,24 @@ def _jsonable(value: Any) -> Any:
     return _text(value) or str(value)
 
 
+EMPTY_KEY = "_empty"
+
+
+def _renamed(key: str) -> bool:
+    return "." in key or key == ""
+
+
+def _segment(key: str) -> str:
+    """A key as one segment of a column name. An empty key gets a fixed name: Polars would name an empty column
+    `column_<n>` by its position, which differs from chunk to chunk."""
+    return key.replace(".", "_") if key else EMPTY_KEY
+
+
 def flatten_document(doc: Mapping, notes: dict | None = None, paths: dict | None = None) -> dict[str, Any]:
     """One document as a flat row, by the table in docs/data-preparation.md. Nested documents become dotted paths,
-    with dots inside a key replaced by `_` first (as `mongoexport --type=csv` names them); a key that then collides
-    with a sibling gets a `_2` (`_3`, …) suffix. A key that had no dots keeps its name over one that was renamed,
-    whichever comes first. Arrays become a JSON string.
+    with dots inside a key replaced by `_` first (as `mongoexport --type=csv` names them) and an empty key named
+    `_empty`; a key that then collides with a sibling gets a `_2` (`_3`, …) suffix. A key that wasn't renamed keeps
+    its name over one that was, whichever comes first. Arrays become a JSON string.
 
     `notes`, when given, is filled for the caller: `arrays` (columns that hold an array), `ids` (columns that held an
     ObjectId, UUID or binary value) and `collisions` (the renamed columns, in order). `paths`, when given, maps each
@@ -107,11 +120,11 @@ def flatten_document(doc: Mapping, notes: dict | None = None, paths: dict | None
 
     def segments(mapping: Mapping) -> dict[Any, str]:
         names = {key: str(key) for key in mapping}
-        used = {seg for seg in names.values() if "." not in seg}
+        used = {seg for seg in names.values() if not _renamed(seg)}
         for key, seg in names.items():
-            if "." not in seg:
+            if not _renamed(seg):
                 continue
-            seg = base = seg.replace(".", "_")
+            seg = base = _segment(seg)
             k = 2
             while seg in used:
                 seg = f"{base}_{k}"
@@ -125,7 +138,7 @@ def flatten_document(doc: Mapping, notes: dict | None = None, paths: dict | None
         for key, value in mapping.items():
             seg = segs[key]
             path = f"{prefix}.{seg}" if prefix else seg
-            if "." in str(key) and seg != str(key).replace(".", "_"):
+            if _renamed(str(key)) and seg != _segment(str(key)):
                 note("collisions", path)
             if isinstance(value, Mapping):
                 walk(path, (*keys, str(key)), value)
@@ -398,7 +411,7 @@ class _Chunks:
     def _name(self, proposed: str, path: tuple[str, ...]) -> str:
         name = proposed
         if name in self.taken:
-            name = base = ".".join(k.replace(".", "_") for k in path)
+            name = base = ".".join(map(_segment, path))
             n = 2
             while name in self.taken:
                 name = f"{base}_{n}"

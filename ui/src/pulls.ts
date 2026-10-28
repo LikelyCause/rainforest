@@ -60,7 +60,7 @@ export function flattenLines(notes: Pull["flatten_notes"]): string[] {
   if (notes.arrays?.length) lines.push(`Arrays kept as JSON text: ${notes.arrays.join(", ")}`);
   if (notes.mixed?.length) lines.push(`Mixed types read as text: ${notes.mixed.join(", ")}`);
   const renamed = Object.entries(notes.renamed ?? {});
-  if (renamed.length) lines.push(`Renamed: ${renamed.map(([from, to]) => `${from} → ${to}`).join(", ")}`);
+  if (renamed.length) lines.push(`Renamed: ${renamed.map(([from, to]) => `${from || '""'} → ${to}`).join(", ")}`);
   if (notes.compared_on?.length) lines.push(`Duplicates compared on: ${notes.compared_on.join(", ")}`);
   return lines;
 }

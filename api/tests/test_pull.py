@@ -88,6 +88,19 @@ def test_pull_keeps_column_names_stable_across_documents_and_chunks(tmp_path, mo
     assert r.per_source == [{"label": "c", "documents": 4}]
 
 
+def test_an_empty_key_is_one_column_across_chunks(tmp_path, monkeypatch):
+    monkeypatch.setattr(mongodb, "CHUNK_DOCS", 2)
+    docs = [{"": i, "x": i, "a": {"": -i}} for i in range(5)]
+    r = _fake(c=docs).pull("d", [CollectionSpec("c")], tmp_path, 10**9, 60, None)
+    dest = tmp_path / "raw.parquet"
+    assemble(tmp_path, [CollectionSpec("c")], False, False, None, dest, identifiers=r.identifiers)
+    df = pl.read_parquet(dest)
+    assert df.columns == ["_empty", "x", "a._empty"]
+    assert df["_empty"].to_list() == [0, 1, 2, 3, 4] and df["a._empty"].to_list() == [0, -1, -2, -3, -4]
+    assert r.flatten_notes["renamed"] == {"": "_empty", "a.": "a._empty"}
+    assert pull.warnings_for(r.flatten_notes, {}, False) == ['Keys renamed: "" → _empty, a. → a._empty']
+
+
 def test_pull_detects_mixed_types_across_chunks(tmp_path, monkeypatch):
     monkeypatch.setattr(mongodb, "CHUNK_DOCS", 2)
     when = datetime(2025, 3, 1, 12, 30)

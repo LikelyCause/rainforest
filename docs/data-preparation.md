@@ -51,8 +51,8 @@ document, in the order first seen. A key that first appears in document 400,000 
 | Value in the document | Becomes |
 |---|---|
 | nested document `{a: {b: 1}}` | the column `a.b`; dots inside a key are replaced by `_`, and nesting can be any depth |
-| array of numbers, text or documents | one text column holding the array as JSON; it profiles as text and can be dropped |
-| `ObjectId`, `UUID`, `Binary` | text (binary other than a UUID as base64); `_id` is kept and profiles as an identifier |
+| array of numbers, text or documents | one text column holding the array as JSON, profiled like any text column: short arrays with few distinct values (`["fleet"]`) come out categorical, long ones text |
+| `ObjectId`, `UUID`, `Binary` | text (binary other than a UUID as base64). `_id` is kept; profiling calls a text column an identifier from 500 values on when nearly every value is distinct, so with fewer rows `_id` comes out categorical. Retype it, or drop it |
 | `Int32`, `Int64`, `Double`, `Decimal128` | a number (`Decimal128` as a float) |
 | `Date` | a datetime |
 | `true`, `false` | a boolean, which profiles as a binary field |
@@ -65,8 +65,9 @@ every column name to lowercase letters, digits and underscores (`a_b`), as for a
 
 Edge cases:
 
-- **Empty-string keys.** A key `""` gives a column with an empty name, and `{a: {"": 1}}` gives `a.`. Field names keep
-  such oddities; in the raw table they become `col_<position>` and `a`.
+- **Empty-string keys.** A key `""` gives the column `_empty`, and `{a: {"": 1}}` gives `a._empty`; a key that is
+  literally `_empty` keeps that name and the empty key takes the next suffix (`_empty_2`). The warning lists each one
+  under *Keys renamed*.
 - **A field that is always `{}`** produces no column: an empty document has no values to flatten, so the field
   vanishes. One that is `{}` in some documents and has keys in others is a column wherever it has keys.
 - **Mixed types** are read as text, with numbers and booleans written in their text form, so nothing is lost. The type
@@ -92,7 +93,8 @@ Leaving out exact duplicates removes rows that are equal on the **comparison col
 
 - By default these are the columns every chosen collection has, less `_id`, the `source` column and any column of
   kind identifier: every value an `ObjectId`, `UUID` or `Binary`, or every value text, or every value a number, under
-  an identifier-like name (ending in `id`, `uuid`, `key`, `code` and the like, as in `vehicle_id` or `extra.key`),
+  an identifier-like name (one whose last part, after `_`, `.`, `-` or a space, or the whole name, is `id`, `uuid`,
+  `guid`, `key`, `pk`, `identifier`, `code` or `nbr`, as in `vehicle_id` or `extra.key` but not `paid`),
   because each collection's own keys would make every row distinct. Columns that only some collections have never
   take part, so a row of a collection with extra fields can still match a row without them. The preview lists these
   columns from its sample; the pull applies the same rule to every document it reads, so the two differ only when
