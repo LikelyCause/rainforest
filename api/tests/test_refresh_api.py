@@ -582,3 +582,21 @@ def test_the_in_use_record_reads_assessments_as_a_personal_export_does(lead, mon
         assert "vehicle" in expected and "engine" not in expected and "rpm.max" not in expected
     finally:
         lead.delete(f"/api/datasets/{ds}")
+
+
+def test_the_in_use_record_has_entries_only_when_the_refresh_deletes_fields(lead, mongo):
+    ds = _connected(lead, mongo, "In use entries", drop=("rpm.max",))
+    rid = lead.get(f"/api/datasets/{ds}").json()["baseline"]["id"]
+    x = lead.post(f"/api/datasets/{ds}/experiments", json={"name": "Try", "source": f"recipe:{rid}"}).json()
+    try:
+        with _held(lead, ds):
+            pass
+        assert _latest_pull(ds)["flatten_notes"]["removed_in_use"] == {"experiments": {}, "assessments": {}}
+        mongo.curated.update_many({}, {"$unset": {"rpm.max": ""}})
+        with _held(lead, ds):
+            pass
+        # Deleting, it records every experiment, the ones that used none of the fields too.
+        assert _latest_pull(ds)["flatten_notes"]["removed_in_use"]["experiments"] == {str(x["id"]): []}
+    finally:
+        seed(mongo)
+        lead.delete(f"/api/datasets/{ds}")

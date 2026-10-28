@@ -328,6 +328,8 @@ def _in_use(conn, dataset_id: int, gone: dict[int, str]) -> dict:
     how an export check later knows what an experiment read (exports.used_fields). Every experiment and assessor gets
     an entry, empty or not, so one made later is told apart by having none."""
     out: dict[str, dict[str, list[str]]] = {"experiments": {}, "assessments": {}}
+    if not gone:  # used_fields reads a record only for the fields its pull removed
+        return out
     ids = list(gone)
     for r in conn.execute(
         """SELECT x.id, coalesce(array_agg(f.name ORDER BY f.ordinal) FILTER (WHERE f.id IS NOT NULL), '{}') AS names
