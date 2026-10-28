@@ -144,8 +144,8 @@ family above the baselines on *Versions* and under *Latest pull* in the *Team* p
 new version with the reopened fields selected. The new version carries the baseline's decisions for the fields still
 in the data; a target that is gone, or that is no longer a valid target, is left out (a field still there takes its
 suggestion), and the version's page lists what wasn't carried over. The *Team* page opens on the drift summary when
-the pull came after the version was finalized. A dataset with no finalized baseline gets no drift summary; its decisions that are still at their
-suggestion follow the new suggestions. A pull from before a baseline was finalized, such as the first pull, has no
+the pull came after the version was finalized. A dataset with no finalized baseline gets no drift summary; its
+decisions that are still at their suggestion follow the new suggestions. A pull from before a baseline was finalized, such as the first pull, has no
 comparison with it and says so; the next refresh compares them.
 
 **While it runs** the dataset is locked. Its pages open read-only with a banner naming who started the refresh, and
@@ -159,8 +159,9 @@ fails, the dataset, its fields and its data stay as they were and the failed pul
 **Exports after a refresh** are built from the new data. Each export of a connected dataset records the pull it was made
 from in its manifest and MLflow parameters, and the exports list shows it on the export's row as *pull #<n>*, where n is
 the pull's id, so it stays clear which data a run was trained on; an export made earlier keeps its own Parquet file.
-The export preview blocks when a field the baseline keeps, or one of its targets, is no longer in the data (a field the
-baseline drops may go), and warns when the baseline was finalized before the latest pull.
+The export preview blocks when a field the export keeps, or one of its targets, is no longer in the data (a field it
+drops may go), whether the export is of the baseline, a team experiment or a personal one; for a team experiment that
+includes the fields its baseline keeps and targets. It warns when the baseline was finalized before the latest pull.
 
 ## Type inference
 

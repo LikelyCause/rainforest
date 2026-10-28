@@ -203,14 +203,15 @@ def _preview_of(
     if not personal and (problem := source_problem(recipe)) is not None:
         blocking.insert(0, problem)
     # A refresh can take away fields a finalized snapshot names; the data checks read only the columns still there.
-    # A field the baseline drops is never read, so it may go.
+    # A field the baseline drops is never read, so it may go. A team experiment's copy loses a removed field's row,
+    # so its baseline's snapshot and its own target order say what it used.
     present = {
         r["name"] for r in conn.execute("SELECT name FROM meta.fields WHERE dataset_id = %s", (dataset_id,)).fetchall()
     }
     blocking += [
         f"Field in the baseline is no longer in the data: {n}"
-        for n, f in snap["fields"].items()
-        if n not in present and (f["decision"]["action"] == "keep" or n in targets)
+        for n in used_fields(conn, recipe, snap, x)
+        if n not in present
     ]
     class_targets = [t for t in targets if tasks[t]["task"] == "classes" and t in present]
     if lone := _lone_class_problem(ds["parquet_path"], class_targets):
@@ -241,6 +242,17 @@ def _preview_of(
         "last_export": None if last is None else {k: last[k] for k in ("id", "created_at", "status", "recipe_id")},
         "changed_since_export": changed,
     }
+
+
+def used_fields(conn, recipe: dict, snap: dict, x: dict | None) -> list[str]:
+    """The fields an export of `snap` reads, kept or as a target, by name; for a team experiment of its own, also
+    those its baseline's snapshot reads and its targets."""
+    snaps = [snap]
+    if x is not None and x["assessor_id"] is None and not x["is_default"] and recipe["phase"] == "finalized":
+        snaps.append(recipes.snapshot_of(conn, recipe))
+    out = {n: None for s in snaps for n, f in s["fields"].items() if f["decision"]["action"] in ("keep", "target")}
+    out.update(dict.fromkeys((x or {}).get("target_order") or []))
+    return list(out)
 
 
 def latest_pull(conn, dataset_id: int) -> dict | None:

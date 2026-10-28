@@ -140,7 +140,8 @@ These block the export:
 
 - no target
 - no kept features
-- a field in the baseline that a refresh took out of the data
+- a field the export keeps, or one of its targets, that a refresh took out of the data (a field it drops may go;
+  for a team experiment, the fields its baseline keeps and targets count too)
 - a target class with a single row
 - a numeric target with values that don't read as numbers, or with a single value
 - a band with fewer than 2 rows

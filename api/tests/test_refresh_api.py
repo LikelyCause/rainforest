@@ -385,3 +385,45 @@ def test_a_new_version_starts_once_profiling_turned_a_baseline_target_down(lead,
     finally:
         seed(mongo)
         lead.delete(f"/api/datasets/{ds}")
+
+
+def _experiments(lead, ds: int) -> dict[str, dict]:
+    """A personal experiment on the lead's assessment of v2 and a team one made on v2 once finalized."""
+    set_phase(ds, "assessing")
+    rid = lead.get(f"/api/datasets/{ds}/team").json()["recipe"]["id"]
+    r = lead.post(f"/api/datasets/{ds}/assessors", json={"user_id": lead.user["id"]})
+    assert r.status_code == 200, r.text
+    r = lead.post(
+        f"/api/datasets/{ds}/experiments", json={"name": "Mine", "source": f"assessment:{rid}:{lead.user['id']}"}
+    )
+    assert r.status_code in (200, 201), r.text
+    personal = r.json()
+    set_phase(ds, "finalized")
+    r = lead.post(f"/api/datasets/{ds}/experiments", json={"name": "Try", "source": f"recipe:{rid}"})
+    assert r.status_code in (200, 201), r.text
+    return {"team": r.json(), "personal": personal}
+
+
+def test_experiment_exports_block_on_kept_fields_and_targets_the_refresh_removed(lead, mongo):
+    ds = _connected(lead, mongo, "Experiment fields gone")
+    xs = _experiments(lead, ds)
+    gone = "Field in the baseline is no longer in the data: "
+    try:
+        mongo.curated.update_many({}, {"$unset": {"engine": "", "vehicle": ""}})
+        with _held(lead, ds):
+            pass
+        assert _latest_pull(ds)["status"] == "done"
+        for kind, x in xs.items():
+            r = lead.get(f"/api/datasets/{ds}/export-preview", params={"experiment_id": x["id"]})
+            assert r.status_code == 200, r.text
+            assert sorted(b for b in r.json()["blocking"] if b.startswith(gone)) == [
+                gone + "engine",
+                gone + "vehicle",
+            ], kind
+            r = lead.post(f"/api/datasets/{ds}/exports", json={"experiment_id": x["id"]})
+            assert r.status_code == 422 and {gone + "engine", gone + "vehicle"} <= set(r.json()["detail"]["errors"]), (
+                kind
+            )
+    finally:
+        seed(mongo)
+        lead.delete(f"/api/datasets/{ds}")
