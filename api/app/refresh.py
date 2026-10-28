@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import time
 from pathlib import Path
 
 import polars as pl
@@ -38,6 +39,7 @@ from .sources.pull import names, pull_into, warnings_for
 log = logging.getLogger(__name__)
 
 NEW = "raw.parquet.new"
+FAILURE_RETRIES = (0.5, 2.0, 0)  # seconds to wait after each attempt to record a failure
 
 
 def run_refresh(dataset_id: int, pull_id: int) -> None:
@@ -60,15 +62,30 @@ def run_refresh(dataset_id: int, pull_id: int) -> None:
             _discard_new(dataset_id)
         except Exception:  # noqa: BLE001 - the next refresh clears them too; the failure must still be recorded
             log.exception("could not remove the new data of dataset %s", dataset_id)
-        execute(
-            "UPDATE meta.dataset_pulls SET status = 'failed', error = %s, finished_at = now() WHERE id = %s",
-            (_error(src, exc), pull_id),
-        )
-        execute(
-            """UPDATE meta.datasets SET status = 'ready', progress = 1, status_message = 'Ready', error = NULL,
-                      updated_at = now() WHERE id = %s""",
-            (dataset_id,),
-        )
+        _record_failure(dataset_id, pull_id, _error(src, exc))
+
+
+def _record_failure(dataset_id: int, pull_id: int, error: str) -> None:
+    """The pull failed and the dataset ready again, together, retried a few times: a database error here would
+    otherwise leave the dataset locked until a restart's sweep."""
+    for attempt, wait in enumerate(FAILURE_RETRIES):
+        try:
+            with connection() as conn:
+                conn.execute(
+                    "UPDATE meta.dataset_pulls SET status = 'failed', error = %s, finished_at = now() WHERE id = %s",
+                    (error, pull_id),
+                )
+                conn.execute(
+                    """UPDATE meta.datasets SET status = 'ready', progress = 1, status_message = 'Ready', error = NULL,
+                              updated_at = now() WHERE id = %s""",
+                    (dataset_id,),
+                )
+            return
+        except Exception:  # noqa: BLE001
+            if attempt == len(FAILURE_RETRIES) - 1:
+                raise
+            log.exception("recording the failed refresh of dataset %s; retrying", dataset_id)
+            time.sleep(wait)
 
 
 def _refresh(ds: dict, src: dict, pull_id: int) -> None:

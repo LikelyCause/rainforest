@@ -6,6 +6,7 @@ import os
 import random
 
 import polars as pl
+import psycopg
 import pytest
 from pymongo import UpdateOne
 from pymongo.errors import PyMongoError
@@ -626,5 +627,51 @@ def test_a_restart_leaves_a_refresh_with_a_live_owner_alone(database):
         jobs.sweep()
         assert _dataset(ds)["status"] == "refreshing"
         assert db.fetch_one("SELECT status FROM meta.dataset_pulls WHERE dataset_id = %s", (ds,))["status"] == "running"
+    finally:
+        jobs.shutdown()
+
+
+def test_the_failure_handler_retries_a_write_that_fails(database, monkeypatch):
+    ds = _bare_dataset()
+
+    def broken(*args):
+        raise RuntimeError("pull broke")
+
+    real = psycopg.Connection.execute
+    raised = []
+
+    def once(self, query, *args, **kw):
+        if not raised and "SET status = 'failed'" in str(query):
+            raised.append(query)
+            raise psycopg.OperationalError("server closed the connection unexpectedly")
+        return real(self, query, *args, **kw)
+
+    monkeypatch.setattr(refresh, "_refresh", broken)
+    monkeypatch.setattr(psycopg.Connection, "execute", once)
+
+    pull = _refresh(ds)
+
+    assert raised and pull["status"] == "failed" and pull["error"] == "pull broke" and pull["finished_at"]
+    after = _dataset(ds)
+    assert after["status"] == "ready" and after["status_message"] == "Ready"
+
+
+@pytest.mark.parametrize("status", ["failed", "done"])
+def test_a_restart_puts_back_a_refresh_whose_pull_already_ended(database, status):
+    from app import jobs
+
+    try:
+        ds = db.fetch_one(
+            """INSERT INTO meta.datasets (name, file_format, status, owner, created_by)
+               VALUES ('connected', 'mongodb', 'refreshing', %s, %s) RETURNING id""",
+            (jobs.owner_id(), _user()),
+        )["id"]
+        db.execute(
+            "INSERT INTO meta.dataset_pulls (dataset_id, status, finished_at) VALUES (%s, %s, now())", (ds, status)
+        )
+        jobs.sweep()
+        row = _dataset(ds)
+        assert row["status"] == "ready" and row["status_message"] == "Ready"
+        assert db.fetch_one("SELECT status FROM meta.dataset_pulls WHERE dataset_id = %s", (ds,))["status"] == status
     finally:
         jobs.shutdown()

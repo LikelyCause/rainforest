@@ -137,18 +137,22 @@ def sweep(owner: int | None = None) -> None:
             ).format(dead)
         )
         # An interrupted refresh swapped nothing in (the swap is one transaction), so the old data is all there; its
-        # leftover _new file and table are cleared by the next refresh.
+        # leftover _new file and table are cleared by the next refresh. A refresh whose pull already ended, but
+        # whose job couldn't set the dataset ready, is put back whoever owns it.
         conn.execute(
             sql.SQL(
-                """UPDATE meta.datasets SET status = 'ready', progress = 1, status_message = 'Ready', updated_at = now()
-                WHERE status = 'refreshing' AND {}"""
+                """UPDATE meta.datasets d SET status = 'ready', progress = 1, status_message = 'Ready', updated_at = now()
+                WHERE status = 'refreshing' AND ({} OR NOT EXISTS (
+                      SELECT 1 FROM meta.dataset_pulls p WHERE p.dataset_id = d.id AND p.status = 'running'))"""
             ).format(dead)
         )
         conn.execute(
             sql.SQL(
                 """UPDATE meta.datasets
-                  SET status = 'failed', error = 'Interrupted by an API restart; upload or generate it again.',
-                      updated_at = now()
+                  SET status = 'failed', updated_at = now(),
+                      error = CASE WHEN file_format = 'mongodb'
+                                   THEN 'Interrupted by an API restart; delete it and connect again.'
+                                   ELSE 'Interrupted by an API restart; upload or generate it again.' END
                 WHERE status IN ('pending', 'ingesting', 'profiling', 'correlating') AND {}"""
             ).format(dead)
         )
