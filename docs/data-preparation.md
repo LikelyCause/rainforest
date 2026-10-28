@@ -79,9 +79,10 @@ Edge cases:
   suffix. Across the pull, the first name given to a key path stays its name in every later document, and a later path
   that would take a name already in use gets the next free suffix, so a key without a dot gets the suffix when its
   dotted twin appeared in an earlier document. A refresh starts from the names the previous pull gave, so a
-  field keeps holding the same key whatever order the documents now come in. A name stays with its key even when
-  no document of the refresh has that key: another key that would take it gets the next suffix, and the old field is
-  removed with the warning *Fields no longer in the data*. The warning lists each rename.
+  field keeps holding the same key whatever order the documents now come in. In a refresh where no document has a
+  key the previous pull named, that name stays reserved for it: another key that would take it gets the next suffix,
+  and the old field is removed in that refresh, with the warning *Fields no longer in the data*, so no later key can
+  take over its id and decisions. The warning lists each rename.
 
 ### The source column and duplicates
 
