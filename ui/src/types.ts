@@ -1306,3 +1306,163 @@ export interface BatchStarted {
   skipped: Skip[];
   redraws: number;
 }
+
+/** How a one-vs-rest model's threshold is chosen on its validation curve, as the API stores it. */
+export type ThresholdRule = { kind: "f1" } | { kind: "precision"; min: number } | { kind: "fixed"; value: number };
+
+/** One model of a deployment. A binary model scores one class against the rest and has a threshold. */
+export interface DeploymentModel {
+  run_id: number;
+  /** The class a binary model scores, or the target. */
+  label: string;
+  model_label: string | null;
+  kind: "binary" | "multiclass" | "regression";
+  target: string;
+  positive_class?: string;
+  threshold: number | null;
+  threshold_rule: ThresholdRule | null;
+  /** Set when the rule fell back to the F1 choice. */
+  threshold_note?: string;
+}
+
+export interface Deployment {
+  id: number;
+  dataset_id: number;
+  experiment_id: number;
+  experiment_name: string;
+  export_id: number;
+  batch_id: number | null;
+  batch_name: string | null;
+  name: string;
+  models: DeploymentModel[];
+  status: "active" | "retired";
+  created_by: number | null;
+  created_by_name: string | null;
+  created_at: string;
+  retired_at: string | null;
+  experiment_archived_at: string | null;
+  /** How many unrevoked keys it has. */
+  keys: number;
+  /** Whether the viewer may retire it and manage its keys: its creator or a lead. */
+  can_manage: boolean;
+}
+
+/** GET /api/deployments/{id}: what a record must carry and two of the dataset's rows of it, or `problem`. */
+export interface DeploymentDetail extends Deployment {
+  fields: DeploymentField[] | null;
+  example: Record<string, unknown>[] | null;
+  problem: string | null;
+}
+export interface DeploymentField {
+  name: string;
+  dtype: string;
+}
+
+/** POST /api/experiments/{id}/deployments. */
+export interface DeploymentRequest {
+  name: string | null;
+  run_ids?: number[];
+  batch_id?: number;
+  threshold_rule?: ThresholdRule;
+  thresholds?: Record<number, ThresholdRule>;
+}
+
+export interface DeploymentKey {
+  id: number;
+  deployment_id: number;
+  name: string;
+  /** The key's first 8 characters. */
+  prefix: string;
+  created_by: number | null;
+  created_by_name: string | null;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+/** The 201 of creating a key: the only time `key` is shown. */
+export interface NewDeploymentKey extends DeploymentKey {
+  key: string;
+}
+
+/** Values of a field that didn't convert to its type; `flagged` when more than half of them failed. */
+export interface FieldWarning {
+  failed: number;
+  values: number;
+  flagged: boolean;
+}
+
+export interface ClassMetrics {
+  label: string;
+  support: number;
+  threshold: number | null;
+  precision: number | null;
+  recall: number | null;
+  f1: number | null;
+  pr_auc: number | null;
+}
+
+/** What a labelled test file says of the deployment. */
+export type TestMetrics =
+  | {
+      kind: "classes";
+      labelled_rows: number;
+      rows_without_label: number;
+      top1_accuracy: number | null;
+      rows_label_without_model: number;
+      /** Null for a single run. */
+      nothing_matched_share: number | null;
+      classes: ClassMetrics[];
+      /** `counts[i][j]`: rows labelled `labels[i]` whose top is `labels[j]`; the last column a top outside the list. */
+      confusion: { labels: string[]; counts: number[][] };
+    }
+  | {
+      kind: "number";
+      labelled_rows: number;
+      rows_without_label: number;
+      rows_label_not_a_number: number;
+      mae: number | null;
+      rmse: number | null;
+      r2: number | null;
+    };
+
+export interface DeploymentTest {
+  id: number;
+  deployment_id: number;
+  filename: string;
+  status: "pending" | "running" | "done" | "failed";
+  progress: number;
+  status_message: string | null;
+  rows: number | null;
+  has_labels: boolean | null;
+  metrics: TestMetrics | null;
+  warnings: Record<string, FieldWarning> | null;
+  /** What the upload reader noted about the file. */
+  notes: string[];
+  /** The identifier field the results carry, or null for the row number. */
+  id_field: string | null;
+  /** What the scores are keyed by. */
+  labels: string[] | null;
+  error: string | null;
+  created_by: number | null;
+  created_by_name: string | null;
+  created_at: string;
+  updated_at: string;
+  finished_at: string | null;
+}
+
+/** One record's result in a test: predict's result with its row number, identifier and the file's label. */
+export interface TestResult {
+  row: number;
+  id: string | number | null;
+  label: string | number | null;
+  top: { label: string; score: number | null } | null;
+  matches: string[] | null;
+  none_matched: boolean | null;
+  scores: Record<string, number | null>;
+}
+
+export interface DeploymentTestDetail extends DeploymentTest {
+  /** The first 500 records' results, once it is done. */
+  results: TestResult[];
+}

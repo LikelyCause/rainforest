@@ -25,6 +25,12 @@ import type {
   Dataset,
   Decision,
   DecisionInput,
+  Deployment,
+  DeploymentDetail,
+  DeploymentKey,
+  DeploymentRequest,
+  DeploymentTest,
+  DeploymentTestDetail,
   Device,
   Experiment,
   ExperimentDetail,
@@ -41,6 +47,7 @@ import type {
   Me,
   ModelOption,
   ModelRun,
+  NewDeploymentKey,
   OptionCatalog,
   PickUser,
   PreviewResult,
@@ -245,6 +252,19 @@ export const api = {
   batches: (experimentId: number) => request<Batch[]>(`/api/experiments/${experimentId}/batches`),
   batch: (id: number) => request<BatchDetail>(`/api/batches/${id}`),
   cancelBatch: (id: number) => request<BatchDetail>(`/api/batches/${id}/cancel`, { method: "POST" }),
+  deployments: (datasetId: number) => request<Deployment[]>(`/api/datasets/${datasetId}/deployments`),
+  deployment: (id: number) => request<DeploymentDetail>(`/api/deployments/${id}`),
+  createDeployment: (experimentId: number, body: DeploymentRequest) =>
+    request<DeploymentDetail>(`/api/experiments/${experimentId}/deployments`, json("POST", body)),
+  retireDeployment: (id: number) => request<DeploymentDetail>(`/api/deployments/${id}/retire`, { method: "POST" }),
+  activateDeployment: (id: number) => request<DeploymentDetail>(`/api/deployments/${id}/activate`, { method: "POST" }),
+  deploymentKeys: (id: number) => request<DeploymentKey[]>(`/api/deployments/${id}/keys`),
+  createDeploymentKey: (id: number, name: string) =>
+    request<NewDeploymentKey>(`/api/deployments/${id}/keys`, json("POST", { name })),
+  revokeDeploymentKey: (id: number, keyId: number) =>
+    request<DeploymentKey>(`/api/deployments/${id}/keys/${keyId}`, { method: "DELETE" }),
+  deploymentTests: (id: number) => request<DeploymentTest[]>(`/api/deployments/${id}/tests`),
+  deploymentTest: (testId: number) => request<DeploymentTestDetail>(`/api/deployment-tests/${testId}`),
   derived: (datasetId: number) => request<DerivedField[]>(`/api/datasets/${datasetId}/derived`),
   previewDerived: (datasetId: number, body: DerivedInput) =>
     request<DerivedPreview>(`/api/datasets/${datasetId}/derived/preview`, json("POST", body)),
@@ -311,20 +331,11 @@ export const api = {
   },
 };
 
-/** Upload with progress (fetch has no upload progress events). */
-export function uploadDataset(
-  file: File,
-  name: string,
-  targets: string,
-  onProgress: (frac: number) => void,
-): Promise<Dataset> {
+/** POST a form with upload progress (fetch has no upload progress events). */
+function uploadForm<T>(path: string, form: FormData, onProgress: (frac: number) => void): Promise<T> {
   return new Promise((resolve, reject) => {
-    const form = new FormData();
-    form.append("file", file);
-    if (name) form.append("name", name);
-    if (targets) form.append("targets", targets);
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/datasets/upload");
+    xhr.open("POST", path);
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
     xhr.onload = () => {
       let body: any = null;
@@ -335,9 +346,40 @@ export function uploadDataset(
       }
       if (xhr.status === 401) signedOut();
       if (xhr.status >= 200 && xhr.status < 300) resolve(body);
-      else reject(errorFromBody(xhr.status, body, `Upload failed (${xhr.status})`));
+      else {
+        const error = errorFromBody(xhr.status, body, `Upload failed (${xhr.status})`);
+        if (isRefreshLock(error)) refreshLockHandler();
+        reject(error);
+      }
     };
     xhr.onerror = () => reject(new ApiError("Network error during upload", 0));
     xhr.send(form);
   });
 }
+
+export function uploadDataset(
+  file: File,
+  name: string,
+  targets: string,
+  onProgress: (frac: number) => void,
+): Promise<Dataset> {
+  const form = new FormData();
+  form.append("file", file);
+  if (name) form.append("name", name);
+  if (targets) form.append("targets", targets);
+  return uploadForm("/api/datasets/upload", form, onProgress);
+}
+
+/** A file of records for a deployment to score in the background. */
+export function uploadDeploymentTest(
+  deploymentId: number,
+  file: File,
+  onProgress: (frac: number) => void,
+): Promise<DeploymentTest> {
+  const form = new FormData();
+  form.append("file", file);
+  return uploadForm(`/api/deployments/${deploymentId}/tests`, form, onProgress);
+}
+
+export const deploymentTestDownload = (testId: number, format: "csv" | "parquet") =>
+  `/api/deployment-tests/${testId}/download?format=${format}`;
