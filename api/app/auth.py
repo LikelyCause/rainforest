@@ -47,6 +47,9 @@ CHECK_PATH = "/api/auth/check"
 UPLOAD_PATH = "/api/datasets/upload"
 AVATAR_UPLOAD = re.compile(r"/api/users/\d+/avatar")
 AVATAR_MAX_BODY = 5 * 1024 * 1024 + 64 * 1024
+PREDICT_PATH = re.compile(r"/api/deployments/(\d+)/predict")
+PREDICT_MAX_BODY = 5 * 1024 * 1024
+BAD_KEY = "Invalid or revoked API key. Send Authorization: Bearer <key> with a key of this deployment."
 AVATAR_PREFIX = "/api/auth/avatars/"  # open to GET: the picker shows pictures before anyone signs in
 DEV_ORIGINS = {"http://localhost:5173", "http://127.0.0.1:5173"}
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
@@ -223,16 +226,30 @@ async def check_request(request: Request) -> JSONResponse | None:
         return None
     if not host_allowed(request.headers.get("host", ""), s.allowed_hosts):
         return JSONResponse({"detail": "Host not allowed. Add it to RAINFOREST_ALLOWED_HOSTS."}, 400)
+    predict = PREDICT_PATH.fullmatch(path) if request.method == "POST" else None
+    key = _bearer(request) if predict else None
     if request.method in UNSAFE_METHODS:
-        if not origin_allowed(request):
+        # A browser never attaches a key on its own, so a request carrying one can't be a cross-site forgery.
+        if key is None and not origin_allowed(request):
             return JSONResponse({"detail": "Cross-origin request refused."}, 403)
         # The check nginx's auth_request makes never carries a body.
         problem = None if path == CHECK_PATH else body_type_problem(request)
         if problem:
             return JSONResponse({"detail": problem}, 415)
         # Checked before the body is read: the route only sees it once it's spooled to disk.
-        if AVATAR_UPLOAD.fullmatch(path) and int(request.headers.get("content-length") or 0) > AVATAR_MAX_BODY:
+        if AVATAR_UPLOAD.fullmatch(path) and _length(request) > AVATAR_MAX_BODY:
             return JSONResponse({"detail": "Pictures can be 5 MB at most."}, 413)
+        if predict and _length(request) > PREDICT_MAX_BODY:
+            return JSONResponse({"detail": "A predict request can be 5 MB at most"}, 413)
+    if key is not None:
+        # Not a session: it opens this one route of this one deployment and nothing else.
+        from . import deployments
+
+        key_id = await run_in_threadpool(deployments.key_for, int(predict[1]), key)
+        if key_id is None:
+            return JSONResponse({"detail": BAD_KEY}, 401)
+        request.state.deployment_key = key_id
+        return None
     if path in OPEN_PATHS or (path.startswith(AVATAR_PREFIX) and request.method in ("GET", "HEAD")):
         return None
     problem = config_problem()
@@ -248,6 +265,19 @@ async def check_request(request: Request) -> JSONResponse | None:
         return JSONResponse({"detail": VIEWER_REFUSED}, 403)
     request.state.user = user
     return None
+
+
+def _bearer(request: Request) -> str | None:
+    """The token of an `Authorization: Bearer` header. Another scheme (a proxy's Basic sign-in) isn't a key."""
+    scheme, _, value = request.headers.get("authorization", "").partition(" ")
+    return value.strip() if scheme.lower() == "bearer" else None
+
+
+def _length(request: Request) -> int:
+    try:
+        return int(request.headers.get("content-length") or 0)
+    except ValueError:
+        return 0
 
 
 class SecurityMiddleware:

@@ -12,7 +12,7 @@ import pyarrow.parquet as pq
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from psycopg import sql
 
-from .. import batches, experiments, jobs, recipes, reuse
+from .. import batches, deployments, experiments, jobs, recipes, reuse
 from ..assessment import source_for
 from ..auth import CurrentUser, LeadUser
 from ..config import get_settings
@@ -759,7 +759,7 @@ def correlate_targets(dataset_id: int, target_ids: list[int], screen_ids: list[i
 
 @router.delete("/{dataset_id}")
 def delete_dataset(dataset_id: int, _: LeadUser) -> dict:
-    """Delete a dataset with its fields, exports and model runs, including their files on disk."""
+    """Delete a dataset with its fields, exports, model runs and deployments, including their files on disk."""
     s = get_settings()
     with connection() as conn:
         ds = conn.execute("SELECT status FROM meta.datasets WHERE id = %s FOR UPDATE", (dataset_id,)).fetchone()
@@ -786,13 +786,16 @@ def delete_dataset(dataset_id: int, _: LeadUser) -> dict:
         n_fields = conn.execute(
             "SELECT count(*) AS n FROM meta.fields WHERE dataset_id = %s", (dataset_id,)
         ).fetchone()["n"]
+        # First: a deployment holds on to its export, which the dataset's own delete would otherwise remove.
+        removed = deployments.remove_for_dataset(conn, dataset_id)
         conn.execute("DELETE FROM meta.datasets WHERE id = %s", (dataset_id,))
+    deployments.discard(removed)
     delete_dataset_files(dataset_id)
     for e in exports:
         shutil.rmtree(s.exports_dir / str(e), ignore_errors=True)
     for path in _run_dirs(s.models_dir, runs):
         shutil.rmtree(path, ignore_errors=True)
-    return {"fields": n_fields, "exports": len(exports), "runs": len(runs)}
+    return {"fields": n_fields, "exports": len(exports), "runs": len(runs), "deployments": len(removed)}
 
 
 def _run_dirs(models_dir: Path, runs: list[dict]) -> set[Path]:

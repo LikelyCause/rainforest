@@ -112,6 +112,10 @@ class Settings(BaseSettings):
     def avatars_dir(self) -> Path:
         return self.data_dir / "avatars"
 
+    @property
+    def deployments_dir(self) -> Path:
+        return self.data_dir / "deployments"
+
 
 @lru_cache
 def get_settings() -> Settings:

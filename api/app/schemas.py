@@ -200,6 +200,18 @@ class BatchRequest(BaseModel):
         return self
 
 
+class DeploymentRequest(BaseModel):
+    name: str | None = Field(None, max_length=200)
+    run_ids: list[int] | None = Field(None, description="The runs to deploy; with batch_id, some of that batch's runs")
+    batch_id: int | None = Field(None, description="Deploy a one-vs-rest batch's finished runs")
+    threshold_rule: dict[str, Any] | None = Field(None, description="Every one-vs-rest model's rule (default f1)")
+    thresholds: dict[int, dict[str, Any]] | None = Field(None, description="A rule for one run, by run id")
+
+
+class DeploymentKeyRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
 class AnalysisParams(BaseModel):
     data: str = Field("raw", pattern=r"^(raw|export:\d+)$")
     kept: bool = False

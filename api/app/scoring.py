@@ -313,7 +313,13 @@ def clear() -> None:
         _cache.clear()
 
 
-def _build(conn, export_id: int, models: list[dict]) -> Scorer:
+def inputs(conn, export_id: int) -> tuple[Input, ...]:
+    """The source fields a record sent to a deployment of this export must carry, with the types they convert to."""
+    return _frozen(conn, export_id)[3]
+
+
+def _frozen(conn, export_id: int) -> tuple[Path, dict, tuple[FieldSpec, ...], tuple[Input, ...], list[dict]]:
+    """The export's folder, manifest and field specs, its inputs, and the derived fields its features read."""
     exp = conn.execute("SELECT config, output_dir FROM meta.exports WHERE id = %s", (export_id,)).fetchone()
     if exp is None:
         raise ValueError("Export not found")
@@ -348,6 +354,11 @@ def _build(conn, export_id: int, models: list[dict]) -> Scorer:
         )
         for n in sources
     )
+    return out_dir, manifest, specs, inputs, needed
+
+
+def _build(conn, export_id: int, models: list[dict]) -> Scorer:
+    out_dir, manifest, specs, inputs, needed = _frozen(conn, export_id)
     loaded = tuple(_model(conn, export_id, m) for m in models)
     keys = [label for m in loaded for label in m.labels]
     if len(set(keys)) < len(keys):
