@@ -642,7 +642,8 @@ export interface ModelRun {
   dataset_id: number;
   model: string;
   family: string;
-  status: "pending" | "running" | "done" | "failed";
+  /** `cancelled`: a batch run cancelled before it started. */
+  status: "pending" | "running" | "done" | "failed" | "cancelled";
   status_message: string | null;
   error: string | null;
   config: {
@@ -652,7 +653,18 @@ export interface ModelRun {
     seed?: number;
     params?: Record<string, unknown>;
     device?: Device;
+    /** A one-vs-rest run: the class it trains against the rest of `target`. */
+    positive_class?: string | null;
+    target?: string | null;
+    balance?: boolean;
+    /** What its batch planned for it, shown before it has a report. */
+    batch_plan?: {
+      settings?: Record<string, SettingValue>;
+      positives?: { train: number; valid: number; test: number };
+    };
   };
+  /** The batch that started it, or null. */
+  batch_id?: number | null;
   metrics: Metrics;
   report: {
     order?: string[];
@@ -1112,4 +1124,105 @@ export interface DerivedPreview {
   rows: number;
   sample: (string | number | null)[];
   distinct: number;
+}
+
+/** One class of a target and its rows in each split, as GET /api/exports/{id}/batch-plan gives them. */
+export interface ClassCount {
+  class: string;
+  train: number;
+  valid: number;
+  test: number;
+}
+/** A class a one-vs-rest batch doesn't train, and why ("not selected" when it was unticked). */
+export interface Skip {
+  class: string;
+  reason: string;
+}
+/** A search setting's range of numbers: drawn on a log scale, as whole numbers, or neither. */
+export interface Range {
+  low: number;
+  high: number;
+  log: boolean;
+  integer: boolean;
+}
+/** A search's space as the API takes it: per setting, a list of values or a range. */
+export type Space = Record<string, SettingValue[] | Range>;
+
+/** GET /api/exports/{id}/batch-plan: the limits a batch is held to and, with a class target, its classes' counts. */
+export interface BatchPlan {
+  min_positives: number;
+  max_runs: number;
+  target: string | null;
+  classes: ClassCount[] | null;
+  valid_rows: number | null;
+  /** The classes a batch of every class would skip. */
+  skipped: Skip[] | null;
+  /** A one-vs-rest search's default classes. */
+  search_classes: string[] | null;
+}
+
+export type BatchKind = "one_vs_rest" | "search";
+export interface Sampler {
+  kind: "grid" | "random";
+  n?: number | null;
+  seed?: number;
+}
+
+/** POST /api/exports/{id}/batches. */
+export interface BatchRequest {
+  kind: BatchKind;
+  name?: string | null;
+  model: string;
+  device: Device;
+  params: Record<string, SettingValue>;
+  seed?: number;
+  cv?: number;
+  cv_folds?: number;
+  target?: string | null;
+  classes?: string[] | null;
+  balance?: boolean;
+  space?: Space;
+  sampler?: Sampler;
+  ranking?: string | null;
+  search_classes?: string[] | null;
+}
+
+export interface Batch {
+  id: number;
+  experiment_id: number;
+  export_id: number;
+  dataset_id: number;
+  kind: BatchKind;
+  name: string;
+  spec: {
+    model: string;
+    device: Device;
+    params: Record<string, SettingValue>;
+    seed: number;
+    cv: number;
+    cv_folds: number;
+    target: string | null;
+    balance: boolean;
+    classes?: string[];
+    space?: Space;
+    sampler?: Required<Sampler> | null;
+    ranking?: string;
+    ranked_target?: string;
+    search_classes?: string[] | null;
+  };
+  skipped: Skip[];
+  status: "running" | "done" | "cancelled";
+  created_by: number | null;
+  created_by_name: string | null;
+  created_at: string;
+  finished_at: string | null;
+  counts: Record<"pending" | "running" | "done" | "failed" | "cancelled", number>;
+}
+
+/** The 202 of starting a batch: `redraws` is how many random draws the checks threw away. */
+export interface BatchStarted {
+  batch: Batch;
+  run_ids: number[];
+  skipped: Skip[];
+  redraws: number;
 }

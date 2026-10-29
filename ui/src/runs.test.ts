@@ -57,6 +57,14 @@ describe("bestRuns", () => {
       "a:secondary": 2,
     });
   });
+
+  it("never stars a one-vs-rest run: its binary scores of one class aren't the target's", () => {
+    const ovr = (id: number, v: number) =>
+      ({ ...run(id, { a: { roc_auc: v, pr_auc: v } }), config: { positive_class: "p", target: "a" } }) as ModelRun;
+    const runs = [run(1, { a: { roc_auc_ovr_macro: 0.6, pr_auc_macro: 0.5 } }), ovr(2, 0.99), ovr(3, 0.98)];
+    expect(bestRuns(runs, ["a"])).toEqual({});
+    expect(bestRuns([...runs, run(4, { a: { roc_auc_ovr_macro: 0.7 } })], ["a"])).toEqual({ "a:primary": 4 });
+  });
 });
 
 describe("number targets", () => {
@@ -186,5 +194,14 @@ describe("model names", () => {
     expect(runLabel(r({ target_kinds: { price: "regression" } }), linear)).toBe("Ridge regression");
     expect(runLabel(r({}), linear)).toBe("Logistic regression");
     expect(runLabel(r({}), undefined)).toBe("logistic_regression");
+  });
+  it("names a one-vs-rest run's class while it waits, as its trained name will", () => {
+    const waiting = {
+      id: 1,
+      model: "lightgbm",
+      report: {},
+      config: { positive_class: "V07", target: "vehicle" },
+    } as unknown as ModelRun;
+    expect(runLabel(waiting, { label: "LightGBM", description: "" })).toBe("LightGBM · vehicle = V07 vs rest");
   });
 });

@@ -21,7 +21,10 @@ export function modelDescription(m: Named, kinds: (string | undefined)[]): strin
 /** A run's model name: the one it was trained under, else the catalog's for the targets it trained on. */
 export function runLabel(r: ModelRun, option: Named | undefined): string {
   if (r.report?.model_label) return r.report.model_label;
-  return option ? modelLabel(option, Object.values(r.report?.target_kinds ?? {})) : r.model;
+  const label = option ? modelLabel(option, Object.values(r.report?.target_kinds ?? {})) : r.model;
+  const { positive_class: cls, target } = r.config ?? {};
+  // Named as the API names it once trained, so a batch's waiting runs can be told apart.
+  return cls != null && target ? `${label} · ${target} = ${cls} vs rest` : label;
 }
 
 /** The two numbers the runs table shows per target: AUC and macro F1 for classes, R² and RMSE for a number. */
@@ -57,13 +60,15 @@ const lowerIsBetter = (r: ModelRun, target: string, m: RunMetric) =>
 /**
  * Which run to star per target and metric (keys `target:metric`, values run ids), among runs of one export.
  * Runs are ranked on the validation split, so picking the best never peeks at the test split the table shows.
- * A star needs at least two runs with a validation score.
+ * A star needs at least two runs with a validation score. One-vs-rest runs never get one: their scores are one
+ * class's against the rest, not the target's, and the API's own best pickers leave them out too.
  */
 export function bestRuns(runs: ModelRun[], targets: string[]): Record<string, number> {
   const out: Record<string, number> = {};
+  const whole = runs.filter((r) => r.config?.positive_class == null);
   for (const t of targets) {
     for (const m of ["primary", "pr", "secondary"] as const) {
-      const scored = runs.flatMap((r) => {
+      const scored = whole.flatMap((r) => {
         const v = metricFor(r, "valid", t, m);
         return v === undefined ? [] : [{ id: r.id, v, low: lowerIsBetter(r, t, m) }];
       });
