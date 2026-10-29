@@ -46,7 +46,7 @@ const newAxis = (s: ModelSetting, values: string[] = []): AxisDraft => ({
 });
 
 /** Every class not trained, grouped by why, so a long target's skips stay readable. */
-function Skips({ skipped }: { skipped: Skip[] }) {
+export function Skips({ skipped }: { skipped: Skip[] }) {
   if (!skipped.length) return null;
   const byReason = new Map<string, string[]>();
   for (const s of skipped) byReason.set(s.reason, [...(byReason.get(s.reason) ?? []), s.class]);
@@ -282,6 +282,8 @@ export function BatchDialog({
   device,
   cvFolds,
   sweep,
+  target: initialTarget = null,
+  origin,
   onClose,
   onStarted,
 }: {
@@ -298,11 +300,17 @@ export function BatchDialog({
   sweep: { name: string; values: string[] }[];
   onClose: () => void;
   onStarted: (started: BatchStarted) => void;
+  /** The class target to start on, when not the export's first. */
+  target?: string | null;
+  /** Where the settings come from, when not the Train panel. */
+  origin?: string;
 }) {
   const targets: string[] = e.summary?.targets ?? [];
   const targetKinds: Record<string, string> = e.summary?.target_kinds ?? {};
   const classTargets = targets.filter((t) => targetKinds[t] && targetKinds[t] !== "regression");
-  const [target, setTarget] = useState<string | null>(classTargets[0] ?? null);
+  const [target, setTarget] = useState<string | null>(
+    initialTarget && classTargets.includes(initialTarget) ? initialTarget : (classTargets[0] ?? null),
+  );
   const [scope, setScope] = useState<"whole" | "ovr">(kind === "one_vs_rest" ? "ovr" : "whole");
   const ovr = kind === "one_vs_rest" || scope === "ovr";
   const planTarget = ovr ? target : null;
@@ -482,7 +490,7 @@ export function BatchDialog({
           <dt>Device</dt>
           <dd>{device === "cuda" ? "GPU" : "CPU"}</dd>
         </dl>
-        <span className="muted small-text">Change the model and its settings in the Train panel.</span>
+        <span className="muted small-text">{origin ?? "Change the model and its settings in the Train panel."}</span>
         {unusedSweep && (
           <span className="small-text batch-note" role="note">
             The values to try in the panel aren't used; each run takes the panel's value

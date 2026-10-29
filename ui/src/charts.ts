@@ -1,5 +1,6 @@
 import type { EChartsCoreOption } from "echarts/core";
-import type { BarsChart, Correlation, HistogramChart, RocCurve } from "./types";
+import type { ChartAxis, ChartPoint } from "./batches";
+import type { BarsChart, Correlation, HistogramChart, RocCurve, ThresholdPoint } from "./types";
 import type { ChartTheme } from "./theme";
 import { fmtCompact, fmtInt, fmtPct, METHOD_LABEL } from "./format";
 
@@ -272,6 +273,150 @@ export function rocOption(t: ChartTheme, curves: RocCurve[]): EChartsCoreOption 
         silent: true,
         lineStyle: { color: t.textMuted, type: "dashed", width: 1 },
         tooltip: { show: false },
+      },
+    ],
+  };
+}
+
+/** A one-vs-rest run's precision, recall and F1 by threshold on validation, the test F1 dashed beside them, and the
+ * threshold the run chose. */
+export function thresholdCurveOption(
+  t: ChartTheme,
+  curve: Record<string, ThresholdPoint[]>,
+  chosen: number | null,
+): EChartsCoreOption {
+  const line = (name: string, points: ThresholdPoint[], key: "precision" | "recall" | "f1", color: string) => ({
+    type: "line",
+    name,
+    data: points.map((p) => [p.threshold, p[key]]),
+    showSymbol: false,
+    lineStyle: { width: 2, color, type: name.startsWith("Test") ? ("dashed" as const) : ("solid" as const) },
+    itemStyle: { color },
+  });
+  const valid = curve.valid ?? [];
+  const test = curve.test ?? [];
+  const [c1, c2, c3] = t.categorical;
+  const series: any[] = [
+    line("Precision", valid, "precision", c1),
+    line("Recall", valid, "recall", c2),
+    line("F1", valid, "f1", c3),
+    ...(test.length ? [line("Test F1", test, "f1", c3)] : []),
+  ];
+  if (chosen !== null)
+    series[2].markLine = {
+      silent: true,
+      symbol: "none",
+      lineStyle: { color: t.textMuted, width: 1, type: "solid" },
+      label: { formatter: `chosen ${chosen.toFixed(2)}`, color: t.textSecondary, fontSize: FS.small },
+      data: [{ xAxis: chosen }],
+    };
+  const axis = (name: string, nameGap: number) => ({
+    ...axisCommon(t),
+    type: "value",
+    min: 0,
+    max: 1,
+    interval: 0.25,
+    name,
+    nameLocation: "middle",
+    nameGap,
+    nameTextStyle: { color: t.textMuted, fontSize: FS.small },
+  });
+  return {
+    ...base(t),
+    grid: { left: 56, right: 16, top: 40, bottom: 40 },
+    legend: { top: 0, icon: "roundRect", itemWidth: 14, textStyle: { color: t.textSecondary, fontSize: FS.small } },
+    tooltip: {
+      ...(base(t).tooltip as object),
+      trigger: "axis",
+      formatter: (ps: any[]) =>
+        `threshold ${Number(ps[0]?.value[0]).toFixed(2)}<br/>` +
+        ps.map((p) => `${p.marker}${esc(p.seriesName)} ${Number(p.value[1]).toFixed(3)}`).join("<br/>"),
+    },
+    xAxis: axis("Threshold", 24),
+    yAxis: axis("Score", 40),
+    series,
+  };
+}
+
+/** A search's combinations: the ranking metric against one setting (the best ringed), or two settings with each
+ * combination coloured by the metric, darker for better. */
+export function searchChartOption(
+  t: ChartTheme,
+  d: { x: ChartAxis; y: ChartAxis | null; points: ChartPoint[] },
+  metric: { label: string; lowerIsBetter: boolean },
+  describe: (settings: ChartPoint["settings"]) => string,
+): EChartsCoreOption {
+  const axis = (a: ChartAxis, nameGap: number) => ({
+    ...axisCommon(t),
+    type: a.numeric ? (a.log ? "log" : "value") : "category",
+    ...(a.numeric ? { scale: true, ...(a.log ? {} : { boundaryGap: ["8%", "8%"] }) } : { data: a.categories }),
+    name: a.label,
+    nameLocation: "middle",
+    nameGap,
+    nameTextStyle: { color: t.textMuted, fontSize: FS.small },
+    axisLabel: {
+      color: t.textMuted,
+      fontSize: FS.small,
+      hideOverlap: true,
+      ...(a.numeric ? { formatter: (v: number) => String(Number(v.toPrecision(3))) } : {}),
+    },
+  });
+  const tip = {
+    ...(base(t).tooltip as object),
+    trigger: "item",
+    formatter: (p: any) => {
+      const pt = d.points[p.dataIndex];
+      return `<b>Rank ${pt.rank}</b> · ${esc(metric.label)} ${pt.value.toFixed(3)}<br/>${esc(describe(pt.settings))}`;
+    },
+  };
+  const ring = { borderColor: t.surface, borderWidth: 2 };
+  if (!d.y) {
+    return {
+      ...base(t),
+      grid: { left: 52, right: 16, top: 16, bottom: 44 },
+      tooltip: tip,
+      xAxis: axis(d.x, 28),
+      yAxis: { ...axis({ ...d.x, label: metric.label, numeric: true, log: false, categories: [] }, 40) },
+      series: [
+        {
+          type: "scatter",
+          data: d.points.map((p) => ({
+            value: [p.x, p.value],
+            symbolSize: p.rank === 1 ? 16 : 12,
+            itemStyle:
+              p.rank === 1 ? { color: t.series, borderColor: t.text, borderWidth: 2 } : { color: t.series, ...ring },
+          })),
+        },
+      ],
+    };
+  }
+  const values = d.points.map((p) => p.value);
+  return {
+    ...base(t),
+    grid: { left: 64, right: 96, top: 16, bottom: 44 },
+    tooltip: tip,
+    xAxis: axis(d.x, 28),
+    yAxis: axis(d.y, 52),
+    visualMap: {
+      type: "continuous",
+      dimension: 2,
+      min: Math.min(...values),
+      max: Math.max(...values),
+      right: 0,
+      top: "middle",
+      itemHeight: 140,
+      calculable: false,
+      text: metric.lowerIsBetter ? ["worse", "better"] : ["better", "worse"],
+      inRange: { color: metric.lowerIsBetter ? [t.seqHi, t.seqLo] : [t.seqLo, t.seqHi] },
+      textStyle: { color: t.textSecondary, fontSize: FS.small },
+      formatter: (v: number) => v.toFixed(3),
+    },
+    series: [
+      {
+        type: "scatter",
+        symbolSize: 16,
+        itemStyle: ring,
+        data: d.points.map((p) => [p.x, p.y, p.value]),
       },
     ],
   };

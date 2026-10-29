@@ -32,6 +32,7 @@ import { ReviewPage } from "./pages/ReviewPage";
 import { BulkEditPage } from "./pages/BulkEditPage";
 import { ExperimentPage, ExperimentsPage } from "./pages/ExperimentsPage";
 import { ExplorePage } from "./pages/ExplorePage";
+import { BatchPage } from "./pages/BatchPage";
 import { DatasetTeamPage } from "./pages/DatasetTeamPage";
 import { DatasetLayout, useDatasetContext } from "./components/DatasetLayout";
 import { ErrorAlert } from "./components/ui";
@@ -529,7 +530,7 @@ function DatasetBar({ ds }: { ds: Dataset }) {
   const me = useMe().data;
   const view = useView();
   const access = useAccess(ds, view);
-  const onExperiment = useMatch("/d/:datasetId/experiments/:experimentId");
+  const onExperiment = useMatch("/d/:datasetId/experiments/:experimentId/*");
   const onBaseline = useMatch("/d/:datasetId/baseline");
   const stage = stageOf(ds);
   const team = useTeam(ds.id, Boolean(stage && stage !== "setup"));
@@ -637,6 +638,7 @@ export default function App() {
             <Route path="export" element={<Navigate to="../experiments" replace />} />
             <Route path="experiments" element={<ExperimentsPage />} />
             <Route path="experiments/:experimentId" element={<ExperimentPage />} />
+            <Route path="experiments/:experimentId/batches/:batchId" element={<BatchPage />} />
             <Route path="team" element={<DatasetTeamPage />} />
             <Route path="baseline" element={<BaselinePage />} />
             <Route path="baselines" element={<BaselinesPage />} />

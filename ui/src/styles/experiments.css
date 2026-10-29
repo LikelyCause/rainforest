@@ -205,6 +205,45 @@ table.data.batches tbody tr:last-child td { border-bottom: 0; }
 .batch-runs .meter { flex: none; }
 .run-batch .badge { display: inline-block; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
 
+/* ------------------------------------------------------------------ the batch page */
+.batch-page h2 { margin: 0; font-size: var(--fs-section); font-weight: 600; }
+.batch-back { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; }
+.batch-title { gap: 8px 12px; align-items: center; }
+.batch-title h1 { margin: 0; font-size: var(--fs-title); overflow-wrap: anywhere; min-width: 0; }
+.batch-top-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
+@media (min-width: 1100px) { .batch-top-grid { grid-template-columns: minmax(320px, 2fr) minmax(0, 3fr); align-items: start; } }
+.batch-progress-card .batch-runs .meter { width: 160px; }
+.batch-space-list { margin: 0; padding-left: 18px; }
+.batch-nowrap { white-space: nowrap; }
+.batch-results .exp-scroll-x { max-height: 70vh; overflow-y: auto; }
+table.data.batch-ovr th, table.data.batch-board th { background: var(--surface-1); color: var(--text-muted); font-size: var(--fs-small); padding: 6px 10px; white-space: nowrap; }
+table.data.batch-ovr td, table.data.batch-board td { padding: 6px 10px; vertical-align: middle; }
+table.data.batch-ovr tr.batch-group-row th { top: auto; position: static; padding-bottom: 0; border-bottom: 0; }
+table.data.batch-ovr th.batch-group { text-align: center; color: var(--text-secondary); border-bottom: 1px solid var(--border); }
+th.batch-check, td.batch-check { width: 28px; padding-right: 0; }
+.batch-sort { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.batch-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+.batch-sort-mark { font-size: 9px; }
+.batch-sort-mark.off { visibility: hidden; }
+th.sortable:hover .batch-sort-mark.off { visibility: visible; opacity: 0.4; }
+.batch-class-cell { min-width: 140px; max-width: 260px; }
+.batch-class-cell .batch-class-name { font-weight: 600; }
+.batch-note-text { color: var(--text-secondary); margin-top: 2px; }
+.batch-note-text svg { color: var(--warn, currentColor); vertical-align: -2px; }
+tr.batch-curve-row > td { background: var(--surface-2); padding: 12px; }
+/* The table scrolls sideways on narrow screens; the opened curve stays the width of what is in view. */
+.batch-results .exp-scroll-x { container-type: inline-size; }
+.batch-curve { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; position: sticky; left: 12px; width: calc(100cqw - 24px); }
+@container (min-width: 900px) { .batch-curve { grid-template-columns: minmax(0, 3fr) minmax(260px, 2fr); align-items: start; } }
+.batch-curve-chart { min-width: 0; }
+.batch-foot { padding: 8px 12px 10px; border-top: 1px solid var(--border); }
+.batch-foot p { margin: 4px 0; }
+table.data tr.batch-top td.batch-value { font-weight: 700; }
+.batch-chart { gap: 8px; }
+.batch-chart-head { gap: 8px 16px; flex-wrap: wrap; }
+.batch-chart-axes select { min-width: 140px; }
+.batch-selection { position: sticky; bottom: 0; border-radius: var(--radius-sm); }
+
 .batch-progress { display: inline-flex; align-items: center; gap: var(--space-2, 8px); color: var(--text-secondary); }
 .batch-progress .meter { width: 80px; flex: none; }
 .batch-progress b { font-weight: 600; color: var(--text-primary); }

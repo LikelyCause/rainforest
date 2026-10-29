@@ -273,11 +273,7 @@ export function batchProgress(b: Pick<Batch, "counts">): { ended: number; total:
 
 type Split = "valid" | "test";
 export type OvrSortKey =
-  | "class"
-  | `positives.${Split | "train"}`
-  | `${Split}.${"pr_auc" | "roc_auc" | "f1"}`
-  | "threshold"
-  | "weak";
+  "class" | `positives.${Split | "train"}` | `${Split}.${"pr_auc" | "roc_auc" | "f1"}` | "threshold" | "weak";
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
@@ -417,7 +413,12 @@ export function searchChartData(
   const ax = chartAxis(x, entries, space, catalog);
   const ay = y ? chartAxis(y, entries, space, catalog) : null;
   const at = (a: ChartAxis, v: SettingValue) =>
-    a.numeric ? (v as number) : settingText(catalog?.find((s) => s.name === a.name), v);
+    a.numeric
+      ? (v as number)
+      : settingText(
+          catalog?.find((s) => s.name === a.name),
+          v,
+        );
   const points = entries.flatMap((e) =>
     e.value === null || e.rank === null
       ? []
