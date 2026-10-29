@@ -184,8 +184,9 @@ counts as a label with no model, and as wrong. Only an empty or missing label le
 | `confusion` | `labels`: the 20 most frequent labels; `counts[i][j]`: rows labelled `labels[i]` whose `top` is `labels[j]`, the last column counting a `top` outside the list |
 
 A number run reports `mae`, `rmse` and `r2` against the target instead, over the labels that are numbers;
-`rows_label_not_a_number` counts the others. `labelled_rows` and `rows_without_label` count the rows either way. The scores are calibrated probabilities and the thresholds were chosen on the validation
-split they were calibrated on, so a file the models haven't seen gives the honest numbers.
+`rows_label_not_a_number` counts the others. `labelled_rows` and `rows_without_label` count the rows either way.
+The scores are calibrated probabilities and the thresholds were chosen on the validation split they were calibrated
+on, so a file the models haven't seen gives the honest numbers.
 
 ### Keeping tests
 
