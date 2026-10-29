@@ -238,17 +238,19 @@ def run_summary(run: dict, spec: dict, weak_pr_auc: float) -> dict:
         row.update(settings=settings, value=metric("valid", ranking), cv_std=cv.get("std"))
     if row["positive_class"] is not None:
         if stored := report.get("f1_threshold"):
-            threshold = stored["threshold"]
+            threshold, note = stored["threshold"], stored.get("note")
             f1 = {split: _number(stored.get(f"{split}_f1")) for split in ("valid", "test")}
         else:  # a run trained before the choice was stored
             curve = report.get("threshold_curve") or {}
-            threshold = choose_threshold(curve["valid"], {"kind": "f1"})[0] if curve.get("valid") else None
+            threshold, note = choose_threshold(curve["valid"], {"kind": "f1"}) if curve.get("valid") else (None, None)
             points = {s: next((p for p in curve.get(s) or [] if p["threshold"] == threshold), None) for s in curve}
             f1 = {split: _number((points.get(split) or {}).get("f1")) for split in ("valid", "test")}
         positives = report.get("positives") or plan.get("positives")
         row.update(
             positives=positives,
             threshold=threshold,
+            threshold_note=note,
+            calibration=report.get("calibration"),
             **{
                 split: {"pr_auc": metric(split, "pr_auc"), "roc_auc": metric(split, "roc_auc"), "f1": f1[split]}
                 for split in ("valid", "test")

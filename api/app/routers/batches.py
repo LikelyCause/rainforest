@@ -30,7 +30,7 @@ STATUSES = ("pending", "running", "done", "failed", "cancelled")
 # a run trained before the F1 choice was stored needs its curves.
 SUMMARY_REPORT = """jsonb_build_object('model_label', report -> 'model_label', 'retried', report -> 'retried',
                         'fit_seconds', report -> 'fit_seconds', 'positives', report -> 'positives',
-                        'f1_threshold', report -> 'f1_threshold',
+                        'f1_threshold', report -> 'f1_threshold', 'calibration', report -> 'calibration',
                         'threshold_curve', CASE WHEN report ? 'f1_threshold' THEN NULL ELSE report -> 'threshold_curve' END,
                         'cross_validation', jsonb_build_object('targets', report -> 'cross_validation' -> 'targets'))"""
 
@@ -298,8 +298,9 @@ def get_batch(batch_id: int, user: CurrentUser) -> dict:
         (batch_id,),
     )
     spec = {**batch["spec"], "kind": batch["kind"]}
-    rows = [batches.run_summary(r, spec, get_settings().ovr_weak_pr_auc) for r in runs]
-    out = {**batch, "rows": rows}
+    weak_pr_auc = get_settings().ovr_weak_pr_auc
+    rows = [batches.run_summary(r, spec, weak_pr_auc) for r in runs]
+    out = {**batch, "rows": rows, "weak_rule": {"pr_auc": weak_pr_auc, "test_positives": batches.WEAK_TEST_POSITIVES}}
     if batch["kind"] == "search":
         out["leaderboard"] = batches.leaderboard(rows, spec["ranking"])
     return out

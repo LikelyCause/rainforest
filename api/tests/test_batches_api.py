@@ -108,6 +108,11 @@ def test_a_one_vs_rest_batch_trains_one_run_per_class_one_at_a_time(setup):
             assert 0 <= r[split]["pr_auc"] <= 1 and 0 <= r[split]["roc_auc"] <= 1 and 0 <= r[split]["f1"] <= 1
         assert 0 <= r["threshold"] <= 1
         assert r["weak"] == (r["valid"]["pr_auc"] < 0.5 or r["positives"]["test"] < 30)
+        cal = r["calibration"]
+        assert cal["method"] in ("isotonic", "sigmoid") and set(cal["test"]) == {"brier_before", "brier_after"}
+        assert {"brier_before", "brier_after", "valid_positives", "valid_negatives"} <= set(cal)
+        assert "threshold_note" in r
+    assert done["weak_rule"] == {"pr_auc": 0.5, "test_positives": 30}
     run = lead.get(f"/api/runs/{rows[0]['run_id']}").json()
     assert run["batch_id"] == batch["id"] and run["config"]["balance"] is True
 
@@ -340,6 +345,48 @@ def test_a_row_reads_the_runs_stored_f1_threshold_or_an_older_runs_curve():
     )
     assert old == new
     assert new["threshold"] == 0.37 and new["valid"]["f1"] == 0.9 and new["test"]["f1"] == 0.9
+    assert new["threshold_note"] is None and new["calibration"] is None
+
+
+def test_a_row_carries_the_runs_calibration_and_its_threshold_note():
+    from app.batches import run_summary
+
+    calibration = {
+        "method": "sigmoid",
+        "brier_before": 0.2,
+        "brier_after": 0.1,
+        "test": {"brier_before": 0.21, "brier_after": 0.12},
+    }
+    note = "No threshold gives a positive F1 on validation; 0.5 is used"
+    row = run_summary(
+        {
+            "id": 1,
+            "status": "done",
+            "config": {"positive_class": "p", "target": "y"},
+            "metrics": {},
+            "report": {
+                "f1_threshold": {"threshold": 0.5, "valid_f1": 0.0, "test_f1": 0.0, "note": note},
+                "calibration": calibration,
+                "positives": {"train": 50, "valid": 40, "test": 40},
+            },
+        },
+        {"kind": "one_vs_rest"},
+        0.5,
+    )
+    assert row["threshold_note"] == note and row["calibration"] == calibration
+    flat = [{"threshold": t / 100, "precision": 0.1, "recall": 0.0, "f1": 0.0} for t in range(101)]
+    old = run_summary(
+        {
+            "id": 1,
+            "status": "done",
+            "config": {"positive_class": "p", "target": "y"},
+            "metrics": {},
+            "report": {"threshold_curve": {"valid": flat}, "positives": {"train": 50, "valid": 40, "test": 40}},
+        },
+        {"kind": "one_vs_rest"},
+        0.5,
+    )
+    assert old["threshold"] == 0.5 and old["threshold_note"] == note
 
 
 def test_archiving_an_experiment_with_a_running_batch_is_409_until_it_is_cancelled(setup):
@@ -462,6 +509,18 @@ def test_the_batch_plan_reads_the_configured_limits(setup, monkeypatch):
         assert "s" in {s["class"] for s in plan["skipped"]}
         for c in plan["classes"]:
             assert (c["reason"] == "fewer than 200 positives in training") == (c["train"] < 200), c
+    finally:
+        monkeypatch.undo()
+        get_settings.cache_clear()
+
+
+def test_a_batchs_weak_rule_reads_the_configured_minimum(setup, monkeypatch):
+    lead = setup["lead"]
+    batch_id = lead.get(f"/api/experiments/{setup['x']['id']}/batches").json()[0]["id"]
+    monkeypatch.setenv("OVR_WEAK_PR_AUC", "0.7")
+    get_settings.cache_clear()
+    try:
+        assert lead.get(f"/api/batches/{batch_id}").json()["weak_rule"] == {"pr_auc": 0.7, "test_positives": 30}
     finally:
         monkeypatch.undo()
         get_settings.cache_clear()
