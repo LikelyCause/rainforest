@@ -7,6 +7,8 @@ import { CopyCommand, Empty, ErrorAlert, InfoTip } from "../components/ui";
 import { Banner, Chip, Icon, ProgressBar, Segmented, StatusBadge, useDismiss } from "../components/kit";
 import { batchTag } from "../batches";
 import { BatchList } from "../components/BatchList";
+import { DeployDialog } from "../components/DeployDialog";
+import { runDeployLabel } from "../deployments";
 import { MlflowLink, RunDetail } from "../components/RunDetail";
 import { TrainPanel, type TrainRequest } from "../components/TrainPanel";
 import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtInt, fmtMetric, fmtNum, fmtPct } from "../format";
@@ -818,6 +820,7 @@ export function RunsTab({
 }) {
   const [params, setParams] = useSearchParams();
   const [split, setSplit] = useState<Split>("test");
+  const [deploying, setDeploying] = useState<ModelRun | null>(null);
   const aside = useRef<HTMLElement>(null);
   const all = useMemo(() => [...(runs ?? [])].sort((a, b) => b.id - a.id), [runs]);
   const withRuns = useMemo(
@@ -1012,9 +1015,27 @@ export function RunsTab({
             }
             kinds={exports.find((x) => x.id === selected.export_id)?.summary?.target_kinds}
             onTrainAgain={canAdd ? onTrainAgain : null}
+            onDeploy={canAdd ? () => setDeploying(selected) : null}
             onClose={close}
           />
         </aside>
+      )}
+      {deploying && (
+        <DeployDialog
+          experimentId={deploying.experiment_id}
+          datasetId={deploying.dataset_id}
+          runIds={[deploying.id]}
+          models={[
+            {
+              runId: deploying.id,
+              label: runDeployLabel(deploying),
+              binary: deploying.config?.positive_class != null,
+            },
+          ]}
+          defaultName={deploying.report?.model_label ?? "Deployment"}
+          origin={`Run ${deploying.id} on Export #${deploying.export_id}`}
+          onClose={() => setDeploying(null)}
+        />
       )}
     </div>
   );

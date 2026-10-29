@@ -21,9 +21,11 @@ import {
 import { searchChartOption, thresholdCurveOption } from "../charts";
 import { BatchDialog, Skips } from "../components/BatchDialog";
 import { Chart } from "../components/Chart";
+import { DeployDialog } from "../components/DeployDialog";
 import { useDatasetContext } from "../components/DatasetLayout";
 import { Chip, confirmDialog, Icon, ProgressBar, StatusBadge } from "../components/kit";
 import { ErrorAlert } from "../components/ui";
+import { batchDeployment } from "../deployments";
 import { addBlocked } from "../experiments";
 import { fmtAgo, fmtDate, fmtInt, fmtMetric, fmtNum } from "../format";
 import { useMe } from "../hooks";
@@ -36,8 +38,18 @@ import type { BatchDetail, BatchRow, BatchStarted, ExportJob, LeaderboardEntry, 
 type Dir = "asc" | "desc";
 const opens = (status: string) => status === "done" || status === "failed";
 
-/** The batch's runs that a selection may hold: finished ones. The deploy dialog takes the selection from here. */
-function SelectionBar({ selected, onClear }: { selected: number[]; onClear: () => void }) {
+/** The batch's runs that a selection may hold: finished ones, for Deploy…. */
+function SelectionBar({
+  selected,
+  onClear,
+  onDeploy,
+  blocked,
+}: {
+  selected: number[];
+  onClear: () => void;
+  onDeploy: () => void;
+  blocked: string | null;
+}) {
   if (!selected.length) return null;
   return (
     <div className="bulk-bar batch-selection" role="region" aria-label="Selected runs">
@@ -46,6 +58,15 @@ function SelectionBar({ selected, onClear }: { selected: number[]; onClear: () =
       </span>
       <button type="button" className="small ghost" onClick={onClear}>
         Clear
+      </button>
+      <button
+        type="button"
+        className="small primary"
+        disabled={Boolean(blocked)}
+        title={blocked ?? undefined}
+        onClick={onDeploy}
+      >
+        Deploy {selected.length === 1 ? "it" : "them"}…
       </button>
     </div>
   );
@@ -698,6 +719,7 @@ function BatchView() {
   });
   const [selected, setSelected] = useState<number[]>([]);
   const [using, setUsing] = useState<LeaderboardEntry | null>(null);
+  const [deploying, setDeploying] = useState(false);
   const stillRunning = () => qc.getQueryData<BatchDetail>(["batch", bid])?.status === "running";
   const alreadyEnded = () => toast({ message: ALREADY_ENDED, tone: "info" });
   const cancel = useMutation({
@@ -757,6 +779,9 @@ function BatchView() {
   const settingsLine = describeSettings(b.spec.params, catalog);
   const paramsExact = describeSettings(b.spec.params, catalog, true);
   const space = b.spec.space ?? {};
+  const deploy = batchDeployment(b, selected);
+  const deployBlocked = blocked || deploy.blocker;
+  const tag = `${KIND_LABEL[b.kind]} #${b.id}`;
 
   const onCancel = async () => {
     const waiting = b.counts.pending;
@@ -799,6 +824,19 @@ function BatchView() {
             {KIND_LABEL[b.kind]} #{b.id}
           </Chip>
           <StatusBadge status={b.status} />
+          <span className="spacer" />
+          <button
+            type="button"
+            className="small"
+            disabled={Boolean(deployBlocked)}
+            title={
+              deployBlocked ||
+              (selected.length ? "Deploy the selected runs" : "Deploy the batch's finished runs, one model per class")
+            }
+            onClick={() => setDeploying(true)}
+          >
+            {selected.length ? `Deploy ${fmtInt(selected.length)} selected…` : "Deploy…"}
+          </button>
         </div>
         <span className="secondary small-text" title={fmtDate(b.created_at)}>
           Export #{b.export_id} · started by {b.created_by_name ?? "someone"} {fmtAgo(b.created_at)}
@@ -897,7 +935,28 @@ function BatchView() {
           <SearchChart b={b} catalog={catalog} metric={metric} />
         </>
       )}
-      <SelectionBar selected={selected} onClear={() => setSelected([])} />
+      <SelectionBar
+        selected={selected}
+        onClear={() => setSelected([])}
+        onDeploy={() => setDeploying(true)}
+        blocked={deployBlocked}
+      />
+      {deploying && (
+        <DeployDialog
+          experimentId={xid}
+          datasetId={ds.id}
+          batchId={b.id}
+          runIds={deploy.runIds}
+          models={deploy.models}
+          defaultName={b.name}
+          origin={
+            deploy.runIds
+              ? `${fmtInt(deploy.runIds.length)} selected run${deploy.runIds.length === 1 ? "" : "s"} of ${tag}, ${b.name}`
+              : `${tag}, ${b.name}: its finished runs`
+          }
+          onClose={() => setDeploying(false)}
+        />
+      )}
 
       {using && e && option && (
         <BatchDialog

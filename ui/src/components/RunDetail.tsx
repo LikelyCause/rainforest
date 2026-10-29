@@ -10,6 +10,7 @@ import { runLabel, whyFailed, type Split } from "../runs";
 import { Banner, Chip, Icon, Segmented } from "./kit";
 import { histogramOption, rocOption, scatterOption } from "../charts";
 import { fmtInt, fmtMetric, fmtNum, fmtPct } from "../format";
+import { runDeployable } from "../deployments";
 import { useChartTheme } from "../theme";
 import type {
   CrossValidation,
@@ -825,12 +826,13 @@ function predicts(run: ModelRun, targets: string[], exportKinds?: Record<string,
 }
 
 /** One run in full, for the aside beside the runs table: what it is, the chosen-model box, its scores per target with
- * their charts, and a way to train again with its settings. */
+ * their charts, and ways to train again with its settings and to deploy it. */
 export function RunDetail({
   run,
   targets,
   kinds,
   onTrainAgain = null,
+  onDeploy = null,
   onClose,
   split: initialSplit = "test",
 }: {
@@ -838,6 +840,8 @@ export function RunDetail({
   targets: string[];
   kinds?: Record<string, string>;
   onTrainAgain?: ((p: TrainPrefill) => void) | null;
+  /** Deploy this run on its own; offered for a finished run with one target. */
+  onDeploy?: (() => void) | null;
   onClose?: () => void;
   split?: Split;
 }) {
@@ -911,6 +915,16 @@ export function RunDetail({
             title="Open Train with this run's export, model, chain order and settings"
           >
             Train again
+          </button>
+        )}
+        {onDeploy && runDeployable(run) && (
+          <button
+            type="button"
+            className="small"
+            onClick={onDeploy}
+            title="Deploy this run to score new records through an API call or an uploaded file"
+          >
+            Deploy…
           </button>
         )}
         <MlflowLink run={run} button />
