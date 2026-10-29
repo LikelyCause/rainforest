@@ -7,7 +7,7 @@ Every path except `/health` and the sign-in endpoints marked *open* below needs 
 sets, for a user who is still active; without it the answer is `401`. In `oidc` mode with a required setting missing,
 everything but `/health` and the open paths answers `503` naming the setting. `POST`, `PUT`, `PATCH` and `DELETE`
 from a browser must be same-origin (`403` otherwise), and a request body must be `application/json`
-(`multipart/form-data` for the dataset and picture uploads) or it gets `415`. A `Host` outside `RAINFOREST_ALLOWED_HOSTS` gets `400`, except on `/health`
+(`multipart/form-data` for the dataset, picture and deployment-test uploads) or it gets `415`. A `Host` outside `RAINFOREST_ALLOWED_HOSTS` gets `400`, except on `/health`
 (`localhost`, `127.0.0.1` and `::1` always pass).
 
 One route also takes a deployment API key instead of the cookie: `POST /api/deployments/{id}/predict` with
@@ -229,7 +229,12 @@ model file's, checked before every load): `kind` is
 `threshold_note` when the rule fell back to the F1 choice), `multiclass` or `regression` (no threshold). `label` is
 the class a binary model scores, or the target. Key rows carry `id`, `deployment_id`, `name`, `prefix` (the key's
 first 8 characters), `created_by`, `created_by_name`, `created_at`, `last_used_at` and `revoked_at`; never the key or
-its hash.
+its hash. Test rows carry `id`, `deployment_id`, `filename`, `status` (`pending`, `running`, `done` or `failed`),
+`progress`, `status_message`, `rows`, `has_labels`, `metrics` (null without labels), `warnings`
+(`{field: {failed, values, flagged}}`), `notes` (what the upload reader noted), `id_field` (the identifier field the
+results carry, or null for the row number), `labels` (what the scores are keyed by), `error`, `created_by`,
+`created_by_name`, `created_at`, `updated_at` and `finished_at`. What a test reports is explained in
+[Deployments](deployments.md#testing-with-a-file).
 
 | Method | Path | Purpose | Key params |
 |---|---|---|---|
@@ -242,6 +247,10 @@ its hash.
 | GET | `/api/deployments/{deployment_id}/keys` | The deployment's keys, revoked ones included, oldest first. Anyone who can see the deployment. | |
 | DELETE | `/api/deployments/{deployment_id}/keys/{key_id}` | Revoke a key: the next call with it is `401`. Its creator or a lead; repeating it changes nothing; `404` for a key of another deployment. Not held back by a refresh. Returns the key row. | |
 | POST | `/api/deployments/{deployment_id}/predict` | Score records with the deployment's models, in record order: `{deployment, models, results, warnings}`. `models` lists the labels `scores` is keyed by (each class, or the target of a number run). Each result is `{scores, top, matches, none_matched}`: `scores` maps label to probability (or the predicted number), `top` is `{label, score}` (null for a number run), `matches` the one-vs-rest classes at or above their threshold, best first, and `none_matched` whether there were none (both null unless one-vs-rest). `warnings` counts, per field, values that didn't convert to the field's type and were scored as missing. A session (not a Viewer's, `403`) of a user who can see it, or `Authorization: Bearer <key>` of this deployment (`401` for any other key, a revoked one, or neither). `404` unknown, `409` when a model file or the export's preprocessor differs from the one deployed (naming the model or the export), `410` retired or its files removed or unreadable (the log names the file), `413` over 5 MB or more than `PREDICT_MAX_RECORDS` records, `422` for a body that isn't `{"records": [objects]}`, a field missing from a record (naming it and the record), a list or object as a value, `NaN`/`Infinity`, or nesting too deep to parse. | body: `records` (`[{"<field>": value, …}]`; extra fields are ignored, `null` is missing) |
+| POST | `/api/deployments/{deployment_id}/tests` | `202` with a test row: upload a file of records to score in the background, 50,000 rows at a time, through the same path as predict. Read by the dataset upload's reader. Write access to the experiment as for runs, never a Viewer (`403`); `409` while the dataset is refreshing, the experiment is archived or the deployment is retired, `415` for another file type, `400` for an empty file. Starting one deletes the deployment's finished tests older than its newest 20, with their files. A missing field, a model or preprocessor that changed, or files that can't be read fail the test with the reason in `error`. | multipart `file` (`.csv`, `.tsv`, `.txt`, `.parquet`, `.pq`) |
+| GET | `/api/deployments/{deployment_id}/tests` | The deployment's tests, newest first. Anyone who can see the deployment. | |
+| GET | `/api/deployment-tests/{test_id}` | One test, with `results`: once done, its first 500 records' results, each `{row, id, label, top, matches, none_matched, scores}` (`row` from 1, `id` the identifier's value, `label` the file's label; the rest as predict gives them). `404` for one the viewer can't see. | |
+| GET | `/api/deployment-tests/{test_id}/download` | Every result, as `format=csv` (the default; `matches` joined with `; `) or `format=parquet`. `409` until the test is done, `410` if its results were removed. | `format` |
 
 ## Explore (`routers/explore.py`)
 

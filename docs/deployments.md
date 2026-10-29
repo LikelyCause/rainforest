@@ -140,11 +140,57 @@ Results come in record order:
 The models of the last `DEPLOYMENT_CACHE` deployments used (4 by default) stay loaded in the API process. The first
 call after that loads them again, which takes longer.
 
+## Testing with a file
+
+A file of records can be scored in the background instead of through predict: `POST /api/deployments/{id}/tests`
+with the file as multipart `file`.
+
+- **The file** is read by the same reader as a dataset upload: `.csv`, `.tsv`, `.txt` or `.parquet`, the separator
+  guessed, the same missing-value tokens. It needs every field predict needs; extra columns are ignored, and a
+  missing field fails the test, naming it.
+- **The job** queues with exports and runs, converts the file, and scores it 50,000 rows at a time, exactly as predict
+  scores records: the same conversion, the same model checks (a model or preprocessor that changed fails the test
+  with the reason). Its `progress` and `status_message` show how far it is.
+- **Results** keep every row of the file, in order: its row number (from 1), the dataset's identifier field when the
+  file has one (a field decided, else inferred, as an identifier), the file's label when it has one, `top` and
+  `top_score`, `matches` and `none_matched` for a one-vs-rest deployment, and a `score_<label>` column per score. A
+  column of the file named like a generated one keeps its name, and the generated one gets a leading `_`. The test
+  shows the first 500; the download has all of them, as Parquet or CSV (`matches` joined with `; `).
+- **Values that don't convert** become missing, as in predict, and are counted per field: `warnings` is
+  `{field: {failed, values, flagged}}`, `values` being the values the file gave, and a field is `flagged` when more
+  than half of them failed. `notes` holds what the reader noted about the file (its separator, dropped columns).
+
+### Labels
+
+When the file has the deployment's target column, the test reports `metrics` over the rows whose label isn't missing.
+Every row is scored; the export's row rules don't apply. A label is read as the dataset's target was, so `7.0` is
+class `7` of a target stored as integers.
+
+| Metric | What it is |
+|---|---|
+| `top1_accuracy` | the share of labelled rows whose `top` is their label. A row whose label has no model (a class skipped, left out or unseen) counts as wrong. |
+| `rows_label_without_model` | how many labelled rows have a label no model scores; they have no per-class row |
+| `classes` | per class: `support` (labelled rows of the class), `precision`, `recall` and `f1` of its model at its `threshold` (a multiclass run's class counts as predicted when it is `top`; no threshold), and `pr_auc` (average precision of its score on the file). A metric with nothing to divide by is null. |
+| `nothing_matched_share` | the share of all rows, labelled or not, where no one-vs-rest model said yes (null for a single run) |
+| `confusion` | `labels`: the 20 most frequent labels; `counts[i][j]`: rows labelled `labels[i]` whose `top` is `labels[j]`, the last column counting a `top` outside the list |
+
+A number run reports `mae`, `rmse` and `r2` against the target instead. `labelled_rows` and `rows_without_label`
+count the rows either way. The scores are calibrated probabilities and the thresholds were chosen on the validation
+split they were calibrated on, so a file the models haven't seen gives the honest numbers.
+
+### Keeping tests
+
+The newest 20 tests of a deployment are kept: starting another deletes the oldest finished one and its files. A test
+interrupted by an API restart fails with *Interrupted by an API restart.* Anyone who can see a deployment sees its
+tests and downloads their results. Starting one is using the deployment, so it needs write access to the experiment
+as for runs, waits for a dataset refresh to finish (`409`), and is refused while the experiment is archived or the
+deployment is retired (`409`).
+
 ## Retiring and deleting
 
-- *Retire* stops a deployment answering (`410`) and keeps its record and keys. Its creator or a lead can reactivate
-  it.
+- *Retire* stops a deployment answering (`410`) and keeps its record, keys and tests. Its creator or a lead can
+  reactivate it.
 - Retiring and revoking a key stop access, so neither a dataset refresh nor an archived experiment holds them back.
   Creating a deployment, creating a key and reactivating grant it: they wait for a refresh to finish, and are
   refused while the experiment is archived (`409`).
-- Deleting a dataset deletes its deployments and their keys first.
+- Deleting a dataset deletes its deployments, their keys and their tests first.
