@@ -1,6 +1,6 @@
 import { settingProblem } from "./settings";
 import { parseSweep } from "./sweep";
-import type { ClassCount, ModelSetting, Range, SettingValue, Skip, Space } from "./types";
+import type { Batch, ClassCount, ModelSetting, Range, SettingValue, Skip, Space } from "./types";
 
 export type { ClassCount } from "./types";
 
@@ -209,4 +209,19 @@ const CLASS_WEIGHTING = ["class_weight", "scale_pos_weight", "is_unbalance"];
 /** The class-weight settings that balance would contradict: changed from their defaults, or searched over. */
 export function weightingClash(params: Record<string, SettingValue>, searched: string[]): string[] {
   return CLASS_WEIGHTING.filter((k) => k in params || searched.includes(k));
+}
+
+/** "12 of 40 done · 1 failed · 27 waiting", from a batch's runs by status, and the ended share for its bar. */
+export function batchProgress(b: Pick<Batch, "counts">): { ended: number; total: number; text: string } {
+  const c = b.counts;
+  const total = c.pending + c.running + c.done + c.failed + c.cancelled;
+  const n = (v: number) => grouped.format(v);
+  const parts = [
+    `${n(c.done)} of ${n(total)} done`,
+    c.failed ? `${n(c.failed)} failed` : null,
+    c.cancelled ? `${n(c.cancelled)} cancelled` : null,
+    c.running ? `${n(c.running)} training` : null,
+    c.pending ? `${n(c.pending)} waiting` : null,
+  ];
+  return { ended: c.done + c.failed + c.cancelled, total, text: parts.filter(Boolean).join(" · ") };
 }

@@ -132,11 +132,16 @@ export const isActive = (s: string) => s === "pending" || s === "running";
  * the first target (the score the ★ is picked on). */
 export function batchSummary(runs: ModelRun[], target: string | undefined, kind: string | undefined): string {
   const done = runs.filter((r) => r.status === "done");
-  const failed = runs.length - done.length;
+  const failed = runs.filter((r) => r.status === "failed").length;
+  const cancelled = runs.filter((r) => r.status === "cancelled").length;
+  const rest = [failed ? `${failed} failed` : null, cancelled ? `${cancelled} cancelled` : null].filter(Boolean);
   const head = done.length
-    ? `${done.length} run${done.length === 1 ? "" : "s"} finished${failed ? `, ${failed} failed` : ""}`
-    : `${failed} run${failed === 1 ? "" : "s"} failed`;
-  if (!target || !done.length) return head;
+    ? `${done.length} run${done.length === 1 ? "" : "s"} finished${rest.length ? `, ${rest.join(", ")}` : ""}`
+    : failed
+      ? `${failed} run${failed === 1 ? "" : "s"} failed${cancelled ? `, ${cancelled} cancelled` : ""}`
+      : `${cancelled} run${cancelled === 1 ? "" : "s"} cancelled`;
+  // A one-vs-rest run's score is one class's, so the best of them says nothing about the target.
+  if (!target || !done.length || done.some((r) => r.config?.positive_class != null)) return head;
   const scores = done.map((r) => metricFor(r, "valid", target, "primary")).filter((v): v is number => v !== undefined);
   if (!scores.length) return head;
   return `${head} · best ${runColumns(kind)[0].label} ${fmtMetric(Math.max(...scores))}`;

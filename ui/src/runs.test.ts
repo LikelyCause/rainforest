@@ -167,6 +167,13 @@ describe("batchSummary", () => {
     expect(batchSummary([a, c], "y", "regression")).toBe("1 run finished, 1 failed · best R² 0.800");
     expect(batchSummary([c], "y", "binary")).toBe("1 run failed");
   });
+  it("names no best for one-vs-rest runs, and counts cancelled runs apart from failed ones", () => {
+    const ovr = (id: number, auc: number) =>
+      ({ ...run(id, { y: { roc_auc: auc } }), status: "done", config: { positive_class: "p" } }) as ModelRun;
+    const cancelled = { id: 9, status: "cancelled", metrics: {} } as unknown as ModelRun;
+    expect(batchSummary([ovr(1, 0.99), ovr(2, 0.7)], "y", "multiclass")).toBe("2 runs finished");
+    expect(batchSummary([ovr(1, 0.99), cancelled], "y", "multiclass")).toBe("1 run finished, 1 cancelled");
+  });
 });
 
 describe("model names", () => {

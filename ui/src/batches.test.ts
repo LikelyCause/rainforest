@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  batchProgress,
   buildSpace,
   capProblem,
   distinctCombinations,
@@ -12,7 +13,7 @@ import {
   weightingClash,
   type ClassCount,
 } from "./batches";
-import type { ModelSetting } from "./types";
+import type { Batch, ModelSetting } from "./types";
 
 // The same counts as api/tests/test_batches_planning.py, so both sides are held to one rule.
 const counts = (o: Record<string, [number, number, number]>): ClassCount[] =>
@@ -298,5 +299,18 @@ describe("weightingClash", () => {
     expect(weightingClash({ num_leaves: 63 }, [])).toEqual([]);
     expect(weightingClash({ scale_pos_weight: 3 }, [])).toEqual(["scale_pos_weight"]);
     expect(weightingClash({}, ["is_unbalance", "num_leaves"])).toEqual(["is_unbalance"]);
+  });
+});
+
+describe("batchProgress", () => {
+  const batch = (counts: Partial<Batch["counts"]>) =>
+    ({ counts: { pending: 0, running: 0, done: 0, failed: 0, cancelled: 0, ...counts } }) as Batch;
+  it("counts the ended runs over all of them and says what the rest are doing", () => {
+    expect(batchProgress(batch({ pending: 1200, running: 1, done: 10, failed: 2 }))).toEqual({
+      ended: 12,
+      total: 1213,
+      text: "10 of 1,213 done · 2 failed · 1 training · 1,200 waiting",
+    });
+    expect(batchProgress(batch({ done: 3, cancelled: 4 })).text).toBe("3 of 7 done · 4 cancelled");
   });
 });
