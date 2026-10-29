@@ -297,7 +297,72 @@ Each export, on *Exports*, has:
 
 - *Train on it*, which opens *Train* with that export
 - *Files ▾*: *Dataset (.parquet)*, *Pipeline (.joblib)*, *Manifest (.json)*
-- *Use from code*: the CLI command and class mappings
+- *Use from code*: *Python script (.py)* (see [Rebuild an export in Python](#rebuild-an-export-in-python)), the CLI
+  command and class mappings
+
+### Rebuild an export in Python
+
+*Use from code → Python script (.py)* downloads one file, `export<id>_<dataset>.py`, that rebuilds the export outside
+the app. Hand it to someone with the original data and they get the same model-ready rows, split, features and target
+codes the app's `model_ready.parquet` holds, without access to Rainforest.
+
+```bash
+uv run export12_customers.py customers.csv            # rebuild it from the uploaded file and check it
+uv run export12_customers.py customers.csv --out model_ready.parquet
+uv run export12_customers.py customers.csv --clean clean.parquet
+uv run export12_customers.py customers.csv --compare export12_model_ready.parquet
+uv run export9_concrete_strength.py                   # a sample dataset: no file needed
+```
+
+`uv run` installs the library versions the script names in its header (the app's own); any environment with them
+works too. From Python, next to the file:
+
+```python
+from export12_customers import load_model_ready, load_clean, xy
+
+data = load_model_ready("customers.csv")     # like model_ready.parquet: __row_id, __split, features, targets
+X_train, y_train = xy(data, "train")
+clean = load_clean("customers.csv")          # the decisions applied, nothing fitted
+```
+
+The script holds:
+
+| Part | What it is |
+|---|---|
+| The data | How the data is read: the uploaded file with the app's reading rules (separator, missing-value markers such as `?`, column names), and the derived fields the export uses, with their definitions as they were at export time |
+| The decisions | `kept_fields()`: one line per kept field, such as `keep.numeric('age', imputation='median', add_missing_indicator=True)`, with the team's notes and the experiment's adjustments as comments; the fields left out; `targets()` in chain order, such as `predict.bands(5)`; the row rules, split shares and seed, and the export's *Max rows to fit on* and memory budgets |
+| Rebuilding | Rainforest's own export code, copied from the app, so the script runs the same steps rather than a rewrite of them |
+| The checks | What the app read (rows, and each original column's type, missing values and a hash of its values) and what it exported (each column's hash, and sums for the float columns) |
+
+Before anything else, the script checks that the data reads as the app read it, and stops (exit code 3) if it
+doesn't, naming the columns that differ. Derived fields aren't checked here: they are computed from the columns that
+are. `--no-check` goes on anyway; the result is still checked. After rebuilding, the script checks the result against
+the export: *Identical to the app's export*, or columns that differ only by floating-point rounding (another
+machine's maths libraries can round the last digits of a log or a text feature differently), or what differs (exit
+code 1). `--compare` checks value by value against the export's own `model_ready.parquet`: row ids, the split and
+class codes must be equal, and a feature may differ by rounding (up to 1e-4 of the column's largest value).
+
+| Exit code | Meaning |
+|---|---|
+| 0 | The result matches the export, exactly or but for floating-point rounding |
+| 1 | The result differs from the export (or from the file given to `--compare`) |
+| 2 | The command line is wrong, or the data file isn't the kind this export reads |
+| 3 | The data doesn't read as the app read it |
+| 4 | The rebuild failed; the error is printed |
+
+Edit the decisions to try other choices: the script then builds what the app would have exported with them, and its
+check says the result no longer matches the export.
+
+Where the data comes from:
+
+| The dataset | The script |
+|---|---|
+| An uploaded file | Takes the file as its first argument |
+| A sample library dataset | Downloads it from its UCI source and builds it as the app's copy was built, or takes the app's Parquet copy from `api/app/sample_library/data/`; the *Concrete strength* build also installs `fastexcel` |
+| A generated sample | Makes it again with the app's generator and the settings it was made with, and takes no file. A sample generated before Rainforest recorded those settings is recognised by its default name when making it again gives the same data; otherwise the script can't be written, and generating the sample again fixes that |
+
+The script is written when you ask for it, by the app as it is then. An export made by an earlier version whose
+library versions differ says so in the script's header; its check then shows whether the result still matches.
 
 ### Chains
 

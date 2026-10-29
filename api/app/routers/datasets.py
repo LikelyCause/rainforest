@@ -100,13 +100,25 @@ def _create(
     user_id: int,
     upload_path: Path | None = None,
     recipe_id: int | None = None,
+    source: dict | None = None,
 ) -> dict:
+    """`source`: where the data came from when it isn't an upload (meta.datasets.source_spec), so an export's script
+    can get the same data."""
     with connection() as conn:
         ds = conn.execute(
             """INSERT INTO meta.datasets (name, source_filename, file_format, target_columns, status, status_message,
-                                          owner, upload_path, created_by)
-               VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s, %s) RETURNING id""",
-            (name, filename, fmt, targets, jobs.owner_id(), None if upload_path is None else str(upload_path), user_id),
+                                          owner, upload_path, created_by, source_spec)
+               VALUES (%s, %s, %s, %s, 'pending', 'Queued', %s, %s, %s, %s) RETURNING id""",
+            (
+                name,
+                filename,
+                fmt,
+                targets,
+                jobs.owner_id(),
+                None if upload_path is None else str(upload_path),
+                user_id,
+                None if source is None else jsonb(source),
+            ),
         ).fetchone()
         first = recipes.create_first(conn, ds["id"], user_id)
         if recipe_id is not None:
@@ -422,7 +434,15 @@ def add_from_library(key: str, user: CurrentUser) -> dict:
     dest = s.uploads_dir / f"{uuid.uuid4().hex}.parquet"
     shutil.copyfile(library_path(key), dest)
     try:
-        ds = _create(entry["name"], f"{key}.parquet", "parquet", list(entry["targets"]), user["id"], dest)
+        ds = _create(
+            entry["name"],
+            f"{key}.parquet",
+            "parquet",
+            list(entry["targets"]),
+            user["id"],
+            dest,
+            source={"kind": "library", "key": key},
+        )
     except Exception:
         dest.unlink(missing_ok=True)
         raise
@@ -447,6 +467,16 @@ def create_sample(req: SampleRequest, user: CurrentUser) -> dict:
         "generated",
         ["column_a", "column_b", *(["column_c"] if req.numeric_target else [])],
         user["id"],
+        source={
+            "kind": "generated",
+            "settings": {
+                "rows": req.rows,
+                "fields": req.fields,
+                "seed": req.seed,
+                "target_kind": req.target_kind,
+                "numeric_target": req.numeric_target,
+            },
+        },
     )
     jobs.submit(_generate_and_process, ds["id"], req.model_dump())
     return ds

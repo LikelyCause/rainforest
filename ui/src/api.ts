@@ -149,6 +149,20 @@ export function errorFromBody(status: number, body: any, fallback = `Request fai
 
 const json = (method: string, data: unknown): RequestInit => ({ method, body: JSON.stringify(data) });
 
+/** The file name a download response gives (`attachment; filename="x.py"`), else `fallback`. */
+export function attachmentName(disposition: string | null, fallback: string): string {
+  const name = disposition?.match(/filename="([^"/\\]+)"/)?.[1];
+  return name && !name.startsWith(".") ? name : fallback;
+}
+
+/** A file the API writes on request: fetched first, so a refusal shows as an error rather than a page of JSON. */
+async function download(path: string, fallback: string): Promise<{ name: string; blob: Blob }> {
+  const res = await fetch(path);
+  if (res.status === 401) signedOut();
+  if (!res.ok) throw errorFromBody(res.status, await res.json().catch(() => null));
+  return { name: attachmentName(res.headers.get("content-disposition"), fallback), blob: await res.blob() };
+}
+
 export const api = {
   me: () => request<Me>("/api/auth/me"),
   updateMe: (data: { name: string }) => request<Me>("/api/auth/me", json("PATCH", data)),
@@ -231,6 +245,8 @@ export const api = {
     request<ExportJob[]>(`/api/datasets/${id}/exports${experimentId ? `?experiment_id=${experimentId}` : ""}`),
   startExport: (id: number, cfg: Record<string, unknown>) =>
     request<ExportJob>(`/api/datasets/${id}/exports`, json("POST", cfg)),
+  /** The export as a Python script that rebuilds it outside the app, written on request. */
+  exportScript: (exportId: number) => download(`/api/exports/${exportId}/files/code`, `export${exportId}.py`),
   modelsForExport: (exportId: number) => request<ModelOption[]>(`/api/exports/${exportId}/models`),
   system: () => request<SystemInfo>("/api/system"),
   startRun: (
