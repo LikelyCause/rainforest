@@ -620,7 +620,8 @@ def test_metrics(path: Path, cols: dict, models: tuple[scoring.Model, ...], unre
     code = {v: k for k, v in enumerate(vocab)}
     has = lab_idx >= 0
     lab = np.array([code[v] for v in lab_names], dtype=np.int64)[lab_idx[has]]
-    top = np.array([code[v] for v in top_names], dtype=np.int64)[top_idx[has]]
+    # A missing top (-1) takes the code after the vocabulary, which no label has.
+    top = np.append(np.array([code[v] for v in top_names], dtype=np.int64), len(vocab))[top_idx[has]]
     classes = []
     for m in models:
         for c in m.labels:
@@ -660,11 +661,11 @@ def _class_metrics(label: str, y: np.ndarray, score: np.ndarray, pred: np.ndarra
 
 def _confusion(lab: np.ndarray, top: np.ndarray, vocab: list[str]) -> dict:
     """Counts of `top` for each of the CONFUSION_CLASSES most frequent labels (codes into `vocab`): one column per
-    listed label, and a last one for a top outside the list."""
+    listed label, and a last one for a top outside the list (or missing, coded `len(vocab)`)."""
     counts = np.bincount(lab, minlength=len(vocab))
     listed = sorted((k for k in range(len(vocab)) if counts[k]), key=lambda k: (-counts[k], vocab[k]))
     listed = listed[:CONFUSION_CLASSES]
-    at = np.full(len(vocab), -1)
+    at = np.full(len(vocab) + 1, -1)
     at[listed] = np.arange(len(listed))
     grid = np.zeros((len(listed), len(listed) + 1), dtype=int)
     rows = at[lab]

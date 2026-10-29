@@ -483,6 +483,33 @@ def test_a_test_whose_process_is_gone_is_failed_by_the_sweep(setup, ovr_dep):
             shutil.rmtree(d, ignore_errors=True)
 
 
+def _metrics_of(tmp_path, labels: list, tops: list) -> dict:
+    """test_metrics of a multiclass deployment of classes a and b on hand-made results."""
+    model = scoring.Model(1, "y", "multiclass", ("a", "b"), None, "", None, {})
+    cols = deployments.result_columns([{"kind": "multiclass"}], ["a", "b"], None, "y")
+    n = len(labels)
+    pl.DataFrame(
+        {
+            cols["row"]: list(range(1, n + 1)),
+            "y": pl.Series(labels, dtype=pl.String),
+            cols["top"]: pl.Series(tops, dtype=pl.String),
+            cols["top_score"]: [0.5] * n,
+            cols["scores"]["a"]: [0.6] * n,
+            cols["scores"]["b"]: [0.4] * n,
+        }
+    ).write_parquet(tmp_path / "r.parquet")
+    return deployments.test_metrics(tmp_path / "r.parquet", cols, (model,))
+
+
+def test_a_missing_top_matches_no_label(tmp_path):
+    m = _metrics_of(tmp_path, ["a", "b", "b"], ["a", None, "b"])
+    assert m["top1_accuracy"] == pytest.approx(2 / 3)
+    assert m["confusion"] == {"labels": ["b", "a"], "counts": [[1, 0, 1], [0, 1, 0]]}
+    m = _metrics_of(tmp_path, ["a", "b"], [None, None])
+    assert m["top1_accuracy"] == 0 and m["confusion"]["counts"] == [[0, 0, 1], [0, 0, 1]]
+    assert [c["precision"] for c in m["classes"]] == [None, None]
+
+
 def test_an_upload_begun_while_the_sweep_runs_is_kept(ovr_dep, monkeypatch):
     """A process that starts after the sweep looked for leftover uploads, and before it asked which processes live,
     isn't in the answer yet; its new upload must survive."""
