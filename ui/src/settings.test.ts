@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   changed,
+  describeSettings,
   groupSummary,
   isVisible,
   prefillValues,
@@ -150,5 +151,19 @@ describe("groupSummary", () => {
   it("lists the first values when nothing changed", () => {
     expect(groupSummary(trees, {})).toBe("X 63 · X No limit · X GBDT · defaults");
     expect(groupSummary(trees, {}, 1)).toBe("X 63 · 2 more · defaults");
+  });
+});
+
+describe("describeSettings", () => {
+  const sampled = { learning_rate: 0.15605975503768751, num_leaves: 31, reg_lambda: 1234.5678, subsample: 0.8 };
+  it("shows a fractional number to 4 significant digits, whole numbers and short values as they are", () => {
+    expect(describeSettings(sampled, null)).toBe(
+      "learning_rate 0.1561 · num_leaves 31 · reg_lambda 1235 · subsample 0.8",
+    );
+  });
+  it("gives every digit when asked, for a tooltip", () => {
+    expect(describeSettings(sampled, null, true)).toBe(
+      "learning_rate 0.15605975503768751 · num_leaves 31 · reg_lambda 1234.5678 · subsample 0.8",
+    );
   });
 });

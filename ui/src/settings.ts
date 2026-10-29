@@ -134,17 +134,22 @@ export function fmtSetting(s: ModelSetting | undefined, v: SettingValue): string
         : String(v);
 }
 
-/** "num_leaves 127 · learning_rate 0.02", labelled when the catalog is known. */
+/** "num_leaves 127 · learning_rate 0.02", labelled when the catalog is known. A fractional number shows 4 significant
+ * digits, since a search's draws carry all 17; `exact` gives every digit, for a tooltip. */
 export function describeSettings(
   params: Record<string, SettingValue>,
   settings: ModelSetting[] | null | undefined,
+  exact = false,
 ): string {
   const entries = Object.entries(params);
   if (!entries.length) return "defaults";
   return entries
     .map(([k, v]) => {
       const s = settings?.find((x) => x.name === k);
-      return `${s?.label ?? k} ${fmtSetting(s, v)}`;
+      // A choice is named by its exact value, so only free numbers are shortened.
+      const short = !exact && s?.kind !== "choice" && typeof v === "number" && !Number.isInteger(v);
+      const shown = short ? Number((v as number).toPrecision(4)) : v;
+      return `${s?.label ?? k} ${fmtSetting(s, shown)}`;
     })
     .join(" · ");
 }

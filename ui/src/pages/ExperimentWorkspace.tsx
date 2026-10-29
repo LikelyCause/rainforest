@@ -5,6 +5,7 @@ import { api } from "../api";
 import { useDebounced, useFields } from "../hooks";
 import { Empty, ErrorAlert, InfoTip } from "../components/ui";
 import { Banner, Chip, Icon, ProgressBar, Segmented, StatusBadge, useDismiss } from "../components/kit";
+import { batchTag } from "../batches";
 import { BatchList } from "../components/BatchList";
 import { MlflowLink, RunDetail } from "../components/RunDetail";
 import { TrainPanel, type TrainRequest } from "../components/TrainPanel";
@@ -1091,6 +1092,12 @@ function RunsTable({
     staleTime: 60_000,
   });
   const settingsOf = (model: string) => models.data?.find((m) => m.key === model)?.settings;
+  // The same query as the batches list above, so the tags read its cache (and its polling) rather than fetch again.
+  const batches = useQuery({
+    queryKey: ["batches", e.experiment_id],
+    queryFn: () => api.batches(e.experiment_id),
+    enabled: runs.some((r) => r.batch_id != null),
+  });
   const multi = targets.length > 1;
   const cols = (["primary", "pr", "secondary"] as const).flatMap((m) =>
     targets.flatMap((t) =>
@@ -1162,6 +1169,8 @@ function RunsTable({
             const on = selectedId === r.id;
             const params = (r.config?.params ?? {}) as Record<string, SettingValue>;
             const changes = describeSettings(params, settingsOf(r.model));
+            const exact = describeSettings(params, settingsOf(r.model), true);
+            const exactChanges = exact !== changes ? exact : undefined;
             return (
               <tr
                 key={r.id}
@@ -1192,15 +1201,31 @@ function RunsTable({
                         Chosen
                       </Chip>
                     )}
+                    {r.batch_id != null && (
+                      <Link
+                        to={`batches/${r.batch_id}`}
+                        className="exp-chip-link run-batch"
+                        onClick={(ev) => ev.stopPropagation()}
+                      >
+                        <Chip title={`Started in the batch ${batchTag(batches.data, r.batch_id)}`}>
+                          {batchTag(batches.data, r.batch_id)}
+                        </Chip>
+                      </Link>
+                    )}
                     {r.note && (
                       <span title={r.note}>
                         <Icon name="comment" size={14} className="muted" label="Has a note" />
                       </span>
                     )}
                   </div>
-                  <div className="muted small-text run-params-inline">{changes}</div>
+                  <div className="muted small-text run-params-inline" title={exactChanges}>
+                    {changes}
+                  </div>
                 </td>
-                <td className={`run-params run-params-col ${changes === "defaults" ? "muted" : "secondary"}`}>
+                <td
+                  className={`run-params run-params-col ${changes === "defaults" ? "muted" : "secondary"}`}
+                  title={exactChanges}
+                >
                   {changes}
                 </td>
                 {multi && <td className="secondary">{order.join(" → ")}</td>}
