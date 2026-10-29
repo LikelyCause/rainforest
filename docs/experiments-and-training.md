@@ -41,8 +41,8 @@ finalized*, whether it is private, and *Train a model*. Its tabs are:
 
 | Tab | What it holds |
 |---|---|
-| *Runs* | The [runs table](#the-runs-table), with a run's detail beside it. |
-| *Train* | The [Train tab](#the-train-tab): what to train, the model's settings, and *Train*. |
+| *Runs* | The experiment's [batches](#batches) and the [runs table](#the-runs-table), with a run's detail beside it. |
+| *Train* | The [Train tab](#the-train-tab): what to train, the model's settings, *Train*, and the batches. |
 | *Exports* | What goes into an export, the split and rows, and the [exports](#exports) made. |
 | *Adjustments* | What the experiment changes from its baseline. See [Adjusting an experiment](#adjusting-an-experiment). |
 | *Notes* | Its name, notes, best run, chosen model, *Open its runs in MLflow*, and *Archive*. |
@@ -290,6 +290,9 @@ The manifest records:
 A summary beside it, *Ready to train*, sums up the model, the export, the changed settings, the scoring and the number
 of runs, above *Train*. Starting a run takes you to *Runs*, where it appears at the top as it trains.
 
+Under *Train*, two buttons start a [batch](#batches) with the same export, model, settings, device and
+cross-validation: *Train one model per class…*, shown when the export has a class target, and *Search settings…*.
+
 Each export, on *Exports*, has:
 
 - *Train on it*, which opens *Train* with that export
@@ -374,11 +377,15 @@ Under the settings, *Try several values* takes up to two settings and the values
 experiment, so the runs table and its ★ compare them. Every combination's values are checked before any starts.
 The runs then start one by one, and one the API refuses stops the rest.
 
+This is for comparing a few values by eye. For more settings, ranges, more runs or a ranked leaderboard, use
+*Search settings…*; [When to use which](#when-to-use-which) sets the two side by side.
+
 ### One class against the rest
 
-A run started through the API with `positive_class` (and `target`, when the export has several targets) trains one
-binary model: that class of a class target against every other class. The export's other targets take no part, and
-nothing is chained. The run is named for the class, as in "LightGBM · vehicle = V07 vs rest".
+A one-vs-rest run trains one binary model: one class of a class target against every other class. A
+[one-model-per-class batch](#one-model-per-class) starts one per class; through the API, a run with `positive_class`
+(and `target`, when the export has several targets) is one. The export's other targets take no part, and nothing is
+chained. The run is named for the class, as in "LightGBM · vehicle = V07 vs rest".
 
 - The model is calibrated on the validation split, so its scores are probabilities that compare across classes:
   isotonic regression when the validation split has at least 200 rows of the class and 200 of the rest, else a
@@ -395,6 +402,8 @@ nothing is chained. The run is named for the class, as in "LightGBM · vehicle =
   changed from its default.
 - Cross-validation folds are calibrated on the validation split too.
 - The training split needs rows of the class and of the rest, and so does the validation split.
+- Its scores are one class's against the rest, not the target's, so the runs table's ★ and the experiment's best run
+  leave it out.
 
 ### Cross-validation
 
@@ -453,14 +462,27 @@ for runs without cross-validation.
 
 In each column, ★ marks the run that scored best on the validation split for that target and metric (lowest for RMSE).
 So choosing it doesn't use the test split. On *Test* or *Cross-validation*, the star can sit on a lower number than
-another run's. Its tooltip gives the validation score it was picked on.
+another run's. Its tooltip gives the validation score it was picked on. One-vs-rest runs never get the star, and the
+experiment's best run (on *Notes*, in the experiments list and as the dataset's *Best result*) leaves them out too:
+their scores are one class's against the rest. Compare them on their [batch page](#one-vs-rest-results).
+
+A run started by a batch carries the batch's chip, such as *Per class #3* or *Search #4*, with the batch's name on
+hover. The chip opens the batch's page.
 
 A lead can mark one run per experiment as the chosen model (see [Choosing a model](#choosing-a-model)).
 
+### Batches on Runs
+
+Above the runs table, *Batches* lists the experiment's batches, newest first: the latest 5, with *Show all N*. Each
+row has the batch's name, which opens its page, its kind (*Per class* or *Search*), how many classes it skipped, its
+export, its runs as a bar and a count (*12 of 40 done · 1 failed · 27 waiting*), who started it and when, and its
+status. The list isn't shown until the experiment has a batch.
+
 ### Run detail
 
-Select a run to open its detail beside the table (below it on a phone). The detail has *Train again*, *MLflow ↗*,
-*Model* (download), the run's note and, for a lead, *Mark as chosen*. Per target, it shows:
+Select a run to open its detail beside the table (below it on a phone). The detail has *Train again*, *Deploy…* (for
+a finished run with one target, to anyone who can add runs; see [Deployments](deployments.md)),
+*MLflow ↗*, *Model* (download), the run's note and, for a lead, *Mark as chosen*. Per target, it shows:
 
 - its headline metrics. For a binary target, precision, recall and F1 are the positive class's. Otherwise they are
   macro averages.
@@ -474,6 +496,13 @@ A *Test / Validation* switch applies to every target. With cross-validation, the
 shows each target's headline metrics as mean ± spread, with every fold's value on hover, and a note when the folds
 weren't stratified or cross-validation was skipped.
 
+For a [one-vs-rest run](#one-class-against-the-rest), the headline precision, recall and F1 are at 0.5, but the run's
+own threshold is the one with the best F1 on validation. A note beside the switch says so and gives that threshold
+and its F1 on validation and test, as in *This run's threshold is 0.34, the highest F1 on validation: F1 0.712 on
+validation, 0.688 on test.* When no threshold has a positive F1, 0.5 stands in, marked *(fallback)*, and the note
+says why. *Threshold* then reads the run's fine curve (every 0.01 from 0 to 1) and its slider starts at that
+threshold.
+
 A failed run's detail shows its settings, why it failed in one sentence (the full message under *Details*), and *Train
 again*.
 
@@ -483,6 +512,173 @@ Each run has a note that its author or a lead can write: why this run, what it s
 run per experiment, and *Unmark* it. The runs table shows *Chosen* beside it, with who chose it on hover. The
 experiments list shows *Chosen: LightGBM*, and the *Datasets* page shows the chosen model as the dataset's *Best
 result*.
+
+## Batches
+
+A batch is many runs started together on one export. There are two kinds:
+
+| Kind | Chip | Runs |
+|---|---|---|
+| [One model per class](#one-model-per-class) | *Per class* | a [one-vs-rest run](#one-class-against-the-rest) for each class of a class target |
+| [Settings search](#settings-search) | *Search* | one run per combination of settings, ranked on validation |
+
+Both start from the [Train tab](#the-train-tab), with its export, model, settings, device and cross-validation. The
+dialog sums these up under *Model*, *Settings*, *Scoring* and *Device*; change them on *Train* before opening it.
+Anyone who can add runs to the experiment can start a batch.
+
+Before anything starts, every run the batch plans gets a single run's checks, the 64-row dry fit included. A refusal
+stays in the dialog and starts nothing. A batch is held to `BATCH_MAX_RUNS` runs (500 by default; see
+[Configuration](configuration.md)): the dialog counts the runs it would start, as *40 runs · at most 500 in one
+batch*, and won't start a larger one.
+
+*Start N runs* takes you to *Runs* on the batch's export, where its runs appear at the top. A message names the batch
+and its run count, with the classes it skipped and, for a random search, how many draws the checks refused.
+
+### One model per class
+
+*Train one model per class…* opens *Train one model per class*. It trains a binary model for each class of the
+target, each calibrated and thresholded on validation as [One class against the rest](#one-class-against-the-rest)
+describes.
+
+- *Target* picks the class target, when the export has several.
+- The class table lists each class with its rows in *Train*, *Valid* and *Test*, ticked to train. *Tick all* and
+  *Untick all* change every row. The last column says *Trains*, or why the class won't.
+- A class is skipped when it isn't ticked (*Not selected*), has fewer than `OVR_MIN_POSITIVES` rows in the training
+  split (10 by default), or when the validation split has no rows or none of the class. Such a class could train but
+  couldn't be calibrated or given a threshold. *Not trained: N classes* lists the skipped ones, grouped by reason.
+- *Balance the classes*, offered for LightGBM and XGBoost and on by default, weights each run's positives by
+  negatives / positives in training (`balance`). It is off, and can't be turned on, while a class-weight setting is
+  changed from its default on *Train*.
+- *Name* defaults to the model and the target, as in *LightGBM · one model per class of vehicle*.
+- Values under *Try several values* aren't used: each run takes the setting's own value, and the dialog says so.
+
+### Settings search
+
+*Search settings…* opens *Search settings*: runs with different values of the model's settings, ranked on the
+validation split. Each run takes the settings on *Train*, with the searched ones replaced. It needs the model's
+settings to be listed in the app (see [Adding a model](#adding-a-model)).
+
+- *Train* chooses what each combination trains, when the export has a class target. *The whole target* (*Every
+  target* when the export has several) trains one run per combination on all of the export's targets, in the
+  export's order, ranked on the first. *One model per class* trains each combination as one-vs-rest runs, once per
+  class under *Classes to tune on*, and ranks it on the mean of their scores. Those classes start as the most
+  frequent, the median and the rarest class that train; a class that can't train is greyed out. *Target* picks the
+  class target, when there are several.
+- *Settings to search*: *Choose a setting to search*, then *Add a setting* for more. It starts with the settings under
+  *Try several values*. Each one takes *Values*, typed as in *Try several values*, or, for a number setting, a
+  *Range* from a low to a high. A range can be on a *Log scale* and in *Whole numbers*; a whole-number setting is
+  always drawn as whole numbers. Values and ends are checked against the setting's own limits.
+- *Combinations*: *Grid* tries every combination of the values, and takes no ranges. *Random* draws the number under
+  *Draw* of distinct combinations from the values and ranges; the same *Seed* draws the same ones. A combination the
+  checks refuse is drawn again, up to 10 times the number of draws; past that, the batch is refused. A grid
+  combination the checks refuse refuses the batch, naming it.
+- *Rank on* is the validation metric that orders the leaderboard. The default is PR AUC for a binary target or a
+  one-vs-rest search, F1 (macro) for several classes and R² for a number. The others are the metrics of that kind of
+  target.
+- *Balance the classes*, for a one-vs-rest search with LightGBM or XGBoost, as in
+  [One model per class](#one-model-per-class). It is also off while a class-weight setting is searched.
+- *Name* defaults to the model and the searched settings, as in *LightGBM · search over num_leaves, learning_rate*.
+
+The preview counts the runs: for a one-vs-rest search, combinations × classes.
+
+### When to use which
+
+| | *Try several values* | *Search settings…* |
+|---|---|---|
+| Settings | one or two | as many as the model has |
+| Values | lists | lists, or ranges drawn at random |
+| Runs | up to 50 | up to `BATCH_MAX_RUNS` |
+| Targets | the targets and order ticked on *Train* | every target of the export, or one model per class |
+| How they run | ordinary runs, started one after another; one refused stops the rest | a batch: checked first, then queued one at a time |
+| Compared on | the runs table and its ★ | the batch page's leaderboard and chart |
+
+Use *Try several values* to see how one or two settings move the scores. Use *Search settings…* to tune: more
+settings, a range, a random search, or settings that must hold up across classes before a one-model-per-class batch.
+
+### How a batch runs
+
+A batch's runs wait as *Waiting in its batch* and train one at a time: the next starts when the previous one ends,
+whether it finished or failed. Other exports, runs and Explore jobs queue between them, so a long batch doesn't hold
+up everyone else's work.
+
+- After an API restart, a batch trains the run the restart interrupted once more (*retried* beside its class on the
+  batch page; interrupted again, it fails) and carries on with its waiting runs.
+- *Cancel the batch*, on its page, asks to confirm, then cancels the runs that haven't started. A run already training
+  finishes, and finished runs stay. With no run waiting, there is nothing to cancel.
+- While a batch has runs to finish, its experiment can't be archived and its dataset can't be refreshed or deleted.
+  The refusal names the batch to cancel.
+
+### The batch page
+
+The page opens from the batch's name under [*Batches*](#batches-on-runs) or from a run's batch chip. *Runs*, at the
+top, goes back. The title row has the batch's name, its chip (*Per class #3*), its status and
+[*Deploy…*](#deploying-from-a-batch). Under it: the export, who started it and when, and when it ended.
+
+- *Progress*: a bar and a count of its runs, as *12 of 40 done · 1 failed · 27 waiting*, with *Cancel the batch*
+  while it runs. *Not trained* lists the classes it skipped, by reason.
+- *What it trains*: the model and device, and *classes balanced* when they are; the target and its classes; the
+  settings every run shares; for a search, what was *Searched*, the *Combinations* (*Grid · 12 combinations* or
+  *Random · 20 draws · seed 0*) and what it is *Ranked on*; and the scoring.
+
+The page follows the batch as it runs.
+
+### One-vs-rest results
+
+A one-model-per-class batch has a table with a row per class: *One model per class*. Select a row to open its run on
+*Runs*. Every column sorts.
+
+| Column | What it shows |
+|---|---|
+| *Class* | the class, with *retried* or a threshold note when there is one |
+| *Positives*: *Train*, *Valid*, *Test* | the class's rows in each split |
+| *Validation* and *Test*: *PR AUC*, *ROC AUC*, *F1* | the run's scores; F1 is at the run's threshold |
+| *Threshold* | the threshold with the best F1 on validation |
+| *Calibration* | *Isotonic* or *Sigmoid*, and the Brier score before → after calibration on test |
+| *Weak* | *Weak* when the model is unlikely to be useful, with the reason on hover |
+
+A row is *Weak* when its validation PR AUC is below `OVR_WEAK_PR_AUC` (0.5 by default) or its class has fewer than
+30 rows in the test split, where test scores say little. A row still waiting or training shows its status instead
+of scores.
+
+*Curve*, at the end of a finished row, opens the run's precision, recall and F1 by threshold on validation, with the
+chosen threshold marked. Beside it are the threshold and the calibration: the method, the validation rows it was fit
+on, and the Brier score before and after, on test and on validation. The validation pair is in-sample: the
+calibrator was fit there. When the export has no test rows, the table's Brier pair is the validation one, marked
+`*`.
+
+Each model is calibrated on the validation split and its threshold is chosen there too, so the validation F1 is
+mildly optimistic. The test columns give the honest number, and a note under the table says so.
+
+### Search results
+
+A search has a *Leaderboard*: one row per combination, best first on the ranking metric on validation. Its columns
+are the *Rank*, each searched setting's value, the metric, for a one-vs-rest search each class's value of it, *CV ±*
+(the spread over the cross-validation folds) and *Fit* (the time it took to train). A combination is ranked once all
+of its runs have the metric, so a one-vs-rest mean is never a partial one. Until then its row shows *Waiting* or
+*Training*, and a failed or cancelled combination says so. For a search on the whole target, select a row to open its
+run; for a one-vs-rest search, each class's value opens its run.
+
+*Use the top settings for a one-vs-rest batch…*, above the leaderboard, and *Per class…* on a finished row open
+*Train one model per class* with that combination's settings over the batch's own, on the batch's model and export.
+They are offered when the export has a class target, to anyone who can add runs.
+
+Under the leaderboard, a chart plots the metric by a searched setting chosen under *Across*, with the best
+combination ringed and each combination's settings on hover. *Against* picks a second setting: each combination is
+then a point coloured by its metric, darker for better. Only settings whose values differ between combinations are
+offered. The chart fills in as combinations finish.
+
+### Deploying from a batch
+
+*Deploy…*, in the title row, opens the [deploy dialog](deployments.md):
+
+- For a one-model-per-class batch with nothing selected, it deploys the batch's finished runs, once the batch has
+  ended.
+- With rows selected, it deploys those runs. A row's checkbox is open once its run (for a combination, all its runs)
+  has finished. The bar at the bottom counts them, with *Clear* and *Deploy them…* (*Deploy it…* for one).
+
+A search is deployed by selecting rows: one row of a whole-target search, or one row of a one-vs-rest search, which
+selects its run for each class. [What can be deployed](deployments.md#what-can-be-deployed) says what may share a
+deployment.
 
 ## GPU training
 
