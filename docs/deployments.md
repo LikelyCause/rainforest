@@ -32,13 +32,20 @@ Anyone who can add runs to the experiment can deploy its runs. Viewers can't.
 | One-vs-rest runs of different targets | Their classes aren't alternatives to one another. |
 | An export made before exports recorded their input types (*Re-export to deploy*) | Scoring needs each source field's type and the derived formulas as they were at export time. |
 | An export whose features read a derived field that can't be computed any more | The field reads a column that was removed from the dataset. |
-| Scores that don't reproduce training | See below. |
+| An export whose features read a field stored as a time of day or a duration | A record can't carry one yet, so the field would always be missing. |
+| A model or preprocessor file that is missing or doesn't unpickle (`410`) | There is nothing to score with. |
+| Scores or features that don't reproduce training | See below. |
 
 **The check at creation.** Before a deployment is stored, Rainforest takes the export's test rows (its validation
 rows when there are none, else a sample of up to 5,000 training rows), reads their raw values from the dataset, and
 scores them through the deployment. Each model must give the scores it gives on the export's own features, within
-1e-9. If not, the deployment is refused with the first model and row that differ. A dataset refreshed after the
-export can fail this check because its rows changed; re-export to deploy.
+1e-9, and the features made from the raw values must equal the export's exactly. If not, the deployment is refused
+with the first model (or feature) and row that differ. A dataset refreshed after the export can fail this check
+because its rows changed; re-export to deploy.
+
+**Model files.** The deployment records each model file's SHA-256. Every time it loads the models it checks them
+first; a file that changed is refused (`409`, naming the model) and never loaded. Deploy the run again to use the
+new file.
 
 ## Thresholds
 
@@ -113,8 +120,9 @@ Results come in record order:
 - Each value is converted to the type the field had in the dataset, whatever type the first record used:
   - numbers as numbers, from JSON numbers or text;
   - a category stored as integers reads `7.0` and `07` as `7`;
-  - a date stored as text is read with the format the export pinned; a date stored as a date takes ISO 8601 text
-    (`2021-03-04`, `2021-03-04T10:30:00Z`), and a time without an offset is UTC;
+  - a date stored as text is read with the format the export pinned; a date stored as a date takes RFC 3339 text
+    (`2021-03-04`, `2021-03-04T10:30:00Z`, `T` and `Z` in either case). A time without an offset is UTC, and an
+    offset needs a time (`2021-03-04Z` doesn't convert);
   - what the upload reader treats as missing (`""`, `NA`, `null`, `?` and the rest) is missing.
 - A value that doesn't convert is scored as missing and counted in `warnings` (`{"weight": 1}`).
 
@@ -134,6 +142,7 @@ call after that loads them again, which takes longer.
 
 - *Retire* stops a deployment answering (`410`) and keeps its record and keys. Its creator or a lead can reactivate
   it.
-- Retiring and revoking a key are never held back by a dataset refresh. Creating a deployment, creating a key and
-  reactivating wait for the refresh to finish (`409`).
+- Retiring and revoking a key stop access, so neither a dataset refresh nor an archived experiment holds them back.
+  Creating a deployment, creating a key and reactivating grant it: they wait for a refresh to finish, and are
+  refused while the experiment is archived (`409`).
 - Deleting a dataset deletes its deployments and their keys first.
