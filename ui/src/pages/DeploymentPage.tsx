@@ -96,6 +96,8 @@ function Keys({ d, locked }: { d: DeploymentDetail; locked: boolean }) {
   };
   const create = useMutation({
     mutationFn: () => api.createDeploymentKey(d.id, name.trim()),
+    // The key is shown once: it mustn't outlive the banner in the mutation cache.
+    gcTime: 0,
     onSuccess: (k) => {
       setFresh(k);
       setName("");
@@ -132,7 +134,14 @@ function Keys({ d, locked }: { d: DeploymentDetail; locked: boolean }) {
           tone="good"
           title={`${fresh.name} created.`}
           action={
-            <button type="button" className="small" onClick={() => setFresh(null)}>
+            <button
+              type="button"
+              className="small"
+              onClick={() => {
+                setFresh(null);
+                create.reset();
+              }}
+            >
               Done
             </button>
           }
@@ -486,7 +495,7 @@ function Metrics({ m, binary, target }: { m: TestMetrics; binary: boolean; targe
           counts={m.confusion.counts}
           extra={["Other"]}
           caption={(total) =>
-            `Top class against ${target} · the ${m.confusion.labels.length === 20 ? "20 most frequent labels" : `${m.confusion.labels.length} labels`}, ${fmtInt(total)} rows; Other is a top class outside them`
+            `Top class against ${target} · the ${m.confusion.labels.length === 20 ? "20 most frequent labels" : `${m.confusion.labels.length} labels`}, ${fmtInt(total)} rows; Other is a top class outside them, or none`
           }
         />
       )}
