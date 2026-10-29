@@ -315,6 +315,13 @@ upload larger than the controller's limit fails with `413`, and one that outlast
 The controller must also set `X-Forwarded-Proto`, which the API reads to mark its session cookie `Secure`; every
 common controller does.
 
+## Calling a deployment from outside
+
+A deployment's predict route, `POST /api/deployments/{id}/predict`, goes through the same Ingress as the UI, so
+nothing extra is exposed. Callers use the release's `hostname` (another `Host` gets `400`) and a key created on the
+deployment page; a key opens only that route. The API itself refuses a body over 5 MB or more than
+`PREDICT_MAX_RECORDS` records with `413`, below the controller's limit. See [Deployments](../docs/deployments.md).
+
 ## MongoDB sources
 
 A team whose data lives in MongoDB can create datasets from its collections (*Datasets → Connect*; see

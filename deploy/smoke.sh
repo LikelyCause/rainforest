@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Installs the Helm chart on a throwaway kind cluster and drives a real workflow through the UI service:
-# generate the 50k x 150 demo, set up and finalize a baseline, export, train one LightGBM run, and check that the
-# in-chart MLflow logged it. Exits 0 and prints "smoke: ok" only when all of that worked.
+# generate the 50k x 150 demo, set up and finalize a baseline, export, train one LightGBM run, check that the
+# in-chart MLflow logged it, then train a 3-class one-vs-rest batch, deploy it and predict two records with an API key.
+# Exits 0 and prints "smoke: ok" only when all of that worked.
 #
 # Needs: docker, kind, helm, kubectl, jq, curl.
 #
@@ -15,7 +16,8 @@
 #   KEEP          1: leave the cluster running and print how to reach the UI.
 #   CLUSTER       kind cluster name                                                 (default: rf-smoke)
 #   LOCAL_PORT    port-forward port on localhost                                    (default: 18080)
-#   HELM_TIMEOUT (10m), DATASET_TIMEOUT, EXPORT_TIMEOUT, RUN_TIMEOUT (600 s each), FORWARD_TIMEOUT (60 s)
+#   HELM_TIMEOUT (10m), DATASET_TIMEOUT, EXPORT_TIMEOUT, RUN_TIMEOUT, BATCH_TIMEOUT (600 s each),
+#                 FORWARD_TIMEOUT (60 s)
 #                 upper bounds for each wait; on a timeout the script prints the pods and their logs and fails.
 #
 # The Postgres passwords contain URI-reserved characters on purpose: the chart hands the password to libpq as
@@ -40,6 +42,7 @@ HELM_TIMEOUT=${HELM_TIMEOUT:-10m}
 DATASET_TIMEOUT=${DATASET_TIMEOUT:-600}
 EXPORT_TIMEOUT=${EXPORT_TIMEOUT:-600}
 RUN_TIMEOUT=${RUN_TIMEOUT:-600}
+BATCH_TIMEOUT=${BATCH_TIMEOUT:-600}
 FORWARD_TIMEOUT=${FORWARD_TIMEOUT:-60}
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -317,6 +320,36 @@ check_mlflow() {
   log "/mlflow/ without a session redirects to $location"
 }
 
+# column_b is the sample's three-class target. Predict gets the key and no cookie, so the key works on its own.
+batch_deploy_predict() {
+  local batch_id rows deployment deployment_id key body out status
+  log "one-vs-rest batch on column_b (timeout ${BATCH_TIMEOUT}s)"
+  batch_id=$(api POST "/api/exports/$EXPORT_ID/batches" \
+    '{"kind": "one_vs_rest", "model": "lightgbm", "target": "column_b", "cv_folds": 0}' 202 | jq -r '.batch.id')
+  [ -n "$batch_id" ] && [ "$batch_id" != null ] || fail "starting the batch returned no batch id"
+  poll "batch $batch_id" "$BATCH_TIMEOUT" "/api/batches/$batch_id" done
+  rows=$(api GET "/api/batches/$batch_id" | jq -c '[.rows[] | {positive_class, status}]')
+  jq -e 'length == 3 and all(.status == "done")' <<<"$rows" >/dev/null || fail "batch $batch_id rows: $rows"
+  log "batch $batch_id trained $rows"
+
+  deployment=$(api POST "/api/experiments/$EXPERIMENT_ID/deployments" "{\"batch_id\": $batch_id}" 201)
+  deployment_id=$(jq -r '.id' <<<"$deployment")
+  jq -e '.models | length == 3' <<<"$deployment" >/dev/null || fail "deployment models: $(jq -c '.models' <<<"$deployment")"
+  key=$(api POST "/api/deployments/$deployment_id/keys" '{"name": "smoke"}' 201 | jq -r '.key')
+  [[ $key == rf_* ]] || fail "creating a key returned no rf_ key"
+
+  body=$(api GET "/api/deployments/$deployment_id" | jq -c '{records: .example}')
+  jq -e '.records | length == 2' <<<"$body" >/dev/null || fail "deployment $deployment_id has no two-record example"
+  status=$(curl -sS --max-time 60 -o "$WORK/predict" -w '%{http_code}' -X POST \
+    "$BASE/api/deployments/$deployment_id/predict" -H "Authorization: Bearer $key" \
+    -H 'Content-Type: application/json' --data "$body") || fail "predict did not complete"
+  out=$(cat "$WORK/predict")
+  [ "$status" = 200 ] || fail "predict with a key -> HTTP $status: $out"
+  jq -e '(.models | length == 3) and (.results | length == 2) and all(.results[]; .top.label != null)' \
+    <<<"$out" >/dev/null || fail "unexpected predict response: $out"
+  log "deployment $deployment_id predicted two records with a key: $(jq -c '[.results[].top]' <<<"$out")"
+}
+
 # ---------------------------------------------------------------- main
 
 main() {
@@ -332,6 +365,7 @@ main() {
   finalize_baseline
   export_and_train
   check_mlflow
+  batch_deploy_predict
 }
 
 main
