@@ -12,9 +12,9 @@ Inside a dataset, it has two rows.
 The first row says where you are:
 
 - The dataset switcher. It lists every dataset, and *All datasets*.
-- The dataset's four places: *Fields · Explore · Baseline · Experiments*. *Fields* shows how many fields are
-  reviewed, such as *7/9*. In team review it shows how many fields are still open instead. A dot on *Experiments*
-  means an export or run is in progress.
+- The dataset's five places: *Fields · Explore · Baseline · Experiments · Deployments*. *Fields* shows how many
+  fields are reviewed, such as *7/9*. In team review it shows how many fields are still open instead. A dot on
+  *Experiments* means an export or run is in progress.
 - Your profile picture.
 
 The second row says where the baseline version stands:
@@ -303,11 +303,23 @@ and its tabs:
 
 | Tab | What it holds |
 |---|---|
-| *Runs* | The runs table. A run's detail opens beside it. |
-| *Train* | The model, its settings and *Train*. |
+| *Runs* | The experiment's batches and the runs table. A run's detail opens beside it. |
+| *Train* | The model, its settings and *Train*, with *Train one model per class…* and *Search settings…* to start a batch. |
 | *Exports* | What goes into an export, the split, row rules, and the exports made. |
 | *Adjustments* | What the experiment changes from its baseline, with *Adjust fields*. |
 | *Notes* | Its name, notes, chosen model, MLflow link, and *Archive*. |
 
 The row also shows what the experiment is built from, such as *From Trees baseline v2 · as finalized*, and
 *Train a model*. See [Experiments and training](experiments-and-training.md).
+
+A batch starts many runs at once: one model per class of a class target, or a search over the model's settings. Each
+batch has its own page, with its progress and its results: a table of the classes, or a ranked leaderboard and a
+chart. See [Batches](experiments-and-training.md#batches).
+
+## Deployments
+
+The dataset's *Deployments* step lists its deployments. A deployment scores new records with finished runs, through
+an API call with a key or a file you upload, to test the models on data they haven't seen. *Deploy…* on a batch's
+page or on a finished run's detail makes one. A deployment's page has its models and thresholds, its keys, a `curl`
+example, *Retire…*, and *Test with a file*: the results, downloads, metrics against the file's labels, and the fields
+whose values didn't convert. See [Deployments](deployments.md).

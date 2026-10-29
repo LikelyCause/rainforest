@@ -97,6 +97,10 @@ the target, and feature importance. *Fields · SQL* is a read-only SQL console o
   also learns from the predictions for the targets before it.
 - **Models:** LightGBM, XGBoost (CPU or NVIDIA GPU), scikit-learn's histogram GBM and random forest, logistic and ridge
   regression, and an MLP, with cross-validation and parameter sweeps.
+- **Batches:** one model per class of a target, each calibrated and thresholded, or a search over a model's settings
+  with a ranked leaderboard (see [Batches](docs/experiments-and-training.md#batches)).
+- **Deployments** that score new records with finished runs, through an API call with a key or an uploaded test file,
+  for trying models on data they haven't seen (see [Deployments](docs/deployments.md)).
 - **Derived fields** computed from a dataset's own fields, such as a ratio or a grouping of codes.
 - **Sign-in** by picking a profile, or with OIDC for teams, and three roles: *Team Lead*, *Team Member* and *Viewer*.
 

@@ -116,6 +116,18 @@ always rebuilds the same way.
 **Chain.** The models a run trains, one per target, in an order. Each model also sees the predictions for the
 targets before it.
 
+**One-vs-rest run.** A run that trains one binary model: one class of a class target against every other class,
+calibrated so its scores are probabilities. See
+[One class against the rest](experiments-and-training.md#one-class-against-the-rest).
+
+**Batch.** Runs started together on one export: one-vs-rest runs, one per class of a target (*Per class*), or one
+run per combination of settings, ranked on validation (*Search*). The runs train one at a time. See
+[Batches](experiments-and-training.md#batches).
+
+**Deployment.** Finished runs of one export, frozen with the export's preprocessing, that score new records sent
+through an API call with a key or in an uploaded file. It is for testing, not production serving. See
+[Deployments](deployments.md).
+
 ### A Rainforest experiment is not an MLflow experiment
 
 Rainforest logs model runs to [MLflow](mlflow.md). The word "experiment" means different things in each:
@@ -155,4 +167,6 @@ See [Roles and permissions](team-workflow.md#roles-and-permissions).
 | Default team experiment | `meta.experiments.is_default` |
 | Experiment source | `recipe:<id>` or `assessment:<recipe id>:<user id>` |
 | Model run | `meta.model_runs` |
-| Chain kind | `classifier_chain` or `target_chain` |
+| Chain kind | `classifier_chain` or `target_chain`; `one_vs_rest` for a one-vs-rest run |
+| Batch (*Per class* / *Search*) | `meta.run_batches`, kind `one_vs_rest` / `search` |
+| Deployment, its keys and its tests | `meta.deployments`, `meta.deployment_keys`, `meta.deployment_tests` |
