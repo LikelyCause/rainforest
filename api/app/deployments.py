@@ -319,12 +319,18 @@ def incoming_dir(deployment_id: int, owner: int) -> Path:
     return tests_dir(deployment_id) / f"{INCOMING}{owner}-{secrets.token_hex(8)}"
 
 
-def clear_uploads(abandoned) -> None:
-    """Remove the incoming uploads whose process `abandoned(owner)` says is gone."""
+def uploads() -> list[tuple[Path, int | None]]:
+    """Every incoming upload, with the owner id of the process taking it (None for a folder not named by one)."""
+    out = []
     for folder in get_settings().deployments_dir.glob(f"*/tests/{INCOMING}*"):
         owner = folder.name[len(INCOMING) :].split("-")[0]
-        if not owner.isdigit() or abandoned(int(owner)):
-            shutil.rmtree(folder, ignore_errors=True)
+        out.append((folder, int(owner) if owner.isdigit() else None))
+    return out
+
+
+def remove_uploads(folders: list[Path]) -> None:
+    for folder in folders:
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 def result_columns(models: list[dict], labels: list[str], id_field: str | None, label_field: str | None) -> dict:

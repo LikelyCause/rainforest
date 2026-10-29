@@ -118,6 +118,12 @@ def _keep_owner_lock() -> None:
                 log.exception("could not retake the job owner lock")
 
 
+def _live_owners() -> set[int]:
+    """The owner ids whose process still holds its owner lock."""
+    with connection() as conn:
+        return {r["objid"] for r in conn.execute(_LIVE).fetchall()}
+
+
 def sweep(owner: int | None = None) -> None:
     """Fail jobs whose owning process is gone, or with `owner`, every active job stamped with that id. Without
     `owner` (at startup), running batches then resume."""
@@ -184,13 +190,19 @@ def sweep(owner: int | None = None) -> None:
             )
             if table == "deployment_tests":
                 tests = cur.fetchall()
-        live = {r["objid"] for r in conn.execute(_LIVE).fetchall()}
     from . import deployments
 
     # An interrupted test left half-written files, and an interrupted upload its incoming folder.
     for r in tests:
         deployments.discard_tests(r["deployment_id"], [r["id"]])
-    deployments.clear_uploads(lambda o: o == owner if owner is not None else o not in live)
+    # Listed before asking who lives: a process that starts in between holds its lock by the time it's asked about,
+    # and an upload it begins after the listing isn't seen at all.
+    uploads = deployments.uploads()
+    if owner is None:
+        live = _live_owners()
+        deployments.remove_uploads([f for f, o in uploads if o not in live])
+    else:
+        deployments.remove_uploads([f for f, o in uploads if o == owner])
     if owner is None:
         from . import batches
 

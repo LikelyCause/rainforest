@@ -483,6 +483,28 @@ def test_a_test_whose_process_is_gone_is_failed_by_the_sweep(setup, ovr_dep):
             shutil.rmtree(d, ignore_errors=True)
 
 
+def test_an_upload_begun_while_the_sweep_runs_is_kept(ovr_dep, monkeypatch):
+    """A process that starts after the sweep looked for leftover uploads, and before it asked which processes live,
+    isn't in the answer yet; its new upload must survive."""
+    tests = deployments.tests_dir(ovr_dep["id"])
+    tests.mkdir(parents=True, exist_ok=True)
+    left, late = tests / ".incoming-626262-old", tests / ".incoming-616161-new"
+    left.mkdir()
+    real = jobs._live_owners
+
+    def a_process_starts_meanwhile():
+        late.mkdir()
+        return real()
+
+    monkeypatch.setattr(jobs, "_live_owners", a_process_starts_meanwhile)
+    try:
+        jobs.sweep()
+        assert not left.exists() and late.exists()
+    finally:
+        shutil.rmtree(late, ignore_errors=True)
+        shutil.rmtree(left, ignore_errors=True)
+
+
 def test_a_member_who_cant_see_the_experiment_cant_see_its_tests(people):
     lead, owner, member = people["lead"], people["a"], people["c"]
     ds = upload(lead, _csv(300), targets="y")
