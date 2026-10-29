@@ -37,16 +37,38 @@ export function cellShade(share: number, diag: boolean): { background: string; c
 
 /** Rows = actual, columns = predicted. */
 function ConfusionMatrix({ ev, accuracy }: { ev: TargetEvaluation; accuracy?: number }) {
+  return (
+    <ConfusionTable
+      labels={ev.labels}
+      counts={ev.confusion_matrix}
+      caption={(total) =>
+        `Confusion matrix · ${fmtInt(total)} rows${accuracy !== undefined ? ` · accuracy ${fmtMetric(accuracy)}` : ""}`
+      }
+    />
+  );
+}
+
+/** A confusion grid, counts or row shares: rows are the actual `labels`, columns the predicted `labels` and then
+ * any `extra` columns (such as a prediction outside the list). */
+export function ConfusionTable({
+  labels,
+  counts,
+  extra = [],
+  caption,
+}: {
+  labels: string[];
+  counts: number[][];
+  extra?: string[];
+  caption: (total: number) => string;
+}) {
   const [mode, setMode] = useState<"count" | "row">("count");
-  const cm = ev.confusion_matrix;
-  const rowTotals = cm.map((r) => r.reduce((a, b) => a + b, 0));
+  const columns = [...labels, ...extra];
+  const rowTotals = counts.map((r) => r.reduce((a, b) => a + b, 0));
   const total = rowTotals.reduce((a, b) => a + b, 0);
   return (
     <div className="stack exp-gap-2">
       <div className="row exp-between">
-        <span className="muted small-text">
-          Confusion matrix · {fmtInt(total)} rows{accuracy !== undefined ? ` · accuracy ${fmtMetric(accuracy)}` : ""}
-        </span>
+        <span className="muted small-text">{caption(total)}</span>
         <Segmented
           label="Show as"
           pressed
@@ -60,24 +82,31 @@ function ConfusionMatrix({ ev, accuracy }: { ev: TargetEvaluation; accuracy?: nu
         />
       </div>
       <div className="exp-scroll-x">
-        <table className="cm" role="grid">
+        {/* Past a dozen columns the grid scrolls sideways rather than squeezing every label to an ellipsis. */}
+        <table
+          className="cm"
+          role="grid"
+          style={columns.length > 12 ? { minWidth: 84 + 52 * columns.length } : undefined}
+        >
           <thead>
             <tr>
               <th className="cm-corner">
                 actual ↓<br />
                 predicted →
               </th>
-              {ev.labels.map((l) => (
-                <th key={l} scope="col">
+              {columns.map((l) => (
+                <th key={l} scope="col" title={l}>
                   {l}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {cm.map((row, i) => (
-              <tr key={ev.labels[i]}>
-                <th scope="row">{ev.labels[i]}</th>
+            {counts.map((row, i) => (
+              <tr key={labels[i]}>
+                <th scope="row" title={labels[i]}>
+                  {labels[i]}
+                </th>
                 {row.map((v, j) => {
                   const share = rowTotals[i] ? v / rowTotals[i] : 0;
                   return (
@@ -85,7 +114,7 @@ function ConfusionMatrix({ ev, accuracy }: { ev: TargetEvaluation; accuracy?: nu
                       key={j}
                       className={i === j ? "diag" : undefined}
                       style={cellShade(share, i === j)}
-                      title={`actual ${ev.labels[i]}, predicted ${ev.labels[j]}: ${fmtInt(v)} (${fmtPct(share)} of actual ${ev.labels[i]})`}
+                      title={`actual ${labels[i]}, predicted ${columns[j]}: ${fmtInt(v)} (${fmtPct(share)} of actual ${labels[i]})`}
                     >
                       {mode === "count" ? fmtInt(v) : fmtPct(share)}
                     </td>

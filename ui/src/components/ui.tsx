@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { describeError } from "../toast";
 import { Banner, Icon, type IconName } from "./kit";
 
@@ -133,5 +133,51 @@ export function ReviewMeter({
       <i className="dropped" style={{ width: pct(dropped) }} />
       <i className="target" style={{ width: pct(targets) }} />
     </span>
+  );
+}
+
+/** A command or secret to copy, with a Copy button. */
+export function CopyCommand({ command, label = "Copy" }: { command: string; label?: string }) {
+  const [state, setState] = useState<"idle" | "copied" | "manual">("idle");
+  const ref = useRef<HTMLElement>(null);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(command);
+      setState("copied");
+    } catch {
+      // Clipboard needs a secure context; over plain-http LAN access, select the text instead (#53).
+      const sel = window.getSelection();
+      if (ref.current && sel) {
+        const r = document.createRange();
+        r.selectNodeContents(ref.current);
+        sel.removeAllRanges();
+        sel.addRange(r);
+      }
+      setState("manual");
+    }
+  };
+  return (
+    <div className="stack exp-gap-2">
+      <code ref={ref} className="cmd">
+        {command}
+      </code>
+      <div className="row">
+        <button type="button" className="small" onClick={copy}>
+          {state === "copied" ? (
+            <>
+              <Icon name="check" size={14} />
+              Copied
+            </>
+          ) : (
+            label
+          )}
+        </button>
+        {state === "manual" && (
+          <span className="muted small-text">
+            Selected: press <kbd>⌘C</kbd> to copy
+          </span>
+        )}
+      </div>
+    </div>
   );
 }

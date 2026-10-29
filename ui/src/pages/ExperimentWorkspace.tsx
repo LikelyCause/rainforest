@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate, useSearchParams } from "react-router-do
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useDebounced, useFields } from "../hooks";
-import { Empty, ErrorAlert, InfoTip } from "../components/ui";
+import { CopyCommand, Empty, ErrorAlert, InfoTip } from "../components/ui";
 import { Banner, Chip, Icon, ProgressBar, Segmented, StatusBadge, useDismiss } from "../components/kit";
 import { batchTag } from "../batches";
 import { BatchList } from "../components/BatchList";
@@ -574,51 +574,6 @@ function BuildPanel({
         <ErrorAlert error={start.error} />
       </div>
     </section>
-  );
-}
-
-function CopyCommand({ command }: { command: string }) {
-  const [state, setState] = useState<"idle" | "copied" | "manual">("idle");
-  const ref = useRef<HTMLElement>(null);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(command);
-      setState("copied");
-    } catch {
-      // Clipboard needs a secure context; over plain-http LAN access, select the text instead (#53).
-      const sel = window.getSelection();
-      if (ref.current && sel) {
-        const r = document.createRange();
-        r.selectNodeContents(ref.current);
-        sel.removeAllRanges();
-        sel.addRange(r);
-      }
-      setState("manual");
-    }
-  };
-  return (
-    <div className="stack exp-gap-2">
-      <code ref={ref} className="cmd">
-        {command}
-      </code>
-      <div className="row">
-        <button type="button" className="small" onClick={copy}>
-          {state === "copied" ? (
-            <>
-              <Icon name="check" size={14} />
-              Copied
-            </>
-          ) : (
-            "Copy"
-          )}
-        </button>
-        {state === "manual" && (
-          <span className="muted small-text">
-            Selected: press <kbd>⌘C</kbd> to copy
-          </span>
-        )}
-      </div>
-    </div>
   );
 }
 
