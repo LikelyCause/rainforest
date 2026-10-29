@@ -316,6 +316,10 @@ export function weakReasons(r: BatchRow, rule: BatchDetail["weak_rule"]): string
     : [`Validation PR AUC below ${rule.pr_auc} or fewer than ${rule.test_positives} positives in test`];
 }
 
+/** A one-vs-rest run's threshold in words. A note means no threshold had a positive F1, so 0.5 stands in. */
+export const describeThreshold = (threshold: number, note: string | null | undefined) =>
+  note ? `${threshold.toFixed(2)} (fallback)` : `${threshold.toFixed(2)}, the highest F1 on validation`;
+
 /** The Brier pair worth showing: the calibrator was fit on validation, so its pair there is in-sample and only the
  * test pair is honest. Validation only when the export has no test rows. */
 export function brierPair(c: Calibration | null | undefined): { split: Split; before: number; after: number } | null {

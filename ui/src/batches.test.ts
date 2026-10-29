@@ -11,6 +11,7 @@ import {
   defaultRanking,
   describeSampler,
   describeSpace,
+  describeThreshold,
   oneVsRestValues,
   parseRange,
   rankingChoices,
@@ -530,5 +531,17 @@ describe("searchChartData", () => {
   it("keeps a log axis off when a value isn't above 0", () => {
     const d = searchChartData([entry(1, 0.9, { learning_rate: 0 })], "learning_rate", null, space, catalog);
     expect(d.x.log).toBe(false);
+  });
+});
+
+describe("describeThreshold", () => {
+  it("calls a one-vs-rest run's threshold the highest F1 on validation", () => {
+    expect(describeThreshold(0.31, null)).toBe("0.31, the highest F1 on validation");
+    expect(describeThreshold(0.3, null)).toBe("0.30, the highest F1 on validation");
+  });
+  it("calls it a fallback when the run has a note, since no threshold had a positive F1", () => {
+    expect(describeThreshold(0.5, "No threshold gives a positive F1 on validation; 0.5 is used")).toBe(
+      "0.50 (fallback)",
+    );
   });
 });

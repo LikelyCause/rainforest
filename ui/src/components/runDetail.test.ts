@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { fmtMetric } from "../format";
-import { cellShade, classTabs, headlineTiles, regressionTabs, regressionTiles } from "./RunDetail";
-import type { RegressionEvaluation } from "../types";
+import {
+  bestF1Note,
+  cellShade,
+  chosenThreshold,
+  classTabs,
+  headlineTiles,
+  regressionTabs,
+  regressionTiles,
+  scoresNote,
+} from "./RunDetail";
+import type { F1Threshold, ModelRun, RegressionEvaluation } from "../types";
 
 describe("fmtMetric", () => {
   it("always shows three decimals", () => {
@@ -63,6 +72,70 @@ describe("headlineTiles", () => {
       0.45,
       undefined,
     ]);
+  });
+  it("says a binary target's precision, recall and F1 are at 0.5", () => {
+    const hint = (rows: ReturnType<typeof headlineTiles>, label: string) => rows.find((r) => r[0] === label)?.[2];
+    for (const label of ["Precision", "Recall", "F1"]) {
+      expect(hint(headlineTiles(m, true), label)).toBe("Positive class, at 0.5");
+      expect(hint(headlineTiles(m, false), label)).toBe("Macro average over classes");
+    }
+  });
+});
+
+describe("chosenThreshold", () => {
+  const f1: F1Threshold = { threshold: 0.31, valid_f1: 0.62, test_f1: 0.58, note: null };
+  const run = (config: ModelRun["config"], report: Partial<ModelRun["report"]> | null) =>
+    ({ config, report }) as Pick<ModelRun, "config" | "report">;
+  it("is a one-vs-rest run's stored F1 choice", () => {
+    expect(chosenThreshold(run({ positive_class: "V01" }, { f1_threshold: f1 }))).toEqual(f1);
+  });
+  it("is null for any other run, or one without a stored choice", () => {
+    expect(chosenThreshold(run({}, { f1_threshold: f1 }))).toBeNull();
+    expect(chosenThreshold(run({ positive_class: "V01" }, {}))).toBeNull();
+    expect(chosenThreshold(run({ positive_class: "V01" }, null))).toBeNull();
+  });
+});
+
+describe("scoresNote", () => {
+  it("says class targets use the most likely class when the run has no chosen threshold", () => {
+    expect(scoresNote(null)).toBe("Class targets use the most likely class (0.5 threshold for binary targets)");
+  });
+  it("says the scores are at 0.5, and gives the run's own threshold and its F1 on each split", () => {
+    expect(scoresNote({ threshold: 0.31, valid_f1: 0.6234, test_f1: 0.58, note: null })).toBe(
+      "Precision, recall and F1 here are at 0.5. This run's threshold is 0.31, the highest F1 on validation: " +
+        "F1 0.623 on validation, 0.580 on test.",
+    );
+  });
+  it("leaves out the test F1 when the export has no test rows", () => {
+    expect(scoresNote({ threshold: 0.31, valid_f1: 0.6234, test_f1: null, note: null })).toBe(
+      "Precision, recall and F1 here are at 0.5. This run's threshold is 0.31, the highest F1 on validation: " +
+        "F1 0.623 on validation.",
+    );
+  });
+  it("calls the threshold a fallback and adds the note when no threshold had a positive F1", () => {
+    const note = "No threshold gives a positive F1 on validation; 0.5 is used";
+    expect(scoresNote({ threshold: 0.5, valid_f1: 0, test_f1: 0, note })).toBe(
+      "Precision, recall and F1 here are at 0.5. This run's threshold is 0.50 (fallback): " +
+        `F1 0.000 on validation, 0.000 on test. ${note}.`,
+    );
+  });
+});
+
+describe("bestF1Note", () => {
+  const tail = " Scores here are for this split; pick a threshold on validation, then check it on test.";
+  it("sets the best F1 against 0.5 when the run has no chosen threshold", () => {
+    expect(bestF1Note({ threshold: 0.3, f1: 0.6 }, null)).toBe(
+      `Best F1 is 0.600 at 0.3 (the scores above use 0.5).${tail}`,
+    );
+    expect(bestF1Note({ threshold: 0.5, f1: 0.6 }, null)).toBe(`Best F1 is 0.600 at 0.5.${tail}`);
+  });
+  it("sets it against the run's chosen threshold when it has one", () => {
+    expect(bestF1Note({ threshold: 0.3, f1: 0.6 }, 0.28)).toBe(
+      `Best F1 is 0.600 at 0.3 (the chosen threshold is 0.28).${tail}`,
+    );
+    expect(bestF1Note({ threshold: 0.28, f1: 0.6 }, 0.28)).toBe(
+      `Best F1 is 0.600 at 0.28, the chosen threshold.${tail}`,
+    );
   });
 });
 

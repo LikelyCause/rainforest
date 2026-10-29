@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useCan } from "./DatasetLayout";
 import { useMe } from "../hooks";
+import { describeThreshold } from "../batches";
 import { describeSettings } from "../settings";
 import { showError } from "../toast";
 import { runLabel, whyFailed, type Split } from "../runs";
@@ -12,12 +13,14 @@ import { fmtInt, fmtMetric, fmtNum, fmtPct } from "../format";
 import { useChartTheme } from "../theme";
 import type {
   CrossValidation,
+  F1Threshold,
   HistogramChart,
   ModelRun,
   RegressionEvaluation,
   RocCurve,
   SettingValue,
   TargetEvaluation,
+  ThresholdPoint,
   TrainPrefill,
 } from "../types";
 import { Chart } from "./Chart";
@@ -117,7 +120,7 @@ function RocChart({ curves, binary }: { curves: RocCurve[]; binary: boolean }) {
 /** Headline tiles: two rows of four. Precision, recall and F1 are the positive class's for a binary target and the
  * macro average otherwise. */
 export function headlineTiles(m: Record<string, number>, binary: boolean): [string, number | undefined, string?][] {
-  const avg = binary ? undefined : "Macro average over classes";
+  const avg = binary ? "Positive class, at 0.5" : "Macro average over classes";
   return [
     ["Accuracy", m.accuracy],
     ["Bal. acc.", m.balanced_accuracy, "Balanced accuracy: the mean of each class's recall"],
@@ -130,9 +133,9 @@ export function headlineTiles(m: Record<string, number>, binary: boolean): [stri
         : "Average precision, one-vs-rest, macro-averaged over classes",
     ],
     ["Log loss", m.log_loss],
-    ["Precision", binary ? m.precision : m.precision_macro, avg ?? "Positive class"],
-    ["Recall", binary ? m.recall : m.recall_macro, avg ?? "Positive class"],
-    ["F1", binary ? m.f1 : m.f1_macro, avg ?? "Positive class"],
+    ["Precision", binary ? m.precision : m.precision_macro, avg],
+    ["Recall", binary ? m.recall : m.recall_macro, avg],
+    ["F1", binary ? m.f1 : m.f1_macro, avg],
     ["Specificity", binary ? m.specificity : undefined, binary ? undefined : "Binary targets only"],
   ];
 }
@@ -335,15 +338,56 @@ export function classTabs(threshold = false, features = false): { key: ClassTab;
   ];
 }
 
-/** What moving a binary target's cut-off from 0.5 would trade: precision against recall, at each threshold. */
+/** A one-vs-rest run's chosen threshold (the one its batch page shows); null for every other run. */
+export function chosenThreshold(run: Pick<ModelRun, "config" | "report">): F1Threshold | null {
+  return (run.config?.positive_class && run.report?.f1_threshold) || null;
+}
+
+/** Beside the split picker: the class scores are at 0.5, and a one-vs-rest run's own threshold differs. */
+export function scoresNote(chosen: F1Threshold | null): string {
+  if (!chosen) return "Class targets use the most likely class (0.5 threshold for binary targets)";
+  const f1 = [
+    chosen.valid_f1 !== null ? `${fmtMetric(chosen.valid_f1)} on validation` : null,
+    chosen.test_f1 !== null ? `${fmtMetric(chosen.test_f1)} on test` : null,
+  ].filter(Boolean);
+  const note = chosen.note ? ` ${chosen.note.replace(/\.?$/, ".")}` : "";
+  return (
+    `Precision, recall and F1 here are at 0.5. This run's threshold is ` +
+    `${describeThreshold(chosen.threshold, chosen.note)}${f1.length ? `: F1 ${f1.join(", ")}` : ""}.${note}`
+  );
+}
+
+/** Under the threshold view: the split's best F1, set against the threshold the run uses. */
+export function bestF1Note(best: Pick<ThresholdPoint, "threshold" | "f1">, chosen: number | null): string {
+  const same = Math.abs(best.threshold - (chosen ?? 0.5)) < 1e-9;
+  const against =
+    chosen === null
+      ? same
+        ? ""
+        : " (the scores above use 0.5)"
+      : same
+        ? ", the chosen threshold"
+        : ` (the chosen threshold is ${fmtNum(chosen)})`;
+  return (
+    `Best F1 is ${fmtMetric(best.f1)} at ${fmtNum(best.threshold)}${against}. ` +
+    "Scores here are for this split; pick a threshold on validation, then check it on test."
+  );
+}
+
+/** What moving a binary target's cut-off would trade: precision against recall, at each threshold. A one-vs-rest
+ * run's fine curve (every 0.01 from 0 to 1) replaces the coarse table, and the slider starts at its chosen threshold. */
 function ThresholdView({
   rows,
   positive,
+  chosen = null,
+  fine = false,
 }: {
-  rows: NonNullable<TargetEvaluation["thresholds"]>;
+  rows: ThresholdPoint[];
   positive: string | null;
+  chosen?: number | null;
+  fine?: boolean;
 }) {
-  const [t, setT] = useState(0.5);
+  const [t, setT] = useState(chosen ?? 0.5);
   const at = rows.reduce((a, r) => (Math.abs(r.threshold - t) < Math.abs(a.threshold - t) ? r : a));
   const best = rows.reduce((a, r) => (r.f1 > a.f1 ? r : a));
   return (
@@ -354,9 +398,9 @@ function ThresholdView({
         </span>
         <input
           type="range"
-          min={0.05}
-          max={0.95}
-          step={0.05}
+          min={fine ? 0 : 0.05}
+          max={fine ? 1 : 0.95}
+          step={fine ? 0.01 : 0.05}
           value={t}
           onChange={(e) => setT(Number(e.target.value))}
           aria-label="Threshold"
@@ -377,11 +421,7 @@ function ThresholdView({
           </div>
         ))}
       </div>
-      <span className="muted small-text">
-        Best F1 is {fmtMetric(best.f1)} at {fmtNum(best.threshold)}
-        {best.threshold !== 0.5 ? " (the scores above use 0.5)" : ""}. Scores here are for this split; pick a threshold
-        on validation, then check it on test.
-      </span>
+      <span className="muted small-text">{bestF1Note(best, chosen)}</span>
     </div>
   );
 }
@@ -454,12 +494,17 @@ function TargetCard({
   m,
   ev,
   features,
+  curve,
+  chosen = null,
 }: {
   target: string;
   m: Record<string, number>;
   ev?: TargetEvaluation;
   features?: Features;
+  curve?: ThresholdPoint[];
+  chosen?: number | null;
 }) {
+  const thresholds = curve?.length ? curve : ev?.thresholds;
   const binary = ev ? ev.labels.length === 2 : "precision" in m;
   const total = ev?.per_class.reduce((a, c) => a + c.support, 0);
   const tiles = headlineTiles(m, binary);
@@ -488,7 +533,7 @@ function TargetCard({
       </div>
       <ResultTabs
         id={uid}
-        tabs={classTabs(Boolean(ev?.thresholds), Boolean(features?.length))}
+        tabs={classTabs(Boolean(thresholds), Boolean(features?.length))}
         value={tab}
         onChange={(k) => {
           steady.hold();
@@ -497,7 +542,14 @@ function TargetCard({
         label={`Results for ${target}`}
       />
       <div ref={steady.box} className="stack" role="tabpanel" id={`${uid}-panel`} aria-labelledby={`${uid}-tab-${tab}`}>
-        {tab === "threshold" && ev?.thresholds && <ThresholdView rows={ev.thresholds} positive={ev.positive_label} />}
+        {tab === "threshold" && thresholds && (
+          <ThresholdView
+            rows={thresholds}
+            positive={ev?.positive_label ?? null}
+            chosen={chosen}
+            fine={thresholds === curve}
+          />
+        )}
         {tab === "features" && features && <TopFeatures rows={features} />}
         {tab === "matrix" &&
           (ev ? (
@@ -789,6 +841,7 @@ export function RunDetail({
   const settingsText = describe(false);
   const exactSettings = describe(true);
   const metrics = run.metrics?.[split];
+  const chosen = chosenThreshold(run);
   const top = run.report?.top_features ?? {};
   const label = runLabel(run, option);
   const trainAgain =
@@ -895,9 +948,7 @@ export function RunDetail({
           }))}
         />
         <span className="muted small-text">
-          {targets.some((t) => metrics?.[t] && !("r2" in metrics[t] || "rmse" in metrics[t]))
-            ? "Class targets use the most likely class (0.5 threshold for binary targets)"
-            : ""}
+          {targets.some((t) => metrics?.[t] && !("r2" in metrics[t] || "rmse" in metrics[t])) ? scoresNote(chosen) : ""}
         </span>
       </div>
       {cv?.note && <div className="muted small-text">{cv.note}</div>}
@@ -924,6 +975,8 @@ export function RunDetail({
                   m={metrics[t]}
                   ev={ev as TargetEvaluation | undefined}
                   features={top[t]}
+                  curve={split === "cv" ? undefined : run.report?.threshold_curve?.[split]}
+                  chosen={chosen?.threshold ?? null}
                 />
               );
             })
