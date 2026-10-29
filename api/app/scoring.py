@@ -7,6 +7,7 @@ A `Scorer` holds nothing that changes after loading, so request threads share on
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import threading
 from collections import OrderedDict
@@ -33,6 +34,21 @@ TOLERANCE = 1e-9
 CHECK_ROWS = 50_000
 TRUE_TEXT = {"true": True, "false": False, "1": True, "0": False}
 TRAINING_SAMPLE = 5_000
+
+
+class ModelChanged(ValueError):
+    """A deployed model's file isn't the one recorded when it was deployed."""
+
+
+class Unreadable(OSError):
+    """A joblib file that is missing or doesn't unpickle: truncated, overwritten, or not a pickle at all."""
+
+
+def _unpickle(path: Path) -> Any:
+    try:
+        return joblib.load(path)
+    except Exception as exc:  # noqa: BLE001  (bytes that aren't a pickle can raise nearly anything)
+        raise Unreadable(f"{path.name} can't be read ({type(exc).__name__})") from exc
 
 
 @dataclass(frozen=True)
@@ -93,7 +109,7 @@ class Scorer:
         for i in self.inputs:
             s, failed = convert(df[i.name], i)
             typed.append(s)
-            seen.append(integer_text(df[i.name], s) if i.integer_number else s)
+            seen.append(integer_text(df[i.name], s, bool(i.decimal_comma)) if i.integer_number else s)
             if failed:
                 warnings[i.name] = failed
         frame, view = pl.DataFrame(typed), pl.DataFrame(seen)
@@ -181,27 +197,28 @@ def missing_as_null(s: pl.Series) -> pl.Series:
     return s
 
 
-def whole_numbers(given: pl.Series) -> pl.Series:
+def whole_numbers(given: pl.Series, decimal_comma: bool = False) -> pl.Series:
     """Int64 of the values that are whole numbers. Integers and integer text are read exactly, past 2^53 too; only
-    values like "7.0" go through a float."""
+    values like "7.0" (or "7,0" with `decimal_comma`) go through a float."""
     if given.dtype.is_integer() or given.dtype == pl.Boolean:
         return given.cast(pl.Int64, strict=False)
-    num = coerce_numeric(given, False)
+    num = coerce_numeric(given, decimal_comma)
     whole = pl.select(pl.when(num == num.round(0)).then(num)).to_series().cast(pl.Int64, strict=False)
     if given.dtype == pl.String:
         return given.str.strip_chars().cast(pl.Int64, strict=False).fill_null(whole)
     return whole
 
 
-def integer_text(s: pl.Series, out: pl.Series) -> pl.Series:
+def integer_text(s: pl.Series, out: pl.Series, decimal_comma: bool = False) -> pl.Series:
     """An integer-typed number (`out`, its float) as derived fields read it from the dataset's integer column: a whole
     number as its integer text, so a groups or count value "30" matches 30.0 the way it matched 30."""
-    whole = whole_numbers(missing_as_null(s))
+    whole = whole_numbers(missing_as_null(s), decimal_comma)
     text = pl.when(whole.is_not_null() & out.is_not_null()).then(whole.cast(pl.String)).otherwise(out.cast(pl.String))
     return pl.select(text).to_series().alias(s.name)
 
 
-ISO_8601 = r"^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2})(:\d{2}(?:\.\d{1,9})?)?)?(Z|[+-]\d{2}:?\d{2})?$"
+# RFC 3339's profile: T and Z in either case, and an offset only after a time (a date alone has no time zone).
+ISO_8601 = r"^(\d{4}-\d{2}-\d{2})(?:[Tt ](\d{2}:\d{2})(:\d{2}(?:\.\d{1,9})?)?([Zz]|[+-]\d{2}:?\d{2})?)?$"
 
 
 def iso_datetime(txt: pl.Series) -> pl.Series:
@@ -214,7 +231,7 @@ def iso_datetime(txt: pl.Series) -> pl.Series:
     off = pl.col("4")
     sign = pl.when(off.str.starts_with("-")).then(-1).otherwise(1)
     minutes = (
-        pl.when(off.is_null() | (off == "Z"))
+        pl.when(off.is_null() | (off.str.to_uppercase() == "Z"))
         .then(0)
         .otherwise(
             sign
@@ -354,7 +371,22 @@ def _frozen(conn, export_id: int) -> tuple[Path, dict, tuple[FieldSpec, ...], tu
         )
         for n in sources
     )
+    for i in inputs:
+        # Nothing reads these from text yet, so a record's value would always be missing; refuse rather than score it.
+        if what := {pl.Time: "a time of day", pl.Duration: "a duration"}.get(i.dtype.base_type()):
+            raise ValueError(
+                f"The field {i.name!r} is stored as {what}, which a deployment can't read from records; leave it out "
+                "of the export's features to deploy"
+            )
     return out_dir, manifest, specs, inputs, needed
+
+
+def file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(1 << 20):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _build(conn, export_id: int, models: list[dict]) -> Scorer:
@@ -368,7 +400,7 @@ def _build(conn, export_id: int, models: list[dict]) -> Scorer:
         inputs=inputs,
         derived=tuple(needed),
         specs=specs,
-        preprocessor=joblib.load(out_dir / "preprocessor.joblib"),
+        preprocessor=_unpickle(out_dir / "preprocessor.joblib"),
         n_features=int(manifest["n_features"]),
         models=loaded,
     )
@@ -398,14 +430,20 @@ def _model(conn, export_id: int, m: dict) -> Model:
         kind, labels, threshold = "regression", (order[0],), None
     else:
         kind, labels, threshold = "multiclass", tuple(report["target_classes"][order[0]]), None
+    label = m.get("label") or report.get("model_label") or f"Run {run['id']}"
+    # Checked before unpickling: a file swapped in after deployment is neither trusted nor loaded.
+    if m.get("sha256") and file_sha256(model_dir / MODEL_FILE) != m["sha256"]:
+        raise ModelChanged(
+            f"The model file of {label!r} (run {run['id']}) changed since it was deployed; deploy the run again"
+        )
     return Model(
         run_id=int(run["id"]),
-        label=m.get("label") or report.get("model_label") or f"Run {run['id']}",
+        label=label,
         kind=kind,
         labels=labels,
         threshold=None if threshold is None else float(threshold),
         model_dir=str(model_dir),
-        estimator=joblib.load(model_dir / MODEL_FILE),
+        estimator=_unpickle(model_dir / MODEL_FILE),
         report=report,
     )
 
@@ -413,7 +451,8 @@ def _model(conn, export_id: int, m: dict) -> Model:
 # =========================================================================== equality check
 def equality_check(conn, export_id: int, models: list[dict]) -> str | None:
     """None when scoring the raw values of the export's test rows reproduces each model's scores on the export's own
-    `model_ready.parquet` within 1e-9; else what differs first. Without test rows it compares the validation rows,
+    `model_ready.parquet` within 1e-9, and its features exactly (as float32); else what differs first, scores before
+    features. Without test rows it compares the validation rows,
     without those a sample of training rows, and with no rows at all it doesn't pass."""
     scorer = load(conn, {"export_id": export_id, "models": models})
     exp = conn.execute(
@@ -439,11 +478,27 @@ def equality_check(conn, export_id: int, models: list[dict]) -> str | None:
         if ids.max() >= n_raw:
             return f"Row {int(ids.max())} of the export is past the end of the dataset.{hint}"
         X = part.select(feats).to_numpy()
-        got, _ = scorer.outputs(read_rows(raw, scorer.required, ids))
-        for m, g in zip(scorer.models, got):
-            if (msg := _differs(m, g, scores_of(m.estimator, m.report, X), ids)) is not None:
+        got_X, _ = scorer.features(read_rows(raw, scorer.required, ids))
+        for m in scorer.models:
+            got = scores_of(m.estimator, m.report, got_X)
+            if (msg := _differs(m, got, scores_of(m.estimator, m.report, X), ids)) is not None:
                 return msg + hint
+        # Scores can agree while a feature doesn't (a tree that never splits on it); training saw the export's.
+        if (msg := _feature_differs(got_X, X, feats, ids)) is not None:
+            return msg + hint
     return None
+
+
+def _feature_differs(got: np.ndarray, want: np.ndarray, feats: list[str], ids: np.ndarray) -> str | None:
+    g, w = got.astype(np.float32), want.astype(np.float32)
+    bad = ~((g == w) | (np.isnan(g) & np.isnan(w)))
+    if not bad.any():
+        return None
+    i, j = np.argwhere(bad)[0]
+    return (
+        f"The export's row {int(ids[i])} has {feats[j]!r} = {g[i, j]:.9g} from its raw values, but {w[i, j]:.9g} in "
+        "the export's features."
+    )
 
 
 def _rows_to_compare(split: pl.Series) -> np.ndarray:

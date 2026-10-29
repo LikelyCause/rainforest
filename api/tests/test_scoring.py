@@ -7,6 +7,7 @@ import shutil
 import threading
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -546,3 +547,58 @@ def test_an_integer_typed_number_read_by_a_groups_field_matches_as_the_integer_i
     assert frame["agegrp"].to_list() == ["rest"] and frame["age"].to_list() == [30.5] and warnings == {}
     frame, _ = s.frame(recs.with_columns(age=pl.lit("75")))
     assert frame["agegrp"].to_list() == ["old"]
+
+
+# =========================================================================== model files, features, time types
+def _input_dtype(name: str, dtype: str):
+    def change(cfg):
+        cfg["input_schema"] = {**cfg["input_schema"], name: {**cfg["input_schema"][name], "dtype": dtype}}
+        return cfg
+
+    return change
+
+
+@pytest.mark.parametrize("dtype", ["Time", "Duration(time_unit='us')"])
+def test_a_field_stored_as_a_time_of_day_or_a_duration_is_refused_naming_it(setup, dtype):
+    with _config(setup["e"]["id"], _input_dtype("c", dtype)), pytest.raises(ValueError, match="'c'") as exc:
+        _scorer(setup)
+    assert "deploy" in str(exc.value)
+
+
+def test_the_equality_check_names_the_first_feature_that_differs_even_when_scores_agree(setup, tmp_path):
+    src = Path(fetch_one("SELECT output_dir FROM meta.exports WHERE id = %s", (setup["e"]["id"],))["output_dir"])
+    feats = json.loads((src / "manifest.json").read_text())["feature_names"]
+    data = pl.read_parquet(src / "model_ready.parquet")
+    name = next(f for f in feats if data[f].dtype == pl.Float32 and data[f].null_count() < len(data))
+
+    def ulp(d: pl.DataFrame) -> pl.DataFrame:
+        # One float32 step: no tree split moves, so every score agrees, but the features don't.
+        return d.with_columns(pl.Series(name, np.nextafter(d[name].to_numpy(), np.float32(np.inf))))
+
+    out = _copy_export(setup, tmp_path, ulp)
+    with _swapped("exports", setup["e"]["id"], "output_dir", out), connection() as conn:
+        msg = scoring.equality_check(conn, setup["e"]["id"], setup["multi"])
+    assert msg and repr(name) in msg and "row" in msg, msg
+
+
+def test_a_model_file_that_changed_since_it_was_recorded_is_refused_naming_the_model(setup):
+    m = setup["ovr"][0]
+    model_dir = Path(fetch_one("SELECT model_dir FROM meta.model_runs WHERE id = %s", (m["run_id"],))["model_dir"])
+    digest = scoring.file_sha256(model_dir / scoring.MODEL_FILE)
+    with connection() as conn:
+        assert scoring.load(conn, {"export_id": setup["e"]["id"], "models": [{**m, "sha256": digest}]})
+        with pytest.raises(scoring.ModelChanged, match="'p'"):
+            scoring.load(conn, {"export_id": setup["e"]["id"], "models": [{**m, "sha256": "0" * 64}]})
+
+
+def test_iso_8601_text_follows_rfc_3339_case_and_needs_a_time_before_an_offset():
+    got = scoring.iso_datetime(
+        pl.Series(["2020-04-03t10:00:00z", "2020-04-03T10:00:00Z", "2020-04-03Z", "2020-04-03+02:00", "2020-04-03"])
+    ).to_list()
+    assert got == [datetime(2020, 4, 3, 10), datetime(2020, 4, 3, 10), None, None, datetime(2020, 4, 3)]
+
+
+def test_an_integer_typed_number_with_a_decimal_comma_reads_as_its_integer_text():
+    s = pl.Series("age", ["30,0", "30,5", "7"])
+    out = scoring.coerce_numeric(s, True)
+    assert scoring.integer_text(s, out, True).to_list() == ["30", "30.5", "7"]
