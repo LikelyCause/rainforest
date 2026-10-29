@@ -481,7 +481,7 @@ status. The list isn't shown until the experiment has a batch.
 ### Run detail
 
 Select a run to open its detail beside the table (below it on a phone). The detail has *Train again*, *Deploy…* (for
-a finished run with one target, to anyone who can add runs; see [Deployments](deployments.md)),
+a finished run with one target, to anyone who can add runs; see [Deployments](deployments.md#the-deploy-dialog)),
 *MLflow ↗*, *Model* (download), the run's note and, for a lead, *Mark as chosen*. Per target, it shows:
 
 - its headline metrics. For a binary target, precision, recall and F1 are the positive class's. Otherwise they are
@@ -669,7 +669,7 @@ offered. The chart fills in as combinations finish.
 
 ### Deploying from a batch
 
-*Deploy…*, in the title row, opens the [deploy dialog](deployments.md):
+*Deploy…*, in the title row, opens the [deploy dialog](deployments.md#the-deploy-dialog):
 
 - For a one-model-per-class batch with nothing selected, it deploys the batch's finished runs, once the batch has
   ended.

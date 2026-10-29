@@ -8,6 +8,11 @@ A deployment is frozen files: the export's preprocessor and field specs, its fro
 and each run's model. Refreshing the dataset, re-exporting, or changing a decision later doesn't change what it
 answers.
 
+The dataset's *Deployments* step, the last of its places in the top bar, lists the deployments in experiments you can
+see, newest first: each one's *Name*, *Experiment* (marked *archived* when it is), *Batch*, how many *Models*, its
+*Status* (*Active* or *Retired*) and who created it when. A row opens the [deployment's page](#the-deployment-page).
+With none yet, the step says where *Deploy…* is.
+
 ## What can be deployed
 
 A deployment is made from runs of **one export**, so they share one preprocessing path and one set of input fields.
@@ -16,7 +21,7 @@ It is one of two things:
 | Deployment | Runs | Each record gets |
 |---|---|---|
 | One-vs-rest | [One-vs-rest runs](experiments-and-training.md#one-class-against-the-rest) of one target, at most one per class. A one-vs-rest batch deploys whole; a search batch by choosing its rows. | every class's calibrated probability, the most likely class, and the classes whose model said yes |
-| Single run | One run with one target: multiclass, or a number | each class's probability and the most likely class, or the predicted number |
+| Single run | One run with one target: a class target, or a number | each class's probability and the most likely class, or the predicted number |
 
 Anyone who can add runs to the experiment can deploy its runs. Viewers can't.
 
@@ -35,6 +40,28 @@ Anyone who can add runs to the experiment can deploy its runs. Viewers can't.
 | An export whose features read a field stored as a time of day or a duration | A record can't carry one yet, so the field would always be missing. |
 | A model or preprocessor file that is missing or doesn't unpickle (`410`) | There is nothing to score with. |
 | Scores or features that don't reproduce training | See below. |
+
+### The deploy dialog
+
+*Deploy…* opens the *Deploy* dialog from two places:
+
+- a batch's page, for a one-model-per-class batch's finished runs once it has ended, or for the rows you select (see
+  [Deploying from a batch](experiments-and-training.md#deploying-from-a-batch));
+- a finished run's detail on *Runs*, when the run has one target.
+
+It is offered to anyone who can add runs to the experiment. The dialog says where the runs come from (*From*) and
+lists the *Models*: the one-vs-rest classes, or the single run.
+
+- *Name* defaults to the batch's name, or the run's model.
+- *Threshold for every model* (*Threshold* with one model), for one-vs-rest models only, picks the
+  [rule](#thresholds): *Best F1*, *Precision at least* with the minimum precision, or *Fixed* with the threshold.
+- *A model's own threshold*, with more than one model, gives a class its own rule; *As every model* leaves it on the
+  shared one. The summary counts how many are set.
+- A number out of range blocks *Deploy*, and the dialog says why.
+
+*Deploy* runs the check below, which can take a few seconds: *Checking that scoring through the deployment reproduces
+training…*. The dialog stays open until it answers. A refusal stays in the dialog, under *Not deployed.*, until you
+change something; a deployment that passes opens its page.
 
 **The check at creation.** Before a deployment is stored, Rainforest takes the export's test rows (its validation
 rows when there are none, else a sample of up to 5,000 training rows), reads their raw values from the dataset, and
@@ -61,9 +88,11 @@ is created, by a rule:
 | `{"kind": "precision", "min": 0.9}` | the lowest whose validation precision reaches 0.9; if none does, the F1 choice, with a `threshold_note` saying so |
 | `{"kind": "fixed", "value": 0.35}` | 0.35 |
 
-`threshold_rule` sets the rule for every model, and `thresholds` (`{run_id: rule}`) for one. The deployment stores
-each model's threshold and the rule that chose it. Scores and thresholds are calibrated probabilities. Choosing a
-threshold on the split the model was calibrated on is mildly optimistic; the test split gives the honest number.
+`threshold_rule` sets the rule for every model, and `thresholds` (`{run_id: rule}`) for one; in the
+[deploy dialog](#the-deploy-dialog) these are *Threshold for every model* and *A model's own threshold*. The
+deployment stores each model's threshold and the rule that chose it. Scores and thresholds are calibrated
+probabilities. Choosing a threshold on the split the model was calibrated on is mildly optimistic; the test split
+gives the honest number.
 
 ## Keys
 
@@ -75,6 +104,12 @@ A script calls a deployment with an API key. The deployment's creator or a lead 
   another deployment refuses it (`401`).
 - Revoking a key stops it at once. Retiring the deployment stops every key (`410`) until it is reactivated.
 - `last_used_at` shows when a key was last used, to the minute.
+
+On the deployment's page, *Keys* lists them: *Name*, *Key* (its first 8 characters), *Created*, *Last used* (*Never*
+until it is) and, once revoked, *Revoked* and when. The creator or a lead names a key, such as the script that calls
+it, and chooses *Create key*. The key then shows once, with *Copy the key*: copy it before *Done*, because it can't be
+shown again. *Revoke* asks to confirm; it can't be undone, so create another key to call the deployment again.
+Others see who manages keys instead.
 
 A browser on Rainforest's own pages can also call predict with the signed-in session, except a Viewer's. A Viewer can
 use a key.
@@ -90,7 +125,9 @@ curl -X POST http://localhost:8080/api/deployments/12/predict \
 ```
 
 `GET /api/deployments/{id}` lists the fields a record must carry (`fields`) and two of the dataset's rows of them
-(`example`).
+(`example`). The page's *Call it* builds this `curl` command from them, at the address you are browsing, with two of
+the dataset's rows as records; replace `rf_…` with a key. *The fields a record carries*, under it, lists each field
+and its type.
 
 ```json
 {
@@ -142,8 +179,11 @@ call after that loads them again, which takes longer.
 
 ## Testing with a file
 
-A file of records can be scored in the background instead of through predict: `POST /api/deployments/{id}/tests`
-with the file as multipart `file`.
+A file of records can be scored in the background instead of through predict: *Upload CSV or Parquet* under *Test
+with a file* on the deployment's page, or `POST /api/deployments/{id}/tests` with the file as multipart `file`. The
+page shows the upload's progress, then the test in a list of the deployment's tests: its *File*, *Status* (with the
+job's progress while it runs), *Rows*, *Labels* (*Labelled* or *No labels*) and who started it when. The newest test
+opens below the list; select another to open it.
 
 - **The file** is read by the same reader as a dataset upload: `.csv`, `.tsv`, `.txt`, `.parquet` or `.pq`, the separator
   guessed, the same missing-value tokens. It needs every field predict needs; extra columns are ignored, and a
@@ -156,9 +196,14 @@ with the file as multipart `file`.
   `top_score`, `matches` and `none_matched` for a one-vs-rest deployment, and a `score_<label>` column per score. A
   column of the file named like a generated one keeps its name, and the generated one gets a leading `_`. The test
   shows the first 500; the download has all of them, as Parquet or CSV (`matches` joined with `; `).
+  On the page, the results table has the identifier (else the row number), the label, *Top* with its score (not for
+  a number), *Matches* for one-vs-rest (*none* when nothing matched) and a column per score; past 10 scores, they
+  are behind *Show all scores (N)*. *CSV* and *Parquet*, beside the test's name, download every row.
 - **Values that don't convert** become missing, as in predict, and are counted per field: `warnings` is
   `{field: {failed, values, flagged}}`, `values` being the values the file gave, and a field is `flagged` when more
   than half of them failed. `notes` holds what the reader noted about the file (its separator, dropped columns).
+  The page lists the notes under the test's name, and the warnings in a table of each field's *Didn't convert* count
+  and *Share*, the flagged fields first and marked *More than half failed*.
 
 ### Labels
 
@@ -181,12 +226,18 @@ counts as a label with no model, and as wrong. Only an empty or missing label le
 | `rows_label_without_model` | how many labelled rows have a label no model scores; they have no per-class row |
 | `classes` | per class: `support` (labelled rows of the class), `precision`, `recall` and `f1` of its model at its `threshold` (a multiclass run's class counts as predicted when it is `top`; no threshold), and `pr_auc` (average precision of its score on the file). A metric with nothing to divide by is null. |
 | `nothing_matched_share` | the share of all rows, labelled or not, where no one-vs-rest model said yes (null for a single run) |
-| `confusion` | `labels`: the 20 most frequent labels; `counts[i][j]`: rows labelled `labels[i]` whose `top` is `labels[j]`, the last column counting a `top` outside the list |
+| `confusion` | `labels`: the 20 most frequent labels; `counts[i][j]`: rows labelled `labels[i]` whose `top` is `labels[j]`, the last column counting a `top` outside the list, or none |
 
 A number run reports `mae`, `rmse` and `r2` against the target instead, over the labels that are numbers;
 `rows_label_not_a_number` counts the others. `labelled_rows` and `rows_without_label` count the rows either way.
 The scores are calibrated probabilities and the thresholds were chosen on the validation split they were calibrated
 on, so a file the models haven't seen gives the honest numbers.
+
+On the page, a labelled test shows these as tiles: *Top-1 accuracy*, *Labelled rows*, *Label has no model*, *Nothing
+matched* (one-vs-rest) and *No label* (when some rows have none); for a number, *MAE*, *RMSE*, *R²*, *Labelled rows*
+and *Label not a number*. A table gives each class's *Rows*, *Threshold* (one-vs-rest), *Precision*, *Recall*, *F1*
+and *PR AUC*, and a grid shows the top class against the label, with *Other* for a top class outside the labels
+shown, or none. Without the target column, the test says there is nothing to measure against.
 
 ### Keeping tests
 
@@ -196,10 +247,27 @@ tests and downloads their results. Starting one is using the deployment, so it n
 as for runs, waits for a dataset refresh to finish (`409`), and is refused while the experiment is archived or the
 deployment is retired (`409`).
 
+## The deployment page
+
+A deployment's page opens from the *Deployments* step, and from the deploy dialog once it passes. Its title row has
+the name, *Deployment #N*, *Active* or *Retired* and, for its creator or a lead, *Retire…* or *Reactivate*. Under it:
+the experiment, the batch it came from, the export, and who deployed it when. Its sections:
+
+- *Models*: each class (or the target) with its run, which opens on *Runs*, and its threshold and the rule that chose
+  it, marked when the rule fell back to the F1 choice. A multiclass run predicts the *Top class*, a number run *A
+  number*.
+- *Keys*: see [Keys](#keys).
+- *Call it*: the `curl` example; see [Predict](#predict).
+- *Test with a file* and the selected test: see [Testing with a file](#testing-with-a-file). Uploading needs write
+  access to the experiment, and an active deployment.
+
+When the export's files can't be read, the page says *This deployment can't score.* with the reason, and *Call it*
+is left out.
+
 ## Retiring and deleting
 
 - *Retire* stops a deployment answering (`410`) and keeps its record, keys and tests. Its creator or a lead can
-  reactivate it.
+  reactivate it. On the page, *Retire…* asks to confirm, and a retired deployment says so until *Reactivate*.
 - Retiring and revoking a key stop access, so neither a dataset refresh nor an archived experiment holds them back.
   Creating a deployment, creating a key and reactivating grant it: they wait for a refresh to finish, and are
   refused while the experiment is archived (`409`).

@@ -59,7 +59,7 @@ These are read by the API (`api/app/config.py`), also from `.env`.
 | `SAMPLE_MAX_CELLS` | 60000000 | cap on rows × fields for generated samples (about 2 GB peak) |
 | `SOURCE_MAX_CELLS` | 600000000 | cap on documents × fields across the collections of a connected dataset; a larger pull is refused before it starts |
 | `SOURCE_PULL_TIMEOUT_S` | 3600 | wall-clock limit for one pull from a MongoDB connection, after which the job fails |
-| `OVR_MIN_POSITIVES` | 10 | training rows a class needs to get its own model in a one-vs-rest batch; a class with fewer, or with no validation positives, is skipped and listed with the reason |
+| `OVR_MIN_POSITIVES` | 10 | training rows a class needs to get its own model in a one-vs-rest batch; a class with fewer, or with no validation rows or positives, is skipped and listed with the reason |
 | `OVR_WEAK_PR_AUC` | 0.5 | a one-vs-rest model whose validation PR-AUC is below this is flagged weak on the batch page (so is a class with fewer than 30 test positives) |
 | `BATCH_MAX_RUNS` | 500 | most runs one batch may plan; a larger batch is refused with its count |
 | `PREDICT_MAX_RECORDS` | 1000 | most records one call to a deployment's predict endpoint may carry |
