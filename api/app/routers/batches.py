@@ -80,6 +80,32 @@ def _cap(n: int) -> None:
         raise HTTPException(422, f"This batch would start {n:,} runs; at most {most:,} may run in one (BATCH_MAX_RUNS)")
 
 
+@router.get("/exports/{export_id}/batch-plan")
+def batch_plan(export_id: int, user: CurrentUser, target: str | None = None) -> dict:
+    """What the batch dialog previews from: the limits a batch is held to and, for a class target, each class's rows
+    by split with the classes a batch of all of them would skip and a one-vs-rest search's default classes."""
+    exp, manifest = export_manifest(export_id, user)
+    settings = get_settings()
+    out: dict[str, Any] = {"min_positives": settings.ovr_min_positives, "max_runs": settings.batch_max_runs}
+    out.update(dict.fromkeys(("target", "classes", "valid_rows", "skipped", "search_classes")))
+    if target is None:
+        return out
+    target, problem = class_target(manifest, target)
+    if problem:
+        raise HTTPException(422, problem)
+    counts = _class_counts(exp, manifest, target)
+    _, skipped = batches.plan_classes(counts, None, settings.ovr_min_positives)
+    out.update(
+        target=target,
+        # A list, in the target's class order, rather than an object keyed by class.
+        classes=[{"class": c, **{k: n[k] for k in ("train", "valid", "test")}} for c, n in counts.items()],
+        valid_rows=next(iter(counts.values()))["valid_rows"] if counts else 0,
+        skipped=skipped,
+        search_classes=batches.search_classes_default(counts, settings.ovr_min_positives),
+    )
+    return out
+
+
 def _default_name(req: BatchRequest, label: str, target: str | None, classes: list) -> str:
     if req.kind == "one_vs_rest":
         return f"{label} · one model per class of {target}"

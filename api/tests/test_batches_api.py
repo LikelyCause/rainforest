@@ -411,3 +411,48 @@ def test_one_vs_rest_runs_are_never_an_experiments_or_datasets_best(setup):
     assert best["run_id"] == plain and best["metric"] == "roc_auc_ovr_macro"
     by_ds = best_by_dataset([ds["id"]], experiments.visible_ids(lead.user["id"]))[ds["id"]]
     assert by_ds["run_id"] != ovr and by_ds["metric"] != "roc_auc"
+
+
+def test_the_batch_plan_gives_each_class_its_counts_by_split_and_the_limits(setup, app_, login_as):  # noqa: F811
+    e = setup["e"]
+    plan = setup["lead"].get(f"/api/exports/{e['id']}/batch-plan", params={"target": "y"})
+    assert plan.status_code == 200, plan.text
+    plan = plan.json()
+    assert plan["min_positives"] == 10 and plan["max_runs"] == 500 and plan["target"] == "y"
+    # A list in the target's class order: class names like "7" would reorder as JSON object keys.
+    assert [c["class"] for c in plan["classes"]] == ["p", "q", "r", "s"]
+    split = setup["lead"].get(f"/api/exports/{e['id']}").json()["summary"]["split_counts"]
+    for k in ("train", "valid", "test"):
+        assert sum(c[k] for c in plan["classes"]) == split[k]
+    assert plan["valid_rows"] == split["valid"]
+    assert plan["skipped"] == [{"class": "s", "reason": "fewer than 10 positives in training"}]
+    counts = {c["class"]: {**c, "valid_rows": plan["valid_rows"]} for c in plan["classes"]}
+    assert plan["search_classes"] == batches.search_classes_default(counts, 10)
+
+    viewer = login_as(TestClient(app_), "viewer", name=f"Viewer {uuid.uuid4().hex[:6]}")
+    limits = viewer.get(f"/api/exports/{e['id']}/batch-plan")
+    assert limits.status_code == 200, limits.text
+    assert limits.json() == {
+        "min_positives": 10,
+        "max_runs": 500,
+        "target": None,
+        "classes": None,
+        "valid_rows": None,
+        "skipped": None,
+        "search_classes": None,
+    }
+    number = setup["lead"].get(f"/api/exports/{e['id']}/batch-plan", params={"target": "v"})
+    assert number.status_code == 422 and "number" in number.json()["detail"], number.text
+
+
+def test_the_batch_plan_reads_the_configured_limits(setup, monkeypatch):
+    monkeypatch.setenv("BATCH_MAX_RUNS", "7")
+    monkeypatch.setenv("OVR_MIN_POSITIVES", "200")
+    get_settings.cache_clear()
+    try:
+        plan = setup["lead"].get(f"/api/exports/{setup['e']['id']}/batch-plan", params={"target": "y"}).json()
+        assert plan["max_runs"] == 7 and plan["min_positives"] == 200
+        assert "s" in {s["class"] for s in plan["skipped"]}
+    finally:
+        monkeypatch.undo()
+        get_settings.cache_clear()
