@@ -168,7 +168,9 @@ row is scored; the export's row rules don't apply. A label is named the way trai
 - a target predicted as a group against the rest: a value of the group is the group, any other value the rest;
 - a target cut into bands: the label of the number's band;
 - any other target: the class it equals. For a target stored as numbers that is by value, so `7` is the class
-  training named `7.0` (an integer column with a missing value reaches training as floats).
+  training named `7.0` (an integer column with a missing value reaches training as floats). A target stored as
+  true/false reads labels as a true/false feature does: `true`, `false`, `1` and `0`, in any case, are the classes
+  training named `True` and `False`, and a group on `true` holds the true rows.
 
 A label that is given but names no class (unseen, or `7.5` and `abc` for a target of codes) keeps its own text: it
 counts as a label with no model, and as wrong. Only an empty or missing label leaves a row unlabelled.
