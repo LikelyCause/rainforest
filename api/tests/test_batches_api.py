@@ -426,6 +426,13 @@ def test_the_batch_plan_gives_each_class_its_counts_by_split_and_the_limits(setu
         assert sum(c[k] for c in plan["classes"]) == split[k]
     assert plan["valid_rows"] == split["valid"]
     assert plan["skipped"] == [{"class": "s", "reason": "fewer than 10 positives in training"}]
+    # Each class carries the reason a batch of every class would skip it, so the dialog needn't re-derive the rule.
+    assert {c["class"]: c["reason"] for c in plan["classes"]} == {
+        "p": None,
+        "q": None,
+        "r": None,
+        "s": "fewer than 10 positives in training",
+    }
     counts = {c["class"]: {**c, "valid_rows": plan["valid_rows"]} for c in plan["classes"]}
     assert plan["search_classes"] == batches.search_classes_default(counts, 10)
 
@@ -453,6 +460,24 @@ def test_the_batch_plan_reads_the_configured_limits(setup, monkeypatch):
         plan = setup["lead"].get(f"/api/exports/{setup['e']['id']}/batch-plan", params={"target": "y"}).json()
         assert plan["max_runs"] == 7 and plan["min_positives"] == 200
         assert "s" in {s["class"] for s in plan["skipped"]}
+        for c in plan["classes"]:
+            assert (c["reason"] == "fewer than 200 positives in training") == (c["train"] < 200), c
     finally:
         monkeypatch.undo()
         get_settings.cache_clear()
+
+
+def test_the_batch_plan_of_a_private_experiments_export_is_404_to_a_member_who_cant_see_it(people):
+    lead, owner, member = people["lead"], people["a"], people["c"]
+    ds = upload(lead, _csv(), targets="y")
+    start(lead, ds, "tree", [owner])
+    rid = lead.get(f"/api/datasets/{ds['id']}").json()["recipe_id"]
+    x = owner.post(
+        f"/api/datasets/{ds['id']}/experiments", json={"name": "mine", "source": f"assessment:{rid}:{owner.user['id']}"}
+    ).json()
+    assert x["private"], x
+    e = export(owner, ds, x)
+    path = f"/api/exports/{e['id']}/batch-plan"
+    assert owner.get(path, params={"target": "y"}).status_code == 200
+    assert member.get(path, params={"target": "y"}).status_code == 404
+    assert member.get(path).status_code == 404

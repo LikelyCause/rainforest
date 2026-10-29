@@ -95,10 +95,15 @@ def batch_plan(export_id: int, user: CurrentUser, target: str | None = None) -> 
         raise HTTPException(422, problem)
     counts = _class_counts(exp, manifest, target)
     _, skipped = batches.plan_classes(counts, None, settings.ovr_min_positives)
+    reasons = {s["class"]: s["reason"] for s in skipped}
     out.update(
         target=target,
-        # A list, in the target's class order, rather than an object keyed by class.
-        classes=[{"class": c, **{k: n[k] for k in ("train", "valid", "test")}} for c, n in counts.items()],
+        # A list, in the target's class order, rather than an object keyed by class. `reason` is why a batch would
+        # skip the class (null when it trains), so the dialog shows the server's rule rather than a copy of it.
+        classes=[
+            {"class": c, **{k: n[k] for k in ("train", "valid", "test")}, "reason": reasons.get(c)}
+            for c, n in counts.items()
+        ],
         valid_rows=next(iter(counts.values()))["valid_rows"] if counts else 0,
         skipped=skipped,
         search_classes=batches.search_classes_default(counts, settings.ovr_min_positives),
