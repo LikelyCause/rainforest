@@ -522,7 +522,7 @@ def _identifier(conn, dataset_id: int, names: list[str]) -> str | None:
 
 def _label_reading(conn, export_id: int, target: str, kind: str) -> dict:
     """How the export's training read its target, so a file's labels are read the same way: its classes, bands or
-    group, whether it is a number in the dataset, and how its column writes decimals."""
+    group, its type in the dataset, and how its column writes decimals."""
     exp = conn.execute("SELECT dataset_id, output_dir, config FROM meta.exports WHERE id = %s", (export_id,)).fetchone()
     manifest = json.loads((Path(exp["output_dir"]) / "manifest.json").read_text())
     bins = (manifest.get("target_bins") or {}).get(target)
@@ -539,7 +539,7 @@ def _label_reading(conn, export_id: int, target: str, kind: str) -> dict:
         "number": kind == "regression",
         "bins": bins,
         "classes": (manifest.get("target_classes") or {}).get(target) or [],
-        "numeric": scoring.parse_dtype(schema["dtype"]).is_numeric() if schema else None,
+        "dtype": scoring.parse_dtype(schema["dtype"]) if schema else None,
         "decimal_comma": comma,
     }
 
@@ -551,7 +551,7 @@ def _label_values(s: pl.Series, how: dict) -> tuple[pl.Series, int]:
         given = scoring.missing_as_null(s)
         out = coerce_numeric(given, how["decimal_comma"])
         return out.alias(s.name), int(given.is_not_null().sum() - out.is_not_null().sum())
-    named = target_labels(s, how["bins"], how["classes"], how["numeric"], how["decimal_comma"])
+    named = target_labels(s, how["bins"], how["classes"], how["dtype"], how["decimal_comma"])
     return pl.Series(s.name, [None if pd.isna(v) else v for v in named], dtype=pl.String), 0
 
 

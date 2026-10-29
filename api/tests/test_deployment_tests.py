@@ -313,10 +313,11 @@ def _trained_classes(tmp_path, values: list, task: dict | None = None) -> list[s
     return prepare_targets(path, ["y"], {"y": task or {"task": "classes"}}, {}, 1)[2]["y"]
 
 
-def _labels(values, classes, numeric, bins=None) -> list:
+def _labels(values, classes, dtype, bins=None) -> list:
+    """`values` (as a file sends them) named against `classes`, for a target of type `dtype` in the dataset."""
     from app.transform import target_labels
 
-    out = target_labels(pl.Series("y", values), bins, classes, numeric=numeric)
+    out = target_labels(pl.Series("y", values), bins, classes, dtype=dtype)
     return [None if pd.isna(v) else v for v in out]
 
 
@@ -324,31 +325,51 @@ def test_a_files_labels_are_named_as_training_named_the_classes(tmp_path):
     # An integer target with a missing value reaches training as floats, so its classes are "1.0", "2.0" and "3.0".
     classes = _trained_classes(tmp_path, [1, 2, 3, None] * 3)
     assert classes == ["1.0", "2.0", "3.0"]
-    got = _labels(["1", "2.0", " 3", "07", "7.5", "abc", "yes", "", None], classes, numeric=True)
+    got = _labels(["1", "2.0", " 3", "07", "7.5", "abc", "yes", "", None], classes, pl.Int64)
     assert got == ["1.0", "2.0", "3.0", "07", "7.5", "abc", "yes", None, None]
-    assert _labels([1, 3, None], classes, numeric=True) == ["1.0", "3.0", None]
+    assert _labels([1, 3, None], classes, pl.Int64) == ["1.0", "3.0", None]
     # Without the missing value they are "1", "2", "3", and a float label still finds them.
     classes = _trained_classes(tmp_path, [1, 2, 3] * 3)
-    assert classes == ["1", "2", "3"] and _labels([1.0, 2.5], classes, numeric=True) == ["1", "2.5"]
+    assert classes == ["1", "2", "3"] and _labels([1.0, 2.5], classes, pl.Int64) == ["1", "2.5"]
     # Text classes match only as text.
-    assert _labels(["07", "7"], ["7", "a"], numeric=False) == ["07", "7"]
+    assert _labels(["07", "7"], ["7", "a"], pl.String) == ["07", "7"]
 
 
 def test_a_files_banded_and_grouped_labels_are_the_band_and_the_group(tmp_path):
     task = {"task": "bins", "bins": {"edges": [10, 20]}}
     classes = _trained_classes(tmp_path, [5.0, 15.0, 25.0] * 3, task)
     bins = {"edges": [10.0, 20.0], "labels": classes}
-    assert _labels(["5", "10", "19.9", "30.5", "x", None], classes, True, bins) == [
+    assert _labels(["5", "10", "19.9", "30.5", "x", None], classes, pl.Float64, bins) == [
         classes[0], classes[1], classes[1], classes[2], "x", None,
     ]  # fmt: skip
     task = {"task": "bins", "bins": {"positive": ["a", "b"]}}
     classes = _trained_classes(tmp_path, ["a", "b", "c", "d"] * 3, task)
     assert classes == ["(rest)", "a / b"]
-    assert _labels(["a", "b", "c", "zz", "", None], classes, False, {"positive": ["a", "b"]}) == [
+    assert _labels(["a", "b", "c", "zz", "", None], classes, pl.String, {"positive": ["a", "b"]}) == [
         "a / b", "a / b", "(rest)", "(rest)", None, None,
     ]  # fmt: skip
     # An integer target grouped on "1": a file's 1.0 is in the group too.
-    assert _labels([1.0, 2.0], ["(rest)", "1"], True, {"positive": ["1"]}) == ["1", "(rest)"]
+    assert _labels([1.0, 2.0], ["(rest)", "1"], pl.Int64, {"positive": ["1"]}) == ["1", "(rest)"]
+
+
+def test_a_boolean_targets_labels_are_read_as_feature_values_are(tmp_path):
+    classes = _trained_classes(tmp_path, [True, False] * 3)
+    assert classes == ["False", "True"]
+    # As text (a Parquet file's or a CSV column with other values), the way a Boolean feature reads it.
+    got = _labels(["true", "1", "0", " FALSE", "True", "maybe", "", None], classes, pl.Boolean)
+    assert got == ["True", "True", "False", "False", "True", "maybe", None, None]
+    assert _labels([1, 0, 2], classes, pl.Boolean) == ["True", "False", "2"]
+    assert _labels([True, None], classes, pl.Boolean) == ["True", None]
+
+
+def test_a_boolean_target_grouped_on_the_uis_true_trains_on_both_groups(tmp_path):
+    path = tmp_path / "y.parquet"
+    pl.DataFrame({"y": [True, False, None] * 4}).write_parquet(path)
+    task = {"task": "bins", "bins": {"positive": ["true"]}}
+    _, y, classes, *_ = prepare_targets(path, ["y"], {"y": task}, {}, 1)
+    assert classes["y"] == ["(rest)", "true"]
+    codes = y["y"].tolist()
+    assert codes[:3] == [1.0, 0.0, codes[2]] and np.isnan(codes[2])
 
 
 # ------------------------------------------------------------------------------------------- failing and refusing
@@ -489,8 +510,8 @@ def test_a_member_who_cant_see_the_experiment_cant_see_its_tests(people):
 
 # ------------------------------------------------------------------------------------------- typed targets
 def _typed_csv(n=900, seed=11) -> str:
-    """x, z features; four targets that follow x: y_int (codes 1-3, one row missing), y_float (classes 0.5, 1.5,
-    2.5), y_band (a number cut into bands), y_group (a, b, c, predicted as a against the rest)."""
+    """x, z features; five targets that follow x: y_int (codes 1-3, one row missing), y_float (classes 0.5, 1.5,
+    2.5), y_band (a number cut into bands), y_group (a, b, c, predicted as a against the rest), y_bool (true, false)."""
     rng = np.random.default_rng(seed)
     x, z = rng.normal(size=n), rng.normal(size=n)
     s = x + 0.4 * rng.normal(size=n)
@@ -498,8 +519,9 @@ def _typed_csv(n=900, seed=11) -> str:
     rows = []
     for i in range(n):
         y_int = "" if i == 0 else str(k[i] + 1)
-        rows.append(f"{x[i]:.3f},{z[i]:.3f},{y_int},{k[i] + 0.5},{10 * s[i]:.3f},{'abc'[k[i]]}\n")
-    return "x,z,y_int,y_float,y_band,y_group\n" + "".join(rows)
+        y_bool = "true" if k[i] else "false"
+        rows.append(f"{x[i]:.3f},{z[i]:.3f},{y_int},{k[i] + 0.5},{10 * s[i]:.3f},{'abc'[k[i]]},{y_bool}\n")
+    return "x,z,y_int,y_float,y_band,y_group,y_bool\n" + "".join(rows)
 
 
 TYPED = {
@@ -507,6 +529,7 @@ TYPED = {
     "y_float": {"target_task": "classes"},
     "y_band": {"target_task": "bins", "target_bins": {"edges": [-4, 5]}},
     "y_group": {"target_task": "bins", "target_bins": {"positive": ["a"]}},
+    "y_bool": {"target_task": "classes"},
 }
 
 
@@ -520,6 +543,7 @@ TRAINED_NAME = {
     "y_float": lambda v: f"{float(v)}",
     "y_band": lambda v: _band(float(v)),
     "y_group": lambda v: "a" if v == "a" else "(rest)",
+    "y_bool": str,  # pandas prints True as "True"
 }
 
 
@@ -554,6 +578,18 @@ def test_a_typed_targets_labels_count_as_training_named_them(typed, target):
     want = np.mean([a == b for a, b in zip(tops, names)])
     assert m["rows_label_without_model"] == 0 and m["rows_without_label"] == 0
     assert m["top1_accuracy"] == pytest.approx(want) and want > 0.5
+
+
+def test_a_boolean_targets_labels_sent_as_text_in_parquet_count_as_its_classes(typed):
+    lead, dep = typed["lead"], typed["deps"]["y_bool"]
+    df = typed["rows"].slice(1, 200).select("x", "z", "y_bool")
+    text = [("1" if v else "0") if i % 2 else ("true" if v else "false") for i, v in enumerate(df["y_bool"])]
+    buf = io.BytesIO()
+    df.with_columns(y_bool=pl.Series(text)).write_parquet(buf)
+    m = _test(lead, dep["id"], "bool.parquet", buf.getvalue())["metrics"]
+    tops = [r["top"]["label"] for r in _predicted(lead, dep["id"], df)]
+    want = np.mean([a == str(v) for a, v in zip(tops, df["y_bool"])])
+    assert m["rows_label_without_model"] == 0 and m["top1_accuracy"] == pytest.approx(want) and want > 0.5
 
 
 def test_a_typed_label_that_names_no_class_is_wrong_not_unlabelled(typed):

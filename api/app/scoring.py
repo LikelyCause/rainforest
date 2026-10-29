@@ -28,12 +28,19 @@ from .modeling.train import scores_of
 from .parquet_rows import read_rows
 from .profiling import coerce_numeric, parse_datetime
 from .semantics import NUMERIC
-from .transform import ROW_ID, SPLIT_COL, FieldSpec, coercion_exprs, to_pandas_frame, transform_into
+from .transform import (
+    ROW_ID,
+    SPLIT_COL,
+    TRUE_TEXT,
+    FieldSpec,
+    coercion_exprs,
+    to_pandas_frame,
+    transform_into,
+)
 
 REEXPORT = "Re-export to deploy"
 TOLERANCE = 1e-9
 CHECK_ROWS = 50_000
-TRUE_TEXT = {"true": True, "false": False, "1": True, "0": False}
 TRAINING_SAMPLE = 5_000
 
 

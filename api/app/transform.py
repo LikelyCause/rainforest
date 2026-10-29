@@ -657,6 +657,10 @@ def check_target_classes(y: pd.DataFrame) -> None:
             )
 
 
+# Text a Boolean is read from, for features and target labels alike.
+TRUE_TEXT = {"true": True, "false": False, "1": True, "0": False}
+
+
 def _float(v: Any) -> float | None:
     try:
         f = float(str(v).strip())
@@ -665,20 +669,29 @@ def _float(v: Any) -> float | None:
     return f if math.isfinite(f) else None
 
 
-def _named(text: pd.Series, names: list[str], numeric: bool) -> pd.Series:
-    """Each value of `text` as the one of `names` it is, by text or, for a number, by value ("7" is "7.0"); NaN for
-    none."""
-    by_number = {}
-    for n in names if numeric else []:
-        if (f := _float(n)) is not None:
-            by_number.setdefault(f, n)
+def _value(v: Any, dtype) -> float | bool | None:
+    """What `v` is as a value of a target of type `dtype`: a number, a Boolean read as a Boolean feature is
+    (TRUE_TEXT, or 1 and 0), or None for a target matched by text."""
+    if dtype == pl.Boolean:
+        t = str(v).strip().lower()
+        return TRUE_TEXT[t] if t in TRUE_TEXT else {1.0: True, 0.0: False}.get(_float(v))
+    return _float(v) if dtype.is_numeric() else None
+
+
+def _named(text: pd.Series, names: list[str], dtype) -> pd.Series:
+    """Each value of `text` as the one of `names` it is, by text or, for a number or a Boolean, by value ("7" is
+    "7.0", "true" is "True"); NaN for none."""
+    by_value = {}
+    for n in names:
+        if (f := _value(n, dtype)) is not None:
+            by_value.setdefault(f, n)
     known = set(names)
     lookup = {}
     for v in pd.unique(text):
         if v in known:
             lookup[v] = v
-        elif by_number and (f := _float(v)) is not None and f in by_number:
-            lookup[v] = by_number[f]
+        elif by_value and (f := _value(v, dtype)) is not None and f in by_value:
+            lookup[v] = by_value[f]
     return text.map(lookup)
 
 
@@ -686,7 +699,7 @@ def target_labels(
     raw: pl.Series,
     bins: dict | None = None,
     classes: list[str] | None = None,
-    numeric: bool | None = None,
+    dtype=None,
     decimal_comma: bool | None = False,
 ) -> pd.Series:
     """A class target's values as the class labels training gives them (object, NaN where missing):
@@ -695,9 +708,13 @@ def target_labels(
     - otherwise the value's text as pandas prints it, so an integer column with a missing value names 7 "7.0".
 
     Training passes no `classes` and finds them from these labels. Scoring a file passes the classes training found:
-    an empty text is missing too, a value matches a class by value when the target is `numeric` ("7" is "7.0"), and
-    a value that names no class, or isn't a number a band needs, keeps its own text, so it matches no model."""
-    numeric = raw.dtype.is_numeric() if numeric is None else numeric
+    an empty text is missing too, and a value that names no class, or isn't a number a band needs, keeps its own
+    text, so it matches no model.
+
+    `dtype` is the target's type in the dataset (default: `raw`'s). A number or Boolean target's values match by
+    value, in training too: "7" is the class "7.0", and "true", "1" and True are the class "True" or the group
+    `["true"]` a Boolean target is grouped on."""
+    dtype = raw.dtype if dtype is None else dtype
     col = raw.to_pandas()
     missing = col.isna().to_numpy()
     text = col.astype(str)
@@ -707,7 +724,7 @@ def target_labels(
     out = pd.Series(np.nan, index=col.index, dtype=object)
     if bins and "positive" in bins:
         positive = [str(p) for p in bins["positive"]]
-        hit = _named(text[given], positive, numeric).notna()
+        hit = _named(text[given], positive, dtype).notna()
         out[given] = np.where(hit, " / ".join(positive), GROUP_REST)
     elif bins and "edges" in bins:
         band = bands.assign(coerce_numeric(raw, decimal_comma).to_numpy(), bins["edges"])
@@ -718,7 +735,7 @@ def target_labels(
     elif classes is None:
         out[given] = text[given]
     else:
-        out[given] = _named(text[given], classes, numeric).fillna(text[given])
+        out[given] = _named(text[given], classes, dtype).fillna(text[given])
     return out
 
 
