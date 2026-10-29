@@ -1,7 +1,7 @@
 import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../api";
+import { api, ApiError } from "../api";
 import {
   batchProgress,
   brierPair,
@@ -649,8 +649,15 @@ function Leaderboard({
 }
 
 /** One batch: what it trains, how far it has got (and Cancel), the classes it skipped, and its results: a row per
- * class for one-vs-rest, a leaderboard and chart for a search. */
+ * class for one-vs-rest, a leaderboard and chart for a search. Keyed by the batch, so moving to another batch (as
+ * after Use these settings) starts with nothing selected and no Cancel in flight. */
 export function BatchPage() {
+  return <BatchView key={useParams().batchId} />;
+}
+
+const ALREADY_ENDED = "The batch had already finished; nothing was cancelled.";
+
+function BatchView() {
   const ds = useDatasetContext();
   const me = useMe().data;
   const nav = useNavigate();
@@ -683,6 +690,8 @@ export function BatchPage() {
   });
   const [selected, setSelected] = useState<number[]>([]);
   const [using, setUsing] = useState<LeaderboardEntry | null>(null);
+  const stillRunning = () => qc.getQueryData<BatchDetail>(["batch", bid])?.status === "running";
+  const alreadyEnded = () => toast({ message: ALREADY_ENDED, tone: "info" });
   const cancel = useMutation({
     mutationFn: () => api.cancelBatch(bid),
     onSuccess: (d) => {
@@ -690,7 +699,17 @@ export function BatchPage() {
       qc.invalidateQueries({ queryKey: ["batches", xid] });
       qc.invalidateQueries({ queryKey: ["runs", ds.id] });
     },
-    onError: (err) => showError("The batch couldn't be cancelled", err),
+    onError: async (err) => {
+      // A batch can end between the last poll and the click; its 409 then means there was nothing left to cancel.
+      if (err instanceof ApiError && err.status === 409) {
+        await qc.invalidateQueries({ queryKey: ["batch", bid] });
+        if (!stillRunning()) {
+          alreadyEnded();
+          return;
+        }
+      }
+      showError("The batch couldn't be cancelled", err);
+    },
   });
 
   const back = `/d/${ds.id}/experiments/${xid}?tab=runs`;
@@ -740,7 +759,10 @@ export function BatchPage() {
       cancel: "Keep it running",
       danger: true,
     });
-    if (ok) cancel.mutate();
+    if (!ok) return;
+    // Polling goes on while the confirm is open, so the batch may have ended meanwhile.
+    if (stillRunning()) cancel.mutate();
+    else alreadyEnded();
   };
   const onStarted = (started: BatchStarted) => {
     setUsing(null);
