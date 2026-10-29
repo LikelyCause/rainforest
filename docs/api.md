@@ -250,7 +250,7 @@ results carry, or null for the row number), `labels` (what the scores are keyed 
 | POST | `/api/deployments/{deployment_id}/tests` | `202` with a test row: upload a file of records to score in the background, 50,000 rows at a time, through the same path as predict. Read by the dataset upload's reader. Write access to the experiment as for runs, never a Viewer (`403`); `409` while the dataset is refreshing, the experiment is archived or the deployment is retired, `415` for another file type, `400` for an empty file. Starting one deletes the deployment's finished tests older than its newest 20, with their files. A missing field, a model or preprocessor that changed, or files that can't be read fail the test with the reason in `error`. | multipart `file` (`.csv`, `.tsv`, `.txt`, `.parquet`, `.pq`) |
 | GET | `/api/deployments/{deployment_id}/tests` | The deployment's tests, newest first. Anyone who can see the deployment. | |
 | GET | `/api/deployment-tests/{test_id}` | One test, with `results`: once done, its first 500 records' results, each `{row, id, label, top, matches, none_matched, scores}` (`row` from 1, `id` the identifier's value, `label` the file's label; the rest as predict gives them). `404` for one the viewer can't see. | |
-| GET | `/api/deployment-tests/{test_id}/download` | Every result, as `format=csv` (the default; `matches` joined with `; `) or `format=parquet`. `409` until the test is done, `410` if its results were removed. | `format` |
+| GET | `/api/deployment-tests/{test_id}/download` | Every result, as `format=csv` (the default; `matches` joined with `; `) or `format=parquet`. `409` until the test is done, `410` if its results were removed, `422` for another format. | `format` |
 
 ## Explore (`routers/explore.py`)
 

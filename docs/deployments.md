@@ -145,7 +145,7 @@ call after that loads them again, which takes longer.
 A file of records can be scored in the background instead of through predict: `POST /api/deployments/{id}/tests`
 with the file as multipart `file`.
 
-- **The file** is read by the same reader as a dataset upload: `.csv`, `.tsv`, `.txt` or `.parquet`, the separator
+- **The file** is read by the same reader as a dataset upload: `.csv`, `.tsv`, `.txt`, `.parquet` or `.pq`, the separator
   guessed, the same missing-value tokens. It needs every field predict needs; extra columns are ignored, and a
   missing field fails the test, naming it.
 - **The job** queues with exports and runs, converts the file, and scores it 50,000 rows at a time, exactly as predict
@@ -162,9 +162,16 @@ with the file as multipart `file`.
 
 ### Labels
 
-When the file has the deployment's target column, the test reports `metrics` over the rows whose label isn't missing.
-Every row is scored; the export's row rules don't apply. A label is read as the dataset's target was, so `7.0` is
-class `7` of a target stored as integers.
+When the file has the deployment's target column, the test reports `metrics` over the rows that have a label. Every
+row is scored; the export's row rules don't apply. A label is named the way training named the target's classes:
+
+- a target predicted as a group against the rest: a value of the group is the group, any other value the rest;
+- a target cut into bands: the label of the number's band;
+- any other target: the class it equals. For a target stored as numbers that is by value, so `7` is the class
+  training named `7.0` (an integer column with a missing value reaches training as floats).
+
+A label that is given but names no class (unseen, or `7.5` and `abc` for a target of codes) keeps its own text: it
+counts as a label with no model, and as wrong. Only an empty or missing label leaves a row unlabelled.
 
 | Metric | What it is |
 |---|---|
@@ -174,8 +181,8 @@ class `7` of a target stored as integers.
 | `nothing_matched_share` | the share of all rows, labelled or not, where no one-vs-rest model said yes (null for a single run) |
 | `confusion` | `labels`: the 20 most frequent labels; `counts[i][j]`: rows labelled `labels[i]` whose `top` is `labels[j]`, the last column counting a `top` outside the list |
 
-A number run reports `mae`, `rmse` and `r2` against the target instead. `labelled_rows` and `rows_without_label`
-count the rows either way. The scores are calibrated probabilities and the thresholds were chosen on the validation
+A number run reports `mae`, `rmse` and `r2` against the target instead, over the labels that are numbers;
+`rows_label_not_a_number` counts the others. `labelled_rows` and `rows_without_label` count the rows either way. The scores are calibrated probabilities and the thresholds were chosen on the validation
 split they were calibrated on, so a file the models haven't seen gives the honest numbers.
 
 ### Keeping tests
