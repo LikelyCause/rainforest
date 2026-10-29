@@ -546,9 +546,9 @@ describes.
 - A class is skipped when it isn't ticked (*Not selected*), has fewer than `OVR_MIN_POSITIVES` rows in the training
   split (10 by default), or when the validation split has no rows or none of the class. Such a class could train but
   couldn't be calibrated or given a threshold. *Not trained: N classes* lists the skipped ones, grouped by reason.
-- *Balance the classes*, offered for LightGBM and XGBoost and on by default, weights each run's positives by
-  negatives / positives in training (`balance`). It is off, and can't be turned on, while a class-weight setting is
-  changed from its default on *Train*.
+- *Balance the classes*, offered for every model with class weights (all but MLP) and on by default, weights each
+  run's classes by their training counts (`balance`; see [One class against the rest](#one-class-against-the-rest)).
+  It is off, and can't be turned on, while a class-weight setting is changed from its default on *Train*.
 - *Name* defaults to the model and the target, as in *LightGBM · one model per class of vehicle*.
 - Values under *Try several values* aren't used: each run takes the setting's own value, and the dialog says so.
 
@@ -558,9 +558,9 @@ describes.
 validation split. Each run takes the settings on *Train*, with the searched ones replaced. It needs the model's
 settings to be listed in the app (see [Adding a model](#adding-a-model)).
 
-- *Train* chooses what each combination trains, when the export has a class target. *The whole target* (*Every
-  target* when the export has several) trains one run per combination on all of the export's targets, in the
-  export's order, ranked on the first. *One model per class* trains each combination as one-vs-rest runs, once per
+- *Train* chooses what each combination trains, when the export has a class target. *The whole target* (*The ticked
+  targets* when several are ticked) trains one run per combination on the targets ticked on *Train*, in their chain
+  order, ranked on the first. *One model per class* trains each combination as one-vs-rest runs, once per
   class under *Classes to tune on*, and ranks it on the mean of their scores. Those classes start as the most
   frequent, the median and the rarest class that train; a class that can't train is greyed out. *Target* picks the
   class target, when there are several.
@@ -575,7 +575,7 @@ settings to be listed in the app (see [Adding a model](#adding-a-model)).
 - *Rank on* is the validation metric that orders the leaderboard. The default is PR AUC for a binary target or a
   one-vs-rest search, F1 (macro) for several classes and R² for a number. The others are the metrics of that kind of
   target.
-- *Balance the classes*, for a one-vs-rest search with LightGBM or XGBoost, as in
+- *Balance the classes*, for a one-vs-rest search, as in
   [One model per class](#one-model-per-class). It is also off while a class-weight setting is searched.
 - *Name* defaults to the model and the searched settings, as in *LightGBM · search over num_leaves, learning_rate*.
 
@@ -588,7 +588,7 @@ The preview counts the runs: for a one-vs-rest search, combinations × classes.
 | Settings | one or two | as many as the model has |
 | Values | lists | lists, or ranges drawn at random |
 | Runs | up to 50 | up to `BATCH_MAX_RUNS` |
-| Targets | the targets and order ticked on *Train* | every target of the export, or one model per class |
+| Targets | the targets and order ticked on *Train* | the targets and order ticked on *Train*, or one model per class |
 | How they run | ordinary runs, started one after another; one refused stops the rest | a batch: checked first, then queued one at a time |
 | Compared on | the runs table and its ★ | the batch page's leaderboard and chart |
 

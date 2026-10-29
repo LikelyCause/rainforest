@@ -609,6 +609,7 @@ export function TrainPanel({
           device={useGpu ? "cuda" : "cpu"}
           cvFolds={cvFolds}
           sweep={axes}
+          order={order}
           onClose={() => setBatchKind(null)}
           onStarted={(started) => {
             setBatchKind(null);

@@ -182,19 +182,27 @@ class BatchRequest(BaseModel):
     sampler: Sampler | None = None
     ranking: str | None = Field(None, max_length=100)
     search_classes: list[str] | None = Field(None, description="One-vs-rest search: the classes it is tuned on")
+    order: list[str] | None = Field(
+        None, description="Search on the whole target: the targets each run trains, in chain order (default: all)"
+    )
 
     @model_validator(mode="after")
     def _check(self) -> BatchRequest:
         if self.cv == 1 or self.cv_folds == 1:
             raise ValueError("cv and cv_folds take 0 or at least 2 folds")
         if self.kind == "one_vs_rest":
-            if extra := [k for k in ("space", "sampler", "ranking", "search_classes") if getattr(self, k) is not None]:
+            extra = [
+                k for k in ("space", "sampler", "ranking", "search_classes", "order") if getattr(self, k) is not None
+            ]
+            if extra:
                 raise ValueError(f"{', '.join(extra)} apply to a search batch")
         else:
             if not self.space:
                 raise ValueError("A search needs a space: the settings to try")
             if self.classes is not None:
                 raise ValueError("A search is tuned on search_classes, not classes")
+            if self.order is not None and (self.target is not None or self.search_classes is not None):
+                raise ValueError("A one-vs-rest search trains only its target; leave the order out")
             if self.sampler and self.sampler.kind == "random" and self.sampler.n is None:
                 raise ValueError("A random search needs n, the number of combinations")
         return self

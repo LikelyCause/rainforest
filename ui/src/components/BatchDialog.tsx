@@ -30,8 +30,9 @@ import { Dialog, Icon, Segmented } from "./kit";
 import { SweepValues } from "./SweepValues";
 import { ErrorAlert } from "./ui";
 
-// The models whose one-vs-rest runs the API weights by negatives / positives when asked to balance.
-const BALANCING_MODELS = ["lightgbm", "xgboost"];
+// The models whose one-vs-rest runs the API weights when asked to balance: the boosters by negatives / positives, the
+// others with balanced class weights. MLP has no class weighting.
+const BALANCING_MODELS = ["lightgbm", "xgboost", "hist_gradient_boosting", "random_forest", "logistic_regression"];
 
 const plural = (n: number, word: string) => `${fmtInt(n)} ${word}${n === 1 ? "" : word.endsWith("s") ? "es" : "s"}`;
 const isNumberSetting = (s: ModelSetting) => s.kind === "int" || s.kind === "float" || s.kind === "int_or_none";
@@ -283,6 +284,7 @@ export function BatchDialog({
   cvFolds,
   sweep,
   target: initialTarget = null,
+  order = [],
   origin,
   onClose,
   onStarted,
@@ -302,6 +304,8 @@ export function BatchDialog({
   onStarted: (started: BatchStarted) => void;
   /** The class target to start on, when not the export's first. */
   target?: string | null;
+  /** The targets ticked on the Train panel, in chain order: what a search on the whole target trains. */
+  order?: string[];
   /** Where the settings come from, when not the Train panel. */
   origin?: string;
 }) {
@@ -313,6 +317,8 @@ export function BatchDialog({
   );
   const [scope, setScope] = useState<"whole" | "ovr">(kind === "one_vs_rest" ? "ovr" : "whole");
   const ovr = kind === "one_vs_rest" || scope === "ovr";
+  const panelOrder = order.filter((t) => targets.includes(t));
+  const trained = panelOrder.length ? panelOrder : targets;
   const planTarget = ovr ? target : null;
   const plan = useQuery({
     queryKey: ["batchPlan", e.id, planTarget],
@@ -324,7 +330,7 @@ export function BatchDialog({
   const [tuneOn, setTuneOn] = useState<string[] | null>(null);
   const [balanceOn, setBalanceOn] = useState(true);
   const [name, setName] = useState("");
-  const kinds = ovr ? ["binary"] : targets.map((t) => targetKinds[t]).filter(Boolean);
+  const kinds = ovr ? ["binary"] : trained.map((t) => targetKinds[t]).filter(Boolean);
   const choices = (catalog ?? []).filter(
     (s) => s.group !== "run" && isVisible(s, values, catalog ?? []) && suitsTargets(s, kinds),
   );
@@ -363,7 +369,7 @@ export function BatchDialog({
           classes: ovr ? chosen.length : undefined,
         });
   const cap = p ? capProblem(count.runs, p.max_runs) : null;
-  const rankKind = ovr ? "binary" : targetKinds[targets[0]];
+  const rankKind = ovr ? "binary" : targetKinds[trained[0]];
   const rankings = rankingChoices(rankKind);
   const rank = ranking && rankings.includes(ranking) ? ranking : defaultRanking(rankKind);
   const balanceOffered = ovr && BALANCING_MODELS.includes(model);
@@ -405,6 +411,7 @@ export function BatchDialog({
       cvFolds,
       ovr,
       target,
+      order: panelOrder,
       balance,
       ticked,
       space: space.space,
@@ -426,9 +433,11 @@ export function BatchDialog({
       : `${modelName} · search over ${Object.keys(space.space).join(", ") || "…"}${ovr ? ` on ${chosen.length} classes of ${target}` : ""}`;
   const splitText = ovr
     ? ""
-    : targets.length > 1
-      ? ` Every run trains ${targets.join(" → ")}, ranked on ${targets[0]}.`
-      : "";
+    : trained.length > 1
+      ? ` Every run trains ${trained.join(" → ")}, ranked on ${trained[0]}.`
+      : targets.length > 1
+        ? ` Every run trains ${trained[0]}, the target ticked on Train.`
+        : "";
 
   return (
     <Dialog
@@ -505,7 +514,7 @@ export function BatchDialog({
               value={scope}
               onChange={edit(setScope)}
               options={[
-                { value: "whole", label: targets.length > 1 ? "Every target" : "The whole target" },
+                { value: "whole", label: trained.length > 1 ? "The ticked targets" : "The whole target" },
                 { value: "ovr", label: "One model per class" },
               ]}
             />

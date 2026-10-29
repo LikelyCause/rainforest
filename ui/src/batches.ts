@@ -67,6 +67,8 @@ export function batchRequest(f: {
   cvFolds: number;
   ovr: boolean;
   target: string | null;
+  /** The Train panel's ticked targets; empty or absent trains every target. */
+  order?: string[];
   balance: boolean;
   ticked: string[] | null;
   space?: Space;
@@ -91,7 +93,7 @@ export function batchRequest(f: {
           space: f.space ?? {},
           sampler: f.sampler?.kind === "random" ? { ...f.sampler } : { kind: "grid" as const },
           ranking: f.ranking,
-          ...(f.ovr ? { search_classes: f.searchClasses ?? [] } : {}),
+          ...(f.ovr ? { search_classes: f.searchClasses ?? [] } : f.order?.length ? { order: f.order } : {}),
         }
       : {}),
   };

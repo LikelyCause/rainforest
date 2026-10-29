@@ -1191,6 +1191,8 @@ export interface BatchRequest {
   sampler?: Sampler;
   ranking?: string | null;
   search_classes?: string[] | null;
+  /** A search on the whole target: the targets each run trains, in chain order. */
+  order?: string[] | null;
 }
 
 export interface Batch {
@@ -1215,6 +1217,7 @@ export interface Batch {
     ranking?: string;
     ranked_target?: string;
     search_classes?: string[] | null;
+    order?: string[] | null;
   };
   skipped: Skip[];
   status: "running" | "done" | "cancelled";

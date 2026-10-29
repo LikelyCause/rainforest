@@ -128,7 +128,14 @@ def start_batch(export_id: int, req: BatchRequest, user: CurrentUser) -> dict:
         refuse_while_refreshing(conn, exp["dataset_id"])
         experiments.require_writable(experiments.get_visible(conn, exp["experiment_id"], user), user)
     settings = get_settings()
-    base = {"model": req.model, "device": req.device, "seed": req.seed, "cv": req.cv, "cv_folds": req.cv_folds}
+    base = {
+        "model": req.model,
+        "device": req.device,
+        "seed": req.seed,
+        "cv": req.cv,
+        "cv_folds": req.cv_folds,
+        "order": req.order,
+    }
     one_vs_rest = req.kind == "one_vs_rest" or req.target is not None or req.search_classes is not None
     target, skipped, redraws = None, [], 0
     counts: batches.ClassCounts = {}
@@ -170,7 +177,7 @@ def start_batch(export_id: int, req: BatchRequest, user: CurrentUser) -> dict:
             return _text(exc.detail)
         return None
 
-    ranked_target = target or manifest["targets"][0]
+    ranked_target = target or first.targets[0]
     ranking = None
     if req.kind == "search":
         kind = "binary" if one_vs_rest else (manifest.get("target_kinds") or {}).get(ranked_target)
@@ -225,6 +232,7 @@ def start_batch(export_id: int, req: BatchRequest, user: CurrentUser) -> dict:
         **(
             {
                 "space": req.space,
+                "order": req.order,
                 "sampler": sampler.model_dump() if sampler else None,
                 "ranking": ranking,
                 "ranked_target": ranked_target,
