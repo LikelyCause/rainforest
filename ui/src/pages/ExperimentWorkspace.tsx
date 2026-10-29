@@ -1207,8 +1207,8 @@ function RunsTable({
                         className="exp-chip-link run-batch"
                         onClick={(ev) => ev.stopPropagation()}
                       >
-                        <Chip title={`Started in the batch ${batchTag(batches.data, r.batch_id)}`}>
-                          {batchTag(batches.data, r.batch_id)}
+                        <Chip title={`Started in the batch ${batchTag(batches.data, r.batch_id).name}`}>
+                          {batchTag(batches.data, r.batch_id).label}
                         </Chip>
                       </Link>
                     )}

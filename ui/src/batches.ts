@@ -1,11 +1,16 @@
-import { settingProblem } from "./settings";
+import { fmtInt, fmtMetric } from "./format";
+import { settingProblem, settingText } from "./settings";
 import { parseSweep } from "./sweep";
 import type {
   Batch,
+  BatchDetail,
   BatchKind,
   BatchRequest,
+  BatchRow,
+  Calibration,
   ClassCount,
   Device,
+  LeaderboardEntry,
   ModelSetting,
   Range,
   SettingValue,
@@ -37,9 +42,16 @@ export function classPlan(classes: ClassCount[], ticked: string[] | null): { tra
   return { trained, skipped };
 }
 
-/** The tag on a run of a batch: the batch's name, or its number until the experiment's batches have loaded. */
-export function batchTag(batches: Pick<Batch, "id" | "name">[] | undefined, id: number): string {
-  return batches?.find((b) => b.id === id)?.name ?? `Batch #${id}`;
+export const KIND_LABEL: Record<BatchKind, string> = { one_vs_rest: "Per class", search: "Search" };
+
+/** The tag on a run of a batch: its kind and number ("Search #3"), with the batch's name for a tooltip. Until the
+ * experiment's batches have loaded, only the number. */
+export function batchTag(
+  batches: Pick<Batch, "id" | "name" | "kind">[] | undefined,
+  id: number,
+): { label: string; name: string } {
+  const b = batches?.find((x) => x.id === id);
+  return b ? { label: `${KIND_LABEL[b.kind]} #${id}`, name: b.name } : { label: `Batch #${id}`, name: `Batch #${id}` };
 }
 
 /** The dialog's choices as POST /api/exports/{id}/batches takes them. A one-vs-rest batch or search carries its
@@ -255,4 +267,169 @@ export function batchProgress(b: Pick<Batch, "counts">): { ended: number; total:
     c.pending ? `${n(c.pending)} waiting` : null,
   ];
   return { ended: c.done + c.failed + c.cancelled, total, text: parts.filter(Boolean).join(" · ") };
+}
+
+// ---- the batch page ------------------------------------------------------------------------------------------------
+
+type Split = "valid" | "test";
+export type OvrSortKey =
+  | "class"
+  | `positives.${Split | "train"}`
+  | `${Split}.${"pr_auc" | "roc_auc" | "f1"}`
+  | "threshold"
+  | "weak";
+
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
+function sortValue(r: BatchRow, key: OvrSortKey): number | string | null {
+  if (key === "class") return r.positive_class;
+  if (key === "threshold") return r.threshold ?? null;
+  if (key === "weak") return r.weak == null ? null : Number(r.weak);
+  const [group, field] = key.split(".");
+  if (group === "positives") return r.positives?.[field as "train"] ?? null;
+  return r[group as Split]?.[field as "pr_auc"] ?? null;
+}
+
+/** A one-vs-rest batch's rows sorted on a column; rows without a value (still waiting, failed) stay last either way,
+ * and ties keep the batch's order. Without a key, the batch's order. */
+export function sortOvrRows(rows: BatchRow[], key: OvrSortKey | null, dir: "asc" | "desc"): BatchRow[] {
+  if (!key) return [...rows];
+  const sign = dir === "asc" ? 1 : -1;
+  return rows
+    .map((r, i) => ({ r, i, v: sortValue(r, key) }))
+    .sort((a, b) => {
+      if (a.v === null || b.v === null) return a.v === b.v ? a.i - b.i : a.v === null ? 1 : -1;
+      const c = typeof a.v === "string" ? collator.compare(a.v, String(b.v)) : a.v - (b.v as number);
+      return c ? sign * c : a.i - b.i;
+    })
+    .map((x) => x.r);
+}
+
+/** Why the server flagged a row weak, in the limits it used. Only its flag decides; the numbers only explain it. */
+export function weakReasons(r: BatchRow, rule: BatchDetail["weak_rule"]): string[] {
+  if (r.weak !== true) return [];
+  const pr = r.valid?.pr_auc;
+  const positives = r.positives?.test;
+  const out: string[] = [];
+  if (pr != null && pr < rule.pr_auc)
+    out.push(`Validation PR AUC ${fmtMetric(pr)} is below ${rule.pr_auc} (OVR_WEAK_PR_AUC)`);
+  if (positives != null && positives < rule.test_positives)
+    out.push(`${fmtInt(positives)} positives in test, fewer than ${rule.test_positives}`);
+  return out.length
+    ? out
+    : [`Validation PR AUC below ${rule.pr_auc} or fewer than ${rule.test_positives} positives in test`];
+}
+
+/** The Brier pair worth showing: the calibrator was fit on validation, so its pair there is in-sample and only the
+ * test pair is honest. Validation only when the export has no test rows. */
+export function brierPair(c: Calibration | null | undefined): { split: Split; before: number; after: number } | null {
+  if (!c) return null;
+  return c.test
+    ? { split: "test", before: c.test.brier_before, after: c.test.brier_after }
+    : { split: "valid", before: c.brier_before, after: c.brier_after };
+}
+
+/** The Train panel's values for a one-vs-rest batch with a search row's settings: the batch's own settings, the
+ * row's searched values over them, and its seed and chain folds. */
+export function oneVsRestValues(
+  spec: Pick<Batch["spec"], "params" | "seed" | "cv">,
+  settings: Record<string, SettingValue>,
+): Record<string, SettingValue> {
+  return { ...spec.params, ...settings, seed: spec.seed, cv: spec.cv };
+}
+
+const labelOf = (catalog: ModelSetting[] | null | undefined, name: string) =>
+  catalog?.find((s) => s.name === name)?.label ?? name;
+
+/** A search's space, a line per setting: its values, or its range and how it was drawn. */
+export function describeSpace(space: Space, catalog: ModelSetting[] | null | undefined): string[] {
+  return Object.entries(space).map(([name, v]) => {
+    const s = catalog?.find((x) => x.name === name);
+    if (!isRange(v)) return `${labelOf(catalog, name)} ${v.map((x) => settingText(s, x)).join(", ")}`;
+    const how = [v.log ? "log scale" : null, v.integer ? "whole numbers" : null].filter(Boolean);
+    return `${labelOf(catalog, name)} from ${settingText(s, v.low)} to ${settingText(s, v.high)}${how.length ? `, ${how.join(", ")}` : ""}`;
+  });
+}
+
+export function describeSampler(sampler: Batch["spec"]["sampler"], space: Space): string {
+  if (!sampler) return "";
+  if (sampler.kind === "random") return `Random · ${fmtInt(sampler.n)} draws · seed ${sampler.seed}`;
+  const n = Object.values(space).reduce((k, v) => k * (isRange(v) ? 1 : v.length), 1);
+  return `Grid · ${fmtInt(n)} combination${n === 1 ? "" : "s"}`;
+}
+
+/** The searched settings whose values differ between combinations, which are the ones worth plotting. */
+export function variedSettings(entries: Pick<LeaderboardEntry, "settings">[], order: string[]): string[] {
+  return order.filter((k) => new Set(entries.map((e) => JSON.stringify(e.settings[k] ?? null))).size > 1);
+}
+
+export interface ChartAxis {
+  name: string;
+  label: string;
+  numeric: boolean;
+  log: boolean;
+  /** A non-numeric axis's values, as shown, in order. */
+  categories: string[];
+}
+export interface ChartPoint {
+  x: number | string;
+  y: number | string | null;
+  value: number;
+  rank: number;
+  settings: Record<string, SettingValue>;
+}
+
+function chartAxis(
+  name: string,
+  entries: Pick<LeaderboardEntry, "settings">[],
+  space: Space,
+  catalog: ModelSetting[] | null | undefined,
+): ChartAxis {
+  const s = catalog?.find((x) => x.name === name);
+  const values = entries.map((e) => e.settings[name]);
+  const axis = space[name];
+  // A "no limit" value is a word, not a point on a number line.
+  const numeric =
+    values.every((v) => typeof v === "number" && Number.isFinite(v)) &&
+    !(s?.kind === "int_or_none" && values.includes(s.none_value as SettingValue));
+  const logScale = axis && isRange(axis) ? axis.log : (s?.log ?? false);
+  const log = numeric && logScale && values.every((v) => (v as number) > 0);
+  let categories: string[] = [];
+  if (!numeric) {
+    const seen = [...new Set([...(axis && !isRange(axis) ? axis : []), ...values])];
+    const options = s?.options?.map((o) => o.value) ?? [];
+    if (options.length) seen.sort((a, b) => options.indexOf(a) - options.indexOf(b));
+    categories = [...new Set(seen.map((v) => settingText(s, v)))];
+  }
+  return { name, label: labelOf(catalog, name), numeric, log, categories };
+}
+
+/** A search's ranked combinations as points of a 1-D (metric by one setting) or 2-D (two settings, coloured by the
+ * metric) chart. Numbers sit on a value axis, logarithmic when the setting was searched on one; anything else is a
+ * category in the catalogue's order. */
+export function searchChartData(
+  entries: LeaderboardEntry[],
+  x: string,
+  y: string | null,
+  space: Space,
+  catalog: ModelSetting[] | null | undefined,
+): { x: ChartAxis; y: ChartAxis | null; points: ChartPoint[] } {
+  const ax = chartAxis(x, entries, space, catalog);
+  const ay = y ? chartAxis(y, entries, space, catalog) : null;
+  const at = (a: ChartAxis, v: SettingValue) =>
+    a.numeric ? (v as number) : settingText(catalog?.find((s) => s.name === a.name), v);
+  const points = entries.flatMap((e) =>
+    e.value === null || e.rank === null
+      ? []
+      : [
+          {
+            x: at(ax, e.settings[x]),
+            y: ay ? at(ay, e.settings[ay.name]) : null,
+            value: e.value,
+            rank: e.rank,
+            settings: e.settings,
+          },
+        ],
+  );
+  return { x: ax, y: ay, points };
 }

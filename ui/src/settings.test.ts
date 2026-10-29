@@ -9,6 +9,7 @@ import {
   restore,
   runFields,
   settingProblem,
+  settingText,
 } from "./settings";
 import type { ModelSetting } from "./types";
 
@@ -165,5 +166,15 @@ describe("describeSettings", () => {
     expect(describeSettings(sampled, null, true)).toBe(
       "learning_rate 0.15605975503768751 · num_leaves 31 · reg_lambda 1234.5678 · subsample 0.8",
     );
+  });
+});
+
+describe("settingText", () => {
+  it("is one value as describeSettings shows it, without the name", () => {
+    const choice = S({ kind: "choice", options: [{ value: 0.5, label: "Half" }] });
+    expect(settingText(undefined, 0.15605975503768751)).toBe("0.1561");
+    expect(settingText(undefined, 0.15605975503768751, true)).toBe("0.15605975503768751");
+    expect(settingText(choice, 0.5)).toBe("Half");
+    expect(settingText(S({ kind: "bool" }), true)).toBe("on");
   });
 });

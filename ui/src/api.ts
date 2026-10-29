@@ -12,6 +12,7 @@ import type {
   BandPreview,
   BaselineLine,
   Batch,
+  BatchDetail,
   BatchPlan,
   BatchRequest,
   BatchStarted,
@@ -242,6 +243,8 @@ export const api = {
   startBatch: (exportId: number, body: BatchRequest) =>
     request<BatchStarted>(`/api/exports/${exportId}/batches`, json("POST", body)),
   batches: (experimentId: number) => request<Batch[]>(`/api/experiments/${experimentId}/batches`),
+  batch: (id: number) => request<BatchDetail>(`/api/batches/${id}`),
+  cancelBatch: (id: number) => request<BatchDetail>(`/api/batches/${id}/cancel`, { method: "POST" }),
   derived: (datasetId: number) => request<DerivedField[]>(`/api/datasets/${datasetId}/derived`),
   previewDerived: (datasetId: number, body: DerivedInput) =>
     request<DerivedPreview>(`/api/datasets/${datasetId}/derived/preview`, json("POST", body)),
@@ -249,6 +252,7 @@ export const api = {
     request<{ id: number; name: string }>(`/api/datasets/${datasetId}/derived`, json("POST", body)),
   removeDerived: (datasetId: number, fieldId: number) =>
     request<{ removed: string }>(`/api/datasets/${datasetId}/derived/${fieldId}`, { method: "DELETE" }),
+  run: (runId: number) => request<ModelRun>(`/api/runs/${runId}`),
   updateRun: (runId: number, body: { note?: string; chosen?: boolean }) =>
     request<ModelRun>(`/api/runs/${runId}`, json("PATCH", body)),
   runs: (datasetId: number, experimentId?: number) =>

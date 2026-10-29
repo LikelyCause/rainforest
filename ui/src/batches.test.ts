@@ -3,17 +3,25 @@ import {
   batchProgress,
   batchRequest,
   batchTag,
+  brierPair,
   buildSpace,
   capProblem,
   classPlan,
   distinctCombinations,
   defaultRanking,
+  describeSampler,
+  describeSpace,
+  oneVsRestValues,
   parseRange,
   rankingChoices,
   runCount,
+  searchChartData,
+  sortOvrRows,
+  variedSettings,
+  weakReasons,
   weightingClash,
 } from "./batches";
-import type { Batch, ClassCount, ModelSetting } from "./types";
+import type { Batch, BatchRow, ClassCount, LeaderboardEntry, ModelSetting } from "./types";
 
 // Each class as GET …/batch-plan gives it: the server's own reason for skipping it, or null.
 const plan: ClassCount[] = [
@@ -50,11 +58,17 @@ describe("classPlan", () => {
 });
 
 describe("batchTag", () => {
-  it("names a run's batch, or its number until the batches have loaded", () => {
-    const batches = [{ id: 4, name: "LightGBM · one model per class of vehicle" }] as Batch[];
-    expect(batchTag(batches, 4)).toBe("LightGBM · one model per class of vehicle");
-    expect(batchTag(undefined, 4)).toBe("Batch #4");
-    expect(batchTag(batches, 9)).toBe("Batch #9");
+  it("labels a run's batch by its kind and number, keeping its name for the tooltip", () => {
+    const batches = [
+      { id: 4, kind: "one_vs_rest", name: "LightGBM · one model per class of vehicle" },
+      { id: 3, kind: "search", name: "LightGBM · search over learning_rate" },
+    ] as Batch[];
+    expect(batchTag(batches, 4)).toEqual({ label: "Per class #4", name: "LightGBM · one model per class of vehicle" });
+    expect(batchTag(batches, 3)).toEqual({ label: "Search #3", name: "LightGBM · search over learning_rate" });
+  });
+  it("says only its number until the batches have loaded", () => {
+    expect(batchTag(undefined, 4)).toEqual({ label: "Batch #4", name: "Batch #4" });
+    expect(batchTag([], 9)).toEqual({ label: "Batch #9", name: "Batch #9" });
   });
 });
 
@@ -336,5 +350,185 @@ describe("batchProgress", () => {
       text: "10 of 1,213 done · 2 failed · 1 training · 1,200 waiting",
     });
     expect(batchProgress(batch({ done: 3, cancelled: 4 })).text).toBe("3 of 7 done · 4 cancelled");
+  });
+});
+
+const row = (o: Partial<BatchRow>): BatchRow => ({
+  run_id: 1,
+  status: "done",
+  status_message: null,
+  error: null,
+  label: null,
+  positive_class: "A",
+  retried: false,
+  fit_seconds: 1,
+  finished_at: null,
+  ...o,
+});
+const scores = (pr_auc: number | null) => ({ pr_auc, roc_auc: null, f1: null });
+
+describe("sortOvrRows", () => {
+  const rows = [
+    row({ run_id: 1, positive_class: "V10", valid: scores(0.7), positives: { train: 50, valid: 9, test: 40 } }),
+    row({ run_id: 2, positive_class: "V2", valid: scores(0.9), positives: { train: 900, valid: 90, test: 300 } }),
+    row({ run_id: 3, positive_class: "V3", status: "pending", valid: scores(null), positives: null }),
+    row({ run_id: 4, positive_class: "V1", valid: scores(0.4), positives: { train: 20, valid: 4, test: 12 } }),
+  ];
+  const ids = (r: BatchRow[]) => r.map((x) => x.run_id);
+
+  it("keeps the batch's own order when not sorted", () => {
+    expect(ids(sortOvrRows(rows, null, "desc"))).toEqual([1, 2, 3, 4]);
+  });
+  it("sorts a metric either way, with the rows that lack it last both times", () => {
+    expect(ids(sortOvrRows(rows, "valid.pr_auc", "desc"))).toEqual([2, 1, 4, 3]);
+    expect(ids(sortOvrRows(rows, "valid.pr_auc", "asc"))).toEqual([4, 1, 2, 3]);
+  });
+  it("sorts positives by split", () => {
+    expect(ids(sortOvrRows(rows, "positives.test", "asc"))).toEqual([4, 1, 2, 3]);
+  });
+  it("sorts classes as people read numbered names", () => {
+    expect(ids(sortOvrRows(rows, "class", "asc"))).toEqual([4, 2, 3, 1]);
+  });
+  it("puts weak rows first when sorted on weak", () => {
+    const flagged = [row({ run_id: 1, weak: false }), row({ run_id: 2, weak: true }), row({ run_id: 3, weak: null })];
+    expect(ids(sortOvrRows(flagged, "weak", "desc"))).toEqual([2, 1, 3]);
+  });
+  it("leaves its input alone", () => {
+    sortOvrRows(rows, "valid.pr_auc", "desc");
+    expect(ids(rows)).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe("weakReasons", () => {
+  const rule = { pr_auc: 0.6, test_positives: 30 };
+  it("names each limit a weak row is under, with the limit the server used", () => {
+    const r = row({ weak: true, valid: scores(0.42), positives: { train: 50, valid: 9, test: 12 } });
+    expect(weakReasons(r, rule)).toEqual([
+      "Validation PR AUC 0.420 is below 0.6 (OVR_WEAK_PR_AUC)",
+      "12 positives in test, fewer than 30",
+    ]);
+  });
+  it("gives no reasons for a row the server didn't flag, whatever its numbers", () => {
+    expect(weakReasons(row({ weak: false, valid: scores(0.42) }), rule)).toEqual([]);
+    expect(weakReasons(row({ weak: null }), rule)).toEqual([]);
+  });
+  it("still says why when the numbers on the row don't show it", () => {
+    const r = row({ weak: true, valid: scores(0.9), positives: { train: 1, valid: 1, test: 99 } });
+    expect(weakReasons(r, rule)).toEqual(["Validation PR AUC below 0.6 or fewer than 30 positives in test"]);
+  });
+});
+
+describe("brierPair", () => {
+  const valid = {
+    method: "sigmoid" as const,
+    valid_positives: 40,
+    valid_negatives: 400,
+    brier_before: 0.2,
+    brier_after: 0.1,
+  };
+  it("shows the test pair, since the validation pair is where the calibrator was fit", () => {
+    expect(brierPair({ ...valid, test: { brier_before: 0.21, brier_after: 0.12 } })).toEqual({
+      split: "test",
+      before: 0.21,
+      after: 0.12,
+    });
+  });
+  it("falls back to the validation pair when the export has no test rows", () => {
+    expect(brierPair(valid)).toEqual({ split: "valid", before: 0.2, after: 0.1 });
+    expect(brierPair(null)).toBeNull();
+  });
+});
+
+describe("oneVsRestValues", () => {
+  it("takes the batch's settings, the row's searched values over them, and the run fields", () => {
+    const spec = { params: { n_estimators: 200, learning_rate: 0.1 }, seed: 7, cv: 0 } as unknown as Batch["spec"];
+    expect(oneVsRestValues(spec, { learning_rate: 0.0312, num_leaves: 63 })).toEqual({
+      n_estimators: 200,
+      learning_rate: 0.0312,
+      num_leaves: 63,
+      seed: 7,
+      cv: 0,
+    });
+  });
+});
+
+describe("describeSpace and describeSampler", () => {
+  const space = {
+    learning_rate: { low: 0.0123456, high: 0.3, log: true, integer: false },
+    num_leaves: [15, 31, 63],
+    boosting_type: ["gbdt", "dart"],
+  };
+  it("names each axis with its values or range, numbers shortened as settings are", () => {
+    expect(describeSpace(space, catalog)).toEqual([
+      "Rate from 0.01235 to 0.3, log scale",
+      "Leaves 15, 31, 63",
+      "Boosting GBDT, DART",
+    ]);
+    expect(describeSpace({ max_depth: { low: 2, high: 9, log: false, integer: true } }, null)).toEqual([
+      "max_depth from 2 to 9, whole numbers",
+    ]);
+  });
+  it("says how the combinations were chosen", () => {
+    const grid = { num_leaves: [15, 31], boosting_type: ["gbdt", "dart"] };
+    expect(describeSampler({ kind: "grid", n: null, seed: 0 }, grid)).toBe("Grid · 4 combinations");
+    expect(describeSampler({ kind: "random", n: 20, seed: 3 }, space)).toBe("Random · 20 draws · seed 3");
+  });
+});
+
+const entry = (rank: number | null, value: number | null, settings: LeaderboardEntry["settings"]) => ({
+  rank,
+  value,
+  settings,
+  run_ids: [rank ?? 0],
+  classes: {},
+  cv_std: null,
+  fit_seconds: 1,
+});
+
+describe("variedSettings", () => {
+  it("lists the searched settings that take more than one value, in the space's order", () => {
+    const entries = [
+      entry(1, 0.9, { learning_rate: 0.1, num_leaves: 31, boosting_type: "gbdt" }),
+      entry(2, 0.8, { learning_rate: 0.2, num_leaves: 31, boosting_type: "dart" }),
+    ];
+    expect(variedSettings(entries, ["num_leaves", "learning_rate", "boosting_type"])).toEqual([
+      "learning_rate",
+      "boosting_type",
+    ]);
+  });
+});
+
+describe("searchChartData", () => {
+  const entries = [
+    entry(2, 0.8, { learning_rate: 0.2, boosting_type: "dart", num_leaves: 31 }),
+    entry(1, 0.9, { learning_rate: 0.05, boosting_type: "gbdt", num_leaves: 63 }),
+    entry(null, null, { learning_rate: 0.1, boosting_type: "gbdt", num_leaves: 15 }),
+  ];
+  const space = {
+    learning_rate: { low: 0.01, high: 0.3, log: true, integer: false },
+    boosting_type: ["gbdt", "dart"],
+    num_leaves: [15, 31, 63],
+  };
+  it("plots the ranked combinations against one setting, on a log axis when it is searched on one", () => {
+    const d = searchChartData(entries, "learning_rate", null, space, catalog);
+    expect(d.x).toEqual({ name: "learning_rate", label: "Rate", numeric: true, log: true, categories: [] });
+    expect(d.y).toBeNull();
+    expect(d.points).toEqual([
+      { x: 0.2, y: null, value: 0.8, rank: 2, settings: entries[0].settings },
+      { x: 0.05, y: null, value: 0.9, rank: 1, settings: entries[1].settings },
+    ]);
+  });
+  it("puts a choice on a category axis in the catalogue's order, by label", () => {
+    const d = searchChartData(entries, "boosting_type", "num_leaves", space, catalog);
+    expect(d.x).toMatchObject({ numeric: false, log: false, categories: ["GBDT", "DART"] });
+    expect(d.y).toMatchObject({ name: "num_leaves", numeric: true, log: false });
+    expect(d.points.map((p) => [p.x, p.y])).toEqual([
+      ["DART", 31],
+      ["GBDT", 63],
+    ]);
+  });
+  it("keeps a log axis off when a value isn't above 0", () => {
+    const d = searchChartData([entry(1, 0.9, { learning_rate: 0 })], "learning_rate", null, space, catalog);
+    expect(d.x.log).toBe(false);
   });
 });

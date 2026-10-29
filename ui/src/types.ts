@@ -681,6 +681,10 @@ export interface ModelRun {
     top_features?: Record<string, { feature: string; source: string; importance: number }[]>;
     /** Run of a private experiment: logged to MLflow once its recipe version reaches review. */
     mlflow_pending?: boolean;
+    /** A one-vs-rest run: precision, recall and F1 of its class at every 0.01 of threshold, per split. */
+    threshold_curve?: Record<string, ThresholdPoint[]>;
+    f1_threshold?: F1Threshold;
+    calibration?: Calibration;
   };
   experiment_id: number;
   created_by?: number | null;
@@ -1219,6 +1223,80 @@ export interface Batch {
   created_at: string;
   finished_at: string | null;
   counts: Record<"pending" | "running" | "done" | "failed" | "cancelled", number>;
+}
+
+export interface ThresholdPoint {
+  threshold: number;
+  precision: number;
+  recall: number;
+  f1: number;
+  flagged?: number;
+}
+/** A one-vs-rest run's threshold: the validation F1 maximum, its F1 on each split, and a note when there is none. */
+export interface F1Threshold {
+  threshold: number;
+  valid_f1: number | null;
+  test_f1: number | null;
+  note: string | null;
+}
+/** How a one-vs-rest run's scores were calibrated on validation. The validation Brier pair is in-sample (the
+ * calibrator was fit there); `test` holds the honest one. */
+export interface Calibration {
+  method: "isotonic" | "sigmoid";
+  valid_positives: number;
+  valid_negatives: number;
+  brier_before: number;
+  brier_after: number;
+  test?: { brier_before: number; brier_after: number };
+}
+export interface SplitScores {
+  pr_auc: number | null;
+  roc_auc: number | null;
+  f1: number | null;
+}
+
+/** One run of GET /api/batches/{id}. The one-vs-rest fields are there for a run with a positive class, the search
+ * fields for a search's runs. */
+export interface BatchRow {
+  run_id: number;
+  status: ModelRun["status"];
+  status_message: string | null;
+  error: string | null;
+  label: string | null;
+  positive_class: string | null;
+  retried: boolean;
+  fit_seconds: number | null;
+  finished_at: string | null;
+  positives?: { train: number; valid: number; test: number } | null;
+  threshold?: number | null;
+  threshold_note?: string | null;
+  calibration?: Calibration | null;
+  valid?: SplitScores;
+  test?: SplitScores;
+  /** Null until the run is done. */
+  weak?: boolean | null;
+  settings?: Record<string, SettingValue>;
+  value?: number | null;
+  cv_std?: number | null;
+}
+
+/** A search's combination, best first; unranked (`rank` null) until every one of its runs has the metric. */
+export interface LeaderboardEntry {
+  rank: number | null;
+  settings: Record<string, SettingValue>;
+  run_ids: number[];
+  value: number | null;
+  /** A one-vs-rest search: each class's value. */
+  classes: Record<string, number | null>;
+  cv_std: number | null;
+  fit_seconds: number;
+}
+
+export interface BatchDetail extends Batch {
+  rows: BatchRow[];
+  leaderboard?: LeaderboardEntry[];
+  /** OVR_WEAK_PR_AUC and the fewest test positives a class may have before its row is weak. */
+  weak_rule: { pr_auc: number; test_positives: number };
 }
 
 /** The 202 of starting a batch: `redraws` is how many random draws the checks threw away. */

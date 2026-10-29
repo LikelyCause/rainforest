@@ -2,14 +2,13 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
-import { batchProgress } from "../batches";
+import { batchProgress, KIND_LABEL } from "../batches";
 import { fmtAgo, fmtDate, fmtInt } from "../format";
 import type { Batch } from "../types";
 import { Chip, ProgressBar, StatusBadge } from "./kit";
 import { ErrorAlert } from "./ui";
 
 const SHOWN = 5;
-const KIND_LABEL: Record<Batch["kind"], string> = { one_vs_rest: "One per class", search: "Search" };
 
 /** The experiment's batches, newest first, each linking to its results; polled while one runs. */
 export function BatchList({ experimentId }: { experimentId: number }) {

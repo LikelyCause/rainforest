@@ -146,12 +146,16 @@ export function describeSettings(
   return entries
     .map(([k, v]) => {
       const s = settings?.find((x) => x.name === k);
-      // A choice is named by its exact value, so only free numbers are shortened.
-      const short = !exact && s?.kind !== "choice" && typeof v === "number" && !Number.isInteger(v);
-      const shown = short ? Number((v as number).toPrecision(4)) : v;
-      return `${s?.label ?? k} ${fmtSetting(s, shown)}`;
+      return `${s?.label ?? k} ${settingText(s, v, exact)}`;
     })
     .join(" · ");
+}
+
+/** One setting's value as describeSettings shows it. */
+export function settingText(s: ModelSetting | undefined, v: SettingValue, exact = false): string {
+  // A choice is named by its exact value, so only free numbers are shortened.
+  const short = !exact && s?.kind !== "choice" && typeof v === "number" && !Number.isInteger(v);
+  return fmtSetting(s, short ? Number((v as number).toPrecision(4)) : v);
 }
 
 /** A folded settings group's one line: what changed in it, else its first few values and "defaults". A long group
