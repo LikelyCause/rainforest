@@ -784,9 +784,10 @@ export function RunDetail({
         ? `${run.config.cv_folds}-fold cross-validation`
         : null,
   ].filter(Boolean);
-  const settingsText = [describeSettings(params, settings), ...extra]
-    .filter((x) => x !== "defaults" || !extra.length)
-    .join(" · ");
+  const describe = (exact: boolean) =>
+    [describeSettings(params, settings, exact), ...extra].filter((x) => x !== "defaults" || !extra.length).join(" · ");
+  const settingsText = describe(false);
+  const exactSettings = describe(true);
   const metrics = run.metrics?.[split];
   const top = run.report?.top_features ?? {};
   const label = runLabel(run, option);
@@ -812,7 +813,10 @@ export function RunDetail({
       <div className="stack exp-gap-1 run-title">
         <h2 id={`run-${run.id}-title`}>{label}</h2>
         <span className="secondary small-text">
-          Run {run.id} · <span title="Settings changed from the defaults">{settingsText}</span>
+          Run {run.id} ·{" "}
+          <span title={exactSettings !== settingsText ? exactSettings : "Settings changed from the defaults"}>
+            {settingsText}
+          </span>
           {prediction ? ` · predicts ${prediction}` : ""}
         </span>
       </div>
