@@ -95,8 +95,8 @@ export function ConfusionTable({
                 actual ↓<br />
                 predicted →
               </th>
-              {columns.map((l) => (
-                <th key={l} scope="col" title={l}>
+              {columns.map((l, j) => (
+                <th key={j} scope="col" title={l}>
                   {l}
                 </th>
               ))}

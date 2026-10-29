@@ -81,6 +81,11 @@ export function DeployDialog({
   });
   // A refusal is about the request as it was sent; once the form changes it no longer applies.
   const edit = () => create.isError && create.reset();
+  // Once sent, the deployment may be created whatever the dialog does, and success opens it; so the dialog stays
+  // open (Cancel, Escape and the overlay alike) until the check answers.
+  const close = () => {
+    if (!create.isPending) onClose();
+  };
   const setOverride = (runId: number, d: RuleDraft | null) => {
     edit();
     setOverrides((o) => {
@@ -96,7 +101,7 @@ export function DeployDialog({
     <Dialog
       title="Deploy"
       wide
-      onClose={onClose}
+      onClose={close}
       labelledBy="deploy-title"
       actions={
         <>
@@ -119,7 +124,7 @@ export function DeployDialog({
               </span>
             )
           )}
-          <button type="button" onClick={onClose}>
+          <button type="button" onClick={close} disabled={create.isPending}>
             Cancel
           </button>
           <button
