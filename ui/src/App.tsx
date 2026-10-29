@@ -33,6 +33,8 @@ import { BulkEditPage } from "./pages/BulkEditPage";
 import { ExperimentPage, ExperimentsPage } from "./pages/ExperimentsPage";
 import { ExplorePage } from "./pages/ExplorePage";
 import { BatchPage } from "./pages/BatchPage";
+import { DeploymentsPage } from "./pages/DeploymentsPage";
+import { DeploymentPage } from "./pages/DeploymentPage";
 import { DatasetTeamPage } from "./pages/DatasetTeamPage";
 import { DatasetLayout, useDatasetContext } from "./components/DatasetLayout";
 import { ErrorAlert } from "./components/ui";
@@ -45,7 +47,7 @@ import type { Access } from "./team";
 
 /* ------------------------------------------------------------------ first row: where you are */
 
-/** Fields, Explore, Baseline, Experiments: the four places inside a dataset. */
+/** Fields, Explore, Baseline, Experiments, Deployments: the places inside a dataset. */
 function DatasetTabs({ ds }: { ds: Dataset }) {
   const nav = useNavigate();
   const view = useView();
@@ -132,6 +134,7 @@ function DatasetTabs({ ds }: { ds: Dataset }) {
             </>
           ),
         },
+        { to: `/d/${ds.id}/deployments`, label: "Deployments" },
       ]}
     />
   );
@@ -639,6 +642,8 @@ export default function App() {
             <Route path="experiments" element={<ExperimentsPage />} />
             <Route path="experiments/:experimentId" element={<ExperimentPage />} />
             <Route path="experiments/:experimentId/batches/:batchId" element={<BatchPage />} />
+            <Route path="deployments" element={<DeploymentsPage />} />
+            <Route path="deployments/:deploymentId" element={<DeploymentPage />} />
             <Route path="team" element={<DatasetTeamPage />} />
             <Route path="baseline" element={<BaselinePage />} />
             <Route path="baselines" element={<BaselinesPage />} />

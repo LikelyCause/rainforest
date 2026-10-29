@@ -248,6 +248,32 @@ table.data tr.batch-top td.batch-value { font-weight: 700; }
 .batch-progress .meter { width: 80px; flex: none; }
 .batch-progress b { font-weight: 600; color: var(--text-primary); }
 
+/* ------------------------------------------------------------------ deployments: the dialog, the list and a deployment's page */
+.deploy-rule { gap: 8px 12px; align-items: center; flex-wrap: wrap; }
+.deploy-rule-value { width: 96px; }
+.deploy-overrides summary { cursor: pointer; color: var(--text-secondary); }
+.deploy-overrides .batch-classes { margin-top: 8px; }
+.deploy-progress { display: inline-flex; align-items: center; gap: 8px; }
+.deployments-page table.data td { vertical-align: middle; }
+.deployments-page .table-wrap { max-height: none; }
+.deployments-page td.deploy-batch { min-width: 180px; }
+.deployment-page h3.deploy-h3 { margin: 0; font-size: var(--fs-body); font-weight: 600; }
+.deploy-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); align-items: start; }
+@media (min-width: 1100px) { .deploy-grid { grid-template-columns: minmax(0, 3fr) minmax(380px, 2fr); } }
+.deploy-models { max-height: 420px; overflow-y: auto; }
+.deploy-key-form { gap: 8px; flex-wrap: nowrap; }
+.deploy-key-form input { flex: 1 1 auto; min-width: 0; }
+.deploy-key-once { display: block; margin-bottom: 6px; }
+table.data tr.deploy-revoked td { color: var(--text-muted); }
+.deploy-fields { margin: 6px 0 0; padding-left: 18px; columns: 2 220px; }
+.deploy-tiles { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.deploy-notes { margin: 0; padding-left: 18px; }
+table.data.deploy-warnings { margin-top: 6px; width: auto; background: transparent; }
+table.data.deploy-warnings th, table.data.deploy-warnings td { padding: 4px 12px 4px 0; background: transparent; }
+.deploy-results { max-height: 70vh; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.deploy-results table.data th { position: sticky; top: 0; z-index: 1; background: var(--surface-1); }
+button.link.deploy-test-open { text-align: left; overflow-wrap: anywhere; }
+
 /* Model settings: one folding group per line, its summary when folded. */
 .card.model-settings { padding: 0; overflow: hidden; }
 .ms-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 12px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
