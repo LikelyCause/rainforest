@@ -271,8 +271,12 @@ Rainforest suggests the defaults above. It also offers options it never suggests
 | Option | Fields | Families | What it does |
 |---|---|---|---|
 | Yeo-Johnson (power transform) | numeric | Linear, Neural / distance | Makes skewed numbers closer to normal, and handles zero and negative values, unlike a log. It doesn't standardize: scaling stays its own setting. |
+| Target encoding | categorical | Trees, Linear, Neural / distance | Replaces each level with the target's average for it: one column for a two-class or number target, and one per class for a target with more classes, named `<field>_<class>`. Settings: *Target* (default: the first target in the chain's order), *Smoothing* (Auto, or 0–1,000) and *Folds* (2–10, default 5). |
 
-Tree ensembles aren't offered it, because a monotonic transform can't change a split.
+Tree ensembles aren't offered Yeo-Johnson, because a monotonic transform can't change a split.
+
+The rows a target encoding is learned from get values from folds that leave each row out, so no row is encoded with
+its own target. Tree ensembles gain most on fields with many levels, such as diagnosis codes.
 
 ## Associations and the leak screen
 

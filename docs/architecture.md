@@ -51,7 +51,7 @@ per team, and is the seed of a separate deploy repository. See [deploy/README.md
 | `profiling.py` | Type inference (a numeric target column stays numeric, including whole numbers that look like keys or dates), statistics, charts, association sample vectors, `coerce_numeric`. |
 | `correlations.py` | Pairwise associations (Spearman, Cramér's V, correlation ratio). |
 | `semantics.py` | Model families, semantic types, allowed settings per family and type, suggestions, validation, target tasks (`default_task`, `target_problem`, `bins_problem`), the option catalog. |
-| `transforms/` (`registry.py`, `builtin.py`) | The transformer registry (`TransformSpec`: the sklearn transformers a field's `transform` or `encoding` can name besides the fixed options), its built-ins, and the encoders' parameters as settings. |
+| `transforms/` (`registry.py`, `builtin.py`) | The transformer registry (`TransformSpec`: the sklearn transformers a field's `transform` or `encoding` can name besides the fixed options), its built-ins (Yeo-Johnson and target encoding), `PickTarget`, which hands a target-aware transformer one target's column, and the encoders' parameters as settings. |
 | `derived.py` | Derived fields: the formula parser (an AST walk to a polars expression, nothing else evaluated), value groups and counts, spec checks. |
 | `processing.py` | The dataset pipeline (`process_dataset`), suggestion seeding, target-derived state (`refresh_target_state`), file cleanup. |
 | `transform.py` | Export: row rules (`row_rules`: duplicates, excluded values, first row per key, group codes), targets and split (`prepare_targets`: class codes, one-vs-rest, float64 numbers, bands cut on the training rows; numbers stratified on bands; `GroupShuffleSplit` when rows are kept together), fit preprocessing on train rows, chunked transform, manifest. |
@@ -204,6 +204,9 @@ the UI polls (`pending → running → done | failed`, with `progress` and `stat
    derived fields (`derived`), which the export's script (`export_code`, written on request by
    `GET /api/exports/{id}/files/code`) computes from the original data. The preview runs the numeric target
    checks first (`exports._numeric_target_problems`), so values that don't read as numbers block before queueing.
+   `run_export` fits the preprocessor on the fit rows with their encoded targets (`fit_preprocessor`), keeps the
+   target-aware columns' cross-fitted output for those rows, and writes it over the chunked transform
+   (`apply_out_of_fold`).
 8. **Training.** `POST /api/exports/{id}/runs` checks model compatibility and the requested device (see `gpu.py`) and submits `runs._run`, which calls
    `modeling.train.train` and writes `models/run<id>_…/{classifier_chain.joblib, report.json}` (the joblib holds a
    `ClassifierChain` or a `TargetChain`, named by `report.chain_kind`). With `cv_folds` K, after the final fit and

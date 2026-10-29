@@ -24,6 +24,7 @@ export const GROUP_LABEL: Record<string, string> = {
 };
 
 const fmt = (v: number | null) => (v === null ? "" : String(Number(v.toPrecision(6))));
+const optional = (s: ModelSetting) => s.kind === "int_or_none" || s.kind === "float_or_none";
 
 /** What's wrong with a value for a setting (the API's rule), or null. */
 export function settingProblem(s: ModelSetting, v: SettingValue | undefined): string | null {
@@ -33,7 +34,8 @@ export function settingProblem(s: ModelSetting, v: SettingValue | undefined): st
       : `must be one of ${(s.options ?? []).map((o) => o.label).join(", ")}`;
   }
   if (s.kind === "bool") return typeof v === "boolean" ? null : "must be on or off";
-  if (s.kind === "int_or_none" && v === s.none_value) return null;
+  if (s.kind === "target") return v === null || (typeof v === "string" && v !== "") ? null : "must be a target's name";
+  if (optional(s) && v === s.none_value) return null;
   if (typeof v !== "number" || !Number.isFinite(v)) return "must be a number";
   if ((s.kind === "int" || s.kind === "int_or_none") && !Number.isInteger(v)) return "must be a whole number";
   if ((s.min !== null && v < s.min) || (s.max !== null && v > s.max)) {
@@ -125,7 +127,7 @@ export function prefillValues(
 export function fmtSetting(s: ModelSetting | undefined, v: SettingValue): string {
   return s?.kind === "choice"
     ? (s.options?.find((o) => o.value === v)?.label ?? String(v))
-    : s?.kind === "int_or_none" && v === s.none_value
+    : s && optional(s) && v === s.none_value
       ? (s.none_label ?? String(v))
       : typeof v === "boolean"
         ? v
@@ -172,4 +174,17 @@ export function groupSummary(rows: ModelSetting[], values: Record<string, Settin
     .map((s) => `${s.label} ${fmtSetting(s, s.default)}`)
     .join(" · ");
   return `${head}${rows.length > max ? ` · ${rows.length - max} more` : ""} · defaults`;
+}
+
+/** A target setting as a choice of the source's targets in chain order; a stored name that isn't one stays listed,
+ * disabled, so the panel shows what is saved. */
+export function targetChoice(s: ModelSetting, targets: string[], value: SettingValue): ModelSetting {
+  const first = s.none_label ?? "First target";
+  const options: NonNullable<ModelSetting["options"]> = [
+    { value: null, label: targets.length ? `${first} (${targets[0]})` : first },
+    ...targets.map((t) => ({ value: t, label: t })),
+  ];
+  if (typeof value === "string" && !targets.includes(value))
+    options.push({ value, label: `${value} (not a target here)`, disabled: true });
+  return { ...s, kind: "choice", options };
 }

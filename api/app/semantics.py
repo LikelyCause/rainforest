@@ -319,10 +319,13 @@ def option_catalog() -> dict[str, Any]:
     }
 
 
-def validate_decision(d: dict[str, Any], family: str = DEFAULT_FAMILY, n_unique: int | None = None) -> list[str]:
+def validate_decision(
+    d: dict[str, Any], family: str = DEFAULT_FAMILY, n_unique: int | None = None, targets: list[str] | None = None
+) -> list[str]:
     """Return a list of problems; empty means the decision is coherent for this family.
 
-    `n_unique` (the field's distinct values) is needed to check the level limit on targets.
+    `n_unique` (the field's distinct values) is needed to check the level limit on targets. `targets` (the source's
+    targets) is checked against a target-aware option's `params.target` when given.
     """
     errors: list[str] = []
     t = d.get("semantic_type")
@@ -374,6 +377,12 @@ def validate_decision(d: dict[str, Any], family: str = DEFAULT_FAMILY, n_unique:
         errors += transforms.param_problems(spec, d.get("params"))
         if not spec.handles_nan and d.get("imputation") == "none":
             errors.append(f"{spec.label} needs missing values filled; choose an imputation")
+        if spec.needs_target and targets is not None:
+            name = (d.get("params") or {}).get("target")
+            if name is not None and name not in targets:
+                errors.append(
+                    f"params.target {name!r} isn't one of this source's targets ({', '.join(targets) or 'none'})"
+                )
     return errors
 
 

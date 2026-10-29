@@ -100,7 +100,7 @@ export function fmtValue(v: unknown): string {
   if (typeof v === "boolean") return v ? "yes" : "no";
   if (typeof v === "object") {
     const entries = Object.entries(v as Record<string, unknown>);
-    return entries.length ? entries.map(([k, x]) => `${k}=${String(x)}`).join(", ") : "—";
+    return entries.length ? entries.map(([k, x]) => `${k}=${x === null ? "auto" : String(x)}`).join(", ") : "—";
   }
   return typeName(String(v));
 }

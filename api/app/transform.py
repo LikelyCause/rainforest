@@ -2,14 +2,15 @@
 
 Pipeline per field (only `action == keep`):
     numeric      : [SimpleImputer] -> [clip | signed-log1p | a registry transform] -> [scaler]   (+ optional missing indicator)
-    categorical  : SimpleImputer -> OneHot | Ordinal | Frequency
+    categorical  : SimpleImputer -> OneHot | Ordinal | Frequency | a registry encoding
     binary       : 0/1 (+ missing indicator when missing values get their own label)
     text         : TF-IDF -> TruncatedSVD   |   length / word-count stats
     datetime     : date parts + epoch days -> [SimpleImputer]
 
 Leakage hygiene: the split is assigned first and every statistic (medians, vocabularies,
 category levels, scaler params) is fitted on training rows only. Fitting uses a sample of
-the training split; transformation streams through the full file in chunks.
+the training split; transformation streams through the full file in chunks. Target-aware
+steps fit with the targets, and their values on the fit rows are written out of fold.
 """
 
 from __future__ import annotations
@@ -56,6 +57,7 @@ from .semantics import (
     NUMERIC,
     grouped_target,
 )
+from .transforms import PickTarget, TargetInfo
 
 SPLIT_COL = "__split"
 ROW_ID = "__row_id"
@@ -293,7 +295,7 @@ SCALERS = {
 }
 
 
-def _numeric_pipeline(f: FieldSpec, seed: int = 0) -> Pipeline | str:
+def _numeric_pipeline(f: FieldSpec, seed: int = 0, targets: tuple[TargetInfo, ...] = ()) -> Pipeline | str:
     steps: list[tuple[str, Any]] = []
     # Fill first, so a constant fill value is in the field's own units, not log or clipped ones.
     if f.imputation != "none":
@@ -306,21 +308,34 @@ def _numeric_pipeline(f: FieldSpec, seed: int = 0) -> Pipeline | str:
     elif f.transform == "log1p":
         steps.append(("log1p", SignedLog1p()))
     elif f.transform != "none":
-        steps.append(("transform", _registered(f, f.transform, seed)))
+        steps.append(("transform", _registered(f, f.transform, seed, targets)))
     if f.scaling in SCALERS:
         steps.append(("scale", SCALERS[f.scaling]()))
     return Pipeline(steps) if steps else "passthrough"
 
 
-def _registered(f: FieldSpec, key: str, seed: int):
+def _registered(f: FieldSpec, key: str, seed: int, targets: tuple[TargetInfo, ...] = ()):
     spec = transforms.get(key)
     if spec is None or not spec.available:
         # The export preview blocks unavailable options; reaching here means a check was skipped.
         raise ValueError(f"{f.name}: {key!r} isn't available on this server")
-    return spec.build(transforms.params_for(spec, f.params), transforms.BuildContext(seed=seed))
+    params = transforms.params_for(spec, f.params)
+    if not spec.needs_target:
+        return spec.build(params, transforms.BuildContext(seed=seed, targets=targets))
+    if not targets:
+        raise ValueError(f"{f.name}: {spec.label} needs the export's targets")
+    name = params.get("target")
+    target = targets[0] if name is None else next((t for t in targets if t.name == name), None)
+    if target is None:
+        # The export preview blocks this too.
+        raise ValueError(f"{f.name}: {spec.label} uses {name!r}, which this export doesn't predict")
+    step = spec.build(params, transforms.BuildContext(seed=seed, targets=targets, target=target))
+    return PickTarget(step, target.name, target.kind, target.classes)
 
 
-def _categorical_pipeline(f: FieldSpec) -> Pipeline | BinaryEncoder:
+def _categorical_pipeline(
+    f: FieldSpec, seed: int = 0, targets: tuple[TargetInfo, ...] = ()
+) -> Pipeline | BinaryEncoder:
     if f.semantic_type == "binary" or f.encoding == "binary":
         return BinaryEncoder("most_frequent" if f.imputation == "most_frequent" else f.impute_value)
     if f.imputation == "most_frequent":
@@ -349,11 +364,13 @@ def _categorical_pipeline(f: FieldSpec) -> Pipeline | BinaryEncoder:
     elif f.encoding == "frequency":
         enc = FrequencyEncoder()
     else:
-        raise ValueError(f"{f.name}: {f.encoding!r} isn't available on this server")
+        enc = _registered(f, f.encoding, seed, targets)
     return Pipeline([("impute", imputer), ("encode", enc)])
 
 
-def build_preprocessor(specs: list[FieldSpec], seed: int = 0) -> ColumnTransformer:
+def build_preprocessor(
+    specs: list[FieldSpec], seed: int = 0, targets: tuple[TargetInfo, ...] = ()
+) -> ColumnTransformer:
     transformers: list[tuple[str, Any, Any]] = []
     sources: dict[str, str] = {}  # transformer name -> source field
     # A step may not share a name with a ColumnTransformer argument (a field called "remainder").
@@ -373,13 +390,13 @@ def build_preprocessor(specs: list[FieldSpec], seed: int = 0) -> ColumnTransform
     for f in specs:
         t = f.semantic_type
         if t in NUMERIC:
-            transformers.append((tname(f.name), _numeric_pipeline(f, seed), [f.name]))
+            transformers.append((tname(f.name), _numeric_pipeline(f, seed, targets), [f.name]))
             if f.add_missing_indicator:
                 transformers.append(
                     (tname(f.name, "_isna"), MissingIndicator(features="all", error_on_new=False), [f.name])
                 )
         elif t in ("categorical", "binary"):
-            transformers.append((tname(f.name), _categorical_pipeline(f), [f.name]))
+            transformers.append((tname(f.name), _categorical_pipeline(f, seed, targets), [f.name]))
         elif t == "text":
             p = {**DEFAULT_PARAMS["tfidf_svd"], **(f.params or {})}
             transformers.append(
@@ -519,8 +536,8 @@ def safe_feature_names(names: list[str], reserved: Iterable[str] = ()) -> list[s
 
 
 # =========================================================================== export
-def estimated_width(specs: list[FieldSpec]) -> int:
-    """Upper bound on the output features, known before fitting."""
+def estimated_width(specs: list[FieldSpec], target_classes: dict[str, int] | None = None) -> int:
+    """Upper bound on the output features, known before fitting. `target_classes`: each class target's class count."""
     n = 0
     for f in specs:
         p = {**DEFAULT_PARAMS.get(f.encoding, {}), **(f.params or {})}
@@ -534,6 +551,8 @@ def estimated_width(specs: list[FieldSpec]) -> int:
             n += int(p.get("max_categories", 30))
         elif f.semantic_type == "binary":
             n += 2
+        elif (spec := transforms.get(f.encoding)) is not None and spec.needs_target:
+            n += max([k for k in (target_classes or {}).values() if k > 2], default=1)
         else:
             n += 1
     return max(n, 1)
@@ -554,6 +573,56 @@ def transform_into(pre: ColumnTransformer, frame: pd.DataFrame, n_out: int) -> n
 def rows_for_budget(mb: int, width: int, floor: int = 1_000) -> int:
     """Rows whose dense float64 output fits in `mb` megabytes."""
     return max(floor, (mb << 20) // (8 * max(width, 1)))
+
+
+def target_infos(targets: list[str], tasks: dict[str, str], classes: dict[str, list[str]]) -> tuple[TargetInfo, ...]:
+    """The export's targets in chain order, as target-aware transformers fit on them."""
+    return tuple(
+        TargetInfo(t, "continuous")
+        if tasks[t] == "regression"
+        else TargetInfo(t, "binary" if len(classes[t]) == 2 else "multiclass", tuple(classes[t]))
+        for t in targets
+    )
+
+
+def fit_sample(train_idx: np.ndarray, seed: int, size: int) -> np.ndarray:
+    return np.sort(np.random.default_rng(seed).choice(train_idx, size=size, replace=False))
+
+
+def _pick(trans: Any) -> PickTarget | None:
+    if isinstance(trans, PickTarget):
+        return trans
+    steps = trans.steps if isinstance(trans, Pipeline) else []
+    return next((s for _, s in steps if isinstance(s, PickTarget)), None)
+
+
+def fit_preprocessor(pre: ColumnTransformer, frame: pd.DataFrame, y_fit: pd.DataFrame) -> dict[str, np.ndarray]:
+    """Fit `pre` on the fit rows. Returns each target-aware transformer's cross-fitted output on those rows: fit_transform
+    gives out-of-fold values, while a later transform would encode each fit row partly from its own target."""
+    aware = {name: p for name, trans, _ in pre.transformers if (p := _pick(trans)) is not None}
+    for name, p in aware.items():
+        if p.kind == "continuous":
+            continue
+        present = set(np.asarray(y_fit[p.target]).astype(np.int64).tolist())
+        if missing := [c for i, c in enumerate(p.classes) if i not in present]:
+            raise ValueError(
+                f"{pre.rainforest_sources_[name]}: class {missing[0]!r} of {p.target!r} has no rows in the fit sample, "
+                "so target encoding can't give it a column. Raise the fit sample, or encode on another target."
+            )
+    out = pre.fit_transform(frame, y_fit)
+    return {name: np.asarray(out[:, pre.output_indices_[name]], dtype=np.float32) for name in aware}
+
+
+def apply_out_of_fold(
+    X: np.ndarray, rows: np.ndarray, fit_idx: np.ndarray, oof: dict[str, np.ndarray], pre: ColumnTransformer
+) -> None:
+    if not oof or fit_idx.size == 0:
+        return
+    pos = np.searchsorted(fit_idx, rows)
+    hit = pos < fit_idx.size
+    hit[hit] = fit_idx[pos[hit]] == rows[hit]
+    for name, block in oof.items():
+        X[hit, pre.output_indices_[name]] = block[pos[hit]]
 
 
 def assign_splits(
@@ -955,13 +1024,17 @@ def run_export(
     # 2. fit preprocessor on a training sample ---------------------------------------
     progress(0.08, "Fitting preprocessing pipeline on training rows")
     train_idx = np.flatnonzero(split == 0)
-    rng = np.random.default_rng(seed)
     # Fitting materialises the whole fit sample's output, so wide exports fit on fewer rows.
-    fit_cap = rows_for_budget(settings.export_fit_mb, estimated_width(specs))
-    fit_idx = np.sort(rng.choice(train_idx, size=min(fit_rows, fit_cap, train_idx.size), replace=False))
+    n_classes = {t: len(classes[t]) for t in targets if tasks[t] != "regression"}
+    fit_cap = rows_for_budget(settings.export_fit_mb, estimated_width(specs, n_classes))
+    fit_idx = fit_sample(train_idx, seed, min(fit_rows, fit_cap, train_idx.size))
     feature_cols = [f.name for f in specs]
-    pre = build_preprocessor(specs, seed)
-    pre.fit(to_pandas_frame(read_rows(parquet_path, feature_cols, fit_idx), specs, coercion_exprs(specs), consume=True))
+    pre = build_preprocessor(specs, seed, target_infos(targets, tasks, classes))
+    oof = fit_preprocessor(
+        pre,
+        to_pandas_frame(read_rows(parquet_path, feature_cols, fit_idx), specs, coercion_exprs(specs), consume=True),
+        y_enc.iloc[fit_idx].reset_index(drop=True),
+    )
     coercers = coercion_exprs(specs)  # fresh, so inf counts cover the written rows only
     raw_names = readable_feature_names(pre)
     feat_names = safe_feature_names(raw_names, reserved=[ROW_ID, SPLIT_COL, *targets])
@@ -997,6 +1070,7 @@ def run_export(
             del df
             X = transform_into(pre, frame, len(feat_names))
             del frame
+            apply_out_of_fold(X, rows, fit_idx, oof, pre)
             for k in range(X.shape[1]):
                 nan_counts[k] += np.count_nonzero(np.isnan(X[:, k]))
             if not FAMILIES[family]["handles_nan"] and nan_counts.any():
@@ -1041,6 +1115,10 @@ def run_export(
         "split_counts": split_counts,
         "split_info": split_info,
         "fit_sample_rows": int(fit_idx.size),
+        "out_of_fold_features": [
+            feat_names[k] for n in oof for k in range(pre.output_indices_[n].start, pre.output_indices_[n].stop)
+        ],
+        "target_aware": {pre.rainforest_sources_[n]: _target_aware(pre, n, feat_names, specs) for n in oof},
         "chunk_rows": chunk_rows,
         "fit_mb": settings.export_fit_mb,  # the budgets that capped them, so an export's script can apply them too
         "chunk_mb": settings.export_chunk_mb,
@@ -1056,6 +1134,21 @@ def run_export(
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, default=_json_default))
     progress(1.0, "Done")
     return manifest
+
+
+def _target_aware(pre: ColumnTransformer, name: str, feat_names: list[str], specs: list[FieldSpec]) -> dict[str, Any]:
+    """What a target-aware field was fit on, and which class each of its features averages: sklearn orders a
+    multiclass encoder's columns by sorted label, and safe_feature_names can merge labels such as "<30" and ">30"."""
+    p = _pick(pre.named_transformers_[name])
+    f = next(s for s in specs if s.name == pre.rainforest_sources_[name])
+    sl = pre.output_indices_[name]
+    labels = [str(c) for c in p.transformer_.classes_] if p.kind == "multiclass" else [None]
+    return {
+        "key": f.encoding if transforms.get(f.encoding) else f.transform,
+        "target": p.target,
+        "kind": p.kind,
+        "features": dict(zip(feat_names[sl.start : sl.stop], labels)),
+    }
 
 
 def _feature_sources(pre: ColumnTransformer, feat_names: list[str]) -> dict[str, str]:

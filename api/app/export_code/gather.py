@@ -18,7 +18,7 @@ import pyarrow.parquet as pq
 import sklearn
 
 from .. import derived as derived_fields
-from .. import recipes
+from .. import recipes, transforms
 from ..config import get_settings
 from ..db import connection, execute, jsonb
 from ..ingest import _sink
@@ -108,6 +108,11 @@ def info_for(export_id: int) -> ExportInfo:
         )
     if set(tasks) != set(names):
         raise CodeUnavailable("The export's targets no longer match its snapshot.")
+    # The script fits its preprocessor without targets, and a target-aware encoding needs them and out-of-fold values.
+    if encoded := [s.name for s in specs if (t := transforms.get(s.encoding)) is not None and t.needs_target]:
+        raise CodeUnavailable(
+            f"The export target-encodes {', '.join(map(repr, encoded))}, which its script can't rebuild yet."
+        )
 
     now_derived = [{"name": r["name"], **r["derived"]} for r in fields_rows if r["derived"] is not None]
     derived_list = config["derived"] if "derived" in config else now_derived

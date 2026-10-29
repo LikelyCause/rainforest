@@ -148,6 +148,7 @@ It warns about:
 - targets that differ from the baseline's
 - a baseline finalized before the connected dataset's latest pull (*Baseline finalized before pull #3; consider a new
   version*)
+- target-encoded fields that follow a first target other than the baseline's
 
 These block the export:
 
@@ -160,6 +161,7 @@ These block the export:
 - a target class with a single row
 - a numeric target with values that don't read as numbers, or with a single value
 - a band with fewer than 2 rows
+- a target-encoded field whose target the experiment doesn't predict
 
 Once an export exists, it shows how many decisions changed since, with *Re-export with same split*.
 
@@ -219,6 +221,9 @@ Both the fit and the transform are sized by output width:
 So a wide export fits on fewer rows. The manifest records `fit_sample_rows` and `chunk_rows`. Peak memory runs at a
 few times these budgets. A 300k-row export peaks at about 1.3–2 GB.
 
+The fit sample is also where target encodings are learned. A target encoding needs every class of its target in it,
+or the export stops and says which class is missing.
+
 ### Output
 
 An export writes:
@@ -228,8 +233,12 @@ An export writes:
 - `__row_id`, which joins back to `raw.ds_<id>`
 - the targets
 - `preprocessor.joblib`, the fitted preprocessor
-- `manifest.json`: feature → source field, class mappings, model family, a NaN report, and `inf_values` (±inf per
-  field, written as missing)
+- `manifest.json`: feature → source field, class mappings, model family, a NaN report, `inf_values` (±inf per
+  field, written as missing), `out_of_fold_features`, and `target_aware` (per target-encoded field: the option, the
+  target, its kind, and which class each feature averages)
+
+On the fit rows (the `fit_sample_rows` training rows drawn with the export's seed), the `out_of_fold_features` hold
+out-of-fold values, so they differ from `preprocessor.transform` there by design. Every other row matches it.
 
 Feature names never take a target's name, `__row_id` or `__split`. A clashing feature gets a numbered suffix.
 
@@ -263,6 +272,8 @@ The manifest records:
 - A field retyped to a date has its date format detected once over the whole column when you save. A date field with
   no recorded format has it detected over the whole column when the export starts. So every chunk of the export, and
   scoring, read it the same way.
+- A target-encoded field's columns average its target. Refitting `preprocessor.joblib` needs `y` as a DataFrame with
+  that target's column, encoded as the export writes it. `transform` needs no target.
 
 ## Training
 
@@ -362,7 +373,8 @@ Where the data comes from:
 | A generated sample | Makes it again with the app's generator and the settings it was made with, and takes no file. A sample generated before Rainforest recorded those settings is recognised by its default name when making it again gives the same data; otherwise the script can't be written, and generating the sample again fixes that |
 
 The script is written when you ask for it, by the app as it is then. An export made by an earlier version whose
-library versions differ says so in the script's header; its check then shows whether the result still matches.
+library versions differ says so in the script's header; its check then shows whether the result still matches. An
+export that target-encodes a field can't be written as a script, and *Python script (.py)* says so.
 
 ### Chains
 
@@ -490,6 +502,8 @@ long.
 - The run detail's cross-validation view shows how long the folds took. Under *Per fold*, it shows every fold's
   scores.
 - Cross-validation is separate from *Chain folds*, which only decides what chained targets pass down.
+- Target encodings' out-of-fold values come from the export's own folds, not cross-validation's. So cross-validation
+  scores on target-encoded features are slightly optimistic. Validation and test scores aren't affected.
 
 ## Metrics
 
