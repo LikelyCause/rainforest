@@ -170,7 +170,8 @@ function SpaceEditor({
         const error = buildSpace([a], catalog).error;
         const started = a.mode === "list" ? a.values.length > 0 : Boolean(a.low.trim() || a.high.trim());
         return (
-          <div key={i} className="batch-axis stack exp-gap-1">
+          // Keyed by setting, so a half-typed value stays with its setting when another axis is removed or changed.
+          <div key={a.name} className="batch-axis stack exp-gap-1">
             <div className="row batch-axis-row">
               <select
                 aria-label={`Setting ${i + 1}`}
