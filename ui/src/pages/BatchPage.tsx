@@ -7,6 +7,7 @@ import {
   brierPair,
   describeSampler,
   describeSpace,
+  describeThreshold,
   KIND_LABEL,
   LOWER_IS_BETTER,
   METRIC_NAME,
@@ -111,7 +112,9 @@ function CurvePanel({ row }: { row: BatchRow }) {
       <dl className="batch-from batch-curve-facts num">
         <dt>Threshold</dt>
         <dd>
-          {fmtNum(row.threshold, 2)}, the highest F1 on validation
+          {row.threshold === null || row.threshold === undefined
+            ? "—"
+            : describeThreshold(row.threshold, row.threshold_note)}
           {row.threshold_note && <div className="batch-note-text">{row.threshold_note}</div>}
         </dd>
         {cal && (
@@ -162,6 +165,7 @@ function OvrTable({
     );
   const done = b.rows.filter((r) => r.status === "done").map((r) => r.run_id);
   const allOn = done.length > 0 && done.every((id) => selected.includes(id));
+  const someOn = !allOn && done.some((id) => selected.includes(id));
   const toggle = (id: number, on: boolean) => onSelect(on ? [...selected, id] : selected.filter((x) => x !== id));
   const head = { sort, onSort };
   const COLS = 16;
@@ -196,6 +200,9 @@ function OvrTable({
                   type="checkbox"
                   aria-label="Select every finished run"
                   checked={allOn}
+                  ref={(el) => {
+                    if (el) el.indeterminate = someOn;
+                  }}
                   disabled={!done.length}
                   onChange={(ev) => onSelect(ev.target.checked ? done : [])}
                 />
@@ -316,6 +323,7 @@ function OvrTable({
                           {r.weak ? (
                             <span title={reasons.join("\n")}>
                               <Chip tone="warn">Weak</Chip>
+                              <span className="exp-sr">: {reasons.join("; ")}</span>
                             </span>
                           ) : (
                             <span className="muted small-text">—</span>
@@ -713,7 +721,7 @@ function BatchView() {
   });
 
   const back = `/d/${ds.id}/experiments/${xid}?tab=runs`;
-  if (batch.error) {
+  if (batch.error && !b) {
     const missing = (batch.error as { status?: number }).status === 404;
     return (
       <div className="state-card card">

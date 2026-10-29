@@ -163,6 +163,37 @@ describe("BatchPage", () => {
     expect(text()).not.toContain("run selected");
   });
 
+  it("shows select-all as partly on when only some finished runs are selected", async () => {
+    batches.set(2, batch(2));
+    await mount(2);
+    act(() => checkbox("Select V01").click());
+    expect(checkbox("Select every finished run").indeterminate).toBe(true);
+    act(() => checkbox("Select V02").click());
+    expect(checkbox("Select every finished run").indeterminate).toBe(false);
+    expect(checkbox("Select every finished run").checked).toBe(true);
+  });
+
+  it("says why a row is weak without hovering", async () => {
+    batches.set(
+      2,
+      batch(2, { rows: [row(21, "V01", { weak: true, valid: { pr_auc: 0.42, roc_auc: 0.6, f1: 0.3 } })] }),
+    );
+    await mount(2);
+    const chip = [...host.querySelectorAll("td")].find((td) => td.textContent?.startsWith("Weak"))!;
+    expect(chip.textContent).toContain("Validation PR AUC 0.420 is below 0.5 (OVR_WEAK_PR_AUC)");
+  });
+
+  it("keeps showing the batch when a refetch fails", async () => {
+    batches.set(2, batch(2));
+    await mount(2);
+    vi.mocked(api.batch).mockRejectedValue(new ApiError("Server down", 503));
+    await act(() => qc.refetchQueries({ queryKey: ["batch", 2] }));
+    await until(() => qc.getQueryState(["batch", 2])?.status === "error");
+    await act(() => new Promise((r) => setTimeout(r, 50)));
+    expect(text()).toContain("One model per class");
+    expect(text()).not.toContain("Server down");
+  });
+
   describe("Cancel", () => {
     const finished = "The batch had already finished; nothing was cancelled.";
 
