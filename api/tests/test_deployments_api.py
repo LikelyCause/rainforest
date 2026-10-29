@@ -6,6 +6,7 @@ import logging
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import polars as pl
@@ -533,6 +534,111 @@ def test_only_the_creator_and_leads_retire_and_manage_keys(setup, people):
     assert setup["lead"].delete(f"/api/deployments/{dep['id']}/keys/{key.json()['id']}").status_code == 200
     assert setup["lead"].post(f"/api/deployments/{dep['id']}/retire").status_code == 200
     assert member.post(f"/api/deployments/{dep['id']}/activate").status_code == 200
+
+
+def test_granting_access_is_409_in_an_archived_experiment_and_stopping_it_still_works(setup):
+    lead, x = setup["lead"], setup["x"]
+    retired = _deploy(lead, x, run_ids=[setup["multi"]])
+    key = lead.post(f"/api/deployments/{retired['id']}/keys", json={"name": "k"}).json()
+    assert lead.post(f"/api/deployments/{retired['id']}/retire").status_code == 200
+    active = _deploy(lead, x, run_ids=[setup["number"]])
+    r = lead.patch(f"/api/experiments/{x['id']}", json={"archived": True})
+    assert r.status_code == 200, r.text
+    try:
+        for path, body in ((f"{retired['id']}/activate", None), (f"{active['id']}/keys", {"name": "late"})):
+            r = lead.post(f"/api/deployments/{path}", json=body)
+            assert r.status_code == 409 and "archived" in r.json()["detail"], (path, r.text)
+        assert lead.delete(f"/api/deployments/{retired['id']}/keys/{key['id']}").status_code == 200
+        assert lead.post(f"/api/deployments/{active['id']}/retire").status_code == 200
+    finally:
+        assert lead.patch(f"/api/experiments/{x['id']}", json={"archived": False}).status_code == 200
+    assert lead.post(f"/api/deployments/{retired['id']}/activate").status_code == 200
+
+
+def test_a_deeply_nested_body_is_422(setup, deployed):
+    body = b'{"records": ' + b"[" * 100_000 + b"]" * 100_000 + b"}"
+    r = setup["lead"].post(
+        f"/api/deployments/{deployed['dep']['id']}/predict", content=body, headers={"content-type": "application/json"}
+    )
+    assert r.status_code == 422, r.text
+
+
+def test_predict_needs_a_session_or_a_key_matched_to_this_deployment(deployed):
+    from fastapi import HTTPException
+
+    from app.routers import deployments as routes
+
+    dep_id = deployed["dep"]["id"]
+    for state in (SimpleNamespace(), SimpleNamespace(deployment_key={"id": 1, "deployment_id": dep_id + 1})):
+        with pytest.raises(HTTPException) as exc:
+            routes._predict(dep_id, SimpleNamespace(state=state), [])
+        assert exc.value.status_code == 401
+    ok = SimpleNamespace(deployment_key={"id": deployed["key"]["id"], "deployment_id": dep_id})
+    assert routes._predict(dep_id, SimpleNamespace(state=ok), [])["results"] == []
+
+
+def test_a_threshold_rule_needs_a_one_vs_rest_model_and_is_stored_normalised(setup):
+    lead, x, p = setup["lead"], setup["x"], setup["ovr"]["p"]
+    detail = _deploy(lead, x, 422, run_ids=[setup["multi"]], threshold_rule={"kind": "f1"})["detail"]
+    assert "one-vs-rest" in detail, detail
+    dep = _deploy(lead, x, run_ids=[p], threshold_rule={"kind": "precision", "min": 1, "note": "x", "value": 3})
+    assert dep["models"][0]["threshold_rule"] == {"kind": "precision", "min": 1.0}
+    dep = _deploy(lead, x, run_ids=[p], thresholds={str(p): {"kind": "fixed", "value": 0, "min": 0.5}})
+    assert dep["models"][0]["threshold_rule"] == {"kind": "fixed", "value": 0.0}
+    dep = _deploy(lead, x, run_ids=[p], threshold_rule={"kind": "f1", "min": 0.5})
+    assert dep["models"][0]["threshold_rule"] == {"kind": "f1"}
+
+
+def _model_file(run_id: int) -> Path:
+    model_dir = db.fetch_one("SELECT model_dir FROM meta.model_runs WHERE id = %s", (run_id,))["model_dir"]
+    return Path(model_dir) / scoring.MODEL_FILE
+
+
+@contextmanager
+def _replaced(path: Path, data: bytes | None):
+    """`path` holding `data` (or gone, for None) inside the block."""
+    saved = path.read_bytes()
+    path.unlink()
+    if data is not None:
+        path.write_bytes(data)
+    try:
+        yield
+    finally:
+        path.write_bytes(saved)
+
+
+@pytest.mark.parametrize("data", [b"", b"not a pickle at all", None], ids=["empty", "junk", "missing"])
+def test_a_corrupt_or_missing_model_file_is_410(setup, data):
+    with _replaced(_model_file(setup["ovr"]["p"]), data):
+        r = setup["lead"].post(
+            f"/api/experiments/{setup['x']['id']}/deployments", json={"run_ids": [setup["ovr"]["p"]]}
+        )
+    assert r.status_code == 410 and "removed or unreadable" in r.json()["detail"], r.text
+
+
+def test_a_batch_with_no_finished_runs_says_so(setup):
+    bid = db.fetch_one(
+        """INSERT INTO meta.run_batches (experiment_id, export_id, kind, name, spec, status)
+           VALUES (%s, %s, 'one_vs_rest', 'nothing finished', '{}', 'cancelled') RETURNING id""",
+        (setup["x"]["id"], setup["e"]["id"]),
+    )["id"]
+    detail = _deploy(setup["lead"], setup["x"], 422, batch_id=bid)["detail"]
+    assert "no finished runs" in detail, detail
+
+
+def test_a_model_file_changed_after_deploying_is_409_naming_the_model(setup, app_):
+    import hashlib
+
+    p, q = setup["ovr"]["p"], setup["ovr"]["q"]
+    dep = _deploy(setup["lead"], setup["x"], run_ids=[p])
+    assert dep["models"][0]["sha256"] == hashlib.sha256(_model_file(p).read_bytes()).hexdigest()
+    recs = _records(setup, 1)
+    before = _predict(setup["lead"], dep["id"], recs)
+    scoring.forget(dep["id"])
+    with _replaced(_model_file(p), _model_file(q).read_bytes()):
+        detail = _predict(setup["lead"], dep["id"], recs, 409)["detail"]
+    assert "'p'" in detail and "changed" in detail, detail
+    assert _predict(setup["lead"], dep["id"], recs) == before
 
 
 def test_deleting_the_dataset_removes_its_deployments_first(setup, deployed, monkeypatch):

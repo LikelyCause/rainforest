@@ -8,6 +8,7 @@ import hmac
 import secrets
 import shutil
 from collections import defaultdict
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -23,7 +24,6 @@ KEY_LEN = len(KEY_PREFIX) + 32
 SHOWN = 8  # the characters kept in clear, so a list can tell keys apart
 F1 = {"kind": "f1"}
 INT64 = 2**63
-EXACT_FLOAT = 2**53
 WORDS = {2: "two", 3: "three"}
 
 
@@ -122,7 +122,29 @@ def compose(runs: list[dict], rule: dict | None, per_run: dict[int, dict] | None
         raise ValueError(f"Thresholds were given for run {_runs(stray)}, which isn't being deployed")
     if no_threshold := sorted(set(per_run) & {r["id"] for r in single}):
         raise ValueError(f"Run {_runs(no_threshold)} isn't a one-vs-rest model, so it has no threshold")
+    if rule is not None and not binary:
+        raise ValueError("threshold_rule sets one-vs-rest models' thresholds, and this deployment has none")
     return exports[0], [_model(r, kinds[r["id"]], per_run.get(r["id"]) or rule or F1) for r in runs]
+
+
+def normal_rule(rule: dict) -> dict:
+    """The rule as stored: its kind and the one number that kind reads, nothing else that came with it."""
+    kind = rule["kind"]
+    if kind == "precision":
+        return {"kind": kind, "min": float(rule["min"])}
+    if kind == "fixed":
+        return {"kind": kind, "value": float(rule["value"])}
+    return {"kind": kind}
+
+
+def with_file_hashes(models: list[dict], runs: list[dict]) -> list[dict]:
+    """Each model with its file's SHA-256, which scoring checks before every load. A run without a model folder is
+    left to scoring, which refuses it."""
+    dirs = {r["id"]: r.get("model_dir") for r in runs}
+    return [
+        {**m, "sha256": scoring.file_sha256(Path(dirs[m["run_id"]]) / scoring.MODEL_FILE)} if dirs[m["run_id"]] else m
+        for m in models
+    ]
 
 
 def _model(run: dict, kind: tuple[str, str], rule: dict) -> dict:
@@ -149,7 +171,7 @@ def _model(run: dict, kind: tuple[str, str], rule: dict) -> dict:
         "label": cls,
         "positive_class": cls,
         "threshold": threshold,
-        "threshold_rule": rule,
+        "threshold_rule": normal_rule(rule),
         **({"threshold_note": note} if note else {}),
     }
 

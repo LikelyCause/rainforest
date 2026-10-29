@@ -248,7 +248,7 @@ async def check_request(request: Request) -> JSONResponse | None:
         key_id = await run_in_threadpool(deployments.key_for, int(predict[1]), key)
         if key_id is None:
             return JSONResponse({"detail": BAD_KEY}, 401)
-        request.state.deployment_key = key_id
+        request.state.deployment_key = {"id": key_id, "deployment_id": int(predict[1])}
         return None
     if path in OPEN_PATHS or (path.startswith(AVATAR_PREFIX) and request.method in ("GET", "HEAD")):
         return None

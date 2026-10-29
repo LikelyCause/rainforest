@@ -21,14 +21,14 @@ router = APIRouter(prefix="/api", tags=["deployments"])
 COLS = """d.id, d.dataset_id, d.experiment_id, x.name AS experiment_name, d.export_id, d.batch_id,
           (SELECT name FROM meta.run_batches b WHERE b.id = d.batch_id) AS batch_name, d.name, d.models, d.status,
           d.created_by, (SELECT name FROM meta.users u WHERE u.id = d.created_by) AS created_by_name, d.created_at,
-          d.retired_at, (SELECT count(*) FROM meta.deployment_keys k
+          d.retired_at, x.archived_at AS experiment_archived_at, (SELECT count(*) FROM meta.deployment_keys k
                           WHERE k.deployment_id = d.id AND k.revoked_at IS NULL) AS keys"""
 FROM = "meta.deployments d JOIN meta.experiments x ON x.id = d.experiment_id"
 KEY_COLS = """k.id, k.deployment_id, k.name, k.prefix, k.created_by,
               (SELECT name FROM meta.users u WHERE u.id = k.created_by) AS created_by_name, k.created_at,
               k.last_used_at, k.revoked_at"""
 RETIRED = "This deployment is retired; reactivate it to score with it."
-FILES_GONE = "The deployment's export or model files were removed"
+FILES_GONE = "The deployment's export or model files were removed or unreadable"
 
 
 def _can_manage(row: dict, user: dict) -> bool:
@@ -59,6 +59,12 @@ def _managed(conn, deployment_id: int, user: dict) -> dict:
     return row
 
 
+def _refuse_archived(row: dict, to: str) -> None:
+    """Granting access respects archiving; retiring and revoking, which stop it, don't."""
+    if row["experiment_archived_at"] is not None:
+        raise HTTPException(409, f"Experiment {row['experiment_name']!r} is archived; unarchive it to {to}.")
+
+
 def _chosen_runs(conn, x: dict, req: DeploymentRequest) -> list[dict]:
     """The runs `req` names: its run ids, or a one-vs-rest batch's finished runs (some of them, with run ids)."""
     if req.batch_id is not None:
@@ -73,18 +79,21 @@ def _chosen_runs(conn, x: dict, req: DeploymentRequest) -> list[dict]:
                 raise HTTPException(422, "A search batch is deployed by choosing its rows: give their run_ids")
             if batch["status"] == "running":
                 raise HTTPException(409, "The batch is still running; deploy it once it ends, or choose its runs")
-            return conn.execute(
-                """SELECT id, export_id, status, report FROM meta.model_runs
+            runs = conn.execute(
+                """SELECT id, export_id, status, report, model_dir FROM meta.model_runs
                     WHERE batch_id = %s AND status = 'done' ORDER BY id""",
                 (batch["id"],),
             ).fetchall()
+            if not runs:
+                raise HTTPException(422, f"Batch {batch['id']} has no finished runs to deploy")
+            return runs
     if not req.run_ids:
         raise HTTPException(422, "Choose the runs to deploy, or a one-vs-rest batch")
     ids = list(dict.fromkeys(req.run_ids))
     rows = {
         r["id"]: r
         for r in conn.execute(
-            """SELECT id, export_id, status, report, batch_id FROM meta.model_runs
+            """SELECT id, export_id, status, report, batch_id, model_dir FROM meta.model_runs
                 WHERE id = ANY(%s) AND experiment_id = %s""",
             (ids, x["id"]),
         ).fetchall()
@@ -110,9 +119,11 @@ def create_deployment(experiment_id: int, req: DeploymentRequest, user: CurrentU
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         batch = conn.execute("SELECT name FROM meta.run_batches WHERE id = %s", (req.batch_id,)).fetchone()
-    # Outside a transaction: the check reads model files and scores rows, which takes a while.
+    # Outside a transaction: the check reads model files and scores rows, which takes a while. The files are hashed
+    # first, so the check vouches for the very files the deployment records.
     with connection() as conn:
         try:
+            models = deployments.with_file_hashes(models, runs)
             problem = scoring.equality_check(conn, export_id, models)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
@@ -179,6 +190,7 @@ def activate(deployment_id: int, user: CurrentUser) -> dict:
     with connection() as conn:
         row = _managed(conn, deployment_id, user)
         refuse_while_refreshing(conn, row["dataset_id"])
+        _refuse_archived(row, "reactivate its deployments")
         if row["status"] == "active":
             raise HTTPException(409, "The deployment is already active")
         conn.execute("UPDATE meta.deployments SET status = 'active', retired_at = NULL WHERE id = %s", (row["id"],))
@@ -197,6 +209,7 @@ def create_key(deployment_id: int, body: DeploymentKeyRequest, user: CurrentUser
     with connection() as conn:
         row = _managed(conn, deployment_id, user)
         refuse_while_refreshing(conn, row["dataset_id"])
+        _refuse_archived(row, "create keys for its deployments")
         new_id = conn.execute(
             """INSERT INTO meta.deployment_keys (deployment_id, name, prefix, hash, created_by)
                VALUES (%s, %s, %s, %s, %s) RETURNING id""",
@@ -249,7 +262,7 @@ def _refuse_constant(name: str):
 def _records(body: bytes) -> list[dict]:
     try:
         payload = json.loads(body, parse_constant=_refuse_constant)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         raise HTTPException(422, f"The body isn't valid JSON: {exc}") from exc
     records = payload.get("records") if isinstance(payload, dict) else None
     if not isinstance(records, list):
@@ -266,13 +279,19 @@ def _records(body: bytes) -> list[dict]:
 
 def _predict(deployment_id: int, request: Request, records: list[dict]) -> dict:
     user = getattr(request.state, "user", None)
+    key = getattr(request.state, "deployment_key", None)
+    # The middleware lets a request through with one or the other; anything else is refused, not trusted.
+    if user is None and (key is None or key["deployment_id"] != deployment_id):
+        raise HTTPException(401, "Sign in, or send a key of this deployment.")
     with connection() as conn:
-        # A key was matched to this deployment before the route ran; a session sees only what its user may.
+        # A session sees only what its user may; a key was matched to this deployment.
         row = _row(conn, deployment_id, user)
         if row["status"] != "active":
             raise HTTPException(410, RETIRED)
         try:
             scorer = scoring.load(conn, {"id": row["id"], "export_id": row["export_id"], "models": row["models"]})
+        except scoring.ModelChanged as exc:
+            raise HTTPException(409, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         except OSError as exc:
