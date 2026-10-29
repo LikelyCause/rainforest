@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import shutil
-import uuid
 from pathlib import Path
 from typing import Literal
 
@@ -46,9 +45,9 @@ FILES_GONE = deployments.FILES_GONE
 DOWNLOADS = {"csv": "text/csv", "parquet": "application/vnd.apache.parquet"}
 
 
-def files_gone(deployment: object, exc: OSError) -> HTTPException:
+def files_gone(what: str, exc: OSError) -> HTTPException:
     """410 with the generic message; the cause (which file, and why) goes to the log for an operator."""
-    log.warning("deployment %s can't load its files: %s", deployment, exc)
+    log.warning("%s can't load its files: %s", what, exc)
     return HTTPException(410, FILES_GONE)
 
 
@@ -150,7 +149,7 @@ def create_deployment(experiment_id: int, req: DeploymentRequest, user: CurrentU
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         except OSError as exc:
-            raise files_gone(f"of export {export_id}", exc) from exc
+            raise files_gone(f"export {export_id}", exc) from exc
     if problem:
         raise HTTPException(422, f"Scoring through the deployment doesn't reproduce training: {problem}")
     name = (req.name or "").strip() or (batch["name"] if batch else models[0]["model_label"] or "Deployment")
@@ -318,7 +317,7 @@ def _predict(deployment_id: int, request: Request, records: list[dict]) -> dict:
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         except OSError as exc:
-            raise files_gone(row["id"], exc) from exc
+            raise files_gone(f"deployment {row['id']}", exc) from exc
     out = {"deployment": deployment_id, "models": deployments.labels(scorer), "results": [], "warnings": {}}
     if not records:
         return out
@@ -358,7 +357,7 @@ def start_test(deployment_id: int, user: CurrentUser, file: UploadFile = File(..
         raise HTTPException(415, UNSUPPORTED)
     with connection() as conn:
         _usable(conn, deployment_id, user)
-    incoming = deployments.tests_dir(deployment_id) / f".incoming-{uuid.uuid4().hex}"
+    incoming = deployments.incoming_dir(deployment_id, jobs.owner_id())
     incoming.mkdir(parents=True)
     folder = None
     try:

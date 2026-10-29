@@ -56,6 +56,10 @@ _DEAD = f"""(owner IS NULL OR NOT EXISTS (
                   AND l.objid = owner::oid AND l.objsubid = 2
                   AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())))"""
 
+_LIVE = f"""SELECT l.objid::text::bigint AS objid FROM pg_locks l
+              WHERE l.locktype = 'advisory' AND l.granted AND l.classid = {OWNER_LOCK}::oid AND l.objsubid = 2
+                AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())"""
+
 _AHEAD = f"""SELECT EXISTS (SELECT 1 FROM pg_locks l
                  WHERE l.locktype = 'advisory' AND l.granted AND l.classid = {TICKET_LOCK}::oid
                    AND l.objid::text::bigint < %s AND l.objsubid = 2
@@ -170,13 +174,23 @@ def sweep(owner: int | None = None) -> None:
         for table in ("exports", "model_runs", "analyses", "deployment_tests"):
             # A batch's runs that it hasn't submitted yet have no owner and no job to lose: the batch resumes them.
             waiting = sql.SQL(" AND NOT (batch_id IS NOT NULL AND owner IS NULL)" if table == "model_runs" else "")
-            conn.execute(
+            back = sql.SQL(" RETURNING id, deployment_id" if table == "deployment_tests" else "")
+            cur = conn.execute(
                 sql.SQL(
                     """UPDATE meta.{} SET status = 'failed', error = {}, status_message = 'Failed',
                           finished_at = now(), updated_at = now()
-                    WHERE status IN ('pending', 'running') AND {}{}"""
-                ).format(sql.Identifier(table), sql.Literal(INTERRUPTED), dead, waiting)
+                    WHERE status IN ('pending', 'running') AND {}{}{}"""
+                ).format(sql.Identifier(table), sql.Literal(INTERRUPTED), dead, waiting, back)
             )
+            if table == "deployment_tests":
+                tests = cur.fetchall()
+        live = {r["objid"] for r in conn.execute(_LIVE).fetchall()}
+    from . import deployments
+
+    # An interrupted test left half-written files, and an interrupted upload its incoming folder.
+    for r in tests:
+        deployments.discard_tests(r["deployment_id"], [r["id"]])
+    deployments.clear_uploads(lambda o: o == owner if owner is not None else o not in live)
     if owner is None:
         from . import batches
 

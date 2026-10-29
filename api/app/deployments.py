@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 import os
 import secrets
@@ -15,7 +16,9 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import numpy as np
+import pandas as pd
 import polars as pl
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 from psycopg import sql
 from sklearn.metrics import average_precision_score
@@ -24,6 +27,8 @@ from . import ingest, scoring
 from .config import get_settings
 from .db import connection, jsonb
 from .modeling.train import choose_threshold
+from .profiling import coerce_numeric
+from .transform import target_labels
 
 log = logging.getLogger(__name__)
 
@@ -268,6 +273,7 @@ KEEP_TESTS = 20
 SHOWN_RESULTS = 500
 CONFUSION_CLASSES = 20
 UPLOAD = "upload"  # + the uploaded file's extension
+INCOMING = ".incoming-"
 INPUT = "input.parquet"
 RESULTS = "results.parquet"
 MATCH_SEP = "; "
@@ -305,6 +311,20 @@ def prune_tests(conn, deployment_id: int) -> list[int]:
 def discard_tests(deployment_id: int, ids: list[int]) -> None:
     for i in ids:
         shutil.rmtree(test_dir(deployment_id, i), ignore_errors=True)
+
+
+def incoming_dir(deployment_id: int, owner: int) -> Path:
+    """Where an upload lands before its test exists; named by the process taking it, so a restart can tell it was
+    abandoned."""
+    return tests_dir(deployment_id) / f"{INCOMING}{owner}-{secrets.token_hex(8)}"
+
+
+def clear_uploads(abandoned) -> None:
+    """Remove the incoming uploads whose process `abandoned(owner)` says is gone."""
+    for folder in get_settings().deployments_dir.glob(f"*/tests/{INCOMING}*"):
+        owner = folder.name[len(INCOMING) :].split("-")[0]
+        if not owner.isdigit() or abandoned(int(owner)):
+            shutil.rmtree(folder, ignore_errors=True)
 
 
 def result_columns(models: list[dict], labels: list[str], id_field: str | None, label_field: str | None) -> dict:
@@ -440,7 +460,7 @@ def _score_test(t: dict, folder: Path) -> dict:
             raise ValueError(FILES_GONE) from exc
         scorer.require(names)
         id_field = _identifier(conn, t["dataset_id"], names)
-        label_input = _label_input(conn, t["export_id"], target, kind) if label_field else None
+        reading = _label_reading(conn, t["export_id"], target, kind) if label_field else None
     scored_by = labels(scorer)
     cols = result_columns(t["models"], scored_by, id_field, label_field)
     source = pq.ParquetFile(data)
@@ -449,7 +469,7 @@ def _score_test(t: dict, folder: Path) -> dict:
     failed: dict[str, int] = defaultdict(int)
     given: dict[str, int] = defaultdict(int)
     tmp = folder / f"{RESULTS}.tmp"
-    writer, done = None, 0
+    writer, done, unreadable = None, 0, 0
     try:
         for batch in source.iter_batches(batch_size=TEST_CHUNK, columns=read):
             df = pl.from_arrow(batch)
@@ -458,7 +478,9 @@ def _score_test(t: dict, folder: Path) -> dict:
                 failed[name] += n
             for name in scorer.required:
                 given[name] += int(scoring.missing_as_null(df[name]).is_not_null().sum())
-            table = _results_frame(df, out, cols, done, label_input).to_arrow()
+            chunk, bad = _results_frame(df, out, cols, done, reading)
+            unreadable += bad
+            table = chunk.to_arrow()
             writer = writer or pq.ParquetWriter(tmp, table.schema)
             writer.write_table(table)
             done += df.height
@@ -466,7 +488,7 @@ def _score_test(t: dict, folder: Path) -> dict:
                 raise _Gone
         if writer is None:
             empty = pl.read_parquet(data, columns=read, n_rows=0)
-            pq.write_table(_results_frame(empty, None, cols, 0, label_input).to_arrow(), tmp)
+            pq.write_table(_results_frame(empty, None, cols, 0, reading)[0].to_arrow(), tmp)
     finally:
         if writer is not None:
             writer.close()
@@ -476,7 +498,7 @@ def _score_test(t: dict, folder: Path) -> dict:
         for n in scorer.required
         if failed[n]
     }
-    metrics = test_metrics(folder / RESULTS, cols, scorer.models) if label_field else None
+    metrics = test_metrics(folder / RESULTS, cols, scorer.models, unreadable) if label_field else None
     return {
         "rows": done,
         "has_labels": label_field is not None,
@@ -498,41 +520,52 @@ def _identifier(conn, dataset_id: int, names: list[str]) -> str | None:
     return next((r["name"] for r in rows if r["name"] in names), None)
 
 
-def _label_input(conn, export_id: int, target: str, kind: str) -> scoring.Input | None:
-    """How a file's label converts: to a number for a number target; else to the target's type in the dataset, so it
-    reads as the class text training saw ("7.0" as class "7" of an integer-coded target)."""
-    if kind == "regression":
-        return scoring.Input(target, pl.Float64, None, False)
-    row = conn.execute(
-        "SELECT config->'input_schema'->%s AS s FROM meta.exports WHERE id = %s", (target, export_id)
-    ).fetchone()
-    s = row and row["s"]
-    if not s:
-        return None
-    return scoring.Input(
-        target, scoring.parse_dtype(s["dtype"]), s.get("datetime_format"), None, bool(s.get("integer_codes"))
-    )
+def _label_reading(conn, export_id: int, target: str, kind: str) -> dict:
+    """How the export's training read its target, so a file's labels are read the same way: its classes, bands or
+    group, whether it is a number in the dataset, and how its column writes decimals."""
+    exp = conn.execute("SELECT dataset_id, output_dir, config FROM meta.exports WHERE id = %s", (export_id,)).fetchone()
+    manifest = json.loads((Path(exp["output_dir"]) / "manifest.json").read_text())
+    bins = (manifest.get("target_bins") or {}).get(target)
+    comma = (bins or {}).get("decimal_comma")
+    if comma is None:  # what training read the decimals by, for a manifest that doesn't record it
+        row = conn.execute(
+            """SELECT coalesce((stats ->> 'decimal_comma')::boolean, false) AS c FROM meta.fields
+                WHERE dataset_id = %s AND name = %s""",
+            (exp["dataset_id"], target),
+        ).fetchone()
+        comma = bool(row and row["c"])
+    schema = ((exp["config"] or {}).get("input_schema") or {}).get(target)
+    return {
+        "number": kind == "regression",
+        "bins": bins,
+        "classes": (manifest.get("target_classes") or {}).get(target) or [],
+        "numeric": scoring.parse_dtype(schema["dtype"]).is_numeric() if schema else None,
+        "decimal_comma": comma,
+    }
 
 
-def _label_values(s: pl.Series, to: scoring.Input | None) -> pl.Series:
-    if to is None:
-        return scoring.missing_as_null(s).cast(pl.String).alias(s.name)
-    out, _ = scoring.convert(s, to)
-    if out.dtype == pl.Boolean:
-        # Training named the classes as pandas prints them.
-        out = out.replace_strict({True: "True", False: "False"}, return_dtype=pl.String)
-    return out.cast(pl.Float64 if to.dtype == pl.Float64 else pl.String).alias(s.name)
+def _label_values(s: pl.Series, how: dict) -> tuple[pl.Series, int]:
+    """A file's labels as training named its classes (`target_labels`), or a number target's as numbers; and how many
+    given labels of a number target aren't numbers. A class label that names no class keeps its own text."""
+    if how["number"]:
+        given = scoring.missing_as_null(s)
+        out = coerce_numeric(given, how["decimal_comma"])
+        return out.alias(s.name), int(given.is_not_null().sum() - out.is_not_null().sum())
+    named = target_labels(s, how["bins"], how["classes"], how["numeric"], how["decimal_comma"])
+    return pl.Series(s.name, [None if pd.isna(v) else v for v in named], dtype=pl.String), 0
 
 
 def _results_frame(
-    df: pl.DataFrame, out: scoring.ScoreResult | None, cols: dict, start: int, label_input: scoring.Input | None
-) -> pl.DataFrame:
-    """One chunk of results; with `out` None, none (the columns of a file with no rows)."""
+    df: pl.DataFrame, out: scoring.ScoreResult | None, cols: dict, start: int, reading: dict | None
+) -> tuple[pl.DataFrame, int]:
+    """One chunk of results, and how many of its number labels aren't numbers; with `out` None, none (the columns of
+    a file with no rows)."""
     data: dict[str, pl.Series] = {cols["row"]: pl.Series(np.arange(start + 1, start + df.height + 1), dtype=pl.Int64)}
+    unreadable = 0
     if cols["id"]:
         data[cols["id"]] = df[cols["id"]]
     if cols["label"]:
-        data[cols["label"]] = _label_values(df[cols["label"]], label_input)
+        data[cols["label"]], unreadable = _label_values(df[cols["label"]], reading)
     if cols["top"]:
         top = (out and out.top) or []
         data[cols["top"]] = pl.Series([label for label, _ in top], dtype=pl.String)
@@ -542,39 +575,62 @@ def _results_frame(
         data[cols["none_matched"]] = pl.Series((out and out.none_matched) or [], dtype=pl.Boolean)
     for label, c in cols["scores"].items():
         data[c] = pl.Series([] if out is None else np.asarray(out.scores[label], dtype=float), dtype=pl.Float64)
-    return pl.DataFrame({k: v.alias(k) for k, v in data.items()})
+    return pl.DataFrame({k: v.alias(k) for k, v in data.items()}), unreadable
 
 
 # --------------------------------------------------------------------------- metrics
-def test_metrics(path: Path, cols: dict, models: tuple[scoring.Model, ...]) -> dict:
-    """What a labelled file says of the deployment, over the rows whose label isn't missing. A row whose label has no
-    model counts as wrong in top-1 accuracy and has no row of its own; the nothing-matched share is over all rows."""
+def _codes(path: Path, col: str) -> tuple[np.ndarray, list[str]]:
+    """A text column as codes into its distinct values (-1 where missing), read dictionary-encoded so the column's
+    text is never held whole."""
+    table = pq.read_table(path, columns=[col], read_dictionary=[col]).unify_dictionaries()
+    if not table.num_rows:
+        return np.empty(0, dtype=np.int64), []
+    arr = table.column(0).combine_chunks()
+    return pc.fill_null(arr.indices, -1).to_numpy().astype(np.int64), arr.dictionary.to_pylist()
 
-    def read(c: str) -> pl.Series:
-        return pl.read_parquet(path, columns=[c]).to_series()
 
-    label = read(cols["label"])
-    has = label.is_not_null()
-    base = {"labelled_rows": int(has.sum()), "rows_without_label": int((~has).sum())}
+def test_metrics(path: Path, cols: dict, models: tuple[scoring.Model, ...], unreadable: int = 0) -> dict:
+    """What a labelled file says of the deployment, over the rows with a label. A row whose label has no model counts
+    as wrong in top-1 accuracy and has no row of its own; the nothing-matched share is over all rows. Labels and tops
+    are compared as codes: the labels the models score first, then the file's other labels."""
+
+    def read(c: str) -> np.ndarray:
+        return pl.read_parquet(path, columns=[c]).to_series().to_numpy()
+
     if models[0].kind == "regression":
-        return {**base, "kind": "number", **_errors(label.to_numpy(), read(cols["scores"][models[0].labels[0]]))}
-    lab, top = label.filter(has), read(cols["top"]).filter(has)
+        y = read(cols["label"]).astype(float)
+        missing = int(np.isnan(y).sum()) - unreadable
+        return {
+            "labelled_rows": len(y) - missing,
+            "rows_without_label": missing,
+            "rows_label_not_a_number": unreadable,
+            "kind": "number",
+            **_errors(y, read(cols["scores"][models[0].labels[0]])),
+        }
     known = [c for m in models for c in m.labels]
+    lab_idx, lab_names = _codes(path, cols["label"])
+    top_idx, top_names = _codes(path, cols["top"])
+    vocab = known + [v for v in lab_names if v not in set(known)]
+    code = {v: k for k, v in enumerate(vocab)}
+    has = lab_idx >= 0
+    lab = np.array([code[v] for v in lab_names], dtype=np.int64)[lab_idx[has]]
+    top = np.array([code[v] for v in top_names], dtype=np.int64)[top_idx[has]]
     classes = []
     for m in models:
         for c in m.labels:
-            score = read(cols["scores"][c]).filter(has).to_numpy()
-            pred = score >= m.threshold if m.kind == "binary" else (top == c).to_numpy()
-            classes.append(_class_metrics(c, (lab == c).to_numpy(), score, pred, m.threshold))
+            score = read(cols["scores"][c])[has]
+            pred = score >= m.threshold if m.kind == "binary" else top == code[c]
+            classes.append(_class_metrics(c, lab == code[c], score, pred, m.threshold))
     none = read(cols["none_matched"]) if cols["none_matched"] else None
     return {
-        **base,
+        "labelled_rows": int(has.sum()),
+        "rows_without_label": int((~has).sum()),
         "kind": "classes",
-        "top1_accuracy": float((top == lab).mean()) if lab.len() else None,
-        "rows_label_without_model": int((~lab.is_in(known)).sum()),
-        "nothing_matched_share": float(none.mean()) if none is not None and none.len() else None,
+        "top1_accuracy": float((top == lab).mean()) if lab.size else None,
+        "rows_label_without_model": int((lab >= len(known)).sum()),
+        "nothing_matched_share": float(none.mean()) if none is not None and none.size else None,
         "classes": classes,
-        "confusion": _confusion(lab, top),
+        "confusion": _confusion(lab, top, vocab),
     }
 
 
@@ -596,21 +652,24 @@ def _class_metrics(label: str, y: np.ndarray, score: np.ndarray, pred: np.ndarra
     }
 
 
-def _confusion(lab: pl.Series, top: pl.Series) -> dict:
-    """Counts of `top` for each of the CONFUSION_CLASSES most frequent labels: one column per listed label, and a last
-    one for a top outside the list."""
-    freq = pl.DataFrame({"label": lab}).group_by("label").len().sort(["len", "label"], descending=[True, False])
-    names = freq["label"].head(CONFUSION_CLASSES).to_list()
-    index = {n: k for k, n in enumerate(names)}
-    grid = np.zeros((len(names), len(names) + 1), dtype=int)
-    pairs = pl.DataFrame({"label": lab, "top": top}).filter(pl.col("label").is_in(names)).group_by("label", "top").len()
-    for a, b, n in pairs.iter_rows():
-        grid[index[a], index.get(b, len(names))] += n
-    return {"labels": names, "counts": grid.tolist()}
+def _confusion(lab: np.ndarray, top: np.ndarray, vocab: list[str]) -> dict:
+    """Counts of `top` for each of the CONFUSION_CLASSES most frequent labels (codes into `vocab`): one column per
+    listed label, and a last one for a top outside the list."""
+    counts = np.bincount(lab, minlength=len(vocab))
+    listed = sorted((k for k in range(len(vocab)) if counts[k]), key=lambda k: (-counts[k], vocab[k]))
+    listed = listed[:CONFUSION_CLASSES]
+    at = np.full(len(vocab), -1)
+    at[listed] = np.arange(len(listed))
+    grid = np.zeros((len(listed), len(listed) + 1), dtype=int)
+    rows = at[lab]
+    cols = np.where(at[top] >= 0, at[top], len(listed))
+    keep = rows >= 0
+    np.add.at(grid, (rows[keep], cols[keep]), 1)
+    return {"labels": [vocab[k] for k in listed], "counts": grid.tolist()}
 
 
-def _errors(y: np.ndarray, predicted: pl.Series) -> dict:
-    p = predicted.to_numpy()
+def _errors(y: np.ndarray, p: np.ndarray) -> dict:
+    p = p.astype(float)
     ok = np.isfinite(y) & np.isfinite(p)
     err, y = p[ok] - y[ok], y[ok]
     if not err.size:

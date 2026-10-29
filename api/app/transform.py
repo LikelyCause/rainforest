@@ -657,6 +657,71 @@ def check_target_classes(y: pd.DataFrame) -> None:
             )
 
 
+def _float(v: Any) -> float | None:
+    try:
+        f = float(str(v).strip())
+    except ValueError:
+        return None
+    return f if math.isfinite(f) else None
+
+
+def _named(text: pd.Series, names: list[str], numeric: bool) -> pd.Series:
+    """Each value of `text` as the one of `names` it is, by text or, for a number, by value ("7" is "7.0"); NaN for
+    none."""
+    by_number = {}
+    for n in names if numeric else []:
+        if (f := _float(n)) is not None:
+            by_number.setdefault(f, n)
+    known = set(names)
+    lookup = {}
+    for v in pd.unique(text):
+        if v in known:
+            lookup[v] = v
+        elif by_number and (f := _float(v)) is not None and f in by_number:
+            lookup[v] = by_number[f]
+    return text.map(lookup)
+
+
+def target_labels(
+    raw: pl.Series,
+    bins: dict | None = None,
+    classes: list[str] | None = None,
+    numeric: bool | None = None,
+    decimal_comma: bool | None = False,
+) -> pd.Series:
+    """A class target's values as the class labels training gives them (object, NaN where missing):
+    - grouped (`bins` with `positive`): a positive value as the group's label, any other as GROUP_REST;
+    - banded (`bins` with `edges`): the label of the number's band;
+    - otherwise the value's text as pandas prints it, so an integer column with a missing value names 7 "7.0".
+
+    Training passes no `classes` and finds them from these labels. Scoring a file passes the classes training found:
+    an empty text is missing too, a value matches a class by value when the target is `numeric` ("7" is "7.0"), and
+    a value that names no class, or isn't a number a band needs, keeps its own text, so it matches no model."""
+    numeric = raw.dtype.is_numeric() if numeric is None else numeric
+    col = raw.to_pandas()
+    missing = col.isna().to_numpy()
+    text = col.astype(str)
+    if classes is not None:
+        missing |= (text.str.strip() == "").to_numpy()
+    given = ~missing
+    out = pd.Series(np.nan, index=col.index, dtype=object)
+    if bins and "positive" in bins:
+        positive = [str(p) for p in bins["positive"]]
+        hit = _named(text[given], positive, numeric).notna()
+        out[given] = np.where(hit, " / ".join(positive), GROUP_REST)
+    elif bins and "edges" in bins:
+        band = bands.assign(coerce_numeric(raw, decimal_comma).to_numpy(), bins["edges"])
+        names = np.array(bands.band_labels(bins["edges"]), dtype=object)
+        banded = given & ~np.isnan(band)
+        out[banded] = names[band[banded].astype(int)]
+        out[given & ~banded] = text[given & ~banded]
+    elif classes is None:
+        out[given] = text[given]
+    else:
+        out[given] = _named(text[given], classes, numeric).fillna(text[given])
+    return out
+
+
 def encode_targets(y: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, list[str]]]:
     """Map each target's labels to 0..k-1 (sorted for determinism); NaN stays NaN."""
     encoded, classes = {}, {}
@@ -757,9 +822,7 @@ def prepare_targets(
     raw = pl.read_parquet(parquet_path, columns=targets)
     y_raw = raw.to_pandas()
     for t, pos in grouped.items():
-        col = y_raw[t]
-        label = " / ".join(pos)
-        y_raw[t] = col.where(col.isna(), np.where(col.astype(str).isin(pos), label, GROUP_REST))
+        y_raw[t] = target_labels(raw[t], {"positive": pos})
     for t in numeric:
         num = coerce_numeric(raw[t], target_tasks[t].get("decimal_comma"))
         given = raw[t].fill_nan(None) if raw[t].dtype.is_float() else raw[t]
@@ -789,7 +852,9 @@ def prepare_targets(
     if config.get("group_by"):
         split_info["grouped_on"] = config["group_by"]
     train_rows = split == 0
-    y_enc, classes = encode_targets(y_raw[class_targets])
+    # Classes are named by `target_labels`, which scoring a test file's labels shares.
+    named = {t: y_raw[t] if t in grouped else target_labels(raw[t]) for t in class_targets}
+    y_enc, classes = encode_targets(pd.DataFrame(named, index=y_raw.index, columns=class_targets))
     target_bins, target_stats = {}, {}
     for t in numeric:
         vals = y_raw[t].to_numpy(dtype=float)
@@ -801,9 +866,11 @@ def prepare_targets(
                     f"Target {t!r}: band(s) {', '.join(thin)} have fewer than 2 rows; move or remove "
                     "cut points, or use fewer bands."
                 )
-            y_enc[t] = bands.assign(vals, edges)
             classes[t] = bands.band_labels(edges)
-            target_bins[t] = {"edges": edges, "labels": classes[t], "k": spec.get("k")}
+            comma = target_tasks[t].get("decimal_comma")
+            target_bins[t] = {"edges": edges, "labels": classes[t], "k": spec.get("k"), "decimal_comma": comma}
+            band = target_labels(raw[t], target_bins[t], decimal_comma=comma)
+            y_enc[t] = band.map({label: float(k) for k, label in enumerate(classes[t])}).astype(float).to_numpy()
         else:
             y_enc[t] = vals
             tr = vals[train_rows & ~np.isnan(vals)]

@@ -1,5 +1,5 @@
 """Testing a deployment with an uploaded file: the job that scores it in chunks, the metrics a labelled file gets, the
-results and their download, warnings, retention, and what refuses a test. Needs RAINFOREST_TEST_DATABASE_URL."""
+results and their download, warnings, retention, how a file's labels are named, and what refuses a test. Needs RAINFOREST_TEST_DATABASE_URL."""
 
 import io
 import shutil
@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import polars as pl
 import pytest
 from fastapi.testclient import TestClient
@@ -14,8 +15,20 @@ from sklearn.metrics import average_precision_score
 
 from app import db, deployments, jobs, scoring
 from app.config import get_settings
+from app.transform import prepare_targets
 
-from .team_helpers import app_, experiment, export, people, start, submit_and_finalize, upload, wait  # noqa: F401
+from .team_helpers import (  # noqa: F401  (fixtures)
+    app_,
+    experiment,
+    export,
+    fields,
+    people,
+    save,
+    start,
+    submit_and_finalize,
+    upload,
+    wait,
+)
 
 
 def _csv(n=900, seed=5) -> str:
@@ -201,10 +214,11 @@ def test_a_number_deployment_reports_errors_against_the_target(setup):
     lead = setup["lead"]
     dep = _deploy(lead, setup["x"], run_ids=[setup["number"]])
     df = setup["rows"].head(200).select("x", "z", "v")
-    m = _test(lead, dep["id"], "number.csv", _csv_of(df))["metrics"]
+    given = ["abc", "", *map(str, df["v"].to_list()[2:])]  # a label that isn't a number is given, not missing
+    m = _test(lead, dep["id"], "number.csv", _csv_of(df.with_columns(v=pl.Series(given))))["metrics"]
     got = np.array([r["scores"]["v"] for r in _predicted(lead, dep["id"], df)])
-    err = got - df["v"].to_numpy()
-    assert m["labelled_rows"] == 200
+    err = (got - df["v"].to_numpy())[2:]
+    assert m["labelled_rows"] == 199 and m["rows_without_label"] == 1 and m["rows_label_not_a_number"] == 1
     assert m["mae"] == pytest.approx(np.abs(err).mean(), rel=1e-6)
     assert m["rmse"] == pytest.approx(np.sqrt((err**2).mean()), rel=1e-6)
 
@@ -292,16 +306,49 @@ def test_values_that_dont_convert_are_counted_per_field_and_a_mostly_failing_fie
     }
 
 
-def test_a_label_reads_as_the_class_text_training_saw(setup):
-    codes = scoring.Input("y", pl.Int64, None, None, integer_codes=True)
-    got = deployments._label_values(pl.Series("y", ["7.0", "07", " 7", "7.5", "NA", None]), codes)
-    assert got.to_list() == ["7", "7", "7", None, None, None]
-    flags = scoring.Input("y", pl.Boolean, None, None)
-    assert deployments._label_values(pl.Series("y", ["true", "0"]), flags).to_list() == ["True", "False"]
-    assert deployments._label_values(pl.Series("y", ["p", ""]), None).to_list() == ["p", None]
-    with db.connection() as conn:  # the export froze the target's type, so a file's labels are read by it
-        frozen = deployments._label_input(conn, setup["e"]["id"], "y", "binary")
-    assert frozen is not None and frozen.dtype == pl.String
+def _trained_classes(tmp_path, values: list, task: dict | None = None) -> list[str]:
+    """The class names training gives a target column holding `values`."""
+    path = tmp_path / "y.parquet"
+    pl.DataFrame({"y": values}).write_parquet(path)
+    return prepare_targets(path, ["y"], {"y": task or {"task": "classes"}}, {}, 1)[2]["y"]
+
+
+def _labels(values, classes, numeric, bins=None) -> list:
+    from app.transform import target_labels
+
+    out = target_labels(pl.Series("y", values), bins, classes, numeric=numeric)
+    return [None if pd.isna(v) else v for v in out]
+
+
+def test_a_files_labels_are_named_as_training_named_the_classes(tmp_path):
+    # An integer target with a missing value reaches training as floats, so its classes are "1.0", "2.0" and "3.0".
+    classes = _trained_classes(tmp_path, [1, 2, 3, None] * 3)
+    assert classes == ["1.0", "2.0", "3.0"]
+    got = _labels(["1", "2.0", " 3", "07", "7.5", "abc", "yes", "", None], classes, numeric=True)
+    assert got == ["1.0", "2.0", "3.0", "07", "7.5", "abc", "yes", None, None]
+    assert _labels([1, 3, None], classes, numeric=True) == ["1.0", "3.0", None]
+    # Without the missing value they are "1", "2", "3", and a float label still finds them.
+    classes = _trained_classes(tmp_path, [1, 2, 3] * 3)
+    assert classes == ["1", "2", "3"] and _labels([1.0, 2.5], classes, numeric=True) == ["1", "2.5"]
+    # Text classes match only as text.
+    assert _labels(["07", "7"], ["7", "a"], numeric=False) == ["07", "7"]
+
+
+def test_a_files_banded_and_grouped_labels_are_the_band_and_the_group(tmp_path):
+    task = {"task": "bins", "bins": {"edges": [10, 20]}}
+    classes = _trained_classes(tmp_path, [5.0, 15.0, 25.0] * 3, task)
+    bins = {"edges": [10.0, 20.0], "labels": classes}
+    assert _labels(["5", "10", "19.9", "30.5", "x", None], classes, True, bins) == [
+        classes[0], classes[1], classes[1], classes[2], "x", None,
+    ]  # fmt: skip
+    task = {"task": "bins", "bins": {"positive": ["a", "b"]}}
+    classes = _trained_classes(tmp_path, ["a", "b", "c", "d"] * 3, task)
+    assert classes == ["(rest)", "a / b"]
+    assert _labels(["a", "b", "c", "zz", "", None], classes, False, {"positive": ["a", "b"]}) == [
+        "a / b", "a / b", "(rest)", "(rest)", None, None,
+    ]  # fmt: skip
+    # An integer target grouped on "1": a file's 1.0 is in the group too.
+    assert _labels([1.0, 2.0], ["(rest)", "1"], True, {"positive": ["1"]}) == ["1", "(rest)"]
 
 
 # ------------------------------------------------------------------------------------------- failing and refusing
@@ -395,10 +442,127 @@ def test_a_test_whose_process_is_gone_is_failed_by_the_sweep(setup, ovr_dep):
         )["id"]
 
     gone, mine = row(515_151), row(jobs.owner_id())
+    for tid in (gone, mine):
+        _folder(ovr_dep["id"], tid).mkdir(parents=True)
+    tests = deployments.tests_dir(ovr_dep["id"])
+    dead_upload, live_upload = tests / ".incoming-515151-abc", tests / f".incoming-{jobs.owner_id()}-abc"
+    for d in (dead_upload, live_upload):
+        d.mkdir()
     try:
         jobs.sweep()
         got = db.fetch_one("SELECT status, error FROM meta.deployment_tests WHERE id = %s", (gone,))
         assert got == {"status": "failed", "error": jobs.INTERRUPTED}
         assert db.fetch_one("SELECT status FROM meta.deployment_tests WHERE id = %s", (mine,))["status"] == "running"
+        # The failed test's half-written files and a dead process's upload go; a live process's stay.
+        assert not _folder(ovr_dep["id"], gone).exists() and _folder(ovr_dep["id"], mine).exists()
+        assert not dead_upload.exists() and live_upload.exists()
     finally:
         db.execute("DELETE FROM meta.deployment_tests WHERE id IN (%s, %s)", (gone, mine))
+        for d in (_folder(ovr_dep["id"], mine), live_upload):
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_member_who_cant_see_the_experiment_cant_see_its_tests(people):
+    lead, owner, member = people["lead"], people["a"], people["c"]
+    ds = upload(lead, _csv(300), targets="y")
+    start(lead, ds, "tree", [owner])
+    rid = lead.get(f"/api/datasets/{ds['id']}").json()["recipe_id"]
+    x = owner.post(
+        f"/api/datasets/{ds['id']}/experiments", json={"name": "mine", "source": f"assessment:{rid}:{owner.user['id']}"}
+    ).json()
+    assert x["private"], x
+    run = _run(owner, export(owner, ds, x), order=["y"])
+    dep = _deploy(owner, x, run_ids=[run["id"]])
+    rows = pl.read_csv(io.StringIO(_csv(300))).head(3).drop("y")
+    t = _test(owner, dep["id"], "private.csv", _csv_of(rows))
+    assert t["status"] == "done", t["error"]
+    paths = [
+        f"/api/deployment-tests/{t['id']}",
+        f"/api/deployment-tests/{t['id']}/download?format=csv",
+        f"/api/deployment-tests/{t['id']}/download?format=parquet",
+        f"/api/deployments/{dep['id']}/tests",
+    ]
+    assert [owner.get(p).status_code for p in paths] == [200] * 4
+    assert [member.get(p).status_code for p in paths] == [404] * 4
+    assert [lead.get(p).status_code for p in paths] == [404] * 4
+
+
+# ------------------------------------------------------------------------------------------- typed targets
+def _typed_csv(n=900, seed=11) -> str:
+    """x, z features; four targets that follow x: y_int (codes 1-3, one row missing), y_float (classes 0.5, 1.5,
+    2.5), y_band (a number cut into bands), y_group (a, b, c, predicted as a against the rest)."""
+    rng = np.random.default_rng(seed)
+    x, z = rng.normal(size=n), rng.normal(size=n)
+    s = x + 0.4 * rng.normal(size=n)
+    k = np.digitize(s, [-0.4, 0.5])
+    rows = []
+    for i in range(n):
+        y_int = "" if i == 0 else str(k[i] + 1)
+        rows.append(f"{x[i]:.3f},{z[i]:.3f},{y_int},{k[i] + 0.5},{10 * s[i]:.3f},{'abc'[k[i]]}\n")
+    return "x,z,y_int,y_float,y_band,y_group\n" + "".join(rows)
+
+
+TYPED = {
+    "y_int": {"target_task": "classes"},
+    "y_float": {"target_task": "classes"},
+    "y_band": {"target_task": "bins", "target_bins": {"edges": [-4, 5]}},
+    "y_group": {"target_task": "bins", "target_bins": {"positive": ["a"]}},
+}
+
+
+def _band(v: float) -> str:
+    return "< -4" if v < -4 else "[-4, 5)" if v < 5 else "≥ 5"
+
+
+# How training names each target's classes, written out independently of the code under test.
+TRAINED_NAME = {
+    "y_int": lambda v: f"{float(v)}",  # a missing value made the column float
+    "y_float": lambda v: f"{float(v)}",
+    "y_band": lambda v: _band(float(v)),
+    "y_group": lambda v: "a" if v == "a" else "(rest)",
+}
+
+
+@pytest.fixture(scope="module")
+def typed(people):
+    lead = people["lead"]
+    ds = upload(lead, _typed_csv(), targets=",".join(TYPED))
+    start(lead, ds, "tree", [lead], targets=tuple(TYPED))
+    f = fields(lead, ds)
+    for name, decision in TYPED.items():
+        r = save(lead, f[name]["id"], action="target", **decision)
+        assert r.status_code == 200, r.text
+    rid = submit_and_finalize(lead, ds)["recipe"]["id"]
+    x = experiment(lead, ds, rid, "typed targets")
+    e = export(lead, ds, x)
+    path = db.fetch_one("SELECT parquet_path FROM meta.datasets WHERE id = %s", (ds["id"],))["parquet_path"]
+    deps = {t: _deploy(lead, x, run_ids=[_run(lead, e, order=[t])["id"]]) for t in TYPED}
+    return {"lead": lead, "deps": deps, "rows": pl.read_parquet(path)}
+
+
+@pytest.mark.parametrize("target", list(TYPED))
+def test_a_typed_targets_labels_count_as_training_named_them(typed, target):
+    lead, dep = typed["lead"], typed["deps"][target]
+    df = typed["rows"].slice(1, 300).select("x", "z", target)
+    t = _test(lead, dep["id"], f"{target}.csv", _csv_of(df))
+    assert t["status"] == "done", t["error"]
+    m = t["metrics"]
+    classes = {c["label"] for c in m["classes"]}
+    names = [TRAINED_NAME[target](v) for v in df[target].to_list()]
+    assert set(names) <= classes, (names[:5], classes)
+    tops = [r["top"]["label"] for r in _predicted(lead, dep["id"], df)]
+    want = np.mean([a == b for a, b in zip(tops, names)])
+    assert m["rows_label_without_model"] == 0 and m["rows_without_label"] == 0
+    assert m["top1_accuracy"] == pytest.approx(want) and want > 0.5
+
+
+def test_a_typed_label_that_names_no_class_is_wrong_not_unlabelled(typed):
+    lead, dep = typed["lead"], typed["deps"]["y_int"]
+    df = typed["rows"].slice(1, 20).select("x", "z", "y_int")
+    given = ["7.5", "abc", "yes", ""] + [str(v) for v in df["y_int"].to_list()[4:]]
+    df = df.with_columns(y_int=pl.Series(given))
+    m = _test(lead, dep["id"], "odd.csv", _csv_of(df))["metrics"]
+    assert m["rows_without_label"] == 1 and m["labelled_rows"] == 19 and m["rows_label_without_model"] == 3
+    tops = [r["top"]["label"] for r in _predicted(lead, dep["id"], df)]
+    hits = sum(tops[i] == f"{float(given[i])}" for i in range(4, 20))
+    assert m["top1_accuracy"] == pytest.approx(hits / 19)
