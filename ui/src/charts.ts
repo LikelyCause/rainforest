@@ -278,6 +278,10 @@ export function rocOption(t: ChartTheme, curves: RocCurve[]): EChartsCoreOption 
   };
 }
 
+/** Legend icons for a solid and a dashed line, so a legend tells two series of one colour apart. */
+export const LEGEND_LINE = "path://M0 0h20v3H0z";
+export const LEGEND_DASH = "path://M0 0h5v3H0zM7.5 0h5v3h-5zM15 0h5v3h-5z";
+
 /** A one-vs-rest run's precision, recall and F1 by threshold on validation, the test F1 dashed beside them, and the
  * threshold the run chose. */
 export function thresholdCurveOption(
@@ -324,7 +328,13 @@ export function thresholdCurveOption(
   return {
     ...base(t),
     grid: { left: 56, right: 16, top: 40, bottom: 40 },
-    legend: { top: 0, icon: "roundRect", itemWidth: 14, textStyle: { color: t.textSecondary, fontSize: FS.small } },
+    legend: {
+      top: 0,
+      itemWidth: 20,
+      itemHeight: 10,
+      data: series.map((x) => ({ name: x.name, icon: x.lineStyle.type === "dashed" ? LEGEND_DASH : LEGEND_LINE })),
+      textStyle: { color: t.textSecondary, fontSize: FS.small },
+    },
     tooltip: {
       ...(base(t).tooltip as object),
       trigger: "axis",
