@@ -1,8 +1,17 @@
 import { settingProblem } from "./settings";
 import { parseSweep } from "./sweep";
-import type { Batch, ClassCount, ModelSetting, Range, SettingValue, Skip, Space } from "./types";
-
-export type { ClassCount } from "./types";
+import type {
+  Batch,
+  BatchKind,
+  BatchRequest,
+  ClassCount,
+  Device,
+  ModelSetting,
+  Range,
+  SettingValue,
+  Skip,
+  Space,
+} from "./types";
 
 /** One axis of the search as the dialog holds it, typed text and all, before it is read into the space. */
 export interface AxisDraft {
@@ -15,43 +24,65 @@ export interface AxisDraft {
   integer: boolean;
 }
 
-/** The classes a one-vs-rest batch trains and, for every other class, why not: the API's `batches.plan_classes`,
- * so the preview names the same skips the batch will. `validRows` 0 means the validation split is empty. */
-export function planClasses(
-  classes: ClassCount[],
-  validRows: number | null,
-  wanted: string[] | null,
-  minPos: number,
-): { trained: string[]; skipped: Skip[] } {
+/** The classes a one-vs-rest batch trains and, for every other class, why not. The batch plan's `reason` is the
+ * server's rule; only unticking, which needs instant feedback, is decided here. */
+export function classPlan(classes: ClassCount[], ticked: string[] | null): { trained: string[]; skipped: Skip[] } {
   const trained: string[] = [];
   const skipped: Skip[] = [];
   for (const c of classes) {
-    const reason =
-      wanted !== null && !wanted.includes(c.class)
-        ? "not selected"
-        : c.train < minPos
-          ? `fewer than ${minPos} positives in training`
-          : validRows === 0
-            ? "no validation rows"
-            : c.valid === 0
-              ? "no validation positives"
-              : null;
+    const reason = ticked && !ticked.includes(c.class) ? "not selected" : c.reason;
     if (reason) skipped.push({ class: c.class, reason });
     else trained.push(c.class);
   }
   return { trained, skipped };
 }
 
-// Python's string order (by code point), not the locale's, so ties fall as the API's sort leaves them.
-const byCodePoint = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+/** The tag on a run of a batch: the batch's name, or its number until the experiment's batches have loaded. */
+export function batchTag(batches: Pick<Batch, "id" | "name">[] | undefined, id: number): string {
+  return batches?.find((b) => b.id === id)?.name ?? `Batch #${id}`;
+}
 
-/** A one-vs-rest search's default classes: the most frequent, the median and the rarest that would train. */
-export function searchClassesDefault(classes: ClassCount[], validRows: number | null, minPos: number): string[] {
-  const { trained } = planClasses(classes, validRows, null, minPos);
-  const train = new Map(classes.map((c) => [c.class, c.train]));
-  const sorted = [...trained].sort((a, b) => train.get(b)! - train.get(a)! || byCodePoint(a, b));
-  if (!sorted.length) return [];
-  return [...new Set([sorted[0], sorted[Math.floor((sorted.length - 1) / 2)], sorted[sorted.length - 1]])];
+/** The dialog's choices as POST /api/exports/{id}/batches takes them. A one-vs-rest batch or search carries its
+ * target and balance; `ticked` (null: every class) is a one-vs-rest batch's classes, `searchClasses` a search's. */
+export function batchRequest(f: {
+  kind: BatchKind;
+  name: string;
+  model: string;
+  device: Device;
+  params: Record<string, SettingValue>;
+  seed: number;
+  cv: number;
+  cvFolds: number;
+  ovr: boolean;
+  target: string | null;
+  balance: boolean;
+  ticked: string[] | null;
+  space?: Space;
+  sampler?: { kind: "grid" | "random"; n: number; seed: number };
+  ranking?: string;
+  searchClasses?: string[];
+}): BatchRequest {
+  return {
+    kind: f.kind,
+    name: f.name.trim() || null,
+    model: f.model,
+    device: f.device,
+    params: f.params,
+    seed: f.seed,
+    cv: f.cv,
+    cv_folds: f.cvFolds,
+    ...(f.ovr ? { target: f.target, balance: f.balance } : {}),
+    // Unticked classes are left out, so the batch lists them as not selected.
+    ...(f.kind === "one_vs_rest" ? { classes: f.ticked } : {}),
+    ...(f.kind === "search"
+      ? {
+          space: f.space ?? {},
+          sampler: f.sampler?.kind === "random" ? { ...f.sampler } : { kind: "grid" as const },
+          ranking: f.ranking,
+          ...(f.ovr ? { search_classes: f.searchClasses ?? [] } : {}),
+        }
+      : {}),
+  };
 }
 
 const isNumberSetting = (s: ModelSetting) => s.kind === "int" || s.kind === "float" || s.kind === "int_or_none";

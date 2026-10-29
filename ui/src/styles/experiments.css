@@ -190,6 +190,8 @@ table.data.batch-class-table tr.skipped td:not(:first-child) { color: var(--text
 .batch-sampler + span { margin-top: -6px; }
 .batch-preview { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--border); }
 .batch-why { margin-right: auto; align-self: center; max-width: 100%; }
+.batch-error { flex: 1 0 100%; min-width: 0; }
+.batch-note { padding: 8px 12px; border-radius: var(--radius-sm); background: var(--warn-weak); color: var(--text-secondary); }
 
 .batches-card { padding: 0; max-height: none; border: 1px solid var(--border); border-radius: var(--radius); }
 .batches-head { padding: 10px 12px; border-bottom: 1px solid var(--border); }
@@ -201,6 +203,7 @@ table.data.batches tbody tr:last-child td { border-bottom: 0; }
 .batch-name a { font-weight: 600; }
 .batch-runs { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; color: var(--text-secondary); }
 .batch-runs .meter { flex: none; }
+.run-batch .badge { display: inline-block; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
 
 .batch-progress { display: inline-flex; align-items: center; gap: var(--space-2, 8px); color: var(--text-secondary); }
 .batch-progress .meter { width: 80px; flex: none; }

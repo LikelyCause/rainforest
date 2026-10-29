@@ -1132,6 +1132,8 @@ export interface ClassCount {
   train: number;
   valid: number;
   test: number;
+  /** Why a batch would skip the class (the server's rule), or null when it trains. */
+  reason: string | null;
 }
 /** A class a one-vs-rest batch doesn't train, and why ("not selected" when it was unticked). */
 export interface Skip {

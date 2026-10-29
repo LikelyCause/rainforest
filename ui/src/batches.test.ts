@@ -1,101 +1,125 @@
 import { describe, expect, it } from "vitest";
 import {
   batchProgress,
+  batchRequest,
+  batchTag,
   buildSpace,
   capProblem,
+  classPlan,
   distinctCombinations,
   defaultRanking,
   parseRange,
-  planClasses,
   rankingChoices,
   runCount,
-  searchClassesDefault,
   weightingClash,
-  type ClassCount,
 } from "./batches";
-import type { Batch, ModelSetting } from "./types";
+import type { Batch, ClassCount, ModelSetting } from "./types";
 
-// The same counts as api/tests/test_batches_planning.py, so both sides are held to one rule.
-const counts = (o: Record<string, [number, number, number]>): ClassCount[] =>
-  Object.entries(o).map(([c, [train, valid, test]]) => ({ class: c, train, valid, test }));
+// Each class as GET …/batch-plan gives it: the server's own reason for skipping it, or null.
+const plan: ClassCount[] = [
+  { class: "A", train: 50, valid: 10, test: 10, reason: null },
+  { class: "B", train: 9, valid: 3, test: 2, reason: "fewer than 10 positives in training" },
+  { class: "C", train: 60, valid: 12, test: 12, reason: null },
+];
 
-describe("planClasses", () => {
-  it("trains every class above the minimum", () => {
-    expect(planClasses(counts({ A: [50, 10, 10], B: [10, 3, 2] }), null, null, 10)).toEqual({
-      trained: ["A", "B"],
-      skipped: [],
-    });
-  });
-
-  it("skips too few training positives with the reason", () => {
-    expect(planClasses(counts({ A: [50, 10, 10], B: [9, 3, 2] }), null, null, 10)).toEqual({
-      trained: ["A"],
+describe("classPlan", () => {
+  it("trains what the server would, and skips with the server's reason", () => {
+    expect(classPlan(plan, null)).toEqual({
+      trained: ["A", "C"],
       skipped: [{ class: "B", reason: "fewer than 10 positives in training" }],
     });
   });
 
-  it("skips a class with no validation positives, and every class when the validation split is empty", () => {
-    expect(planClasses(counts({ A: [50, 10, 10], B: [40, 0, 5] }), null, null, 10).skipped).toEqual([
-      { class: "B", reason: "no validation positives" },
-    ]);
-    expect(planClasses(counts({ A: [50, 0, 10] }), 0, null, 10)).toEqual({
-      trained: [],
-      skipped: [{ class: "A", reason: "no validation rows" }],
-    });
-  });
-
-  it("gives each class one reason, the training minimum before the validation split", () => {
-    expect(planClasses(counts({ A: [2, 0, 0] }), 0, null, 10).skipped).toEqual([
-      { class: "A", reason: "fewer than 10 positives in training" },
-    ]);
-  });
-
-  it("lists unticked classes as not selected, ahead of any other reason", () => {
-    expect(planClasses(counts({ A: [50, 10, 10], B: [9, 3, 2], C: [60, 12, 12] }), null, ["B", "C"], 10)).toEqual({
+  it("lists every unticked class as not selected, ahead of the server's reason", () => {
+    expect(classPlan(plan, ["C"])).toEqual({
       trained: ["C"],
       skipped: [
         { class: "A", reason: "not selected" },
-        { class: "B", reason: "fewer than 10 positives in training" },
+        { class: "B", reason: "not selected" },
       ],
     });
-    expect(planClasses(counts({ A: [2, 0, 0], B: [60, 12, 12] }), null, ["B"], 10).skipped).toEqual([
-      { class: "A", reason: "not selected" },
-    ]);
   });
 
-  it("uses the configured minimum", () => {
-    expect(planClasses(counts({ A: [50, 10, 10] }), null, null, 200).skipped).toEqual([
-      { class: "A", reason: "fewer than 200 positives in training" },
+  it("keeps the server's reason for a ticked class that can't train", () => {
+    expect(classPlan(plan, ["B", "C"]).skipped).toEqual([
+      { class: "A", reason: "not selected" },
+      { class: "B", reason: "fewer than 10 positives in training" },
     ]);
+    expect(classPlan(plan, []).trained).toEqual([]);
   });
 });
 
-describe("searchClassesDefault", () => {
-  it("is the most frequent, the median and the rarest above the minimum", () => {
-    const c = counts({
-      V01: [5000, 900, 900],
-      V02: [1200, 200, 200],
-      V03: [800, 100, 100],
-      V04: [300, 50, 50],
-      V05: [40, 8, 8],
-      V06: [12, 3, 3],
-      V07: [4, 1, 1],
+describe("batchTag", () => {
+  it("names a run's batch, or its number until the batches have loaded", () => {
+    const batches = [{ id: 4, name: "LightGBM · one model per class of vehicle" }] as Batch[];
+    expect(batchTag(batches, 4)).toBe("LightGBM · one model per class of vehicle");
+    expect(batchTag(undefined, 4)).toBe("Batch #4");
+    expect(batchTag(batches, 9)).toBe("Batch #9");
+  });
+});
+
+describe("batchRequest", () => {
+  const common = {
+    name: "  ",
+    model: "lightgbm",
+    device: "cpu" as const,
+    params: { num_leaves: 63 },
+    seed: 42,
+    cv: 5,
+    cvFolds: 0,
+    target: "vehicle",
+    balance: true,
+  };
+  const search = {
+    space: { learning_rate: { low: 0.01, high: 0.3, log: true, integer: false } },
+    sampler: { kind: "random" as const, n: 20, seed: 3 },
+    ranking: "pr_auc",
+    searchClasses: ["V01", "V04"],
+  };
+
+  it("sends a one-vs-rest batch's target, balance and classes, null for all of them", () => {
+    expect(batchRequest({ ...common, kind: "one_vs_rest", ovr: true, ticked: null })).toEqual({
+      kind: "one_vs_rest",
+      name: null,
+      model: "lightgbm",
+      device: "cpu",
+      params: { num_leaves: 63 },
+      seed: 42,
+      cv: 5,
+      cv_folds: 0,
+      target: "vehicle",
+      balance: true,
+      classes: null,
     });
-    expect(searchClassesDefault(c, null, 10)).toEqual(["V01", "V03", "V06"]);
+    expect(batchRequest({ ...common, kind: "one_vs_rest", ovr: true, ticked: ["V01"], name: " Mine " })).toMatchObject({
+      name: "Mine",
+      classes: ["V01"],
+    });
   });
 
-  it("is distinct when few classes qualify, and skips classes that could not train", () => {
-    expect(searchClassesDefault(counts({ A: [50, 10, 10], B: [20, 5, 5] }), null, 10)).toEqual(["A", "B"]);
-    expect(searchClassesDefault(counts({ A: [50, 10, 10], B: [2, 1, 1] }), null, 10)).toEqual(["A"]);
-    expect(searchClassesDefault(counts({ A: [5, 1, 1] }), null, 10)).toEqual([]);
-    expect(searchClassesDefault(counts({ A: [500, 90, 90], B: [400, 0, 80], C: [30, 6, 6] }), null, 10)).toEqual([
-      "A",
-      "C",
-    ]);
+  it("sends a whole-target search without a target, balance or classes", () => {
+    const body = batchRequest({ ...common, ...search, kind: "search", ovr: false, ticked: null });
+    expect(body).toMatchObject({ kind: "search", space: search.space, ranking: "pr_auc" });
+    expect(body.sampler).toEqual({ kind: "random", n: 20, seed: 3 });
+    for (const k of ["target", "balance", "classes", "search_classes"]) expect(body).not.toHaveProperty(k);
   });
 
-  it("breaks a tie in frequency by name, as the API sorts", () => {
-    expect(searchClassesDefault(counts({ b: [50, 10, 10], a: [50, 10, 10] }), null, 10)).toEqual(["a", "b"]);
+  it("sends a one-vs-rest search's target, balance and search classes, but no classes", () => {
+    const body = batchRequest({ ...common, ...search, kind: "search", ovr: true, ticked: ["X"] });
+    expect(body).toMatchObject({ target: "vehicle", balance: true, search_classes: ["V01", "V04"] });
+    expect(body).not.toHaveProperty("classes");
+  });
+
+  it("sends a grid sampler as just its kind", () => {
+    const body = batchRequest({
+      ...common,
+      ...search,
+      sampler: { kind: "grid", n: 20, seed: 3 },
+      kind: "search",
+      ovr: false,
+      ticked: null,
+    });
+    expect(body.sampler).toEqual({ kind: "grid" });
   });
 });
 

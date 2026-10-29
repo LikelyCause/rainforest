@@ -2,12 +2,13 @@ import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import {
+  batchRequest,
   buildSpace,
   capProblem,
+  classPlan,
   defaultRanking,
   LOWER_IS_BETTER,
   METRIC_NAME,
-  planClasses,
   rankingChoices,
   runCount,
   weightingClash,
@@ -17,7 +18,6 @@ import { fmtInt } from "../format";
 import { changed, describeSettings, isVisible, runFields, suitsTargets } from "../settings";
 import type {
   BatchKind,
-  BatchRequest,
   BatchStarted,
   ClassCount,
   Device,
@@ -335,13 +335,14 @@ export function BatchDialog({
   const run = catalog ? runFields(values, catalog) : { seed: 42, cv: 5 };
   const p = plan.data;
   const classes = p?.classes ?? [];
-  const validRows = p?.valid_rows ?? null;
-  const minPos = p?.min_positives ?? 0;
-  const ovrPlan = planClasses(classes, validRows, kind === "one_vs_rest" ? ticked : null, minPos);
-  const eligible = planClasses(classes, validRows, null, minPos);
+  const ovrPlan = classPlan(classes, kind === "one_vs_rest" ? ticked : null);
   const reasonOf = new Map(ovrPlan.skipped.map((s) => [s.class, s.reason]));
-  const ineligible = new Map(eligible.skipped.map((s) => [s.class, s.reason]));
+  const ineligible = new Map(classes.flatMap((c) => (c.reason ? [[c.class, c.reason] as const] : [])));
   const chosen = (tuneOn ?? p?.search_classes ?? []).filter((c) => !ineligible.has(c));
+  const searched = new Set(axes.map((a) => a.name));
+  // A searched setting's own value is never used, so it isn't listed among the settings every run takes.
+  const fixed = Object.fromEntries(Object.entries(params).filter(([k]) => kind !== "search" || !searched.has(k)));
+  const unusedSweep = kind === "one_vs_rest" && sweep.some((a) => a.values.length > 0);
 
   const space = kind === "search" && catalog ? buildSpace(axes, catalog) : { space: {}, error: null };
   const count =
@@ -363,9 +364,13 @@ export function BatchDialog({
   const labelOf = (n: string) => catalog?.find((s) => s.name === n)?.label ?? n;
 
   const blocker = plan.isLoading
-    ? "Loading the export's classes…"
+    ? ovr
+      ? "Loading the export's classes…"
+      : "Loading…"
     : plan.error
-      ? "The export's classes couldn't be read"
+      ? ovr
+        ? "The export's classes couldn't be read"
+        : "The batch limits couldn't be read"
       : ovr && !target
         ? "This export has no class target"
         : kind === "one_vs_rest" && !ovrPlan.trained.length
@@ -380,29 +385,33 @@ export function BatchDialog({
                   ? "The seed must be a whole number"
                   : (count.error ?? cap);
 
-  const body = (): BatchRequest => ({
-    kind,
-    name: name.trim() || null,
-    model,
-    device,
-    params,
-    seed: run.seed,
-    cv: run.cv,
-    cv_folds: cvFolds,
-    ...(ovr ? { target, balance } : {}),
-    // Unticked classes are sent as left out, so the batch lists them as not selected.
-    ...(kind === "one_vs_rest" ? { classes: ticked } : {}),
-    ...(kind === "search"
-      ? {
-          space: space.space,
-          sampler:
-            sampler === "grid" ? { kind: "grid" } : { kind: "random", n: Number(draws), seed: Number(seed.trim()) },
-          ranking: rank,
-          ...(ovr ? { search_classes: chosen } : {}),
-        }
-      : {}),
-  });
+  const body = () =>
+    batchRequest({
+      kind,
+      name,
+      model,
+      device,
+      params,
+      seed: run.seed,
+      cv: run.cv,
+      cvFolds,
+      ovr,
+      target,
+      balance,
+      ticked,
+      space: space.space,
+      sampler: { kind: sampler, n: Number(draws), seed: Number(seed.trim()) },
+      ranking: rank,
+      searchClasses: chosen,
+    });
   const start = useMutation({ mutationFn: () => api.startBatch(e.id, body()), onSuccess: onStarted });
+  // A refusal is about the form as it was sent; once the form changes it no longer applies.
+  const edit =
+    <T,>(set: (v: T) => void) =>
+    (v: T) => {
+      if (start.isError) start.reset();
+      set(v);
+    };
   const defaultName =
     kind === "one_vs_rest"
       ? `${modelName} · one model per class of ${target ?? "…"}`
@@ -421,6 +430,12 @@ export function BatchDialog({
       labelledBy="batch-title"
       actions={
         <>
+          {/* In the actions row, above the buttons, so a refusal is in view however far the body is scrolled. */}
+          {start.error != null && (
+            <div className="batch-error">
+              <ErrorAlert error={start.error} />
+            </div>
+          )}
           {blocker && (
             <span id="batch-why" className={`small-text batch-why${cap ? " exp-bad" : " muted"}`}>
               {blocker}
@@ -459,13 +474,20 @@ export function BatchDialog({
             {modelName} on Export #{e.id}
           </dd>
           <dt>Settings</dt>
-          <dd>{catalog ? describeSettings(params, catalog) : "defaults"}</dd>
+          <dd title={catalog ? describeSettings(fixed, catalog, true) : undefined}>
+            {catalog ? describeSettings(fixed, catalog) : "defaults"}
+          </dd>
           <dt>Scoring</dt>
           <dd>{cvFolds ? `Validation, test and ${cvFolds} folds` : "Validation and test"}</dd>
           <dt>Device</dt>
           <dd>{device === "cuda" ? "GPU" : "CPU"}</dd>
         </dl>
         <span className="muted small-text">Change the model and its settings in the Train panel.</span>
+        {unusedSweep && (
+          <span className="small-text batch-note" role="note">
+            The values to try in the panel aren't used; each run takes the panel's value
+          </span>
+        )}
 
         {kind === "search" && classTargets.length > 0 && (
           <div className="field">
@@ -473,7 +495,7 @@ export function BatchDialog({
             <Segmented
               label="Train"
               value={scope}
-              onChange={setScope}
+              onChange={edit(setScope)}
               options={[
                 { value: "whole", label: targets.length > 1 ? "Every target" : "The whole target" },
                 { value: "ovr", label: "One model per class" },
@@ -492,7 +514,7 @@ export function BatchDialog({
             <select
               value={target ?? ""}
               onChange={(ev) => {
-                setTarget(ev.target.value);
+                edit(setTarget)(ev.target.value);
                 setTicked(null);
                 setTuneOn(null);
               }}
@@ -508,7 +530,7 @@ export function BatchDialog({
         <ErrorAlert error={plan.error} />
 
         {kind === "one_vs_rest" && p?.classes && target && (
-          <ClassTable target={target} classes={classes} ticked={ticked} reasons={reasonOf} onTick={setTicked} />
+          <ClassTable target={target} classes={classes} ticked={ticked} reasons={reasonOf} onTick={edit(setTicked)} />
         )}
         {kind === "search" && ovr && p?.classes && (
           <fieldset className="field bare">
@@ -523,7 +545,7 @@ export function BatchDialog({
                       disabled={Boolean(why)}
                       checked={!why && chosen.includes(c.class)}
                       onChange={(ev) =>
-                        setTuneOn(
+                        edit(setTuneOn)(
                           ev.target.checked
                             ? classes.map((x) => x.class).filter((x) => x === c.class || chosen.includes(x))
                             : chosen.filter((x) => x !== c.class),
@@ -545,14 +567,14 @@ export function BatchDialog({
 
         {kind === "search" && catalog && (
           <>
-            <SpaceEditor catalog={catalog} choices={choices} axes={axes} onChange={setAxes} />
+            <SpaceEditor catalog={catalog} choices={choices} axes={axes} onChange={edit(setAxes)} />
             <div className="row batch-sampler">
               <div className="field">
                 <span>Combinations</span>
                 <Segmented
                   label="Combinations"
                   value={sampler}
-                  onChange={setSampler}
+                  onChange={edit(setSampler)}
                   options={[
                     { value: "grid", label: "Grid" },
                     { value: "random", label: "Random" },
@@ -568,12 +590,12 @@ export function BatchDialog({
                       min={1}
                       inputMode="numeric"
                       value={draws}
-                      onChange={(ev) => setDraws(ev.target.value)}
+                      onChange={(ev) => edit(setDraws)(ev.target.value)}
                     />
                   </label>
                   <label className="field">
                     Seed
-                    <input inputMode="numeric" value={seed} onChange={(ev) => setSeed(ev.target.value)} />
+                    <input inputMode="numeric" value={seed} onChange={(ev) => edit(setSeed)(ev.target.value)} />
                   </label>
                 </>
               )}
@@ -585,7 +607,7 @@ export function BatchDialog({
             </span>
             <label className="field">
               Rank on
-              <select value={rank} onChange={(ev) => setRanking(ev.target.value)}>
+              <select value={rank} onChange={(ev) => edit(setRanking)(ev.target.value)}>
                 {rankings.map((m) => (
                   <option key={m} value={m}>
                     {METRIC_NAME[m] ?? m}
@@ -609,7 +631,7 @@ export function BatchDialog({
               type="checkbox"
               checked={balance}
               disabled={clash.length > 0}
-              onChange={(ev) => setBalanceOn(ev.target.checked)}
+              onChange={(ev) => edit(setBalanceOn)(ev.target.checked)}
             />
             Balance the classes
             <span className="muted small-text">
@@ -622,7 +644,12 @@ export function BatchDialog({
 
         <label className="field">
           Name
-          <input value={name} placeholder={defaultName} maxLength={200} onChange={(ev) => setName(ev.target.value)} />
+          <input
+            value={name}
+            placeholder={defaultName}
+            maxLength={200}
+            onChange={(ev) => edit(setName)(ev.target.value)}
+          />
         </label>
 
         <div className="batch-preview" aria-live="polite">
@@ -638,7 +665,6 @@ export function BatchDialog({
           </div>
           {kind === "one_vs_rest" && <Skips skipped={ovrPlan.skipped} />}
         </div>
-        <ErrorAlert error={start.error} />
       </div>
     </Dialog>
   );
