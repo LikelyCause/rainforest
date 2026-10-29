@@ -13,11 +13,13 @@ import {
   runFields,
   suitsTargets,
 } from "../settings";
-import { addSweepValues, combinations, parseSweep, readSweepValue, SWEEP_MAX } from "../sweep";
+import { combinations, parseSweep, SWEEP_MAX } from "../sweep";
 import { modelDescription, modelLabel, pickExport } from "../runs";
-import type { ExportJob, ModelRun, ModelSetting, SettingValue, TrainPrefill } from "../types";
+import type { BatchKind, BatchStarted, ExportJob, ModelRun, ModelSetting, SettingValue, TrainPrefill } from "../types";
+import { BatchDialog } from "./BatchDialog";
 import { Icon, Segmented } from "./kit";
 import { ModelSettings } from "./ModelSettings";
+import { SweepValues } from "./SweepValues";
 import { ErrorAlert } from "./ui";
 
 const settingsKey = (exportId: number, model: string) => `rf.trainSettings.${exportId}.${model}`;
@@ -37,72 +39,6 @@ export interface TrainRequest {
 }
 
 type Axis = { name: string; values: string[] };
-
-/** One setting's values to try: a chip per value (with its own remove), and a box that adds what's typed on Enter, on
- * a comma's worth of values, or when it loses focus. Backspace in the empty box takes the last value back. */
-function SweepValues({ s, axis, onChange }: { s: ModelSetting; axis: Axis; onChange: (values: string[]) => void }) {
-  const [draft, setDraft] = useState("");
-  const add = () => {
-    if (!draft.trim()) return;
-    onChange(addSweepValues(s, axis.values, draft));
-    setDraft("");
-  };
-  const remove = (i: number) => onChange(axis.values.filter((_, j) => j !== i));
-  const example = s.options
-    ? s.options
-        .map((o) => o.label)
-        .slice(0, 3)
-        .join(", ")
-    : s.kind === "float"
-      ? "0.01, 0.05, 0.1"
-      : "15, 31, 63";
-  return (
-    <div className="sweep-values" role="group" aria-label={`Values for ${s.label}`}>
-      {axis.values.map((t, i) => {
-        const { value, problem } = readSweepValue(s, t);
-        const label = problem ? t : fmtSetting(s, value);
-        return (
-          <span
-            key={`${t}:${i}`}
-            className={`sweep-chip num${problem ? " bad" : ""}`}
-            title={problem ? `${t}: ${problem}` : undefined}
-          >
-            {label}
-            <button type="button" className="ghost" aria-label={`Remove ${label}`} onClick={() => remove(i)}>
-              <Icon name="x" size={12} />
-            </button>
-          </span>
-        );
-      })}
-      <input
-        aria-label={`Add a value for ${s.label}`}
-        value={draft}
-        placeholder={axis.values.length ? "Add a value" : `e.g. ${example}`}
-        onChange={(ev) => setDraft(ev.target.value)}
-        onBlur={add}
-        onKeyDown={(ev) => {
-          if (ev.key === "Enter") {
-            ev.preventDefault();
-            add();
-          } else if (ev.key === "Backspace" && !draft && axis.values.length) {
-            ev.preventDefault();
-            remove(axis.values.length - 1);
-          }
-        }}
-      />
-      <button
-        type="button"
-        className="ghost small sweep-add"
-        disabled={!draft.trim()}
-        onMouseDown={(ev) => ev.preventDefault()}
-        onClick={add}
-      >
-        <Icon name="plus" />
-        Add a value
-      </button>
-    </div>
-  );
-}
 
 /** Up to two settings, each with values to try; Train then starts one run per combination. */
 function Sweep({
@@ -156,7 +92,7 @@ function Sweep({
                   </option>
                 ))}
               </select>
-              {s && <SweepValues key={a.name} s={s} axis={a} onChange={(v) => set(i, { ...a, values: v })} />}
+              {s && <SweepValues key={a.name} s={s} values={a.values} onChange={(v) => set(i, { ...a, values: v })} />}
               <button
                 type="button"
                 className="ghost small"
@@ -256,11 +192,13 @@ export function TrainPanel({
   exports,
   request,
   onStarted,
+  onBatchStarted,
   private: personal = false,
 }: {
   exports: ExportJob[];
   request: TrainRequest | null;
   onStarted: (runs: ModelRun[], e: ExportJob, label: string) => void;
+  onBatchStarted: (started: BatchStarted, e: ExportJob) => void;
   /** A private experiment's runs reach MLflow only once its baseline version is in team review. */
   private?: boolean;
 }) {
@@ -285,6 +223,7 @@ export function TrainPanel({
   const [showAll, setShowAll] = useState(false);
   const [pending, setPending] = useState<TrainPrefill | null>(null);
   const [axes, setAxes] = useState<Axis[]>([]);
+  const [batchKind, setBatchKind] = useState<BatchKind | null>(null);
 
   // A request picks the export; Train again also brings the run's model, order and settings once the export's
   // models have loaded.
@@ -404,23 +343,28 @@ export function TrainPanel({
     if (next.exportId !== undefined) setExportId(next.exportId);
     if (next.model !== undefined) setModel(next.model);
   };
-  const blocked = models.isLoading
+  // A batch picks its own target and values, so only the model and its settings must be ready.
+  const batchBlocked = models.isLoading
     ? "Loading models…"
     : !model
       ? "Choose a model"
       : !selected?.compatible
         ? "This model can't train on this export"
-        : order.length === 0
-          ? "Choose at least one target"
-          : settingProblems > 0
-            ? "Fix the settings marked in red"
-            : parsedAxes.some((a) => a.error)
-              ? "Finish the values to try"
-              : combos.length > SWEEP_MAX
-                ? `${combos.length} combinations; keep it to ${SWEEP_MAX}`
-                : comboProblem
-                  ? `A combination won't train: ${comboProblem[0]} ${comboProblem[1]}`
-                  : null;
+        : settingProblems > 0
+          ? "Fix the settings marked in red"
+          : null;
+  const blocked =
+    batchBlocked ??
+    (order.length === 0
+      ? "Choose at least one target"
+      : parsedAxes.some((a) => a.error)
+        ? "Finish the values to try"
+        : combos.length > SWEEP_MAX
+          ? `${combos.length} combinations; keep it to ${SWEEP_MAX}`
+          : comboProblem
+            ? `A combination won't train: ${comboProblem[0]} ${comboProblem[1]}`
+            : null);
+  const classTarget = targets.some((t) => e.summary?.target_kinds?.[t] && e.summary.target_kinds[t] !== "regression");
 
   const split = e.summary?.split_counts as { train: number; valid: number; test: number } | undefined;
   const info = e.summary?.split_info as { stratified_on?: string[] | null; grouped_on?: string | null } | undefined;
@@ -616,6 +560,31 @@ export function TrainPanel({
                 ? "Train chain"
                 : "Train"}
         </button>
+        <div className="train-batch stack exp-gap-2" role="group" aria-label="Batches">
+          {classTarget && (
+            <button
+              type="button"
+              disabled={Boolean(batchBlocked)}
+              title={batchBlocked ?? "A binary model for each class of a target, against the rest"}
+              onClick={() => setBatchKind("one_vs_rest")}
+            >
+              Train one model per class…
+            </button>
+          )}
+          <button
+            type="button"
+            disabled={Boolean(batchBlocked) || !catalog}
+            title={
+              batchBlocked ??
+              (catalog
+                ? "Many runs over ranges or lists of settings, ranked"
+                : "This model's settings aren't in the app yet")
+            }
+            onClick={() => setBatchKind("search")}
+          >
+            Search settings…
+          </button>
+        </div>
         {dropped.length > 0 && (
           <span className="muted small-text">
             Not carried over (no longer settings of this model): {dropped.join(", ")}
@@ -629,6 +598,27 @@ export function TrainPanel({
             ` ${count > 1 ? "Each one is" : "It's"} logged to MLflow${personal ? " once review opens" : ""}.`}
         </p>
       </aside>
+      {batchKind && selected && (
+        <BatchDialog
+          kind={batchKind}
+          e={e}
+          model={model}
+          modelName={selected.label}
+          catalog={catalog}
+          values={values}
+          device={useGpu ? "cuda" : "cpu"}
+          cvFolds={cvFolds}
+          sweep={axes}
+          onClose={() => setBatchKind(null)}
+          onStarted={(started) => {
+            setBatchKind(null);
+            qc.invalidateQueries({ queryKey: ["runs", e.dataset_id] });
+            qc.invalidateQueries({ queryKey: ["batches", e.experiment_id] });
+            qc.invalidateQueries({ queryKey: ["experiment", e.experiment_id] });
+            onBatchStarted(started, e);
+          }}
+        />
+      )}
     </div>
   );
 }

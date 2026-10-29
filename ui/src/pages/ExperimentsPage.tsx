@@ -25,7 +25,16 @@ import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtMetric } from "../forma
 import { fmtChange } from "../recipes";
 import { withView } from "../view";
 import { toast } from "../toast";
-import type { Dataset, Experiment, ExperimentDetail, ExportJob, Me, ModelRun, TrainPrefill } from "../types";
+import type {
+  BatchStarted,
+  Dataset,
+  Experiment,
+  ExperimentDetail,
+  ExportJob,
+  Me,
+  ModelRun,
+  TrainPrefill,
+} from "../types";
 
 const FILTERS: { value: ExperimentFilter; label: string }[] = [
   { value: "all", label: "All" },
@@ -716,6 +725,21 @@ export function ExperimentPage() {
     // The new runs are at the top of Runs: land there, not where Train was scrolled to.
     document.querySelector("main")?.scrollTo({ top: 0 });
   };
+  const onBatchStarted = ({ batch, run_ids, skipped, redraws }: BatchStarted, e: ExportJob) => {
+    setFresh(run_ids);
+    toast({
+      message: `Started ${batch.name}: ${run_ids.length} run${run_ids.length === 1 ? "" : "s"} on Export #${e.id}`,
+      detail:
+        [
+          skipped.length ? `${skipped.length} class${skipped.length === 1 ? "" : "es"} skipped` : null,
+          redraws ? `${redraws} random draw${redraws === 1 ? "" : "s"} refused by the checks and drawn again` : null,
+        ]
+          .filter(Boolean)
+          .join(" · ") || undefined,
+    });
+    nav(`${base}?tab=runs&export=${e.id}`);
+    document.querySelector("main")?.scrollTo({ top: 0 });
+  };
   const reason = blocked && (
     <div className="exp-page-banner">
       <Banner>{blocked}</Banner>
@@ -724,7 +748,12 @@ export function ExperimentPage() {
   switch (tab) {
     case "train":
       return canAdd ? (
-        <TrainTab exports={jobs.exports.data} onStarted={onStarted} private={x.data.private} />
+        <TrainTab
+          exports={jobs.exports.data}
+          onStarted={onStarted}
+          onBatchStarted={onBatchStarted}
+          private={x.data.private}
+        />
       ) : (
         <div className="page exp-narrow">
           <Banner>{blocked}</Banner>

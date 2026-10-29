@@ -5,6 +5,7 @@ import { api } from "../api";
 import { useDebounced, useFields } from "../hooks";
 import { Empty, ErrorAlert, InfoTip } from "../components/ui";
 import { Banner, Chip, Icon, ProgressBar, Segmented, StatusBadge, useDismiss } from "../components/kit";
+import { BatchList } from "../components/BatchList";
 import { MlflowLink, RunDetail } from "../components/RunDetail";
 import { TrainPanel, type TrainRequest } from "../components/TrainPanel";
 import { baselineLabel, familyShort, fmtAgo, fmtDate, fmtInt, fmtMetric, fmtNum, fmtPct } from "../format";
@@ -24,7 +25,7 @@ import {
 } from "../runs";
 import { lastRowRules, NO_RULES, rowsSentence, sourceLabel, splitPreview, type RowRules } from "../experiments";
 import { describeSettings } from "../settings";
-import type { Dataset, Experiment, ExportJob, ModelRun, SettingValue, TrainPrefill } from "../types";
+import type { BatchStarted, Dataset, Experiment, ExportJob, ModelRun, SettingValue, TrainPrefill } from "../types";
 
 const FAMILY_EXPLAINER: Record<string, string> = {
   tree: "Missing values stay as NaN for the trees to route; no scaling or log transforms; mid/high-cardinality categoricals become compact ordinal codes.",
@@ -962,6 +963,7 @@ export function RunsTab({
     <div className={`exp-runs${selected ? " with-aside" : ""}`}>
       <div className="exp-runs-main stack">
         <ErrorAlert error={error} />
+        <BatchList experimentId={x.id} />
         {!runs && <span className="skeleton exp-skel-line" />}
         {e && (
           <>
@@ -1148,7 +1150,11 @@ function RunsTable({
         </thead>
         <tbody>
           {runs.map((r) => {
-            const order = r.report?.order ?? r.config?.order ?? targets;
+            // A one-vs-rest run waiting in its batch has no report yet; it trains its one target, not the export's chain.
+            const order =
+              r.report?.order ??
+              r.config?.order ??
+              (r.config?.positive_class != null && r.config.target ? [r.config.target] : targets);
             const label = runLabel(
               r,
               models.data?.find((m) => m.key === r.model),
@@ -1291,10 +1297,12 @@ export function ExportsTab({
 export function TrainTab({
   exports,
   onStarted,
+  onBatchStarted,
   private: personal = false,
 }: {
   exports: ExportJob[] | undefined;
   onStarted: (runs: ModelRun[], e: ExportJob, label: string) => void;
+  onBatchStarted: (started: BatchStarted, e: ExportJob) => void;
   private?: boolean;
 }) {
   const loc = useLocation();
@@ -1339,7 +1347,13 @@ export function TrainTab({
   }
   return (
     <div className="page exp-wide">
-      <TrainPanel exports={exports} request={request} onStarted={onStarted} private={personal} />
+      <TrainPanel
+        exports={exports}
+        request={request}
+        onStarted={onStarted}
+        onBatchStarted={onBatchStarted}
+        private={personal}
+      />
     </div>
   );
 }

@@ -71,7 +71,8 @@ tr.run-row.inert:hover td { background: transparent; }
 tr.run-row.selected td, tr.run-row.selected:hover td { background: var(--accent-weak); }
 tr.run-row.fresh:not(.selected) td { background: color-mix(in srgb, var(--accent-weak) 55%, transparent); }
 .run-model { white-space: normal; min-width: 180px; }
-.run-params { white-space: normal; min-width: 140px; max-width: 280px; font-size: var(--fs-ui); }
+/* A sampled number has every digit (0.15605975503768751), which must wrap rather than run into the next column. */
+table.data.runs td.run-params { white-space: normal; overflow-wrap: anywhere; min-width: 140px; max-width: 280px; font-size: var(--fs-ui); }
 .run-params-inline { display: none; white-space: normal; margin-top: var(--space-1, 4px); }
 button.run-open { all: unset; cursor: pointer; font-weight: 600; color: var(--text-primary); border-radius: var(--radius-xs); }
 button.run-open:hover { text-decoration: underline; }
@@ -160,6 +161,47 @@ input.exp-values-input { width: 200px; max-width: 100%; }
 button.ghost.sweep-add { color: var(--accent); }
 
 /* The batch just started: "2 of 3 done" in the runs toolbar. */
+/* ------------------------------------------------------------------ batches: the dialog and the list above Runs */
+.train-batch button { width: 100%; }
+.batch-body { max-height: calc(100dvh - 200px); overflow-y: auto; padding: 0 4px 2px 0; gap: 14px; }
+.batch-from { margin: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; font-size: var(--fs-ui); }
+.batch-from dt { color: var(--text-muted); }
+.batch-from dd { margin: 0; overflow-wrap: anywhere; }
+.batch-from + span { margin-top: -8px; }
+.batch-body .field > .segmented { align-self: flex-start; }
+.batch-classes { max-height: 260px; }
+table.data.batch-class-table th { position: sticky; top: 0; background: var(--surface-1); color: var(--text-muted); font-size: var(--fs-small); padding: 6px 10px; z-index: 1; }
+table.data.batch-class-table td { padding: 4px 10px; vertical-align: middle; }
+table.data.batch-class-table th:first-child, table.data.batch-class-table td:first-child { width: 28px; padding-right: 0; }
+table.data.batch-class-table tr.skipped td:not(:first-child) { color: var(--text-muted); }
+.batch-class-name { overflow-wrap: anywhere; }
+.batch-skips { padding: 8px 12px; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-secondary); }
+.batch-skips ul { margin: 4px 0 0; padding-left: 18px; }
+.batch-skips li { overflow-wrap: anywhere; }
+.batch-space { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.batch-axis { padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.batch-axis-row { flex-wrap: nowrap; gap: 8px; }
+.batch-axis-row > select { flex: 1 1 220px; min-width: 0; }
+.batch-axis-row > button { flex: none; margin-left: auto; }
+.batch-range { gap: 8px 12px; align-items: center; }
+.batch-range input:not([type="checkbox"]) { width: 120px; }
+.batch-sampler { gap: 12px; align-items: flex-end; }
+.batch-sampler input { width: 110px; }
+.batch-sampler + span { margin-top: -6px; }
+.batch-preview { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--border); }
+.batch-why { margin-right: auto; align-self: center; max-width: 100%; }
+
+.batches-card { padding: 0; max-height: none; border: 1px solid var(--border); border-radius: var(--radius); }
+.batches-head { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.batches-head h2 { margin: 0; font-size: var(--fs-section); font-weight: 600; }
+table.data.batches th { background: var(--surface-1); color: var(--text-muted); font-size: var(--fs-small); padding: 8px 12px; white-space: nowrap; }
+table.data.batches td { padding: 8px 12px; vertical-align: middle; }
+table.data.batches tbody tr:last-child td { border-bottom: 0; }
+.batch-name { min-width: 220px; }
+.batch-name a { font-weight: 600; }
+.batch-runs { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; color: var(--text-secondary); }
+.batch-runs .meter { flex: none; }
+
 .batch-progress { display: inline-flex; align-items: center; gap: var(--space-2, 8px); color: var(--text-secondary); }
 .batch-progress .meter { width: 80px; flex: none; }
 .batch-progress b { font-weight: 600; color: var(--text-primary); }

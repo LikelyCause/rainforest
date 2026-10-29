@@ -11,6 +11,10 @@ import type {
   DerivedPreview,
   BandPreview,
   BaselineLine,
+  Batch,
+  BatchPlan,
+  BatchRequest,
+  BatchStarted,
   BulkRequest,
   BulkResult,
   CollectionSpec,
@@ -233,6 +237,11 @@ export const api = {
       device?: Device;
     },
   ) => request<ModelRun>(`/api/exports/${exportId}/runs`, json("POST", data)),
+  batchPlan: (exportId: number, target?: string | null) =>
+    request<BatchPlan>(`/api/exports/${exportId}/batch-plan${target ? `?target=${encodeURIComponent(target)}` : ""}`),
+  startBatch: (exportId: number, body: BatchRequest) =>
+    request<BatchStarted>(`/api/exports/${exportId}/batches`, json("POST", body)),
+  batches: (experimentId: number) => request<Batch[]>(`/api/experiments/${experimentId}/batches`),
   derived: (datasetId: number) => request<DerivedField[]>(`/api/datasets/${datasetId}/derived`),
   previewDerived: (datasetId: number, body: DerivedInput) =>
     request<DerivedPreview>(`/api/datasets/${datasetId}/derived/preview`, json("POST", body)),
