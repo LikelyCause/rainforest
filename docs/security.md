@@ -54,6 +54,15 @@ Set `RAINFOREST_ALLOWED_HOSTS` to the names and addresses you use, so a DNS-rebo
 The [reference Keycloak](deployment.md#reference-keycloak-development-only) is for development only. Its client
 secret and passwords are public.
 
+## Deployment keys
+
+- A key opens only its own deployment's predict call. It isn't a session and reads nothing else.
+- Only its SHA-256 and first 8 characters are stored, and it is compared in constant time. It is shown once and
+  never logged. The SQL console's role can't read the keys table at all.
+- The predict call with a key is exempt from the same-origin check: a browser never sends a key on its own, so it
+  can't be forged cross-site. With a session it is checked like any other write.
+- Revoking a key stops it at once. See [Keys](deployments.md#keys).
+
 ## Profile pictures
 
 - Pictures are open at a URL naming the picture's hash, because the sign-in page shows them.

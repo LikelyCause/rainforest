@@ -176,7 +176,8 @@ The [Makefile](Makefile) has the rest.
 
 - **Using it:** [Concepts](docs/concepts.md) · [User guide](docs/user-guide.md) ·
   [Team workflow](docs/team-workflow.md) · [Data preparation](docs/data-preparation.md) · [Explore](docs/explore.md) ·
-  [Experiments and training](docs/experiments-and-training.md) · [MLflow](docs/mlflow.md) · [SQL](docs/sql.md)
+  [Experiments and training](docs/experiments-and-training.md) · [Deployments](docs/deployments.md) · [MLflow](docs/mlflow.md) ·
+  [SQL](docs/sql.md)
 - **Running it:** [Deployment](docs/deployment.md) · [Kubernetes](deploy/README.md) · [Configuration](docs/configuration.md) ·
   [Security](docs/security.md)
 - **Developing it:** [Development](docs/development.md) · [Architecture](docs/architecture.md) · [API](docs/api.md)

@@ -10,6 +10,11 @@ from a browser must be same-origin (`403` otherwise), and a request body must be
 (`multipart/form-data` for the dataset and picture uploads) or it gets `415`. A `Host` outside `RAINFOREST_ALLOWED_HOSTS` gets `400`, except on `/health`
 (`localhost`, `127.0.0.1` and `::1` always pass).
 
+One route also takes a deployment API key instead of the cookie: `POST /api/deployments/{id}/predict` with
+`Authorization: Bearer rf_…` (see [Deployments](#deployments-routersdeploymentspy)). A key opens only that route
+of its own deployment, isn't a session, and is exempt from the same-origin check there; anywhere else it counts for
+nothing (`401` without a cookie).
+
 **Private experiments.** A personal experiment (built from one assessor's assessment) is private to that assessor
 while its baseline version is `assessing`. Every route answers for anyone else as if it, its exports and its runs
 didn't exist: lists leave them out (and the Datasets list's counts and latest export / run don't include them), and
@@ -24,7 +29,8 @@ batches.
 (`"Viewers can look but not change anything."`) on every `POST`, `PUT`, `PATCH` and `DELETE` except
 `POST …/analyses` (never recomputed), `POST …/fields/query`, `POST /api/sources/{name}/preview`, their own name (`PATCH /api/auth/me`) and their own picture (`PUT` / `DELETE
 /api/users/{id}/avatar`); sign-in and sign-out are open. The SQL console (`POST /api/sql`) is refused too: it reads
-every table, assessors' work in progress included. On `/api/auth/check` (MLflow) only MLflow's search requests may be
+every table, assessors' work in progress included. So is a deployment's predict call with a Viewer's session; a
+deployment key works whoever holds it. On `/api/auth/check` (MLflow) only MLflow's search requests may be
 `POST`s (`X-Original-URI`). While the current baseline version is `assessing`, the field
 routes, the field finder and Explore give a Viewer the dataset's latest finalized baseline's snapshot, or each field's
 suggestion (the `suggested` source) when it has none, read-only; from `review` on, the team decision like everyone
@@ -106,7 +112,7 @@ The session cookie is `HttpOnly`, `SameSite=Strict`, lasts 7 days and is `Secure
 | GET | `/api/datasets/sample/limits` | `{max_cells}`: the cap on `rows × fields` for generated samples. | |
 | GET | `/api/datasets/{dataset_id}` | One dataset, with `recipe_id`, `recipe_version` and `phase`; `baseline`, the current version (`id`, `family`, `version`, `phase`, `name` (null when unnamed), `label` like `Dropout risk v2 (Trees)` or `Trees baseline v2`, and `setup`: a new dataset's first baseline nobody has started on), or null; and `baselines`, one per family that has one, Trees first (`family`, `id`, `version`, `phase`, `name` and `label` of its latest version, and `latest_finalized_id`); and `source` (a connected dataset's origin: `kind`, `connection`, `database`, `collections`: each `name`, `label`, `filter` and `projection` as JSON text or null, `add_source`, `dedupe`, `match_on` or null; never a connection string; null for any other dataset) and `last_pull` (its newest pull: `id`, `status`, `started_at`, `finished_at`, `rows`, `has_drift`; null without one). | |
 | PATCH | `/api/datasets/{dataset_id}` | Rename or set the targets. `model_family` is the current baseline's: sending another is `422`. Setting targets needs a `ready` dataset (`409` otherwise) and may start a job for targets with no associations yet. While assessing, targets change only before any assessor is assigned (`409` after); in review only a lead changes them; a finalized version refuses (`409`), and so does a change to a carried-over field's role. A target must be typed binary, categorical or numeric, and binary or categorical with at most 100 distinct values (`422` naming each field otherwise). A new target gets its type's default task (see `PUT /api/fields/{id}/decision`); an existing one keeps its own. | `name`, `target_columns` (exact list in chain order; `[]` for none) |
-| DELETE | `/api/datasets/{dataset_id}` | *Lead.* Delete the dataset, its fields, exports, runs, analyses and files. `409` while it is processing or refreshing, or one of its exports or runs is still running (for a batch, naming it to cancel first). Returns counts removed. | |
+| DELETE | `/api/datasets/{dataset_id}` | *Lead.* Delete the dataset, its fields, exports, runs, analyses, [deployments](#deployments-routersdeploymentspy) (their keys and tests too) and files. `409` while it is processing or refreshing, or one of its exports or runs is still running (for a batch, naming it to cancel first). Returns counts removed. | |
 | GET | `/api/datasets/{dataset_id}/fields` | Lightweight field rows for the *Fields* list (type, confidence, missing, uniques, target association, leakage, decision, reviewed, `locked`: carried over into the current version, always false once it is finalized), with the viewer's decisions. | `view` |
 
 ## Sources (`routers/sources.py`)
@@ -205,6 +211,34 @@ Batch rows carry `id`, `experiment_id`, `export_id`, `dataset_id`, `kind`, `name
 | GET | `/api/experiments/{experiment_id}/batches` | The experiment's batches, newest first, with `counts`. `404` for an experiment the viewer can't see. | |
 | GET | `/api/batches/{batch_id}` | One batch with `rows`, one per run in the order they run: `run_id`, `status`, `status_message`, `error`, `label`, `positive_class`, `retried`, `fit_seconds`, `finished_at`. A one-vs-rest run's row adds `positives` (`train`, `valid`, `test`), `threshold` (the F1-best threshold on validation, kept in the run's `report.f1_threshold` as `{threshold, valid_f1, test_f1, note}`), `valid` and `test` (`pr_auc`, `roc_auc`, and `f1` at that threshold), and `weak` (validation PR-AUC below `OVR_WEAK_PR_AUC` or fewer than 30 test positives; null until the run is done). A search's rows add `settings` (the searched settings' values), `value` (the ranking metric on validation) and `cv_std` (its spread over the cross-validation folds, or null), and the batch adds `leaderboard`: per combination, best first, `rank`, `settings`, `run_ids`, `value` (for a one-vs-rest search the mean over its classes, with each in `classes`; null, and unranked, until every one of its runs has it), `cv_std`, `fit_seconds`. `404` for a batch the viewer can't see. | |
 | POST | `/api/batches/{batch_id}/cancel` | Cancel a running batch: its runs that haven't started become `cancelled` (a run already training finishes), and so does the batch. Returns the batch as `GET` does. `409` once it has ended or while the dataset is refreshing; write access to the experiment as for starting one. | |
+
+## Deployments (`routers/deployments.py`)
+
+A deployment scores raw records with finished runs of one export, through that export's own preprocessing. It is
+frozen files: a later refresh or re-export doesn't change it. What may be deployed together, thresholds and keys are
+explained in [Deployments](deployments.md).
+
+Deployment rows carry `id`, `dataset_id`, `experiment_id`, `experiment_name`, `export_id`, `batch_id`, `batch_name`,
+`name`, `models`, `status` (`active` or `retired`), `created_by`, `created_by_name`, `created_at`, `retired_at`, `keys`
+(how many unrevoked keys it has) and `can_manage` (whether the viewer may retire it and manage its keys: its creator
+or a lead). Each of `models` is `{run_id, label, model_label, kind, target, threshold, threshold_rule}`: `kind` is
+`binary` (a one-vs-rest run, with `positive_class`, its `threshold` and the `threshold_rule` that chose it, and
+`threshold_note` when the rule fell back to the F1 choice), `multiclass` or `regression` (no threshold). `label` is
+the class a binary model scores, or the target. Key rows carry `id`, `deployment_id`, `name`, `prefix` (the key's
+first 8 characters), `created_by`, `created_by_name`, `created_at`, `last_used_at` and `revoked_at`; never the key or
+its hash.
+
+| Method | Path | Purpose | Key params |
+|---|---|---|---|
+| POST | `/api/experiments/{experiment_id}/deployments` | Deploy runs of the experiment. `batch_id` alone deploys a one-vs-rest batch's finished runs (`409` while it runs); a search batch is deployed by choosing its rows (`run_ids` with `batch_id`, `422` without). The runs must be finished runs of one export, and either one-vs-rest runs of one target with at most one run per class, or a single run with one target (multiclass or number); a chain, a mixed set, two single runs or two runs of one class is `422` naming them. Each binary model's threshold follows its rule in `thresholds`, else `threshold_rule`, else the F1 choice. Before anything is stored, the export's test rows (else its validation rows, else a sample of training rows) are scored from the dataset's raw values and must reproduce each model's scores on the export's own features within 1e-9; a mismatch is `422` naming the model and row. An export made before exports froze their inputs is `422` *Re-export to deploy*. Write access to the experiment as for runs (`403`, `409` archived), `409` while the dataset is refreshing, `410` if the export's or a run's files were removed. Returns the deployment as `GET` does. | body: `name` (default: the batch's name or the model's label), `run_ids`, `batch_id`, `threshold_rule` and `thresholds` (`{run_id: rule}`); a rule is `{"kind": "f1"}`, `{"kind": "precision", "min": p}` (the lowest threshold whose validation precision reaches p, else the F1 choice with a note) or `{"kind": "fixed", "value": t}` |
+| GET | `/api/datasets/{dataset_id}/deployments` | The dataset's deployments in experiments the viewer can see, newest first. | |
+| GET | `/api/deployments/{deployment_id}` | One deployment, with `fields` (`[{name, dtype}]`: the source fields a record must carry), `example` (two of the dataset's rows of those fields, for a `curl` example) and `problem`; when the export can't be read, `fields` and `example` are null and `problem` says why. `404` for one the viewer can't see. | |
+| POST | `/api/deployments/{deployment_id}/retire` | Stop it answering (predict is `410`); its record, keys and tests stay. Its creator or a lead (`403`); `409` if already retired. Not held back by a refresh. Returns the deployment. | |
+| POST | `/api/deployments/{deployment_id}/activate` | Reactivate a retired deployment. Its creator or a lead; `409` if active or while the dataset is refreshing. | |
+| POST | `/api/deployments/{deployment_id}/keys` | `201` with a key row and `key` (`rf_` and 32 URL-safe characters). This is the only time the key is shown: only its SHA-256 and prefix are stored. Its creator or a lead; `409` while the dataset is refreshing. | body: `name` |
+| GET | `/api/deployments/{deployment_id}/keys` | The deployment's keys, revoked ones included, oldest first. Anyone who can see the deployment. | |
+| DELETE | `/api/deployments/{deployment_id}/keys/{key_id}` | Revoke a key: the next call with it is `401`. Its creator or a lead; repeating it changes nothing; `404` for a key of another deployment. Not held back by a refresh. Returns the key row. | |
+| POST | `/api/deployments/{deployment_id}/predict` | Score records with the deployment's models, in record order: `{deployment, models, results, warnings}`. `models` lists the labels `scores` is keyed by (each class, or the target of a number run). Each result is `{scores, top, matches, none_matched}`: `scores` maps label to probability (or the predicted number), `top` is `{label, score}` (null for a number run), `matches` the one-vs-rest classes at or above their threshold, best first, and `none_matched` whether there were none (both null unless one-vs-rest). `warnings` counts, per field, values that didn't convert to the field's type and were scored as missing. A session (not a Viewer's, `403`) of a user who can see it, or `Authorization: Bearer <key>` of this deployment (`401` for any other key, a revoked one, or neither). `404` unknown, `410` retired, `413` over 5 MB or more than `PREDICT_MAX_RECORDS` records, `422` for a body that isn't `{"records": [objects]}`, a field missing from a record (naming it and the record), a list or object as a value, or `NaN`/`Infinity`. | body: `records` (`[{"<field>": value, …}]`; extra fields are ignored, `null` is missing) |
 
 ## Explore (`routers/explore.py`)
 
