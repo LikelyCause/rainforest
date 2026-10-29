@@ -167,7 +167,7 @@ def sweep(owner: int | None = None) -> None:
                 WHERE batch_id IS NOT NULL AND status = 'pending' AND owner IS NOT NULL AND {}"""
             ).format(sql.Literal(WAITING), dead)
         )
-        for table in ("exports", "model_runs", "analyses"):
+        for table in ("exports", "model_runs", "analyses", "deployment_tests"):
             # A batch's runs that it hasn't submitted yet have no owner and no job to lose: the batch resumes them.
             waiting = sql.SQL(" AND NOT (batch_id IS NOT NULL AND owner IS NULL)" if table == "model_runs" else "")
             conn.execute(

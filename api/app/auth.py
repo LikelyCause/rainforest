@@ -46,6 +46,7 @@ OPEN_PATHS = {
 CHECK_PATH = "/api/auth/check"
 UPLOAD_PATH = "/api/datasets/upload"
 AVATAR_UPLOAD = re.compile(r"/api/users/\d+/avatar")
+TEST_UPLOAD = re.compile(r"/api/deployments/\d+/tests")
 AVATAR_MAX_BODY = 5 * 1024 * 1024 + 64 * 1024
 PREDICT_PATH = re.compile(r"/api/deployments/(\d+)/predict")
 PREDICT_MAX_BODY = 5 * 1024 * 1024
@@ -213,7 +214,8 @@ def body_type_problem(request: Request) -> str | None:
     if not has_body:
         return None
     ctype = request.headers.get("content-type", "").split(";")[0].strip().lower()
-    if request.url.path == UPLOAD_PATH or AVATAR_UPLOAD.fullmatch(request.url.path):
+    path = request.url.path
+    if path == UPLOAD_PATH or AVATAR_UPLOAD.fullmatch(path) or TEST_UPLOAD.fullmatch(path):
         return None if ctype == "multipart/form-data" else "Uploads must be sent as multipart/form-data."
     return None if ctype == "application/json" else "Send the request body as application/json."
 

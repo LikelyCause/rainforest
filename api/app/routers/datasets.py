@@ -18,6 +18,7 @@ from ..auth import CurrentUser, LeadUser
 from ..config import get_settings
 from ..correlations import target_associations
 from ..db import connection, execute, fetch_all, fetch_one, jsonb
+from ..ingest import UNSUPPORTED, UPLOAD_FORMATS
 from ..modeling.registry import MODELS
 from ..processing import _Status, delete_dataset_files, process_dataset, upsert_correlations
 from ..profiling import corr_vector, sample_indices
@@ -311,9 +312,9 @@ def upload(
             reuse.check_source(conn, recipe_id)
     filename = file.filename or "upload"
     suffix = Path(filename).suffix.lower()
-    fmt = {".csv": "csv", ".txt": "csv", ".tsv": "csv", ".parquet": "parquet", ".pq": "parquet"}.get(suffix)
+    fmt = UPLOAD_FORMATS.get(suffix)
     if fmt is None:
-        raise HTTPException(415, "Only .csv, .tsv, .txt and .parquet files are supported")
+        raise HTTPException(415, UNSUPPORTED)
     s = get_settings()
     s.uploads_dir.mkdir(parents=True, exist_ok=True)
     dest = s.uploads_dir / f"{uuid.uuid4().hex}{suffix}"

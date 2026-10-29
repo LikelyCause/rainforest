@@ -1,19 +1,26 @@
-"""Deployments: deploy finished runs of one export, retire and reactivate them, manage their API keys, and score
-records through `POST /api/deployments/{id}/predict` with a session or a key."""
+"""Deployments: deploy finished runs of one export, retire and reactivate them, manage their API keys, score
+records through `POST /api/deployments/{id}/predict` with a session or a key, and test them with uploaded files."""
 
 from __future__ import annotations
 
 import json
 import logging
+import os
+import shutil
+import uuid
+from pathlib import Path
+from typing import Literal
 
 import polars as pl
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from .. import deployments, experiments, scoring
+from .. import deployments, experiments, jobs, scoring
 from ..auth import PREDICT_MAX_BODY, CurrentUser
 from ..config import get_settings
 from ..db import connection, fetch_all, json_safe, jsonb
+from ..ingest import UNSUPPORTED, UPLOAD_FORMATS
 from ..schemas import DeploymentKeyRequest, DeploymentRequest
 from ._lock import refuse_while_refreshing
 
@@ -22,27 +29,27 @@ router = APIRouter(prefix="/api", tags=["deployments"])
 
 COLS = """d.id, d.dataset_id, d.experiment_id, x.name AS experiment_name, d.export_id, d.batch_id,
           (SELECT name FROM meta.run_batches b WHERE b.id = d.batch_id) AS batch_name, d.name, d.models, d.status,
-          d.preprocessor_sha256, d.created_by, (SELECT name FROM meta.users u WHERE u.id = d.created_by) AS created_by_name,
-          d.created_at,
-          d.retired_at, x.archived_at AS experiment_archived_at, (SELECT count(*) FROM meta.deployment_keys k
+          d.preprocessor_sha256, d.created_by,
+          (SELECT name FROM meta.users u WHERE u.id = d.created_by) AS created_by_name, d.created_at, d.retired_at,
+          x.archived_at AS experiment_archived_at, (SELECT count(*) FROM meta.deployment_keys k
                           WHERE k.deployment_id = d.id AND k.revoked_at IS NULL) AS keys"""
 FROM = "meta.deployments d JOIN meta.experiments x ON x.id = d.experiment_id"
 KEY_COLS = """k.id, k.deployment_id, k.name, k.prefix, k.created_by,
               (SELECT name FROM meta.users u WHERE u.id = k.created_by) AS created_by_name, k.created_at,
               k.last_used_at, k.revoked_at"""
-RETIRED = "This deployment is retired; reactivate it to score with it."
-FILES_GONE = "The deployment's export or model files were removed or unreadable"
+TEST_COLS = """t.id, t.deployment_id, t.filename, t.status, t.progress, t.status_message, t.rows, t.has_labels,
+               t.metrics, t.warnings, t.notes, t.id_field, t.labels, t.error, t.created_by,
+               (SELECT name FROM meta.users u WHERE u.id = t.created_by) AS created_by_name, t.created_at,
+               t.updated_at, t.finished_at"""
+RETIRED = deployments.RETIRED
+FILES_GONE = deployments.FILES_GONE
+DOWNLOADS = {"csv": "text/csv", "parquet": "application/vnd.apache.parquet"}
 
 
 def files_gone(deployment: object, exc: OSError) -> HTTPException:
     """410 with the generic message; the cause (which file, and why) goes to the log for an operator."""
     log.warning("deployment %s can't load its files: %s", deployment, exc)
     return HTTPException(410, FILES_GONE)
-
-
-def spec(row: dict) -> dict:
-    """What `scoring.load` reads of a deployment row."""
-    return {k: row[k] for k in ("id", "export_id", "models", "preprocessor_sha256")}
 
 
 def _can_manage(row: dict, user: dict) -> bool:
@@ -305,7 +312,7 @@ def _predict(deployment_id: int, request: Request, records: list[dict]) -> dict:
         if row["status"] != "active":
             raise HTTPException(410, RETIRED)
         try:
-            scorer = scoring.load(conn, spec(row))
+            scorer = scoring.load(conn, deployments.scoring_spec(row))
         except scoring.ModelChanged as exc:
             raise HTTPException(409, str(exc)) from exc
         except ValueError as exc:
@@ -328,3 +335,115 @@ async def predict(deployment_id: int, request: Request) -> dict:
     `Authorization: Bearer <key>` of this deployment; the middleware has checked which."""
     records = _records(await _body(request))
     return await run_in_threadpool(_predict, deployment_id, request, records)
+
+
+# ------------------------------------------------------------------------------------------- tests
+def _usable(conn, deployment_id: int, user: dict) -> dict:
+    """Starting a test uses the deployment: it waits for a refresh, needs write access to the experiment (never an
+    archived one), and an active deployment."""
+    row = _row(conn, deployment_id, user)
+    refuse_while_refreshing(conn, row["dataset_id"])
+    experiments.require_writable(experiments.get_visible(conn, row["experiment_id"], user), user)
+    if row["status"] != "active":
+        raise HTTPException(409, RETIRED)
+    return row
+
+
+@router.post("/deployments/{deployment_id}/tests", status_code=202)
+def start_test(deployment_id: int, user: CurrentUser, file: UploadFile = File(...)) -> dict:
+    """Upload a file of records to score with the deployment; a job scores it (`run_test`)."""
+    filename = file.filename or "upload"
+    suffix = Path(filename).suffix.lower()
+    if suffix not in UPLOAD_FORMATS:
+        raise HTTPException(415, UNSUPPORTED)
+    with connection() as conn:
+        _usable(conn, deployment_id, user)
+    incoming = deployments.tests_dir(deployment_id) / f".incoming-{uuid.uuid4().hex}"
+    incoming.mkdir(parents=True)
+    folder = None
+    try:
+        dest = incoming / f"{deployments.UPLOAD}{suffix}"
+        with dest.open("wb") as out:
+            shutil.copyfileobj(file.file, out, length=8 * 1024 * 1024)
+        if dest.stat().st_size == 0:
+            raise HTTPException(400, "Uploaded file is empty")
+        with connection() as conn:
+            _usable(conn, deployment_id, user)
+            test_id = conn.execute(
+                """INSERT INTO meta.deployment_tests (deployment_id, filename, status, status_message, owner, created_by)
+                   VALUES (%s, %s, 'pending', 'Queued', %s, %s) RETURNING id""",
+                (deployment_id, filename, jobs.owner_id(), user["id"]),
+            ).fetchone()["id"]
+            folder = deployments.test_dir(deployment_id, test_id)
+            os.replace(incoming, folder)
+            pruned = deployments.prune_tests(conn, deployment_id)
+    except BaseException:
+        shutil.rmtree(incoming, ignore_errors=True)
+        if folder is not None:
+            shutil.rmtree(folder, ignore_errors=True)
+        raise
+    deployments.discard_tests(deployment_id, pruned)
+    jobs.submit(deployments.run_test, test_id)
+    return _test_row(test_id, user)
+
+
+@router.get("/deployments/{deployment_id}/tests")
+def list_tests(deployment_id: int, user: CurrentUser) -> list[dict]:
+    with connection() as conn:
+        _row(conn, deployment_id, user)
+        return conn.execute(
+            f"SELECT {TEST_COLS} FROM meta.deployment_tests t WHERE t.deployment_id = %s ORDER BY t.id DESC",
+            (deployment_id,),
+        ).fetchall()
+
+
+def _test_row(test_id: int, user: dict) -> dict:
+    """The test with its deployment's models, or 404 when it doesn't exist or `user` can't see its experiment."""
+    with connection() as conn:
+        row = conn.execute(
+            f"""SELECT {TEST_COLS}, d.models AS deployment_models FROM meta.deployment_tests t
+                  JOIN meta.deployments d ON d.id = t.deployment_id
+                 WHERE t.id = %s AND d.experiment_id IN ({experiments.visible_ids(user["id"])})""",
+            (test_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(404, "Test not found")
+    return row
+
+
+def _results_file(row: dict) -> Path:
+    if row["status"] != "done":
+        raise HTTPException(409, "The test hasn't finished")
+    path = deployments.test_dir(row["deployment_id"], row["id"]) / deployments.RESULTS
+    if not path.exists():
+        raise HTTPException(410, "The test's results were removed")
+    return path
+
+
+@router.get("/deployment-tests/{test_id}")
+def get_test(test_id: int, user: CurrentUser) -> dict:
+    """The test, with `results`: its first 500 records' results once it is done."""
+    row = _test_row(test_id, user)
+    models = row.pop("deployment_models")
+    path = deployments.test_dir(row["deployment_id"], test_id) / deployments.RESULTS
+    results = []
+    if row["status"] == "done" and path.exists():
+        results = deployments.shown_results(path, deployments.test_columns(row, models))
+    return {**row, "results": json_safe(results)}
+
+
+@router.get("/deployment-tests/{test_id}/download")
+def download_test(
+    test_id: int, user: CurrentUser, fmt: Literal["csv", "parquet"] = Query("csv", alias="format")
+) -> Response:
+    row = _test_row(test_id, user)
+    path = _results_file(row)
+    name = f"deployment{row['deployment_id']}_test{test_id}.{fmt}"
+    if fmt == "parquet":
+        return FileResponse(path, media_type=DOWNLOADS[fmt], filename=name)
+    cols = deployments.test_columns(row, row["deployment_models"])
+    return StreamingResponse(
+        deployments.csv_chunks(path, cols),
+        media_type=DOWNLOADS[fmt],
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )

@@ -21,6 +21,9 @@ log = logging.getLogger(__name__)
 # A whole cell holding one of these is missing. "?" is how many public datasets (UCI's among them) mark blanks.
 NULL_TOKENS = ["", "NA", "N/A", "n/a", "NaN", "nan", "null", "NULL", "None", "#N/A", "?"]
 SEPARATORS = {",": "commas", ";": "semicolons", "\t": "tabs", "|": "pipes"}
+# What an upload's extension says it is; anything else is refused with UNSUPPORTED.
+UPLOAD_FORMATS = {".csv": "csv", ".txt": "csv", ".tsv": "csv", ".parquet": "parquet", ".pq": "parquet"}
+UNSUPPORTED = "Only .csv, .tsv, .txt and .parquet files are supported"
 ROW_ID = "__row_id"
 
 

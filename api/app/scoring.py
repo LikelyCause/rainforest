@@ -120,11 +120,15 @@ class Scorer:
     def required(self) -> list[str]:
         return [i.name for i in self.inputs]
 
+    def require(self, columns: list[str]) -> None:
+        """ValueError naming the source fields `columns` lacks."""
+        if missing := [n for n in self.required if n not in columns]:
+            raise ValueError(f"Missing field{'s' if len(missing) > 1 else ''}: {', '.join(map(repr, missing))}")
+
     def frame(self, df: pl.DataFrame) -> tuple[pl.DataFrame, dict[str, int]]:
         """The source fields converted and the derived fields computed, and how many values of each field didn't
         convert."""
-        if missing := [n for n in self.required if n not in df.columns]:
-            raise ValueError(f"Missing field{'s' if len(missing) > 1 else ''}: {', '.join(map(repr, missing))}")
+        self.require(df.columns)
         typed, seen, warnings = [], [], {}
         for i in self.inputs:
             s, failed = convert(df[i.name], i)
