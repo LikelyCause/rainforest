@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import io
 import json
 import threading
 from collections import OrderedDict
@@ -36,19 +37,38 @@ TRUE_TEXT = {"true": True, "false": False, "1": True, "0": False}
 TRAINING_SAMPLE = 5_000
 
 
+PREPROCESSOR = "preprocessor.joblib"
+
+
 class ModelChanged(ValueError):
-    """A deployed model's file isn't the one recorded when it was deployed."""
+    """A deployed model's file, or its export's preprocessor, isn't the one recorded when it was deployed."""
 
 
 class Unreadable(OSError):
     """A joblib file that is missing or doesn't unpickle: truncated, overwritten, or not a pickle at all."""
 
 
-def _unpickle(path: Path) -> Any:
+def _read(path: Path) -> bytes:
     try:
-        return joblib.load(path)
+        return path.read_bytes()
+    except OSError as exc:
+        raise Unreadable(f"{path.name} can't be read ({type(exc).__name__})") from exc
+
+
+def _unpickle(path: Path, data: bytes) -> Any:
+    try:
+        return joblib.load(io.BytesIO(data))
     except Exception as exc:  # noqa: BLE001  (bytes that aren't a pickle can raise nearly anything)
         raise Unreadable(f"{path.name} can't be read ({type(exc).__name__})") from exc
+
+
+def _checked(path: Path, want: str | None, changed: str) -> Any:
+    """The object pickled in `path`, unpickled from the very bytes hashed: a file swapped in after deployment is
+    neither trusted nor loaded."""
+    data = _read(path)
+    if want and sha256(data) != want:
+        raise ModelChanged(changed)
+    return _unpickle(path, data)
 
 
 @dataclass(frozen=True)
@@ -301,17 +321,17 @@ _lock = threading.Lock()
 
 
 def load(conn, deployment_or_spec: dict) -> Scorer:
-    """The scorer of a deployment ({id, export_id, models}), from the cache of the last `DEPLOYMENT_CACHE` used; without
-    an id (a deployment being created) it is built and not kept."""
+    """The scorer of a deployment ({id, export_id, models, preprocessor_sha256}), from the cache of the last
+    `DEPLOYMENT_CACHE` used; without an id (a deployment being created) it is built and not kept."""
     key = deployment_or_spec.get("id")
     if key is None:
-        return _build(conn, deployment_or_spec["export_id"], deployment_or_spec["models"])
+        return _build(conn, deployment_or_spec)
     with _lock:
         if (hit := _cache.get(key)) is not None:
             _cache.move_to_end(key)
             return hit
     # Built outside the lock: loading models takes a while, and two threads building one is only wasted work.
-    scorer = _build(conn, deployment_or_spec["export_id"], deployment_or_spec["models"])
+    scorer = _build(conn, deployment_or_spec)
     with _lock:
         _cache[key] = scorer
         _cache.move_to_end(key)
@@ -381,17 +401,30 @@ def _frozen(conn, export_id: int) -> tuple[Path, dict, tuple[FieldSpec, ...], tu
     return out_dir, manifest, specs, inputs, needed
 
 
+def sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
 def file_sha256(path: Path) -> str:
     h = hashlib.sha256()
-    with open(path, "rb") as f:
-        while chunk := f.read(1 << 20):
-            h.update(chunk)
+    try:
+        with open(path, "rb") as f:
+            while chunk := f.read(1 << 20):
+                h.update(chunk)
+    except OSError as exc:
+        raise Unreadable(f"{path.name} can't be read ({type(exc).__name__})") from exc
     return h.hexdigest()
 
 
-def _build(conn, export_id: int, models: list[dict]) -> Scorer:
+def preprocessor_sha256(conn, export_id: int) -> str:
+    """The SHA-256 of the export's preprocessor, recorded on a deployment and checked before every load."""
+    return file_sha256(_frozen(conn, export_id)[0] / PREPROCESSOR)
+
+
+def _build(conn, spec: dict) -> Scorer:
+    export_id = spec["export_id"]
     out_dir, manifest, specs, inputs, needed = _frozen(conn, export_id)
-    loaded = tuple(_model(conn, export_id, m) for m in models)
+    loaded = tuple(_model(conn, export_id, m) for m in spec["models"])
     keys = [label for m in loaded for label in m.labels]
     if len(set(keys)) < len(keys):
         raise ValueError("Two models give a score for the same class")
@@ -400,7 +433,11 @@ def _build(conn, export_id: int, models: list[dict]) -> Scorer:
         inputs=inputs,
         derived=tuple(needed),
         specs=specs,
-        preprocessor=_unpickle(out_dir / "preprocessor.joblib"),
+        preprocessor=_checked(
+            out_dir / PREPROCESSOR,
+            spec.get("preprocessor_sha256"),
+            f"The preprocessor of export {export_id} changed since it was deployed; deploy again",
+        ),
         n_features=int(manifest["n_features"]),
         models=loaded,
     )
@@ -431,11 +468,11 @@ def _model(conn, export_id: int, m: dict) -> Model:
     else:
         kind, labels, threshold = "multiclass", tuple(report["target_classes"][order[0]]), None
     label = m.get("label") or report.get("model_label") or f"Run {run['id']}"
-    # Checked before unpickling: a file swapped in after deployment is neither trusted nor loaded.
-    if m.get("sha256") and file_sha256(model_dir / MODEL_FILE) != m["sha256"]:
-        raise ModelChanged(
-            f"The model file of {label!r} (run {run['id']}) changed since it was deployed; deploy the run again"
-        )
+    estimator = _checked(
+        model_dir / MODEL_FILE,
+        m.get("sha256"),
+        f"The model file of {label!r} (run {run['id']}) changed since it was deployed; deploy the run again",
+    )
     return Model(
         run_id=int(run["id"]),
         label=label,
@@ -443,18 +480,18 @@ def _model(conn, export_id: int, m: dict) -> Model:
         labels=labels,
         threshold=None if threshold is None else float(threshold),
         model_dir=str(model_dir),
-        estimator=_unpickle(model_dir / MODEL_FILE),
+        estimator=estimator,
         report=report,
     )
 
 
 # =========================================================================== equality check
-def equality_check(conn, export_id: int, models: list[dict]) -> str | None:
+def equality_check(conn, export_id: int, models: list[dict], preprocessor_sha256: str | None = None) -> str | None:
     """None when scoring the raw values of the export's test rows reproduces each model's scores on the export's own
     `model_ready.parquet` within 1e-9, and its features exactly (as float32); else what differs first, scores before
     features. Without test rows it compares the validation rows,
     without those a sample of training rows, and with no rows at all it doesn't pass."""
-    scorer = load(conn, {"export_id": export_id, "models": models})
+    scorer = load(conn, {"export_id": export_id, "models": models, "preprocessor_sha256": preprocessor_sha256})
     exp = conn.execute(
         """SELECT e.output_dir, e.created_at, d.parquet_path, d.profiled_at FROM meta.exports e
              JOIN meta.datasets d ON d.id = e.dataset_id WHERE e.id = %s""",

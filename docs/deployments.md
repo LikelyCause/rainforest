@@ -43,9 +43,11 @@ scores them through the deployment. Each model must give the scores it gives on 
 with the first model (or feature) and row that differ. A dataset refreshed after the export can fail this check
 because its rows changed; re-export to deploy.
 
-**Model files.** The deployment records each model file's SHA-256. Every time it loads the models it checks them
-first; a file that changed is refused (`409`, naming the model) and never loaded. Deploy the run again to use the
-new file.
+**Model and preprocessor files.** The deployment records the SHA-256 of each model file and of the export's
+`preprocessor.joblib`. Every time it loads them it reads each file once, checks those bytes and unpickles the same
+bytes; a file that changed is refused (`409`, naming the model or the export) and never loaded. Deploy again to use
+the new file. A file that is missing or doesn't unpickle is `410`, and the API logs a warning naming the file and
+the error.
 
 ## Thresholds
 

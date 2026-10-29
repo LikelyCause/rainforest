@@ -1,6 +1,7 @@
 """Scoring: raw records through an export's own preprocessing to each deployed run's scores, the equality check that
 holds it to what training produced, and the shape of the output. The API tests need RAINFOREST_TEST_DATABASE_URL."""
 
+import hashlib
 import io
 import json
 import shutil
@@ -589,6 +590,48 @@ def test_a_model_file_that_changed_since_it_was_recorded_is_refused_naming_the_m
         assert scoring.load(conn, {"export_id": setup["e"]["id"], "models": [{**m, "sha256": digest}]})
         with pytest.raises(scoring.ModelChanged, match="'p'"):
             scoring.load(conn, {"export_id": setup["e"]["id"], "models": [{**m, "sha256": "0" * 64}]})
+
+
+def _model_path(m: dict) -> Path:
+    model_dir = fetch_one("SELECT model_dir FROM meta.model_runs WHERE id = %s", (m["run_id"],))["model_dir"]
+    return Path(model_dir) / scoring.MODEL_FILE
+
+
+def test_the_model_loaded_is_the_bytes_whose_hash_was_checked(setup, monkeypatch):
+    """A file swapped between the hash check and the unpickling is not what gets loaded."""
+    p, q = setup["ovr"][0], setup["ovr"][1]
+    p_file, q_bytes = _model_path(p), _model_path(q).read_bytes()
+    saved = p_file.read_bytes()
+    real = scoring.joblib.load
+
+    def swap_then_load(*args, **kwargs):
+        p_file.write_bytes(q_bytes)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(scoring.joblib, "load", swap_then_load)
+    try:
+        with connection() as conn:
+            got = scoring.load(
+                conn, {"export_id": setup["e"]["id"], "models": [{**p, "sha256": hashlib.sha256(saved).hexdigest()}]}
+            )
+    finally:
+        monkeypatch.undo()
+        p_file.write_bytes(saved)
+    want = _scorer(setup).outputs(_records(setup, 50))[0][0]
+    assert np.array_equal(got.outputs(_records(setup, 50))[0][0], want)
+
+
+def test_a_preprocessor_that_changed_since_it_was_recorded_is_refused_naming_the_export(setup):
+    out = Path(fetch_one("SELECT output_dir FROM meta.exports WHERE id = %s", (setup["e"]["id"],))["output_dir"])
+    with connection() as conn:
+        digest = scoring.preprocessor_sha256(conn, setup["e"]["id"])
+        assert digest == hashlib.sha256((out / "preprocessor.joblib").read_bytes()).hexdigest()
+        spec = {"export_id": setup["e"]["id"], "models": setup["multi"]}
+        assert scoring.load(conn, {**spec, "preprocessor_sha256": digest})
+        with pytest.raises(scoring.ModelChanged, match=f"export {setup['e']['id']}"):
+            scoring.load(conn, {**spec, "preprocessor_sha256": "0" * 64})
+        with pytest.raises(scoring.ModelChanged, match=f"export {setup['e']['id']}"):
+            scoring.equality_check(conn, setup["e"]["id"], setup["multi"], "0" * 64)
 
 
 def test_iso_8601_text_follows_rfc_3339_case_and_needs_a_time_before_an_offset():

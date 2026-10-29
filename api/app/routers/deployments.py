@@ -4,6 +4,7 @@ records through `POST /api/deployments/{id}/predict` with a session or a key."""
 from __future__ import annotations
 
 import json
+import logging
 
 import polars as pl
 from fastapi import APIRouter, HTTPException, Request
@@ -16,11 +17,13 @@ from ..db import connection, fetch_all, json_safe, jsonb
 from ..schemas import DeploymentKeyRequest, DeploymentRequest
 from ._lock import refuse_while_refreshing
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["deployments"])
 
 COLS = """d.id, d.dataset_id, d.experiment_id, x.name AS experiment_name, d.export_id, d.batch_id,
           (SELECT name FROM meta.run_batches b WHERE b.id = d.batch_id) AS batch_name, d.name, d.models, d.status,
-          d.created_by, (SELECT name FROM meta.users u WHERE u.id = d.created_by) AS created_by_name, d.created_at,
+          d.preprocessor_sha256, d.created_by, (SELECT name FROM meta.users u WHERE u.id = d.created_by) AS created_by_name,
+          d.created_at,
           d.retired_at, x.archived_at AS experiment_archived_at, (SELECT count(*) FROM meta.deployment_keys k
                           WHERE k.deployment_id = d.id AND k.revoked_at IS NULL) AS keys"""
 FROM = "meta.deployments d JOIN meta.experiments x ON x.id = d.experiment_id"
@@ -29,6 +32,17 @@ KEY_COLS = """k.id, k.deployment_id, k.name, k.prefix, k.created_by,
               k.last_used_at, k.revoked_at"""
 RETIRED = "This deployment is retired; reactivate it to score with it."
 FILES_GONE = "The deployment's export or model files were removed or unreadable"
+
+
+def files_gone(deployment: object, exc: OSError) -> HTTPException:
+    """410 with the generic message; the cause (which file, and why) goes to the log for an operator."""
+    log.warning("deployment %s can't load its files: %s", deployment, exc)
+    return HTTPException(410, FILES_GONE)
+
+
+def spec(row: dict) -> dict:
+    """What `scoring.load` reads of a deployment row."""
+    return {k: row[k] for k in ("id", "export_id", "models", "preprocessor_sha256")}
 
 
 def _can_manage(row: dict, user: dict) -> bool:
@@ -124,11 +138,12 @@ def create_deployment(experiment_id: int, req: DeploymentRequest, user: CurrentU
     with connection() as conn:
         try:
             models = deployments.with_file_hashes(models, runs)
-            problem = scoring.equality_check(conn, export_id, models)
+            pre = scoring.preprocessor_sha256(conn, export_id)
+            problem = scoring.equality_check(conn, export_id, models, pre)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         except OSError as exc:
-            raise HTTPException(410, FILES_GONE) from exc
+            raise files_gone(f"of export {export_id}", exc) from exc
     if problem:
         raise HTTPException(422, f"Scoring through the deployment doesn't reproduce training: {problem}")
     name = (req.name or "").strip() or (batch["name"] if batch else models[0]["model_label"] or "Deployment")
@@ -136,9 +151,10 @@ def create_deployment(experiment_id: int, req: DeploymentRequest, user: CurrentU
         refuse_while_refreshing(conn, x["dataset_id"])
         experiments.require_writable(experiments.get_visible(conn, experiment_id, user), user)
         new_id = conn.execute(
-            """INSERT INTO meta.deployments (dataset_id, experiment_id, export_id, batch_id, name, models, created_by)
-               VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
-            (x["dataset_id"], experiment_id, export_id, req.batch_id, name, jsonb(models), user["id"]),
+            """INSERT INTO meta.deployments (dataset_id, experiment_id, export_id, batch_id, name, models,
+                                             preprocessor_sha256, created_by)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+            (x["dataset_id"], experiment_id, export_id, req.batch_id, name, jsonb(models), pre, user["id"]),
         ).fetchone()["id"]
     return get_deployment(new_id, user)
 
@@ -289,13 +305,13 @@ def _predict(deployment_id: int, request: Request, records: list[dict]) -> dict:
         if row["status"] != "active":
             raise HTTPException(410, RETIRED)
         try:
-            scorer = scoring.load(conn, {"id": row["id"], "export_id": row["export_id"], "models": row["models"]})
+            scorer = scoring.load(conn, spec(row))
         except scoring.ModelChanged as exc:
             raise HTTPException(409, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         except OSError as exc:
-            raise HTTPException(410, FILES_GONE) from exc
+            raise files_gone(row["id"], exc) from exc
     out = {"deployment": deployment_id, "models": deployments.labels(scorer), "results": [], "warnings": {}}
     if not records:
         return out

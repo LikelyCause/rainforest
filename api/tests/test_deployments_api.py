@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from app import db, scoring
 from app.config import get_settings
 from app.modeling.train import choose_threshold
+from app.routers.deployments import FILES_GONE
 
 from .team_helpers import app_, experiment, export, people, start, submit_and_finalize, upload, wait  # noqa: F401
 
@@ -608,12 +609,33 @@ def _replaced(path: Path, data: bytes | None):
 
 
 @pytest.mark.parametrize("data", [b"", b"not a pickle at all", None], ids=["empty", "junk", "missing"])
-def test_a_corrupt_or_missing_model_file_is_410(setup, data):
+def test_a_corrupt_or_missing_model_file_is_410_and_the_cause_is_logged(setup, data, caplog):
+    caplog.set_level(logging.WARNING, logger="app.routers.deployments")
     with _replaced(_model_file(setup["ovr"]["p"]), data):
         r = setup["lead"].post(
             f"/api/experiments/{setup['x']['id']}/deployments", json={"run_ids": [setup["ovr"]["p"]]}
         )
-    assert r.status_code == 410 and "removed or unreadable" in r.json()["detail"], r.text
+    assert r.status_code == 410 and r.json()["detail"] == FILES_GONE, r.text
+    logged = [rec.getMessage() for rec in caplog.records if rec.levelno == logging.WARNING]
+    assert any(f"{scoring.MODEL_FILE} can't be read (" in m for m in logged), logged
+
+
+def test_a_preprocessor_changed_after_deploying_is_409_naming_the_export(setup):
+    import hashlib
+
+    lead, e = setup["lead"], setup["e"]
+    pre = Path(db.fetch_one("SELECT output_dir FROM meta.exports WHERE id = %s", (e["id"],))["output_dir"])
+    pre = pre / "preprocessor.joblib"
+    dep = _deploy(lead, setup["x"], run_ids=[setup["multi"]])
+    assert dep["preprocessor_sha256"] == hashlib.sha256(pre.read_bytes()).hexdigest()
+    recs = _records(setup, 1)
+    before = _predict(lead, dep["id"], recs)
+    scoring.forget(dep["id"])
+    saved = pre.read_bytes()
+    with _replaced(pre, saved + b"\0"):  # still unpickles: only the hash tells
+        detail = _predict(lead, dep["id"], recs, 409)["detail"]
+    assert f"export {e['id']}" in detail and "changed" in detail, detail
+    assert _predict(lead, dep["id"], recs) == before
 
 
 def test_a_batch_with_no_finished_runs_says_so(setup):
