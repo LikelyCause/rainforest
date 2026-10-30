@@ -67,7 +67,7 @@ on, Viewers see the team decision like everyone else.
 Every dataset has baselines: the team's decisions for one model type (*Trees*, *Linear* or *Neural*), at most one per
 type. Each baseline has numbered versions, labelled like *Trees baseline v2*. A version moves through three phases:
 *Assessing*, *Team review* and *Finalized*. Before its first version starts, a new dataset's baseline is in *Set up*.
-The phase shows on the *Datasets* list and on the top bar's phase rail: *Set up · Assessing · Team review ·
+The phase shows on the *Datasets* list and in the side rail's phase list: *Set up · Assessing · Team review ·
 Finalized*.
 
 One baseline version per dataset is in progress (assessing or in review) at a time. Another baseline or version can
@@ -99,8 +99,8 @@ For *another dataset's baseline*, see [Reusing another dataset's baseline](#reus
 
 1. Each assessor starts from the baseline's starting point: the suggestions, or the baseline it was built from.
 2. They use *Fields · Focus* and *Fields · Table* as usual, but on their own assessment. The lens chip reads
-   *Private*, and the top bar's next step reads *Next field · N left*.
-3. When every field is reviewed, they choose *Submit assessment* in the top bar, or *Submit* on the *Baseline* tab,
+   *Private*, and the page bar's next step reads *Next field · N left*.
+3. When every field is reviewed, they choose *Submit assessment* in the page bar, or *Submit* on the *Baseline* tab,
    and confirm.
 
 An assessment is private. Nobody else sees an assessor's choices, the lead included. The API never returns them to
@@ -126,7 +126,7 @@ assessor who hadn't submitted.
 A field is **adopted** as the team decision when every assessor chose the same keep, drop or target, type and
 *Predict as*. Its settings take the most common choice. A tie takes the suggestion.
 
-The other fields form the **review queue**. During team review, *Fields* opens on it, and the top bar's next step
+The other fields form the **review queue**. During team review, *Fields* opens on it, and the page bar's next step
 reads *Settle N open fields*. The queue lists fields under *Open*, *Settled* and *Agreed*. Each queued field shows
 every assessor's choice, settings and notes side by side, with the differences marked, and a discussion.
 
@@ -139,7 +139,7 @@ With a single assessor, every field is adopted and the queue is empty.
 
 ## Finalizing
 
-A lead finalizes once the queue is settled, with *Finalize Trees v2* (the version's name) in the top bar or *Finalize…*
+A lead finalizes once the queue is settled, with *Finalize Trees v2* (the version's name) in the page bar or *Finalize…*
 on the *Baseline* tab.
 Rainforest asks to confirm, and says how many fields are agreed, settled and still open. A lead can also finalize
 with fields left open: they keep their current team decision. Finalizing takes you to *Experiments*.
@@ -172,7 +172,7 @@ card on *Versions and compare*. A blank name removes it.
 
 | | Named baseline | Unnamed baseline |
 |---|---|---|
-| Top bar, export badges | Dropout risk v2 | Trees v2 |
+| Side rail, export badges | Dropout risk v2 | Trees v2 |
 | Dataset list, pickers and messages | Dropout risk v2 (Trees) | Trees baseline v2 |
 
 - Names are up to 60 characters.
@@ -181,7 +181,7 @@ card on *Versions and compare*. A blank name removes it.
 - Renaming doesn't change a finalized version's decisions.
 - What was named at the time keeps its name: an export's manifest, and a team experiment's default name
   ("Team · Dropout risk v1").
-- A long name is shortened in the top bar and badges, and shown in full on hover.
+- A long name is shortened in the side rail and badges, and shown in full on hover.
 
 ## Reusing another dataset's baseline
 

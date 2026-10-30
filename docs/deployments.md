@@ -8,7 +8,7 @@ A deployment is frozen files: the export's preprocessor and field specs, its fro
 and each run's model. Refreshing the dataset, re-exporting, or changing a decision later doesn't change what it
 answers.
 
-The dataset's *Deployments* step, the last of its places in the top bar, lists the deployments in experiments you can
+The dataset's *Deployments* step, the last of its places in the side rail, lists the deployments in experiments you can
 see, newest first: each one's *Name*, *Experiment* (marked *archived* when it is), *Batch*, how many *Models*, its
 *Status* (*Active* or *Retired*) and who created it when. A row opens the [deployment's page](#the-deployment-page).
 With none yet, the step says where *Deploy…* is.

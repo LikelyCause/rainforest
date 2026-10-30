@@ -3,26 +3,31 @@
 One section per screen. Terms are defined in [Concepts](concepts.md). The team process behind the *Baseline* tab and
 the team review queue is in [Team workflow](team-workflow.md).
 
-## Top bar
+## Side rail and page bar
 
-Outside a dataset, the top bar has *Datasets* and, on the right, your profile: picture and name.
+The side rail on the left says where you can go. On top:
 
-Inside a dataset, it has two rows.
-
-The first row says where you are:
-
-- The dataset switcher. It lists every dataset, and *All datasets*.
-- The dataset's five places: *Fields · Explore · Baseline · Experiments · Deployments*. *Fields* shows how many
-  fields are reviewed, such as *7/9*. In team review it shows how many fields are still open instead. A dot on
+- *Rainforest*, which goes to *Datasets*.
+- Inside a dataset, the dataset switcher, with the dataset's rows and fields. It lists every dataset, and *All
+  datasets*.
+- Inside a dataset, its five places: *Fields · Explore · Baseline · Experiments · Deployments*. *Fields* shows how
+  many fields are reviewed, such as *7/9*. In team review it shows how many fields are still open instead. A dot on
   *Experiments* means an export or run is in progress.
-- Your profile picture.
+- *Datasets* (*All datasets* inside a dataset), *People* and *Settings*.
 
-The second row says where the baseline version stands:
+At the bottom, inside a dataset, it says where the baseline version stands:
 
 - The version switcher, such as *Trees v2*. It lists every version of the dataset's baselines with its phase, and
   opens *Versions and compare*. Leads also get *New version or baseline…*.
-- The phase rail: *Set up · Assessing · Team review · Finalized*. Next to it, what opens the next phase, such as
+- The phase list: *Set up · Assessing · Team review · Finalized*. Under it, what opens the next phase, such as
   *Team review opens when all 3 submit · 1 in*, or *4 adopted · 2 open*.
+
+Under it is your profile: picture, name and role.
+
+Below 1360 px wide the rail narrows to icons and the phase dots; hover an icon or a dot for its name.
+
+Inside a dataset, the page bar across the top names the place you are on and holds:
+
 - The lens chip. It says whose decisions are on screen:
 
   | Chip | What you see |
@@ -37,9 +42,9 @@ The second row says where the baseline version stands:
 - The next step, always in the same place. It reads, for example, *Set up the baseline*, *Next field · 12 left*,
   *Submit assessment*, *Settle 2 open fields*, *Finalize Trees v2* or *Start an experiment*.
 
-While you adjust an experiment, the second row names the experiment and what it is built from instead, with
-*Back to the experiment*. While you browse a finalized version, it says so, with *Back to versions*. On an
-experiment's page, it holds the experiment's own tabs. See [Experiments](#experiments).
+While you adjust an experiment, the page bar names the experiment and what it is built from instead, with *Back to
+the experiment*. While you browse a finalized version, it says so, with *Back to versions*. On an experiment's page,
+it holds the experiment's own tabs. See [Experiments](#experiments).
 
 Opening a dataset takes you to its next step: the *Baseline* tab while it is being set up, the review queue in team
 review, and *Fields* otherwise. From the *Datasets* page, a dataset you worked on reopens on the field you had open.
@@ -47,8 +52,6 @@ review, and *Fields* otherwise. From the *Datasets* page, a dataset you worked o
 Your profile opens a menu with:
 
 - *Change picture…*
-- *Settings*
-- *People*
 - *MLflow ↗*, in a new tab, when MLflow is on
 - *Switch profile* in pick mode, or *Sign out* with OIDC sign-in
 
@@ -72,12 +75,12 @@ After you choose a picture, frame it in the circle:
 - *Reset* centres it again.
 
 Rainforest turns the picture upright, keeps the square you framed and saves it as a 256 × 256 WebP. Nothing of the
-file is kept but its pixels. Pictures are stored in `DATA_DIR/avatars`. They appear on the sign-in page, the top
-bar and the *People* page. Without a picture, your initials stand in.
+file is kept but its pixels. Pictures are stored in `DATA_DIR/avatars`. They appear on the sign-in page, the side
+rail and the *People* page. Without a picture, your initials stand in.
 
 ## Settings
 
-*Settings*, in your profile menu, has a section per topic:
+*Settings*, in the side rail, has a section per topic:
 
 | Section | What you can do |
 |---|---|
@@ -197,7 +200,7 @@ The field list filters fields:
 
 - A field still at its suggestion and not yet reviewed follows target changes. A new leak flag drops it.
 - In a new version, carried-over fields show 🔒 in the list, and the decision panel says why they are locked.
-- While you adjust an experiment, the second row of the top bar names the experiment, with the *Experiment copy*
+- While you adjust an experiment, the page bar names the experiment, with the *Experiment copy*
   chip. The decision panel says what differs from the baseline and offers *Revert*.
 - On a phone, a bar at the bottom moves back, opens the field list from *Fields · 3 of 9*, and confirms.
 
@@ -263,7 +266,7 @@ The dataset's *Baseline* tab runs the team process for the baseline version in p
 Alongside, *Versions* lists the dataset's baselines and their versions. For a lead, *Other model types* starts a
 *Linear* or *Neural* baseline. After set-up, the tab's sub-tabs are *Progress*, *Queue* in team review, and *Versions*.
 
-*People*, in your profile menu, is different: it lists users. Leads manage users there. See
+*People*, in the side rail, is different: it lists users. Leads manage users there. See
 [Managing people](team-workflow.md#managing-people).
 
 See [Team workflow](team-workflow.md) for each step.
@@ -298,7 +301,7 @@ The dataset's *Experiments* tab lists its experiments. Filter by *All*, *Mine*, 
 shows the export and run counts and the best run on the validation split. Right after a lead finalizes a version, and
 until an experiment is built on it, the tab offers *New experiment from vN*.
 
-On an experiment's page, the second row of the top bar names the experiment, with a menu to switch to another one,
+On an experiment's page, the page bar names the experiment, with a menu to switch to another one,
 and its tabs:
 
 | Tab | What it holds |

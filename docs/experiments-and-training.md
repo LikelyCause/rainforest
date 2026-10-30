@@ -35,7 +35,7 @@ console doesn't know who is asking, so this includes the owner. See [SQL](sql.md
 
 ### The experiment page
 
-On an experiment's page, the second row of the top bar names the experiment, with a menu to switch to another one of
+On an experiment's page, the page bar names the experiment, with a menu to switch to another one of
 the dataset's experiments. It shows what the experiment is built from, such as *From Trees baseline v2 · as
 finalized*, whether it is private, and *Train a model*. Its tabs are:
 
@@ -67,7 +67,7 @@ Changes stay within the baseline's model type. A type change brings the new type
 ones don't fit.
 
 1. Choose *Adjust fields* on the experiment's *Adjustments* tab. It opens *Fields · Focus* and *Fields · Table* on the
-   experiment's copy (`?view=experiment:<id>`). The top bar's second row names the experiment, with the *Experiment
+   experiment's copy (`?view=experiment:<id>`). The page bar names the experiment, with the *Experiment
    copy* chip and *Back to the experiment*.
 2. Change fields as in *Focus*. The decision panel says what differs from the baseline, with *Revert*.
 3. Check the experiment's *Adjustments* tab. It lists every changed field, and the targets when they differ, with a
@@ -288,7 +288,7 @@ The manifest records:
 
 ### The Train tab
 
-*Train a model*, in the top bar, opens the experiment's *Train* tab. It picks:
+*Train a model*, in the page bar, opens the experiment's *Train* tab. It picks:
 
 - the export: the newest finished one, unless you choose another
 - the model

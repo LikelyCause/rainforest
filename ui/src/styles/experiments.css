@@ -34,7 +34,7 @@ button.exp-icon { width: 28px; padding: 0; }
 .exp-switcher-menu a:hover { background: var(--surface-hover); text-decoration: none; }
 .exp-switcher-menu a.on { background: var(--accent-weak); font-weight: 600; }
 .exp-switcher-menu .exp-grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dataset-bar .exp-tabs { align-self: stretch; }
+.dataset-bar .exp-tabs { align-self: stretch; flex: 0 1 auto; min-width: 0; }
 .dataset-bar .exp-tabs .tab { min-height: 36px; }
 .dataset-bar .exp-tabs .tab.on { border-bottom-color: var(--lens-experiment); }
 .exp-chip-link, .exp-chip-link:hover { text-decoration: none; }
