@@ -1,5 +1,6 @@
 import { useLocation, useNavigate } from "react-router-dom";
-import { useCan } from "./DatasetLayout";
+import { can } from "../can";
+import { useMe } from "../hooks";
 import { useView, withView } from "../view";
 import { Segmented } from "./kit";
 import type { Dataset } from "../types";
@@ -8,14 +9,25 @@ export type FieldsView = "focus" | "table" | "sql" | "derived" | "queue";
 
 /** Fields' own view switch: Focus · Table · SQL · Derived (and the queue first during team review). Each is a place,
  * so pressing one navigates; `?view=` comes along. SQL and Derived only show for the baseline in progress, to those
- * allowed them. */
-export function FieldsViewSwitch({ ds, current, className }: { ds: Dataset; current: FieldsView; className?: string }) {
+ * allowed them. It sits in the page bar and reads which view is open from the route. */
+export function FieldsViewSwitch({ ds, className }: { ds: Dataset; className?: string }) {
   const nav = useNavigate();
   const view = useView();
+  const me = useMe().data;
   const { pathname, search } = useLocation();
-  const canDo = useCan();
-  const sql = canDo("querySql") && !view;
-  const derive = canDo("editDataset") && !view;
+  // The console reads every table, work in progress included, so it isn't a Viewer's.
+  const sql = can(me, "querySql") && !view;
+  const derive = can(me, "editDataset", ds.status === "refreshing") && !view;
+  const tab = new URLSearchParams(search).get("tab");
+  const current: FieldsView = pathname.endsWith("/team")
+    ? "queue"
+    : !pathname.endsWith("/bulk")
+      ? "focus"
+      : tab === "sql" && sql
+        ? "sql"
+        : tab === "derived" && derive
+          ? "derived"
+          : "table";
   const base = `/d/${ds.id}`;
   const options: { value: FieldsView; label: string; title?: string }[] = [
     ...(ds.phase === "review" && !view

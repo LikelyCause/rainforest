@@ -159,7 +159,7 @@ A new dataset's first baseline (*Trees v1*) waits for a lead to set it up on the
 
 ## Fields
 
-*Fields* is where you decide each field. It has its own switch at the top of the field list:
+*Fields* is where you decide each field. It has its own switch in the page bar, next to its name:
 
 - *Focus* walks the fields one at a time.
 - *Table* changes many fields at once.

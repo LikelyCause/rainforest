@@ -23,7 +23,7 @@ export function DeploymentsPage() {
   const href = (d: Deployment) => `/d/${ds.id}/deployments/${d.id}`;
   return (
     <div className="page deployments-page">
-      <h1>Deployments</h1>
+      <h1 className="tools-sr">Deployments</h1>
       <p className="secondary exp-flush">
         A deployment scores new records with finished runs, through an API call with a key or a file uploaded here, to
         test them on data they haven&apos;t seen. It isn&apos;t production serving.

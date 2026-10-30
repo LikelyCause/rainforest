@@ -28,8 +28,6 @@
 .field-sidebar { background: var(--surface-1); }
 .field-sidebar .sidebar-head { border-bottom: 0; gap: 12px; padding: 12px 12px 8px; position: relative; }
 .field-sidebar .drawer-head { display: none; align-items: center; justify-content: space-between; }
-.fields-view.segmented { display: flex; width: 100%; }
-.fields-view.segmented button { flex: 1; min-width: 0; padding: 0 6px; }
 .search-box {
   display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm); background: var(--surface-1); color: var(--text-muted);
@@ -237,6 +235,10 @@
   .field-sidebar .drawer-head { display: flex; }
   .field-nav .list-button { display: inline-flex; }
   .narrow-bar { display: none; }
+}
+/* At iPad width the rail's icons take 56px; a narrower decision panel gives the field room. */
+@media (max-width: 1023px) {
+  .review { grid-template-columns: minmax(0, 1fr) 300px; }
 }
 
 /* Phone: the field, then the decision; a bottom bar to move and confirm. */

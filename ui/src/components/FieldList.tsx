@@ -5,7 +5,6 @@ import { attentionOf } from "../signals";
 import type { View } from "../view";
 import { useFailedSaves } from "../saveQueue";
 import { Icon, useDismiss } from "./kit";
-import { FieldsViewSwitch } from "./FieldsViewSwitch";
 import { Empty, ReviewMeter, StatusGlyph, glyphFor } from "./ui";
 
 export type StatusFilter = "todo" | "kept" | "dropped" | "all";
@@ -141,7 +140,6 @@ export function FieldList(p: Props) {
             </button>
           </div>
         )}
-        {p.ds && <FieldsViewSwitch ds={p.ds} current="focus" className="fields-view" />}
         <label className="search-box">
           <Icon name="search" />
           <input

@@ -9,7 +9,6 @@ import { useCan, useDatasetContext, useLead } from "../components/DatasetLayout"
 import { DecisionPanel, type DecisionPanelHandle, type VoteKey } from "../components/DecisionPanel";
 import { FieldDetailView } from "../components/FieldDetailView";
 import { Chip, Icon, Segmented } from "../components/kit";
-import { FieldsViewSwitch } from "../components/FieldsViewSwitch";
 import { PullCard } from "../components/PullCard";
 import { ReuseCard } from "../components/ReuseCard";
 import { Empty, ErrorAlert, StatusGlyph } from "../components/ui";
@@ -182,7 +181,6 @@ function Review({ ds, team }: { ds: Dataset; team: TeamState }) {
     <div className={`team-review tr${fieldOpen ? " tr-field-open" : ""}`}>
       <aside className="sidebar tr-queue" aria-label="Review queue">
         <div className="sidebar-head">
-          <FieldsViewSwitch ds={ds} current="queue" className="fields-view" />
           <Segmented<Show>
             label="Show"
             pressed

@@ -8,6 +8,7 @@ import { SideRail } from "./components/SideRail";
 import { ConfirmRegion, LensChip, stageOf, type Lens, type Stage } from "./components/kit";
 import { NextStep } from "./components/NextStep";
 import { ExperimentBar } from "./components/ExperimentBar";
+import { FieldsViewSwitch } from "./components/FieldsViewSwitch";
 import { DatasetsPage } from "./pages/DatasetsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ForbiddenPage } from "./pages/ForbiddenPage";
@@ -129,7 +130,7 @@ const SECTION: Record<string, string> = {
   team: "Team review",
   explore: "Explore",
   baseline: "Baseline",
-  baselines: "Versions",
+  baselines: "Baseline",
   experiments: "Experiments",
   deployments: "Deployments",
 };
@@ -143,16 +144,25 @@ function DatasetBar({ ds }: { ds: Dataset }) {
   const section = useMatch("/d/:datasetId/:section/*")?.params.section;
   const stage = stageOf(ds);
   const team = useTeam(ds.id, Boolean(stage && stage !== "setup"));
+  const fieldsSwitch = (section === "review" || section === "bulk" || section === "team") && (
+    <FieldsViewSwitch ds={ds} className="page-bar-switch" />
+  );
   let body: React.ReactNode;
   if (onExperiment) {
     body = <ExperimentBar ds={ds} experimentId={Number(onExperiment.params.experimentId)} />;
   } else if (view) {
-    body = <ViewBar ds={ds} />;
+    body = (
+      <>
+        {fieldsSwitch}
+        <ViewBar ds={ds} />
+      </>
+    );
   } else if (stage) {
     const lens = lensOf(stage, access, me, team.data, Boolean(onBaseline));
     body = (
       <>
         {section && SECTION[section] && <span className="page-bar-title">{SECTION[section]}</span>}
+        {fieldsSwitch}
         <span className="spacer" />
         <LensChip lens={lens.lens} title={access.note || undefined}>
           {lens.text}
