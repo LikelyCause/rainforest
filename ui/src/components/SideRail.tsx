@@ -64,7 +64,8 @@ function RailLink({
 
 const FOCUS_KEY = "rf:focus";
 
-function storedFocus(): number {
+/** The dataset last opened, which the rail and the home page carry on with; NaN for none. */
+export function storedFocus(): number {
   try {
     return Number(localStorage.getItem(FOCUS_KEY)) || NaN;
   } catch {

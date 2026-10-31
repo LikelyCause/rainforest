@@ -93,7 +93,14 @@ changes names in `.env`. With OIDC sign-in, names come from the identity provide
 
 ## Datasets
 
-The *Datasets* page has two parts.
+The *Datasets* page is the home page. From the top:
+
+- A welcome band: a greeting, a one-line summary, the ways to add a dataset (*Add a sample*, *Upload CSV or
+  Parquet*, and *Connect* when a source is configured), and the totals across your datasets: datasets, rows, fields,
+  model runs and things waiting on you.
+- *Pick up where you left off*: the dataset you last opened, with its size, stage and best result, links straight to
+  its *Fields*, *Explore*, *Experiments*, *Runs* and *Models*, and *Open*. It isn't shown on a phone.
+- *Waiting on you* and *All datasets*, below.
 
 *Waiting on you* holds a card for each thing you can move forward, your own work first:
 
