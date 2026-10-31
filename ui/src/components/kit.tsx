@@ -119,6 +119,35 @@ const PATHS: Record<string, ReactNode> = {
       <path d="M3.5 10h17M9 10v9" />
     </>
   ),
+  list: <path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01" />,
+  chart: <path d="M4 20V11M10 20V5M16 20v-6M3 20h18" />,
+  layers: (
+    <>
+      <path d="M12 4l8.5 4.5L12 13 3.5 8.5z" />
+      <path d="M3.5 13L12 17.5l8.5-4.5" />
+    </>
+  ),
+  rocket: (
+    <>
+      <path d="M9.5 15.5l-2.8-2.8C8.5 7.5 12.5 4 19.5 4.5c.5 7-3 11-8.2 12.8z" />
+      <path d="M6.5 13.5c-1.5.5-2.5 2.5-2.5 6 3.5 0 5.5-1 6-2.5" />
+      <circle cx="14.5" cy="9.5" r="1.5" />
+    </>
+  ),
+  database: (
+    <>
+      <ellipse cx="12" cy="6" rx="7.5" ry="2.5" />
+      <path d="M4.5 6v12c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5V6M4.5 12c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5" />
+    </>
+  ),
+  settings: (
+    <>
+      <path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1" />
+      <circle cx="15" cy="7" r="2" />
+      <circle cx="9" cy="12" r="2" />
+      <circle cx="17" cy="17" r="2" />
+    </>
+  ),
 };
 export type IconName = keyof typeof PATHS;
 
@@ -397,6 +426,7 @@ export function PhaseRail({ stage, compact }: { stage: Stage; compact?: boolean 
           <li
             key={s.key}
             aria-current={current ? "step" : undefined}
+            title={s.label}
             className={[current && "current", done && "done", !current && !done && "todo"].filter(Boolean).join(" ")}
           >
             {i > 0 && <span className="conn" aria-hidden="true" />}

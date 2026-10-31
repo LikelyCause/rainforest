@@ -71,7 +71,7 @@ async function mount() {
                 />
               }
             />
-            <Route path="/d/1/deployments/:id" element={<p>deployment page</p>} />
+            <Route path="/d/1/models/:id" element={<p>deployment page</p>} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>,

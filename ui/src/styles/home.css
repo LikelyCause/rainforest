@@ -1,11 +1,40 @@
 /* home: styles for this area; loads after styles.css, so rules here override it. */
 
-.page.home { padding-top: 32px; gap: 32px; }
+.page.home { padding-top: 24px; gap: 32px; }
 .home h1 { font-size: var(--fs-display); font-weight: 600; letter-spacing: -0.01em; margin: 0; }
 .home h2 { font-size: var(--fs-section); font-weight: 600; margin: 0; }
 .home h3 { font-size: var(--fs-section); font-weight: 600; margin: 0; color: var(--text-primary); }
 .home p { margin: 0; }
 .home .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* The welcome band: greeting, what's going on, the ways to add data, and the headline numbers. */
+.home-hero { position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 28px; padding: 32px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: radial-gradient(120% 140% at 100% 0%, color-mix(in srgb, var(--brand) 14%, transparent), transparent 55%), var(--surface-1); }
+.home-hero > * { position: relative; }
+.home-hero-mark { position: absolute; right: -56px; top: -72px; width: 240px; height: 240px; opacity: 0.05; pointer-events: none; }
+.home-hero-mark svg { width: 100%; height: 100%; }
+.home-eyebrow { font-size: var(--fs-small); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--brand); }
+.home-numbers { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; margin: 0;
+  border-top: 1px solid var(--border); padding-top: 20px; }
+.home-number { display: flex; flex-direction: column; gap: 4px; padding: 0 20px; border-left: 1px solid var(--border); }
+.home-number:first-child { padding-left: 0; border-left: 0; }
+.home-number dt { font-size: var(--fs-small); color: var(--text-muted); }
+.home-number dd { margin: 0; font-size: var(--fs-title); font-weight: 600; color: var(--text-primary); }
+
+/* Pick up where you left off: the dataset in focus and its places. */
+.home-continue { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px 32px; padding: 20px 24px;
+  border-left: 3px solid var(--brand); }
+.home-continue h2 { font-size: var(--fs-title); }
+.home-continue-stage { margin-top: 6px; max-width: 420px; }
+.home-continue-result { align-items: flex-end; text-align: right; }
+.home-places { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding-top: 14px;
+  border-top: 1px solid var(--border); }
+.home-place { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-radius: var(--radius-sm);
+  color: var(--text-secondary); font-size: var(--fs-ui); font-weight: 500; text-decoration: none; }
+.home-place .ic { color: var(--text-muted); }
+.home-place:hover { background: var(--surface-hover); color: var(--text-primary); text-decoration: none; }
+.home-open { margin-left: auto; gap: 6px; }
 
 .home-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px; }
 .home-head p { font-size: var(--fs-body); }
@@ -95,6 +124,11 @@ a.home-item-main:hover { text-decoration: none; background: var(--surface-hover)
 .home-item-stage { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--fs-small); color: var(--text-secondary); }
 .home-item-menu { display: flex; align-items: center; padding-right: 6px; }
 
+@media (max-width: 1023px) {
+  .home-hero { padding: 24px; }
+  .home-number { padding: 0 14px; }
+  .home-number dd { font-size: var(--fs-section); }
+}
 @media (max-width: 759px) {
   .page.home { padding-top: 16px; gap: 20px; }
   .home h1 { font-size: var(--fs-title); }

@@ -7,7 +7,6 @@ import { useAccess, useDebounced, useMe, useOptions, useFields } from "../hooks"
 import { JoinAssessment } from "../components/JoinAssessment";
 import { DerivedFields } from "../components/DerivedFields";
 import { useView, type View, viewKey, withView } from "../view";
-import { FieldsViewSwitch } from "../components/FieldsViewSwitch";
 import { useCan, useDatasetContext } from "../components/DatasetLayout";
 import { Empty, ErrorAlert, StatusGlyph, glyphFor } from "../components/ui";
 import { Banner, Chip, Icon, Segmented } from "../components/kit";
@@ -813,7 +812,6 @@ export function BulkEditPage() {
     <div className="page tools-fields">
       <div className="tools-head">
         <h1 className="tools-sr">Fields · {tab === "table" ? "Table" : tab === "sql" ? "SQL" : "Derived"}</h1>
-        <FieldsViewSwitch ds={ds} current={tab} />
         {VIEW_HINT[tab] && (
           <span className="secondary small-text tools-hint">
             {VIEW_HINT[tab]}

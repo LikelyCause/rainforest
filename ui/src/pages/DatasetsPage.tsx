@@ -19,9 +19,11 @@ import { eligibleTarget } from "../baselines";
 import { can, lockedTitle, refreshBlocker } from "../can";
 import { metricLabel } from "../experiments";
 import { defaultTask, taskLabel } from "../decision";
-import { fmtAgo, fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
+import { fmtAgo, fmtCompact, fmtDate, fmtInt, fmtNum, fmtPct } from "../format";
 import { sourceSummary } from "../sources";
 import { ConnectDialog } from "../components/ConnectDialog";
+import { Logo } from "../components/Logo";
+import { storedFocus } from "../components/SideRail";
 import { ErrorAlert, Empty, InfoTip } from "../components/ui";
 import {
   Banner,
@@ -1039,6 +1041,78 @@ function Failed({ ds, open, onToggle }: { ds: Dataset; open: boolean; onToggle: 
   );
 }
 
+function greeting(name: string | undefined): string {
+  const h = new Date().getHours();
+  const part = h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+  return name ? `${part}, ${name.split(" ")[0]}` : part;
+}
+
+/** The headline numbers across every dataset the viewer can see. */
+function Numbers({ rows, waiting }: { rows: Dataset[]; waiting: number }) {
+  const sum = (f: (d: Dataset) => number | null | undefined) => rows.reduce((n, d) => n + (f(d) ?? 0), 0);
+  const tiles: [string, string, string?][] = [
+    ["Datasets", fmtInt(rows.length)],
+    ["Rows", fmtCompact(sum((d) => d.row_count)), fmtInt(sum((d) => d.row_count))],
+    ["Fields", fmtInt(sum((d) => d.column_count))],
+    ["Model runs", fmtInt(sum((d) => d.run_count))],
+    ["Waiting on you", fmtInt(waiting)],
+  ];
+  return (
+    <dl className="home-numbers">
+      {tiles.map(([label, value, title]) => (
+        <div key={label} className="home-number">
+          <dt>{label}</dt>
+          <dd className="num" title={title}>
+            {value}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+const PLACES = [
+  { label: "Fields", path: "review", icon: "list" },
+  { label: "Explore", path: "explore", icon: "chart" },
+  { label: "Experiments", path: "experiments", icon: "flask" },
+  { label: "Runs", path: "runs", icon: "play" },
+  { label: "Models", path: "models", icon: "rocket" },
+] as const;
+
+/** The dataset last opened, where it stands, and a way straight into each of its places. */
+function ContinueCard({ ds }: { ds: Dataset }) {
+  return (
+    <section className="card home-continue" aria-labelledby="home-continue">
+      <div className="stack home-gap-6 home-continue-main">
+        <span className="muted small-text">Pick up where you left off</span>
+        <h2 id="home-continue">{ds.name}</h2>
+        <span className="secondary num">
+          {fmtInt(ds.row_count)} rows · {fmtInt(ds.column_count)} fields
+        </span>
+        <div className="home-continue-stage">
+          <StageCell ds={ds} />
+        </div>
+      </div>
+      <div className="stack home-gap-6 home-continue-result">
+        <span className="muted small-text">{ds.best_run?.chosen ? "Chosen model" : "Best result"}</span>
+        <ResultCell ds={ds} />
+      </div>
+      <nav className="home-places" aria-label={`${ds.name}: places`}>
+        {PLACES.map((p) => (
+          <Link key={p.path} to={`/d/${ds.id}/${p.path}`} className="home-place">
+            <Icon name={p.icon} />
+            {p.label}
+          </Link>
+        ))}
+        <Link to={openPath(ds)} className="btn primary home-open">
+          Open
+          <Icon name="arrow-right" />
+        </Link>
+      </nav>
+    </section>
+  );
+}
+
 export function DatasetsPage() {
   const qc = useQueryClient();
   const nav = useNavigate();
@@ -1230,6 +1304,8 @@ export function DatasetsPage() {
   const waiting = useMemo(() => waitingOn(rows, me.data), [rows, me.data]);
   const processing = rows.filter((d) => PROCESSING.has(d.status)).length;
   const failed = rows.filter((d) => d.status === "failed").length;
+  const focusId = useMemo(storedFocus, []);
+  const focused = rows.find((d) => d.id === focusId && (d.status === "ready" || d.status === "refreshing"));
   const closeTarget = useCallback(() => {
     linkedTarget.current = null;
     setTargetFor(null);
@@ -1293,7 +1369,9 @@ export function DatasetsPage() {
     `${rows.length} dataset${rows.length === 1 ? "" : "s"}`,
     processing > 0 && `${processing} processing`,
     failed > 0 && `${failed} failed`,
-    waiting.length > 0 && `${waiting.length} thing${waiting.length === 1 ? "" : "s"} waiting on you`,
+    waiting.length > 0
+      ? `${waiting.length} thing${waiting.length === 1 ? "" : "s"} waiting on you`
+      : "nothing waiting on you",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -1310,22 +1388,33 @@ export function DatasetsPage() {
           e.target.value = "";
         }}
       />
-      <div className="home-head">
-        <div className="stack home-gap-4">
-          <h1>Datasets</h1>
-          {data && rows.length > 0 && <p className="secondary num">{summary}</p>}
-        </div>
-        {editor && (
-          <div className="row home-actions">
-            <SampleMenu onCreated={(ds) => highlight(ds.id)} />
-            <ConnectMenu onCreated={(ds) => highlight(ds.id)} />
-            <button type="button" className="primary" onClick={browse} disabled={upload.progress !== null}>
-              <Icon name="upload" />
-              Upload CSV or Parquet
-            </button>
+      <header className="home-hero">
+        <span className="home-hero-mark" aria-hidden="true">
+          <Logo />
+        </span>
+        <div className="home-head">
+          <div className="stack home-gap-4">
+            <span className="home-eyebrow">Datasets</span>
+            <h1>{greeting(me.data?.name)}</h1>
+            <p className="secondary num">
+              {data && rows.length > 0
+                ? summary
+                : "Prepare a dataset with your team, field by field, then train and deploy models on it."}
+            </p>
           </div>
-        )}
-      </div>
+          {editor && (
+            <div className="row home-actions">
+              <SampleMenu onCreated={(ds) => highlight(ds.id)} />
+              <ConnectMenu onCreated={(ds) => highlight(ds.id)} />
+              <button type="button" className="primary" onClick={browse} disabled={upload.progress !== null}>
+                <Icon name="upload" />
+                Upload CSV or Parquet
+              </button>
+            </div>
+          )}
+        </div>
+        {data && rows.length > 0 && <Numbers rows={rows} waiting={waiting.length} />}
+      </header>
       <ErrorAlert error={error} />
       {isLoading && (
         <div className="stack">
@@ -1344,6 +1433,7 @@ export function DatasetsPage() {
           </div>
         ))}
       <ErrorAlert error={demo.error} />
+      {focused && !phone && <ContinueCard ds={focused} />}
 
       {waiting.length > 0 && (
         <section className="stack home-section" aria-labelledby="home-waiting">

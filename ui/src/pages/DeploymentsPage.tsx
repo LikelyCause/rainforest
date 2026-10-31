@@ -15,15 +15,15 @@ export function DeploymentStatus({ d }: { d: Pick<Deployment, "status" | "retire
   );
 }
 
-/** The dataset's Deployments step: every deployment in an experiment the viewer can see, newest first. */
+/** The dataset's Models place: every deployment in an experiment the viewer can see, newest first. */
 export function DeploymentsPage() {
   const ds = useDatasetContext();
   const nav = useNavigate();
   const list = useQuery({ queryKey: ["deployments", ds.id], queryFn: () => api.deployments(ds.id) });
-  const href = (d: Deployment) => `/d/${ds.id}/deployments/${d.id}`;
+  const href = (d: Deployment) => `/d/${ds.id}/models/${d.id}`;
   return (
     <div className="page deployments-page">
-      <h1>Deployments</h1>
+      <h1 className="tools-sr">Models</h1>
       <p className="secondary exp-flush">
         A deployment scores new records with finished runs, through an API call with a key or a file uploaded here, to
         test them on data they haven&apos;t seen. It isn&apos;t production serving.
@@ -74,7 +74,7 @@ export function DeploymentsPage() {
             </div>
           ) : (
             <Empty
-              title="No deployments yet"
+              title="No models deployed yet"
               action={
                 <Link className="btn" to={`/d/${ds.id}/experiments`}>
                   Go to the experiments

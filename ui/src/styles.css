@@ -106,50 +106,76 @@ code, .mono { font-family: var(--mono); font-size: var(--fs-small); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ------------------------------------------------------------------ app shell */
-.app { display: flex; flex-direction: column; height: 100%; }
-.topbar { flex: none; background: var(--surface-1); border-bottom: 1px solid var(--border); }
-.topbar-row { display: flex; align-items: stretch; flex-wrap: wrap; gap: 0 var(--space-3); min-height: 52px; padding: 0 var(--space-4); }
-.topbar.in-dataset .topbar-row { border-bottom: 1px solid var(--border); }
-.topbar-row > * { align-self: center; }
-.topbar-row > .tabs { align-self: stretch; }
+.app { display: flex; height: 100%; }
+.app-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* The rail: the dataset and baseline in focus, their places, then the app's and you at the bottom. */
+.rail { flex: none; width: 220px; display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3) var(--space-2);
+  background: var(--surface-1); border-right: 1px solid var(--border); position: relative; z-index: 40; }
 .brand { display: flex; align-items: center; gap: var(--space-2); font-weight: 600; color: var(--text-primary); }
 .brand:hover { text-decoration: none; }
 .brand svg { width: 20px; height: 20px; }
+.rail > .brand { padding: var(--space-1) var(--space-2) var(--space-3); }
+.rail-group { display: flex; flex-direction: column; gap: 2px; }
+.rail-link { position: relative; display: flex; align-items: center; gap: 10px; min-height: 32px; padding: 0 10px; border-radius: var(--radius-sm);
+  color: var(--text-secondary); font-size: var(--fs-ui); font-weight: 500; text-decoration: none; }
+.rail-link:hover { background: var(--surface-hover); text-decoration: none; }
+.rail-link .ic { color: var(--text-muted); }
+.rail-link.on { background: var(--surface-hover); color: var(--text-primary); font-weight: 600; }
+.rail-link.on .ic { color: var(--text-primary); }
+.rail-count { margin-left: auto; font-size: var(--fs-small); font-weight: 400; color: var(--text-muted); }
+.rail-link .running-dot { margin-left: auto; }
 .crumb-sep { color: var(--border-strong); }
-.switcher { padding: 0 6px; color: var(--text-primary); font-weight: 600; gap: 6px; max-width: 100%; }
+.rail-rule { border: 0; border-top: 1px solid var(--border); margin: var(--space-2) var(--space-1); }
+.rail-switch { position: relative; margin-bottom: var(--space-2); }
+.rail-dataset { width: 100%; height: auto; min-height: 44px; justify-content: flex-start; gap: 10px; padding: 6px 10px; text-align: left;
+  background: var(--bg); border-color: var(--border); }
+.rail-dataset-text { display: flex; flex-direction: column; flex: 1; min-width: 0; line-height: 1.3; }
+.rail-dataset .ds-name { max-width: none; }
+.rail-popover { left: 0; right: auto; min-width: 260px; }
+.user-menu .rail-popover { top: auto; bottom: calc(100% + 4px); }
+.rail-link.off { color: var(--text-muted); cursor: default; opacity: 0.6; }
+.rail-link.off:hover { background: none; }
+.focus-menu { width: 300px; max-height: calc(100vh - 80px); overflow-y: auto; }
+.focus-baseline { display: flex; flex-direction: column; }
+.focus-phase { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-1) 10px var(--space-2); }
+.focus-phase .phase-rail { gap: 6px; font-size: var(--fs-small); }
+.focus-phase .phase-rail .conn { width: 10px; }
+.focus-phase .phase-rail .dot { width: 16px; height: 16px; }
+.focus-phase .phase-rail li:not(.current) .phase-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .ds-name { font-weight: 600; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dataset-tabs, .main-tabs { margin-left: var(--space-1); }
-.dataset-tabs .tab, .main-tabs .tab { min-height: 52px; }
 .running-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
   vertical-align: middle; animation: running-pulse 1.4s ease-in-out infinite; }
 @keyframes running-pulse { 50% { opacity: 0.3; } }
 .spacer { flex: 1; }
-/* The second row: the version, its phase, whose decisions are on screen, and the next step. */
-.dataset-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); min-height: 48px; padding: 6px var(--space-4); font-size: var(--fs-ui); }
-.dataset-bar .version-switcher .badge { height: 20px; }
+/* The page bar: where you are, whose decisions are on screen, and the next step. */
+.dataset-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); min-height: 52px; padding: 8px var(--space-4);
+  font-size: var(--fs-ui); background: var(--surface-1); border-bottom: 1px solid var(--border); }
+.page-bar-title { font-size: var(--fs-section); font-weight: 600; }
+.page-bar-switch { margin-left: var(--space-2); }
 .dataset-bar .version-name { font-weight: 600; }
 .gate-text { font-size: var(--fs-small); color: var(--text-muted); }
-/* Below ~1300px the gate text gives way, so the next-step button stays on the first line. */
-@media (max-width: 1299px) { .dataset-bar .gate-text { display: none; } }
 .menu-link { display: flex; align-items: center; gap: var(--space-2); min-height: 32px; padding: var(--space-1) 10px; border-radius: var(--radius-sm);
   color: var(--text-primary); font-size: var(--fs-ui); text-decoration: none; }
 .menu-link:hover { background: var(--surface-hover); text-decoration: none; }
 .menu-link[aria-current="true"] { font-weight: 600; }
 .popover hr { border: 0; border-top: 1px solid var(--border); margin: var(--space-1) 0; width: 100%; }
+/* Below 1360 the rail keeps its icons; its words stay for screen readers. */
+@media (max-width: 1359px) {
+  .rail { width: 56px; padding: var(--space-3) 6px; }
+  .rail-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .rail > .brand, .rail-link, .rail-dataset { justify-content: center; padding: 0; }
+  .rail-dataset { border-color: transparent; background: transparent; }
+  .rail > .brand { padding: var(--space-1) 0 var(--space-3); }
+  .rail-link .running-dot { position: absolute; top: 5px; right: 7px; }
+  .rail .profile-button { justify-content: center; padding: 0; }
+}
 @media (max-width: 759px) {
-  .topbar-row { padding: 0 var(--space-3); }
-  .topbar.in-dataset .brand-name { display: none; }
-  /* The dataset's places take their own row on a phone: two rows of chrome, not three. */
-  .topbar-row > .dataset-tabs { order: 10; flex-basis: 100%; margin: 0 calc(var(--space-3) * -1); padding: 0 var(--space-1); border-top: 1px solid var(--border); }
-  .dataset-tabs .tab { min-height: 44px; }
   .dataset-bar { padding: 6px var(--space-3); }
-  .dataset-bar .phase-rail li:not(.current), .dataset-bar .phase-rail .conn, .dataset-bar .gate-text { display: none; }
   .ds-name { max-width: 160px; }
-  .dataset-tabs .tab { padding: 0 var(--space-2); }
-  .dataset-bar .version-switcher .badge, .lens-more, .hide-phone, .dataset-bar > button:disabled { display: none; }
+  .lens-more, .hide-phone, .dataset-bar > button:disabled { display: none; }
   .dataset-bar .spacer { flex-basis: 0; }
   /* Touch targets: every full-size control is at least 44px tall on a phone. */
-  .main button:not(.small):not(.link), .main .btn:not(.small), .switcher { min-height: 44px; }
+  .main button:not(.small):not(.link), .main .btn:not(.small) { min-height: 44px; }
   /* A row of tabs that scrolls says so with a fade at its right edge. */
   .tabs.sub { mask-image: linear-gradient(to right, #000 85%, transparent); padding-right: var(--space-5); }
 }
@@ -158,8 +184,10 @@ code, .mono { font-family: var(--mono); font-size: var(--fs-small); }
 .check-grid label.check { min-width: 0; }
 .check-grid label.check .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .start-baseline { gap: var(--space-3); }
-.user-menu { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; }
-.topbar-row > .user-menu { align-self: center; }
+.user-menu { position: relative; display: flex; align-items: center; }
+.rail .profile-button { width: 100%; height: auto; min-height: 44px; justify-content: flex-start; padding: 6px; }
+.profile-text { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; line-height: 1.3; }
+.rail .user-name { color: var(--text-primary); }
 .main { flex: 1; min-height: 0; overflow: auto; position: relative; }
 .login { min-height: 100%; display: grid; place-items: center; padding: var(--space-5) var(--space-4); }
 .login-card { width: min(360px, 100%); gap: var(--space-3); padding: var(--space-5); }
@@ -591,7 +619,6 @@ table.comparison tr.differs td, table.comparison tr.differs th { background: var
   .review { grid-template-columns: minmax(0, 1fr); height: auto; }
   .decision { border-left: 0; border-top: 1px solid var(--border); }
   .filter-row { grid-template-columns: 1fr 1fr; }
-  .topbar { flex-wrap: wrap; padding: var(--space-2) var(--space-3); }
   .detail { padding: var(--space-4); }
 }
 @media (prefers-reduced-motion: reduce) {

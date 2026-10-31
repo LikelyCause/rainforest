@@ -245,8 +245,12 @@ export function ExperimentsPage() {
   const canCreate = canDo("createExperiment");
   return (
     <div className="page experiments-page">
+      <h1 className="tools-sr">Experiments</h1>
       <div className="row exp-between">
-        <h1>Experiments</h1>
+        <p className="secondary exp-flush">
+          Each experiment holds exports and the models trained on them. Build one from a finalized baseline, or from
+          your own assessment while you assess; that one stays private to you until team review opens.
+        </p>
         {canCreate && (
           <button type="button" className="primary" onClick={() => setCreating({})}>
             <Icon name="plus" />
@@ -254,10 +258,6 @@ export function ExperimentsPage() {
           </button>
         )}
       </div>
-      <p className="secondary exp-flush">
-        Each experiment holds exports and the models trained on them. Build one from a finalized baseline, or from your
-        own assessment while you assess; that one stays private to you until team review opens.
-      </p>
       {prompt !== null && (
         <FinalizedCard
           ds={ds}
