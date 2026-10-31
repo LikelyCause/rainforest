@@ -43,10 +43,17 @@ vi.mock("../hooks", () => ({
 vi.mock("../api", async (orig) => ({
   ...(await orig<typeof import("../api")>()),
   api: {
-    datasets: vi.fn(async () => []),
+    datasets: vi.fn(async () => [DS, { ...DS, id: 2, name: "Leaves" }]),
     exports: vi.fn(async () => []),
     runs: vi.fn(async () => []),
-    baselines: vi.fn(async () => []),
+    baselines: vi.fn(async () => [
+      {
+        family: "tree",
+        name: null,
+        label: "Trees",
+        versions: [{ id: 5, family: "tree", version: 1, name: null, phase: "finalized" }],
+      },
+    ]),
     system: vi.fn(async () => ({ mlflow: { enabled: false, browseUrl: null } })),
     logout: vi.fn(),
   },
@@ -83,31 +90,62 @@ afterEach(() => {
 const links = (label: string) =>
   [...document.querySelectorAll<HTMLElement>(`nav[aria-label="${label}"] a`)].map((a) => a.textContent);
 
+const open = async () => {
+  const button = document.querySelector<HTMLButtonElement>(".rail-dataset")!;
+  await act(async () => button.click());
+  for (let n = 0; n < 50 && !document.querySelector('.focus-menu [aria-label="Baseline"] a[href="/d/1/baseline"]'); n++)
+    await act(() => new Promise((r) => setTimeout(r, 20)));
+};
+
+const store = new Map<string, string>();
+vi.stubGlobal("localStorage", {
+  getItem: (k: string) => store.get(k) ?? null,
+  setItem: (k: string, v: string) => store.set(k, v),
+  removeItem: (k: string) => store.delete(k),
+});
+
 describe("side rail", () => {
-  it("outside a dataset, offers the app's places and no dataset's", async () => {
+  afterEach(() => store.clear());
+
+  it("with no dataset in focus, greys out the dataset's places and keeps People out", async () => {
     await mount("/");
-    expect(links("Main")).toEqual(["Datasets", "People", "Settings"]);
-    expect(document.querySelector('nav[aria-label="Dataset"]')).toBeNull();
-    expect(document.querySelector('[aria-label="Baseline"]')).toBeNull();
+    expect(links("Main")).toEqual(["Datasets", "Settings"]);
+    expect(links("Dataset")).toEqual([]);
+    const places = [...document.querySelectorAll('nav[aria-label="Dataset"] [aria-disabled="true"]')];
+    expect(places.map((p) => p.textContent)).toEqual(["Fields", "Explore", "Experiments", "Runs", "Models"]);
+    expect(document.querySelector(".rail-dataset")?.textContent).toContain("Choose a dataset");
   });
 
   it("inside a dataset, lists its places with the review count and marks the one open", async () => {
     await mount("/d/1/review");
-    expect(links("Dataset")).toEqual(["Fields2/3", "Explore", "Baseline", "Experiments", "Deployments"]);
+    expect(links("Dataset")).toEqual(["Fields2/3", "Explore", "Experiments", "Runs", "Models"]);
     expect(document.querySelector('[aria-current="page"]')?.textContent).toBe("Fields2/3");
-    expect(links("Main")[0]).toBe("All datasets");
-    expect(document.body.textContent).toContain("1,030 rows · 9 fields");
+    expect(document.querySelector('nav[aria-label="Dataset"] a[href="/d/1/models"]')).not.toBeNull();
   });
 
-  it("shows where the baseline stands: its version, the current phase, who finalized it", async () => {
+  it("names the dataset and the baseline in focus, and keeps them after leaving the dataset", async () => {
+    await mount("/d/1/runs");
+    expect(document.querySelector(".rail-dataset")?.textContent).toContain("Concrete strength");
+    expect(document.querySelector(".rail-dataset")?.textContent).toContain("Trees v1 · Finalized");
+    act(() => root.unmount());
+    host.remove();
+    await mount("/settings");
+    expect(document.querySelector(".rail-dataset")?.textContent).toContain("Concrete strength");
+    expect(links("Dataset")).toEqual(["Fields2/3", "Explore", "Experiments", "Runs", "Models"]);
+  });
+
+  it("its menu switches dataset and lists the baseline: phase, who finalized it, its versions", async () => {
     await mount("/d/1/experiments");
-    const status = document.querySelector('[aria-label="Baseline"]')!;
-    expect(status.textContent).toContain("Trees v1");
-    expect(status.querySelector('[aria-current="step"]')?.textContent).toBe("Finalized");
-    expect(status.textContent).toContain("by Tanner");
+    await open();
+    const menu = document.querySelector(".focus-menu")!;
+    expect(menu.querySelector('a[href="/d/2/experiments"]')?.textContent).toBe("Leaves");
+    const baseline = menu.querySelector('[aria-label="Baseline"]')!;
+    expect(baseline.querySelector('[aria-current="step"]')?.textContent).toBe("Finalized");
+    expect(baseline.textContent).toContain("by Tanner");
+    expect(baseline.querySelector('a[href="/d/1/baseline"]')?.textContent).toContain("Trees v1");
   });
 
-  it("keeps Settings and People out of the profile menu, which the rail already has", async () => {
+  it("keeps Settings and People out of the profile menu", async () => {
     await mount("/");
     const profile = document.querySelector<HTMLButtonElement>('button[aria-label^="Profile menu"]')!;
     await act(async () => profile.click());

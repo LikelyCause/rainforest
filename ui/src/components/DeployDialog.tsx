@@ -76,7 +76,7 @@ export function DeployDialog({
     onSuccess: (d) => {
       qc.invalidateQueries({ queryKey: ["deployments", datasetId] });
       toast({ message: `Deployed ${d.name}` });
-      nav(`/d/${datasetId}/deployments/${d.id}`);
+      nav(`/d/${datasetId}/models/${d.id}`);
     },
   });
   // A refusal is about the request as it was sent; once the form changes it no longer applies.

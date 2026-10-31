@@ -8,23 +8,21 @@ the team review queue is in [Team workflow](team-workflow.md).
 The side rail on the left says where you can go. On top:
 
 - *Rainforest*, which goes to *Datasets*.
-- Inside a dataset, the dataset switcher, with the dataset's rows and fields. It lists every dataset, and *All
-  datasets*.
-- Inside a dataset, its five places: *Fields · Explore · Baseline · Experiments · Deployments*. *Fields* shows how
-  many fields are reviewed, such as *7/9*. In team review it shows how many fields are still open instead. A dot on
-  *Experiments* means an export or run is in progress.
-- *Datasets* (*All datasets* inside a dataset), *People* and *Settings*.
+- The focus menu: the dataset you are working on and its baseline version with its phase, such as *Concrete
+  strength* over *Trees v2 · Assessing*. It stays on the dataset you last opened, so the places below are one click
+  away from *Datasets* or *Settings* too. Open it to:
+  - Switch dataset. From *Explore*, *Experiments*, *Runs* or *Models*, the other dataset opens on the same place.
+  - See the phase list (*Set up · Assessing · Team review · Finalized*) and what opens the next phase, such as
+    *Team review opens when all 3 submit · 1 in*, or *4 adopted · 2 open*.
+  - Switch baseline version. The current version opens its progress on the *Baseline* page; a finalized one opens
+    its fields read-only. *Versions and compare* is there too, and leads get *New version or baseline…*.
+- The dataset's places: *Fields · Explore · Experiments · Runs · Models*. *Fields* shows how many fields are
+  reviewed, such as *7/9*. In team review it shows how many fields are still open instead. A dot on *Experiments*
+  means an export or run is in progress, and on *Runs* a run. With no dataset chosen yet, they are greyed out.
 
-At the bottom, inside a dataset, it says where the baseline version stands:
+At the bottom are *Datasets* and *Settings*, then your profile: picture, name and role.
 
-- The version switcher, such as *Trees v2*. It lists every version of the dataset's baselines with its phase, and
-  opens *Versions and compare*. Leads also get *New version or baseline…*.
-- The phase list: *Set up · Assessing · Team review · Finalized*. Under it, what opens the next phase, such as
-  *Team review opens when all 3 submit · 1 in*, or *4 adopted · 2 open*.
-
-Under it is your profile: picture, name and role.
-
-Below 1360 px wide the rail narrows to icons and the phase dots; hover an icon or a dot for its name.
+Below 1360 px wide the rail narrows to icons; hover an icon for its name.
 
 Inside a dataset, the page bar across the top names the place you are on and holds:
 
@@ -60,7 +58,7 @@ dialog.
 
 ### Profile picture
 
-*Change picture…* sets your picture. A lead can set anyone's picture from the *People* page.
+*Change picture…* sets your picture. A lead can set anyone's picture in *Settings › People*.
 
 | Limit | Value |
 |---|---|
@@ -76,7 +74,7 @@ After you choose a picture, frame it in the circle:
 
 Rainforest turns the picture upright, keeps the square you framed and saves it as a 256 × 256 WebP. Nothing of the
 file is kept but its pixels. Pictures are stored in `DATA_DIR/avatars`. They appear on the sign-in page, the side
-rail and the *People* page. Without a picture, your initials stand in.
+rail and *Settings › People*. Without a picture, your initials stand in.
 
 ## Settings
 
@@ -86,7 +84,7 @@ rail and the *People* page. Without a picture, your initials stand in.
 |---|---|
 | *Profile* | Change your picture and your name. Your email and role are shown read-only. |
 | *Appearance* | Choose the *System*, *Light* or *Dark* theme. *System* follows your device. The choice is kept in this browser. |
-| *People* | Leads only: the user list, as on the *People* page. |
+| *People* | Leads only: users, their roles and pictures. |
 | *Integrations* | See whether runs are logged to the built-in MLflow server. Connecting your own MLflow deployment, or pulling data from S3 or other storage, is coming soon. |
 | *Application* | Coming soon: app settings that today live in `.env`. |
 
@@ -266,7 +264,7 @@ The dataset's *Baseline* tab runs the team process for the baseline version in p
 Alongside, *Versions* lists the dataset's baselines and their versions. For a lead, *Other model types* starts a
 *Linear* or *Neural* baseline. After set-up, the tab's sub-tabs are *Progress*, *Queue* in team review, and *Versions*.
 
-*People*, in the side rail, is different: it lists users. Leads manage users there. See
+Users are listed in *Settings › People*, where leads manage them. See
 [Managing people](team-workflow.md#managing-people).
 
 See [Team workflow](team-workflow.md) for each step.
@@ -319,9 +317,15 @@ A batch starts many runs at once: one model per class of a class target, or a se
 batch has its own page, with its progress and its results: a table of the classes, or a ranked leaderboard and a
 chart. See [Batches](experiments-and-training.md#batches).
 
-## Deployments
+## Runs
 
-The dataset's *Deployments* step lists its deployments. A deployment scores new records with finished runs, through
+The dataset's *Runs* place lists every run of its experiments, newest first: the model, its experiment, its first
+target and validation score (AUC for a class target, R² for a number), and its status. A chosen model is marked.
+Filter by *All*, *Finished*, *In progress* or *Failed*. A row opens the run in its experiment's *Runs* tab.
+
+## Models
+
+The dataset's *Models* place lists its deployments. A deployment scores new records with finished runs, through
 an API call with a key or a file you upload, to test the models on data they haven't seen. *Deploy…* on a batch's
 page or on a finished run's detail makes one. A deployment's page has its models and thresholds, its keys, a `curl`
 example, *Retire…*, and *Test with a file*: the results, downloads, metrics against the file's labels, and the fields

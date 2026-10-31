@@ -8,7 +8,7 @@ baseline changes over time. Terms are defined in [Concepts](concepts.md).
 Every dataset goes through the same steps, whether one person uses Rainforest or a team. On your own, you are the lead
 and the only assessor.
 
-1. A lead adds people and uploads the dataset. In pick mode, people are added on the *People* page or in
+1. A lead adds people and uploads the dataset. In pick mode, people are added in *Settings › People* or in
    `RAINFOREST_USERS`. With OIDC, they come from the identity provider's groups. See
    [Deployment](deployment.md#sign-in).
 2. The lead sets up the dataset's baseline on its *Baseline* tab: model type, starting point, targets and assessors.
@@ -35,11 +35,11 @@ uploads, exports, model runs and *Explore* analyses.
 | Assess in *Fields · Focus* and *Fields · Table* when assigned; comment in team review | | ✓ | ✓ |
 | Start baselines and versions, assign assessors, set the team decision in review, finalize, mark a chosen model | | | ✓ |
 | Delete datasets | | | ✓ |
-| Manage users on the *People* page; change anyone's picture | | | ✓ |
+| Manage users in *Settings › People*; change anyone's picture | | | ✓ |
 
 What "manage users" means depends on the sign-in mode:
 
-| Sign-in mode | What a lead can do on the *People* page |
+| Sign-in mode | What a lead can do in *Settings › People* |
 |---|---|
 | Pick mode without `RAINFOREST_USERS` | add, rename, edit email, set role, deactivate, reactivate |
 | Pick mode with `RAINFOREST_USERS` | nothing: the page lists the accounts read-only |
@@ -58,7 +58,7 @@ on, Viewers see the team decision like everyone else.
 
 - Deactivating a user, or changing their role, signs them out everywhere at once.
 - The last active lead can't be demoted or deactivated.
-- The *People* page doesn't let you deactivate yourself.
+- *Settings › People* doesn't let you deactivate yourself.
 - Users are never deleted, so their history keeps their names.
 - With OIDC, users are matched by the provider's subject id, never by email.
 
@@ -67,7 +67,7 @@ on, Viewers see the team decision like everyone else.
 Every dataset has baselines: the team's decisions for one model type (*Trees*, *Linear* or *Neural*), at most one per
 type. Each baseline has numbered versions, labelled like *Trees baseline v2*. A version moves through three phases:
 *Assessing*, *Team review* and *Finalized*. Before its first version starts, a new dataset's baseline is in *Set up*.
-The phase shows on the *Datasets* list and in the side rail's phase list: *Set up · Assessing · Team review ·
+The phase shows on the *Datasets* list and in the side rail's focus menu: *Set up · Assessing · Team review ·
 Finalized*.
 
 One baseline version per dataset is in progress (assessing or in review) at a time. Another baseline or version can

@@ -197,13 +197,9 @@
 .name-chip { display: inline-flex; align-items: center; padding: 1px var(--space-2); border-radius: var(--radius-xs); background: var(--surface-2);
   font-size: var(--fs-ui); color: var(--text-primary); }
 
-/* Header row 2: the version switcher lists every version of every baseline. */
-.version-switch { position: relative; min-width: 0; }
-.version-menu { left: 0; right: auto; min-width: 300px; max-height: 70vh; overflow-y: auto; }
-.version-menu .menu-note { display: block; padding: var(--space-1) 10px 2px; }
-.version-menu .menu-link .ic.muted { color: var(--text-muted); }
+/* The rail's focus menu lists every dataset, then every version of every baseline. */
+.focus-menu .menu-note { display: block; padding: var(--space-1) 10px 2px; }
+.focus-menu .menu-link .ic.muted { color: var(--text-muted); }
 @media (max-width: 759px) {
   .bl-tabs .tab { min-height: 44px; }
-  .version-menu { min-width: 0; width: calc(100vw - 32px); }
-  .version-menu .menu-link { min-height: 44px; }
 }

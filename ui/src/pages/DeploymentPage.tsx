@@ -716,7 +716,7 @@ function DeploymentView() {
     },
   });
 
-  const back = `/d/${ds.id}/deployments`;
+  const back = `/d/${ds.id}/models`;
   if (dep.error && !d) {
     const missing = (dep.error as { status?: number }).status === 404;
     return (
@@ -728,7 +728,7 @@ function DeploymentView() {
         )}
         <div>
           <Link className="btn" to={back}>
-            Back to the deployments
+            Back to the models
           </Link>
         </div>
       </div>
@@ -764,7 +764,7 @@ function DeploymentView() {
       <div className="stack exp-gap-1">
         <Link to={back} className="secondary small-text batch-back">
           <Icon name="arrow-left" size={14} />
-          Deployments
+          Models
         </Link>
         <div className="row batch-title">
           <h1>{d.name}</h1>

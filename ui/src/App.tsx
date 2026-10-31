@@ -12,7 +12,6 @@ import { FieldsViewSwitch } from "./components/FieldsViewSwitch";
 import { DatasetsPage } from "./pages/DatasetsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ForbiddenPage } from "./pages/ForbiddenPage";
-import { TeamPage } from "./pages/TeamPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { BaselinesPage } from "./pages/BaselinesPage";
 import { BaselinePage } from "./pages/BaselinePage";
@@ -23,6 +22,7 @@ import { ExplorePage } from "./pages/ExplorePage";
 import { BatchPage } from "./pages/BatchPage";
 import { DeploymentsPage } from "./pages/DeploymentsPage";
 import { DeploymentPage } from "./pages/DeploymentPage";
+import { RunsPage } from "./pages/RunsPage";
 import { DatasetTeamPage } from "./pages/DatasetTeamPage";
 import { DatasetLayout, useDatasetContext } from "./components/DatasetLayout";
 import { ErrorAlert } from "./components/ui";
@@ -132,7 +132,8 @@ const SECTION: Record<string, string> = {
   baseline: "Baseline",
   baselines: "Baseline",
   experiments: "Experiments",
-  deployments: "Deployments",
+  runs: "Runs",
+  models: "Models",
 };
 
 function DatasetBar({ ds }: { ds: Dataset }) {
@@ -183,6 +184,13 @@ function PageBar() {
   const ds = useDataset(datasetId, !Number.isNaN(datasetId));
   const d = m ? ds.data : undefined;
   return d && (d.status === "ready" || d.status === "refreshing") ? <DatasetBar ds={d} /> : null;
+}
+
+/** Deployments live under Models now; old links still land. */
+function DeploymentsRedirect() {
+  const m = useMatch("/d/:datasetId/deployments/*");
+  const rest = m?.params["*"];
+  return <Navigate to={`/d/${m?.params.datasetId}/models${rest ? `/${rest}` : ""}`} replace />;
 }
 
 /** Opening a dataset lands where its next step is: set-up, the review queue, or the fields. */
@@ -253,8 +261,8 @@ export default function App() {
         />
         <Route element={<RequireAuth />}>
           <Route path="/" element={<DatasetsPage />} />
-          <Route path="/people" element={<TeamPage />} />
-          <Route path="/team" element={<Navigate to="/people" replace />} />
+          <Route path="/people" element={<Navigate to="/settings/people" replace />} />
+          <Route path="/team" element={<Navigate to="/settings/people" replace />} />
           <Route path="/settings/:section?" element={<SettingsPage />} />
           <Route path="/d/:datasetId" element={<DatasetLayout />}>
             <Route index element={<DatasetIndex />} />
@@ -267,8 +275,10 @@ export default function App() {
             <Route path="experiments" element={<ExperimentsPage />} />
             <Route path="experiments/:experimentId" element={<ExperimentPage />} />
             <Route path="experiments/:experimentId/batches/:batchId" element={<BatchPage />} />
-            <Route path="deployments" element={<DeploymentsPage />} />
-            <Route path="deployments/:deploymentId" element={<DeploymentPage />} />
+            <Route path="runs" element={<RunsPage />} />
+            <Route path="models" element={<DeploymentsPage />} />
+            <Route path="models/:deploymentId" element={<DeploymentPage />} />
+            <Route path="deployments/*" element={<DeploymentsRedirect />} />
             <Route path="team" element={<DatasetTeamPage />} />
             <Route path="baseline" element={<BaselinePage />} />
             <Route path="baselines" element={<BaselinesPage />} />

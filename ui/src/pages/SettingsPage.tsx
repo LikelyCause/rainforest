@@ -128,10 +128,12 @@ function Profile({ me }: { me: Me }) {
             <span className="muted small-text">
               {me.mode === "oidc" ? (
                 "Set by your identity provider's groups."
-              ) : (
+              ) : me.role === "lead" ? (
                 <>
-                  A Team Lead changes roles on the <Link to="/people">People</Link> page.
+                  Roles are changed in <Link to="/settings/people">People</Link>.
                 </>
+              ) : (
+                "A Team Lead changes roles."
               )}
             </span>
           </div>
